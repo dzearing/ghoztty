@@ -46,6 +46,7 @@ const GlobalShortcuts = @import("global_shortcuts.zig").GlobalShortcuts;
 const OpenURI = @import("../portal.zig").OpenURI;
 const url_scheme = @import("../url_scheme.zig");
 const wslg_gpu = @import("../wslg_gpu.zig");
+const viewer_chrome = @import("../viewer_chrome.zig");
 const CloseUndo = @import("../CloseUndo.zig");
 const builtin = @import("builtin");
 
@@ -926,6 +927,219 @@ pub const Application = extern struct {
     /// Returns the apprt application associated with this application.
     pub fn rt(self: *Self) *ApprtApp {
         return self.private().rt_app;
+    }
+
+    // -----------------------------------------------------------------
+    // App keybindings from a viewer pane (T3430)
+
+    /// A key press the focused VIEWER pane `surface` did not claim itself:
+    /// is it an app keybinding a viewer may perform (`viewer_chrome.route`)?
+    /// True takes it from the page; the action then runs one main-loop hop
+    /// later, because it may close the very pane whose key handler is still
+    /// on the stack (win32 posts `WM_APP_VIEWER_ACCEL` for the same reason).
+    /// The binding is resolved again when it runs, so a config reload in
+    /// between is honoured.
+    pub fn viewerChord(self: *Self, surface: *Surface, event: input.KeyEvent) bool {
+        const leaf = CoreApp.bindingForEvent(self.private().config.get(), event) orelse return false;
+        const r = viewer_chrome.route(&leaf, hostTerminal(surface) != null);
+        if (r == .pass) return false;
+        const pending = std.heap.c_allocator.create(PendingViewerChord) catch return false;
+        pending.* = .{ .surface = surface.ref(), .event = event };
+        _ = glib.idleAdd(runViewerChord, pending);
+        log.debug("viewer chord: {t} route={t}", .{ event.key, r });
+        return true;
+    }
+
+    const PendingViewerChord = struct {
+        surface: *Surface,
+        event: input.KeyEvent,
+    };
+
+    fn runViewerChord(ud: ?*anyopaque) callconv(.c) c_int {
+        const pending: *PendingViewerChord = @ptrCast(@alignCast(ud orelse return 0));
+        defer std.heap.c_allocator.destroy(pending);
+        const surface = pending.surface;
+        defer surface.unref();
+        _ = default().performViewerChord(surface, pending.event);
+        return 0;
+    }
+
+    /// Carry out a viewer chord `viewerChord` claimed. Returns whether
+    /// anything was performed.
+    pub fn performViewerChord(self: *Self, surface: *Surface, event: input.KeyEvent) bool {
+        const priv = self.private();
+        // The pane may have closed in the hop (another chord, a script).
+        if (!surface.isViewer()) return false;
+        const leaf = CoreApp.bindingForEvent(priv.config.get(), event) orelse return false;
+        const host = hostTerminal(surface);
+        const actions = leaf.actionsSlice();
+        switch (viewer_chrome.route(&leaf, host != null)) {
+            .pass => return false,
+            .native => {
+                const action = actions[0];
+                const ok = performViewerBinding(surface, action);
+                log.info("viewer chord: {t} performed on the viewer ok={}", .{ action, ok });
+                return ok;
+            },
+            .core => {
+                if (leaf.flags.global or leaf.flags.all) {
+                    priv.core_app.performAllChainedAction(priv.rt_app, actions);
+                    return true;
+                }
+                var performed = false;
+                for (actions) |action| {
+                    const v = priv.core_app.performActionForNonTerminal(priv.rt_app, host, action);
+                    performed = performed or v;
+                    if (v and CoreSurface.closingAction(action)) break;
+                }
+                log.info("viewer chord: {d} action(s) through the core performed={}", .{ actions.len, performed });
+                return performed;
+            },
+        }
+    }
+
+    /// One binding action chosen while a VIEWER pane is the active one - a
+    /// command palette entry (T3430; win32 `menuRoute`, T2356). The same
+    /// route as the keyboard's, so an entry answers from a viewer exactly as
+    /// its chord does; a terminal-only entry does nothing rather than act on
+    /// a terminal the user is not looking at.
+    pub fn performViewerAction(self: *Self, surface: *Surface, action: input.Binding.Action) bool {
+        const priv = self.private();
+        const leaf: input.Binding.Set.GenericLeaf = .{ .flags = .{}, .actions = .{ .single = .{action} } };
+        const host = hostTerminal(surface);
+        return switch (viewer_chrome.route(&leaf, host != null)) {
+            .pass => pass: {
+                log.info("viewer action: {t} needs a terminal; not performed", .{action});
+                break :pass false;
+            },
+            .native => performViewerBinding(surface, action),
+            .core => priv.core_app.performActionForNonTerminal(priv.rt_app, host, action),
+        };
+    }
+
+    /// A terminal in the viewer's own window for the core to perform a
+    /// window-scoped action through: the active tab's first, then any.
+    /// Null in a window of nothing but viewers.
+    fn hostTerminal(viewer: *Surface) ?*CoreSurface {
+        const window = ext.getAncestor(Window, viewer.as(gtk.Widget)) orelse return null;
+        if (window.getSelectedTab()) |tab| if (tab.getSurfaceTree()) |tree| {
+            var it = tree.iterator();
+            while (it.next()) |entry| if (entry.view.core()) |c| return c;
+        };
+        for (default().core().surfaces.items) |s| {
+            const c = s.core();
+            const w = ext.getAncestor(Window, s.gobj().as(gtk.Widget)) orelse continue;
+            if (w == window) return c;
+        }
+        return null;
+    }
+
+    /// Perform `action` on the focused viewer pane `surface` itself - what
+    /// its core surface would have done, for the actions
+    /// `viewer_chrome.nativeTag` admits: the split, close and zoom act on
+    /// the viewer, the tab and window ones on its window. Also the command
+    /// palette's way in for a viewer-only window, which has no core surface
+    /// to run an entry through. Returns whether it was performed.
+    pub fn performViewerBinding(surface: *Surface, action: input.Binding.Action) bool {
+        const widget = surface.as(gtk.Widget);
+        const window = ext.getAncestor(Window, widget);
+        const tree = ext.getAncestor(SplitTree, widget);
+        const goto = struct {
+            fn of(to: input.Binding.Action.SplitFocusDirection) Surface.Tree.Goto {
+                return switch (to) {
+                    .previous => .previous_wrapped,
+                    .next => .next_wrapped,
+                    .up => .{ .spatial = .up },
+                    .down => .{ .spatial = .down },
+                    .left => .{ .spatial = .left },
+                    .right => .{ .spatial = .right },
+                };
+            }
+        };
+        switch (action) {
+            .new_tab => {
+                const w = window orelse return false;
+                w.newTab(hostTerminal(surface));
+                return true;
+            },
+            .close_tab => |v| return widget.activateAction(
+                "tab.close",
+                glib.ext.VariantType.stringFor([:0]const u8),
+                @as([*:0]const u8, @tagName(v)),
+            ) != 0,
+            inline .previous_tab, .next_tab, .last_tab, .goto_tab => |v, tag| {
+                const w = window orelse return false;
+                return w.selectTab(switch (tag) {
+                    .previous_tab => .previous,
+                    .next_tab => .next,
+                    .last_tab => .last,
+                    .goto_tab => .{ .n = @intCast(v) },
+                    else => comptime unreachable,
+                });
+            },
+            .move_tab => |amount| {
+                const w = window orelse return false;
+                return w.moveTab(surface, @intCast(amount));
+            },
+            .close_window => return widget.activateAction("win.close", null) != 0,
+            .toggle_fullscreen => surface.toggleFullscreen(),
+            .toggle_maximize => surface.toggleMaximize(),
+            .toggle_tab_overview => (window orelse return false).toggleTabOverview(),
+            .toggle_window_decorations => (window orelse return false).toggleWindowDecorations(),
+            .toggle_command_palette => return surface.toggleCommandPalette(),
+            .prompt_tab_title, .prompt_window_title => {
+                const tab = ext.getAncestor(Tab, widget) orelse return false;
+                tab.promptTabTitle();
+            },
+            .equalize_splits => return widget.activateAction("split-tree.equalize", null) != 0,
+            .new_split => |direction| {
+                const dir: apprt.action.SplitDirection = switch (direction) {
+                    .right => .right,
+                    .left => .left,
+                    .down => .down,
+                    .up => .up,
+                    .auto => if (widget.getWidth() > widget.getHeight()) .right else .down,
+                };
+                // Off THIS pane, not whichever the tree last saw focused.
+                const t = tree orelse return false;
+                t.newSplit(switch (dir) {
+                    .right => .right,
+                    .left => .left,
+                    .down => .down,
+                    .up => .up,
+                }, surface, .{}) catch |err| {
+                    log.warn("viewer chord: new_split failed err={}", .{err});
+                    return false;
+                };
+            },
+            .goto_split => |to| return (tree orelse return false).goto(goto.of(to)),
+            .swap_split => |to| return (tree orelse return false).swapSplit(goto.of(to)),
+            .resize_split => |value| {
+                const t = tree orelse return false;
+                if (!t.getIsSplit()) return false;
+                return t.resize(switch (value[0]) {
+                    .up => .up,
+                    .down => .down,
+                    .left => .left,
+                    .right => .right,
+                }, value[1]) catch |err| {
+                    log.warn("viewer chord: resize_split failed err={}", .{err});
+                    return false;
+                };
+            },
+            .toggle_split_zoom => {
+                const t = tree orelse return false;
+                if (!t.getIsSplit()) return false;
+                return widget.activateAction("split-tree.zoom", null) != 0;
+            },
+            .close_surface => surface.close(),
+            else => {
+                // `nativeTag` admitted something this switch does not handle.
+                log.warn("viewer chord: no viewer handler for {t}", .{action});
+                return false;
+            },
+        }
+        return true;
     }
 
     /// Returns the app winproto implementation.

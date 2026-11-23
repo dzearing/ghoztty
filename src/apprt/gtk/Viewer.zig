@@ -183,6 +183,9 @@ message_handler: c_ulong = 0,
 on_open_split: ?*const fn (*Viewer, location: []const u8) void = null,
 on_open_window: ?*const fn (*Viewer, location: []const u8) void = null,
 on_focus_link: ?*const fn (*Viewer, url: []const u8) void = null,
+/// A key press the pane does not claim, offered to the app's keybindings
+/// (T3430): true when a binding took it. Set by the hosting pane.
+on_app_chord: ?*const fn (*Viewer, keyval: u32, keycode: u32, state: u32) bool = null,
 /// The pointer's last position over the page, in the web view's own
 /// coordinates: where the link menu pops up (Mac: at the pointer).
 pointer_x: f64 = 0,
@@ -1446,23 +1449,33 @@ fn unparentMenu(data: ?*anyopaque) callconv(.c) c_int {
 fn onKeyPressed(
     _: *wk.GtkEventController,
     keyval: c_uint,
-    _: c_uint,
+    keycode: c_uint,
     state: c_uint,
     ud: ?*anyopaque,
 ) callconv(.c) c_int {
     const self: *Viewer = @ptrCast(@alignCast(ud orelse return 0));
-    return @intFromBool(self.handleKey(keyval, state));
+    return @intFromBool(self.handleKey(keyval, keycode, state));
 }
 
-/// One key press in the pane. True when the pane claimed it; false leaves it
-/// to the page or the focused field, and from there to the app's bindings.
-pub fn handleKey(self: *Viewer, keyval: u32, state: u32) bool {
-    const action = chrome.classify(keyval, state, .{
+/// One key press in the pane. True when the pane claimed it, or handed it to
+/// an app keybinding (T3430); false leaves it to the page or the focused
+/// field. `keycode` is the hardware code when GDK delivered the press, 0 from
+/// the steps runner (the physical key is then read off the keyval).
+pub fn handleKey(self: *Viewer, keyval: u32, keycode: u32, state: u32) bool {
+    const focus: chrome.FieldFocus = .{
         .address = self.addressHasFocus(),
         .find = self.findHasFocus(),
         .diff_filter = self.diff.filterHasFocus(self),
         .find_open = self.find_open,
-    }) orelse return false;
+    };
+    const action = chrome.classify(keyval, state, focus) orelse {
+        // Not the pane's: an app keybinding may answer it, exactly as from
+        // a terminal, minus what needs one (T3430). The page and our own
+        // fields keep their editing chords first (`offersToApp`).
+        if (!chrome.offersToApp(keyval, state, focus)) return false;
+        const chord = self.on_app_chord orelse return false;
+        return chord(self, keyval, keycode, state);
+    };
     switch (action) {
         .pane => |c| switch (c) {
             .reload => self.reloadContent(.chrome),
@@ -2269,7 +2282,7 @@ const steps = if (build_config.is_debug) struct {
             if (wk.gtk_accelerator_parse(z.ptr, &kv, &mods) == 0) {
                 out("key {s} PARSE-FAILED", .{arg});
             } else {
-                out("key {s} handled={}", .{ arg, v.handleKey(kv, mods) });
+                out("key {s} handled={}", .{ arg, v.handleKey(kv, 0, mods) });
             }
         } else if (std.mem.eql(u8, verb, "type")) {
             var zbuf: [2048]u8 = undefined;

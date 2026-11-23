@@ -238,11 +238,90 @@ grep -E 'panic|reached unreachable' "$APP_LOG" > /dev/null 2>&1
 [ $? != 0 ] && kill -0 "$APP" 2>/dev/null
 hl_check "N26 no panic, the app is still up" $? "$(grep -m2 -E 'panic|unreachable' "$APP_LOG" 2>/dev/null | tr '\n' ' ')"
 
+# ---- T3430: app keybindings from a viewer pane -----------------------------
+# A second app, so the FIRST viewer it opens (the one the steps seam drives)
+# sits in a window of nothing but viewers: no terminal anywhere in it for the
+# core to perform a window action through. Linux defaults: Ctrl+Shift+O
+# splits right, Ctrl+Shift+T opens a tab, Ctrl+Shift+N a window,
+# Ctrl+Shift+P the palette, Ctrl+Shift+C copies (a terminal action).
+kill "$APP" 2>/dev/null
+hl_wait_for 15 sh -c "! kill -0 $APP 2>/dev/null"
+rm -f "$sock"
+printf '# Nav One\n' > "$fx/doc.md"
+cat > "$steps" <<EOF
+key <Control>c
+key <Control><Shift>c
+key <Control><Shift>o
+sleep 1500
+key <Control><Shift>p
+sleep 1000
+key <Control><Shift>p
+sleep 500
+key <Control>l
+key o
+key <Control>v
+key <Control><Shift>t
+sleep 1500
+key <Control><Shift>n
+sleep 2000
+state
+EOF
+: > "$out"; : > "$dump"
+export GHOZTTY_TEST_VIEWER_DUMP="$dump"
+export GHOZTTY_TEST_VIEWER_PROBE="$H"
+export GHOZTTY_TEST_VIEWER_STEPS="$steps"
+export GHOZTTY_TEST_VIEWER_STEPS_OUT="$out"
+hl_launch APP2 "$app" --gtk-single-instance=false --session-persistence=false -e /bin/sh -c 'PS1="hl$ " exec /bin/sh -i'
+unset GHOZTTY_TEST_VIEWER_DUMP GHOZTTY_TEST_VIEWER_PROBE GHOZTTY_TEST_VIEWER_STEPS GHOZTTY_TEST_VIEWER_STEPS_OUT
+hl_wait_for 30 test -S "$sock"
+o=$(cli +new-window --target=vonly --name=vdoc --view=doc.md 2>&1)
+hl_check "K1 +new-window --view opens a viewer-only window" $? "$o"
+hl_wait_for 60 grep -q '^done' "$out"
+hl_check "K2 every chord step ran to the end" $? "$(tail -3 "$out" 2>/dev/null | tr '\n' ' ')"
+
+k=$(grep '^key' "$out")
+kh() { echo "$k" | grep -qF "key $1 handled=$2"; }
+kh '<Control>c' false && kh '<Control><Shift>c' false
+hl_check "K3 the page keeps Ctrl+C, and Ctrl+Shift+C (copy needs a terminal) is never performed from a viewer" $? "$(echo "$k" | tr '\n' ' ')"
+kh '<Control><Shift>o' true && kh '<Control><Shift>p' true && kh '<Control><Shift>n' true
+hl_check "K4 split, palette and new-window chords are taken from a viewer" $? "$(echo "$k" | tr '\n' ' ')"
+kh 'o' false && kh '<Control>v' false && kh '<Control><Shift>t' true
+hl_check "K5 in the address field typing and paste stay the field's; Ctrl+Shift+T leaves it" $? "$(echo "$k" | tr '\n' ' ')"
+
+# The window's shape, read back: the split and the tab happened in the
+# viewer-only window, and Ctrl+Shift+N opened a window of its own.
+shape=$(cli +list --json 2>/dev/null | python3 -c '
+import json, sys
+d = json.load(sys.stdin)["data"]
+def leaves(n):
+    return leaves(n["left"]) + leaves(n["right"]) if n["type"] == "split" else [n["terminal"]]
+out = []
+for w in d["windows"]:
+    tabs = w["tabs"]
+    names = [l.get("name") for t in tabs for l in leaves(t["splits"])]
+    if "vdoc" in names:
+        out.append("vonly tabs=%d first=%d" % (len(tabs), len(leaves(tabs[0]["splits"]))))
+out.append("windows=%d" % len(d["windows"]))
+print(" ".join(out))
+' 2>&1)
+has "$shape" "vonly tabs=2 first=2"
+hl_check "K6 Ctrl+Shift+O split the viewer and Ctrl+Shift+T opened a tab, in a window with no terminal" $? "$shape"
+has "$shape" "windows=3"
+hl_check "K7 Ctrl+Shift+N opened a new window (an app action, through the core)" $? "$shape"
+grep -q 'viewer chord: toggle_command_palette performed on the viewer ok=true' "$APP2_LOG"
+hl_check "K8 Ctrl+Shift+P opens the command palette over a viewer-only window" $? "$(grep -m4 'viewer chord' "$APP2_LOG" | tr '\n' ' ')"
+
+grep -E 'panic|reached unreachable' "$APP2_LOG" > /dev/null 2>&1
+[ $? != 0 ] && kill -0 "$APP2" 2>/dev/null
+hl_check "K9 no panic, the app is still up" $? "$(grep -m2 -E 'panic|unreachable' "$APP2_LOG" 2>/dev/null | tr '\n' ' ')"
+
 if [ "$HL_FAILS" != 0 ]; then
     echo "---- steps output ----"
     cat "$out" 2>/dev/null
     echo "---- app log (viewer lines) ----"
     grep -iE 'viewer|webkit|critical|error' "$APP_LOG" 2>/dev/null | grep -v 'Portal not found' | tail -40
+    echo "---- second app log (viewer lines) ----"
+    grep -iE 'viewer|webkit|critical|error' "$APP2_LOG" 2>/dev/null | grep -v 'Portal not found' | tail -40
 fi
 
 hl_finish "$L"

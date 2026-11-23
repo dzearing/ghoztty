@@ -200,10 +200,318 @@ pub fn classify(kv: u32, state: u32, focus: FieldFocus) ?KeyAction {
 }
 
 // -------------------------------------------------------------------------
+// App keybindings from a viewer pane (T3430)
+// -------------------------------------------------------------------------
+//
+// A chord the pane does not claim (`classify` returned null) may still be an
+// app keybinding: Ctrl+Shift+O splits, Alt+2 picks a tab, a user's own
+// `keybind = ctrl+k=new_window`. A terminal pane performs those through its
+// core surface's key callback; a viewer pane has no core surface, so before
+// this only the handful of actions GTK mirrors as GtkApplication
+// accelerators answered from one. The rule is win32's (T1803, Mac
+// `ViewerKeyFallback`): **a chord the pane does not claim reaches Ghoztty's
+// bindings exactly as it would from a focused terminal, minus the bindings
+// that need a terminal** (`Binding.Action.requires`).
+
+pub const Route = accel.Route;
+
+/// The keysyms `offersToApp` asks the shared text tables about, beyond the
+/// chord keys `vkForKeyval` knows (gdk/gdkkeysyms.h).
+pub const edit_keyval = struct {
+    pub const Tab: u32 = 0xff09;
+    pub const ISO_Left_Tab: u32 = 0xfe20;
+    pub const BackSpace: u32 = 0xff08;
+    pub const Delete: u32 = 0xffff;
+    pub const Insert: u32 = 0xff63;
+    pub const Home: u32 = 0xff50;
+    pub const Left: u32 = 0xff51;
+    pub const Up: u32 = 0xff52;
+    pub const Right: u32 = 0xff53;
+    pub const Down: u32 = 0xff54;
+    pub const End: u32 = 0xff57;
+    pub const KP_Home: u32 = 0xff95;
+    pub const KP_Left: u32 = 0xff96;
+    pub const KP_Up: u32 = 0xff97;
+    pub const KP_Right: u32 = 0xff98;
+    pub const KP_Down: u32 = 0xff99;
+    pub const KP_End: u32 = 0xff9c;
+    pub const KP_Delete: u32 = 0xff9f;
+};
+
+/// `vkForKeyval`, widened to the keys the shared text tables
+/// (`viewer_accel.pageOwns` / `fieldOffers`) are written in: digits, Tab,
+/// the arrows, Home/End, Backspace/Delete/Insert. Null for anything else.
+pub fn textVkForKeyval(kv: u32) ?u16 {
+    if (kv >= '0' and kv <= '9') return @intCast(kv);
+    return switch (kv) {
+        edit_keyval.Tab, edit_keyval.ISO_Left_Tab => 0x09,
+        edit_keyval.BackSpace => 0x08,
+        edit_keyval.Delete, edit_keyval.KP_Delete => 0x2E,
+        edit_keyval.Insert => 0x2D,
+        edit_keyval.Home, edit_keyval.KP_Home => 0x24,
+        edit_keyval.End, edit_keyval.KP_End => 0x23,
+        edit_keyval.Left, edit_keyval.KP_Left => 0x25,
+        edit_keyval.Up, edit_keyval.KP_Up => 0x26,
+        edit_keyval.Right, edit_keyval.KP_Right => 0x27,
+        edit_keyval.Down, edit_keyval.KP_Down => 0x28,
+        else => vkForKeyval(kv),
+    };
+}
+
+/// Whether an unclaimed key press in a viewer pane may be offered to the
+/// app's keybind table at all (T3430). The capture-phase controller sees a
+/// key BEFORE the page or the focused field does - WebView2's accelerator
+/// event has the same shape - so their first claim is spelled out, as on
+/// win32:
+///
+/// - **A field of ours has the caret** (the address, the find query, the
+///   diff filter): typing stays typing. Only a chord with Ctrl, Alt or Super
+///   is offered, minus the field's own editing chords (`fieldOffers`: copy,
+///   paste, undo, word movement and selection, zoom). Mac's menu key
+///   equivalents fire from a focused text field; this is that.
+/// - **The page has it**: everything except the page's own editing and
+///   text-navigation chords (`pageOwns`: Ctrl+C/V/X/A/Z/Y, Ctrl+arrows ...).
+pub fn offersToApp(kv: u32, state: u32, focus: FieldFocus) bool {
+    const mods = modsFromGdk(state);
+    const vk = textVkForKeyval(kv);
+    if (focus.address or focus.find or focus.diff_filter) {
+        if (!mods.ctrl and !mods.alt and !mods.super) return false;
+        return if (vk) |v| accel.fieldOffers(v, mods) else true;
+    }
+    if (vk) |v| if (accel.pageOwns(v, mods)) return false;
+    return true;
+}
+
+/// The key event the binding table is asked about for a key press in a
+/// viewer pane: the press of `key` (the physical key, as the terminal path
+/// resolves it) whose unshifted codepoint is `unshifted`. No UTF-8: nothing
+/// is ever encoded from here, and `Binding.Set.getEvent` matches on the
+/// physical key, then on the unshifted codepoint - how `ctrl+shift+o`-style
+/// defaults are stored. Null for a bare modifier or an unknown key with no
+/// codepoint, which no binding can name.
+pub fn keyEventFor(key: input.Key, unshifted: u21, mods: input.Mods) ?input.KeyEvent {
+    if (key.modifier()) return null;
+    if (key == .unidentified and unshifted == 0) return null;
+    return .{
+        .action = .press,
+        .key = key,
+        .mods = mods,
+        .consumed_mods = .{},
+        .utf8 = "",
+        .unshifted_codepoint = unshifted,
+    };
+}
+
+/// Whether the GTK frontend acts on a focused viewer pane ITSELF for this
+/// action (`Application.performViewerBinding`), the way a terminal pane's
+/// core surface would have: the split, close and zoom act on the viewer, the
+/// tab and window ones on the viewer's own window. Win32's `nativeTag`, cut
+/// to what GTK implements - an action GTK does not perform for a terminal
+/// either (hero mode, the sidebar, stash) is not offered from a viewer.
+/// App-scoped actions are not here: the core performs them with no surface.
+pub fn nativeTag(tag: std.meta.Tag(input.Binding.Action)) bool {
+    return switch (tag) {
+        .new_tab,
+        .close_tab,
+        .previous_tab,
+        .next_tab,
+        .last_tab,
+        .goto_tab,
+        .move_tab,
+        .close_window,
+        .toggle_fullscreen,
+        .toggle_maximize,
+        .toggle_tab_overview,
+        .toggle_window_decorations,
+        .toggle_command_palette,
+        .prompt_tab_title,
+        .prompt_window_title,
+        .equalize_splits,
+        .new_split,
+        .goto_split,
+        .swap_split,
+        .resize_split,
+        .toggle_split_zoom,
+        .close_surface,
+        => true,
+        else => false,
+    };
+}
+
+pub fn native(action: input.Binding.Action) bool {
+    return nativeTag(std.meta.activeTag(action));
+}
+
+/// Where a bound chord from a focused viewer pane goes (T3430) - win32's
+/// `viewer_accel.route` with GTK's native set:
+///
+/// - `.pass`: not ours. Anything a terminal is needed for (`text:`, copy and
+///   paste, font size, scrolling, search) - performed through another
+///   terminal it would type into a shell the user is not looking at.
+/// - `.native`: performed on the viewer by `performViewerBinding`.
+/// - `.core`: `App.performBindingForNonTerminal` - app actions with no
+///   surface, window actions through a terminal in the same window
+///   (`has_host_surface`); a viewer-only window has none.
+pub fn route(leaf: *const input.Binding.Set.GenericLeaf, has_host_surface: bool) Route {
+    const actions = leaf.actionsSlice();
+    if (actions.len == 0) return .pass;
+    if (leaf.flags.global or leaf.flags.all) return .core;
+
+    var requires: input.Binding.Action.Requires = .app;
+    for (actions) |action| {
+        const r = action.requires();
+        if (@intFromEnum(r) > @intFromEnum(requires)) requires = r;
+    }
+    if (requires == .terminal) return .pass;
+
+    if (actions.len == 1 and native(actions[0])) return .native;
+
+    return switch (requires) {
+        .app => .core,
+        .window => if (has_host_surface) .core else .pass,
+        // Through a terminal it would act on THAT terminal's pane.
+        .pane, .terminal => .pass,
+    };
+}
+
+// -------------------------------------------------------------------------
 // Tests
 // -------------------------------------------------------------------------
 
 const testing = std.testing;
+
+fn leafOf(action: input.Binding.Action) input.Binding.Set.GenericLeaf {
+    return .{ .flags = .{}, .actions = .{ .single = .{action} } };
+}
+
+test "T3430: typing in a field of ours stays typing" {
+    const ctrl = gdk_control_mask;
+    const shift = gdk_shift_mask;
+    const alt = gdk_alt_mask;
+    const addr: FieldFocus = .{ .address = true };
+    // Plain and shifted keys never leave the field.
+    try testing.expect(!offersToApp('d', 0, addr));
+    try testing.expect(!offersToApp('D', shift, addr));
+    try testing.expect(!offersToApp(edit_keyval.Left, shift, addr));
+    try testing.expect(!offersToApp(edit_keyval.Delete, 0, .{ .find = true }));
+    // The field's own editing chords stay too.
+    try testing.expect(!offersToApp('c', ctrl, addr));
+    try testing.expect(!offersToApp('v', ctrl, addr));
+    try testing.expect(!offersToApp('z', ctrl, addr));
+    try testing.expect(!offersToApp('Z', ctrl | shift, addr));
+    try testing.expect(!offersToApp(edit_keyval.Left, ctrl | shift, addr));
+    try testing.expect(!offersToApp(edit_keyval.BackSpace, ctrl, addr));
+    try testing.expect(!offersToApp(edit_keyval.BackSpace, alt, addr));
+    try testing.expect(!offersToApp('=', ctrl, addr));
+    // App chords leave it.
+    try testing.expect(offersToApp('O', ctrl | shift, addr));
+    try testing.expect(offersToApp('T', ctrl | shift, .{ .diff_filter = true }));
+    try testing.expect(offersToApp('2', alt, .{ .find = true }));
+    try testing.expect(offersToApp(edit_keyval.Tab, ctrl, addr));
+}
+
+test "T3430: the page keeps its own editing chords, the rest is offered" {
+    const ctrl = gdk_control_mask;
+    const shift = gdk_shift_mask;
+    const none: FieldFocus = .{};
+    for ([_]u32{ 'c', 'v', 'x', 'a', 'z', 'y' }) |kv| {
+        try testing.expect(!offersToApp(kv, ctrl, none));
+    }
+    try testing.expect(!offersToApp('Z', ctrl | shift, none));
+    try testing.expect(!offersToApp(edit_keyval.Left, ctrl, none));
+    try testing.expect(!offersToApp(edit_keyval.Home, ctrl, none));
+    // Copy is Ctrl+Shift+C on Linux, and a terminal binding: offered here,
+    // and then `route` passes it, so the page keeps it after all.
+    try testing.expect(offersToApp('C', ctrl | shift, none));
+    try testing.expect(offersToApp('O', ctrl | shift, none));
+    // Ctrl+Shift+arrows: Windows binds them to tabs; offered from the page.
+    try testing.expect(offersToApp(edit_keyval.Left, ctrl | shift, none));
+    // A key the text tables do not name (Page Up) is offered.
+    try testing.expect(offersToApp(0xff55, ctrl, none));
+}
+
+test "T3430: the keys the text tables read map onto their virtual keys" {
+    try testing.expectEqual(@as(?u16, 0x31), textVkForKeyval('1'));
+    try testing.expectEqual(@as(?u16, 0x25), textVkForKeyval(edit_keyval.Left));
+    try testing.expectEqual(@as(?u16, 0x25), textVkForKeyval(edit_keyval.KP_Left));
+    try testing.expectEqual(@as(?u16, 0x09), textVkForKeyval(edit_keyval.ISO_Left_Tab));
+    try testing.expectEqual(@as(?u16, 0x2E), textVkForKeyval(edit_keyval.Delete));
+    try testing.expectEqual(@as(?u16, 0x52), textVkForKeyval('r'));
+    try testing.expectEqual(@as(?u16, null), textVkForKeyval(0xffbe)); // F1
+}
+
+test "T3430: a key event for the binding table carries no text" {
+    const ev = keyEventFor(.key_o, 'o', .{ .ctrl = true, .shift = true }).?;
+    try testing.expectEqual(input.Key.key_o, ev.key);
+    try testing.expectEqual(@as(u21, 'o'), ev.unshifted_codepoint);
+    try testing.expectEqual(@as(usize, 0), ev.utf8.len);
+    try testing.expectEqual(input.Action.press, ev.action);
+    try testing.expect(keyEventFor(.shift_left, 0, .{}) == null);
+    try testing.expect(keyEventFor(.unidentified, 0, .{ .ctrl = true }) == null);
+    try testing.expect(keyEventFor(.unidentified, 'x', .{ .ctrl = true }) != null);
+}
+
+test "T3430: no terminal action is ever routed out of a viewer" {
+    const terminal_actions = [_]input.Binding.Action{
+        .{ .text = "x" },
+        .{ .copy_to_clipboard = .mixed },
+        .{ .paste_from_clipboard = {} },
+        .{ .increase_font_size = 1 },
+        .{ .scroll_page_up = {} },
+        .{ .start_search = {} },
+        .{ .clear_screen = {} },
+    };
+    for (terminal_actions) |a| {
+        const leaf = leafOf(a);
+        try testing.expectEqual(Route.pass, route(&leaf, true));
+        try testing.expectEqual(Route.pass, route(&leaf, false));
+    }
+}
+
+test "T3430: pane and window actions act on the viewer itself" {
+    const natives = [_]input.Binding.Action{
+        .{ .new_split = .right },
+        .{ .goto_split = .previous },
+        .{ .toggle_split_zoom = {} },
+        .{ .close_surface = {} },
+        .{ .new_tab = {} },
+        .{ .goto_tab = 2 },
+        .{ .close_tab = .this },
+        .{ .toggle_command_palette = {} },
+    };
+    for (natives) |a| {
+        const leaf = leafOf(a);
+        // With or without a terminal anywhere in the window: a viewer-only
+        // window still splits, closes and opens the palette.
+        try testing.expectEqual(Route.native, route(&leaf, false));
+        try testing.expectEqual(Route.native, route(&leaf, true));
+    }
+}
+
+test "T3430: app actions go to the core, window actions need a host" {
+    const quit = leafOf(.{ .quit = {} });
+    try testing.expectEqual(Route.core, route(&quit, false));
+    const nw = leafOf(.{ .new_window = {} });
+    try testing.expectEqual(Route.core, route(&nw, false));
+    // A window action GTK has no viewer handler for goes through a terminal
+    // in the window, and passes in a viewer-only one.
+    const wf = leafOf(.{ .toggle_window_float_on_top = {} });
+    try testing.expectEqual(Route.core, route(&wf, true));
+    try testing.expectEqual(Route.pass, route(&wf, false));
+    // A pane action with no viewer handler never goes through a terminal.
+    const stash = leafOf(.{ .stash_pane = {} });
+    try testing.expectEqual(Route.pass, route(&stash, true));
+}
+
+test "T3430: every native action needs no terminal" {
+    inline for (@typeInfo(input.Binding.Action).@"union".fields) |f| {
+        const tag = @field(std.meta.Tag(input.Binding.Action), f.name);
+        if (nativeTag(tag)) {
+            const a = @unionInit(input.Binding.Action, f.name, undefined);
+            try testing.expect(a.requires() != .terminal);
+        }
+    }
+}
 
 test "T3412: a template URL round-trips its file, odd bytes included" {
     const alloc = testing.allocator;

@@ -40,6 +40,7 @@ const media = @import("../media.zig");
 // both frontends mint the same shape of id (docs/claude/cli.md "Pane identity").
 const pane_id_mod = @import("../../ipc/pane_id.zig");
 const Viewer = @import("../Viewer.zig");
+const viewer_chrome = @import("../viewer_chrome.zig");
 const IpcHandlers = @import("../IpcHandlers.zig");
 const PaneBanner = @import("../PaneBanner.zig");
 const wk = @import("../webkit.zig");
@@ -954,6 +955,7 @@ pub const Surface = extern struct {
         viewer.on_open_split = &viewerOpenSplit;
         viewer.on_open_window = &viewerOpenWindow;
         viewer.on_focus_link = &viewerFocusLink;
+        viewer.on_app_chord = &viewerAppChord;
         self.syncViewerTitle(viewer);
         log.info("viewer pane: opened mode={s} location={s} pane={s}", .{ @tagName(viewer.mode), location, self.paneId() });
     }
@@ -1003,6 +1005,34 @@ pub const Surface = extern struct {
         // A link the user clicked: it opens in front.
         _ = app.newWindowForIpc(null, null, &.{}, loc, true);
         log.info("viewer link: opened a viewer window for {s}", .{location});
+    }
+
+    /// A key press this viewer pane did not claim, offered to the app's
+    /// keybindings (T3430): built into the event a terminal would have
+    /// produced - the physical key from the hardware code, the way
+    /// `keyEvent` resolves it, else from the keyval - and handed to the
+    /// app, which decides whether a viewer may perform it.
+    fn viewerAppChord(viewer: *Viewer, keyval: u32, keycode: u32, state: u32) bool {
+        const self: *Self = @ptrCast(@alignCast(viewer.owner orelse return false));
+        const lower = gdk.keyvalToLower(keyval);
+        const physical: input.Key = physical: {
+            const remapped = gtk_key.keyFromKeyval(lower);
+            if (keycode != 0) {
+                const w3c: input.Key = for (input.keycodes.entries) |entry| {
+                    if (entry.native == keycode) break entry.key;
+                } else .unidentified;
+                if (remapped) |r| if (w3c.shouldBeRemappable() or r.shouldBeRemappable()) break :physical r;
+                if (w3c != .unidentified) break :physical w3c;
+            }
+            break :physical remapped orelse .unidentified;
+        };
+        const unshifted = std.math.cast(u21, gdk.keyvalToUnicode(lower)) orelse 0;
+        const event = viewer_chrome.keyEventFor(
+            physical,
+            unshifted,
+            viewer_chrome.modsFromGdk(state),
+        ) orelse return false;
+        return Application.default().viewerChord(self, event);
     }
 
     /// A `ghoztty://` link in this viewer pane (T3415, T695).

@@ -767,7 +767,13 @@ pub const Window = extern struct {
         action: input.Binding.Action,
     ) void {
         const surface = self.getActiveSurface() orelse return;
-        const core_surface = surface.core() orelse return;
+        const core_surface = surface.core() orelse {
+            // A viewer pane has no core surface: its entry takes the same
+            // route its chord would (T3430), so the palette works over a
+            // viewer, and over a window of nothing but viewers.
+            if (surface.isViewer()) _ = Application.default().performViewerAction(surface, action);
+            return;
+        };
         _ = core_surface.performBindingAction(action) catch |err| {
             log.warn("error performing binding action error={}", .{err});
             return;
