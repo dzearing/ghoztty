@@ -381,11 +381,11 @@ fn serveIcns(req: *wk.URISchemeRequest, path: []const u8, revision: u64) void {
     const png = shared.icnsBestPng(bytes) orelse return Viewer.finishNotFound(req, "no PNG in this icon set");
     // The stream frees its copy with libc's `free`, which is what
     // `c_allocator` allocates with.
-    const copy = alloc.dupe(u8, png) catch return Viewer.finishNotFound(req, "out of memory");
-    const stream = wk.g_memory_input_stream_new_from_data(copy.ptr, @intCast(copy.len), @ptrCast(&std.c.free));
+    const owned = alloc.dupe(u8, png) catch return Viewer.finishNotFound(req, "out of memory");
+    const stream = wk.g_memory_input_stream_new_from_data(owned.ptr, @intCast(owned.len), @ptrCast(&std.c.free));
     defer wk.g_object_unref(stream);
-    wk.webkit_uri_scheme_request_finish(req, stream, @intCast(copy.len), "image/png");
-    log.info("viewer image served rev={d} bytes={d} mime=image/png route=icns", .{ revision, copy.len });
+    wk.webkit_uri_scheme_request_finish(req, stream, @intCast(owned.len), "image/png");
+    log.info("viewer image served rev={d} bytes={d} mime=image/png route=icns", .{ revision, owned.len });
 }
 
 /// One host decode, off the main thread: a 12-megapixel TIFF must not freeze
