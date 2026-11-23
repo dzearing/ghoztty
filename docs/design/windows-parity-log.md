@@ -40139,3 +40139,8 @@ The card's three red assertions (G3 one sample over the frame budget, G4 `mode=b
 
 The GTK composer pushed fixed Adwaita light colours into `composer.js`, and the app's default style is dark, so the pill was a white slab in a dark pane. New std-only `src/apprt/gtk/composer_palette.zig` derives every composer colour (fill, text, placeholder, selection, quote wash and bar, image chip) from `AdwStyleManager:dark` plus the theme's card and accent through win32's `chrome_theme` derivations; `ViewerFeedback.pushVars` reads the style and the named colours, and `notify::dark` re-pushes while a composer page exists. Debug steps verb `style dark|light|default`.
 - Evidence: `test/linux/viewer-composer.sh` VIEWER COMPOSER: ALL PASS (27; new C24-C27: light page paints rgb(255,255,255)/rgb(26,26,26), a live flip repaints rgb(54,54,54)/rgb(235,235,235), a reopen under dark starts dark). LINUX FLOOR ALL PASS (lib, none, agentx, agent); Windows `floor-lane -Lane none` PASS (shared `unit_tests.zig`).
+
+## 2026-11-23 13:45 lane a - T1995: the dashboard's browser test checks the per-lane loop rows
+
+`dashboard-stub-server.js` now injects a fixed two-lane payload over whatever lanes the box runs (a stopped/self, b running turn 12 on TX903), dropped to one lane by `/api/_unblock`; `dashboard-dom-selftest.js` C64-C66 assert each row's state, turn, task title and supervisor, C67 that one lane renders no row.
+- Evidence: `test\win32\dashboard-dom.ps1` ALL PASS (78); with `laneRows()` forced empty the same run scored C64-C66 FAIL, page reverted. self-spawn, unwired-hook, seam-audit re-run green over lane L's GTK commits.
