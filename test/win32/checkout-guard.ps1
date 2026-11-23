@@ -16,7 +16,10 @@
 #   C. The pure function: the literal checkout itself is never refused, and a
 #      sibling sharing the prefix (D:\git\ghoztty-b) is not the literal.
 #   D. Wiring: both libraries load the guard; suite-run re-roots in a foreign
-#      checkout; guard-due prints the runner form there.
+#      checkout; guard-due prints the runner form there. D4 (T2007): every
+#      script that spells the literal checkout loads the guard, directly or
+#      through a library that does - with a probe proving the audit flags one
+#      that does not.
 #   E. The agent half (T2006), run bare from the same fixture checkout:
 #        E1 a script with no lineage set gets its own (aph-<pid>) and its
 #           autostart teardown armed;
@@ -164,6 +167,51 @@ $sr = [IO.File]::ReadAllText((Join-Path $repo 'scripts\suite-run.ps1'))
 Assert ($sr -match 'Get-AcceptanceScriptClass' -and $sr -match 'T1996') 'D2 suite-run re-roots a script''s literal parameters in a foreign checkout'
 $gd = [IO.File]::ReadAllText((Join-Path $repo 'scripts\guard-due.ps1'))
 Assert ($gd -match 'acceptance-parallel\.ps1 run -Scripts' -and $gd -match 'T1996') 'D3 guard-due prints the runner form of run: in a foreign checkout'
+
+# D4 (T2007): the guard only sees a script that loads it. Every script in
+# test\win32 that spells the literal checkout outside a comment or a
+# `# @repo-literal-fixture` line must dot-source the guard, directly or
+# through a library that does (transitively: BuildMode, TestScore,
+# CleanSlate, TestDesktop, ...). Three scripts once loaded none and so ran
+# lane A's files from lane B unrefused.
+function Get-CgLoadRegex([string]$name) {
+    "(?m)^[^#\r\n]*(?<![\w$])\.\s+[^\r\n]*[\\/'""]$([regex]::Escape($name))\.ps1['""]"
+}
+function Get-CgGuardLibs([string]$libDir) {
+    $text = @{}
+    foreach ($l in @(Get-ChildItem -LiteralPath $libDir -Filter '*.ps1' -File)) { $text[$l.BaseName] = [IO.File]::ReadAllText($l.FullName) }
+    $reach = @{ 'CheckoutGuard' = $true }
+    do {
+        $grew = $false
+        foreach ($k in @($text.Keys)) {
+            if ($reach.ContainsKey($k)) { continue }
+            foreach ($r in @($reach.Keys)) {
+                if ($text[$k] -match (Get-CgLoadRegex $r)) { $reach[$k] = $true; $grew = $true; break }
+            }
+        }
+    } while ($grew)
+    @($reach.Keys)
+}
+function Test-CgScriptUnguarded([string]$text, [string[]]$guardLibs) {
+    $litRx = '(?i)' + [regex]::Escape($lit) + '(?![\w-])'
+    $spells = @($text -split "\r?\n" | Where-Object { $_ -match $litRx -and $_ -notmatch '@repo-literal-fixture' -and $_ -notmatch '^\s*#' }).Count -gt 0
+    if (-not $spells) { return $false }
+    foreach ($g in $guardLibs) { if ($text -match (Get-CgLoadRegex $g)) { return $false } }
+    $true
+}
+$guardLibs = @(Get-CgGuardLibs (Join-Path $PSScriptRoot 'lib'))
+Assert (($guardLibs -contains 'BuildMode') -and ($guardLibs -contains 'TestScore')) "D4 the guard is reached through $($guardLibs.Count) libraries, BuildMode and TestScore among them"
+$probeBare = "param([string]`$Repo = '$lit')`n`$x = Get-Content (Join-Path `$Repo 'a.txt')"
+$probeLoaded = "param([string]`$Repo = '$lit')`n. (Join-Path `$PSScriptRoot 'lib\TestScore.ps1')"
+Assert ((Test-CgScriptUnguarded $probeBare $guardLibs) -and -not (Test-CgScriptUnguarded $probeLoaded $guardLibs)) 'D4 the audit flags a literal -Repo default that loads no guard library, and passes the same script once it does'
+$unguarded = @()
+$nSpell = 0
+foreach ($f in @(Get-ChildItem -LiteralPath $PSScriptRoot -Filter '*.ps1' -File)) {
+    $t = [IO.File]::ReadAllText($f.FullName)
+    if (Test-CgScriptUnguarded $t @('__none__')) { $nSpell++ }
+    if (Test-CgScriptUnguarded $t $guardLibs) { $unguarded += $f.Name }
+}
+Assert ($nSpell -gt 0 -and $unguarded.Count -eq 0) "D4 every one of the $nSpell scripts that spell $lit loads the guard$(if ($unguarded.Count) { ' - not: ' + ($unguarded -join ', ') })"
 
 Write-Host '--- E. the agent half (T2006) ---'
 $noLineage = @{ GHOZTTY_AGENT_INSTANCE = $null; GHOZTTY_TEST_FOREIGN_CHECKOUT = $null }

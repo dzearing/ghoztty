@@ -1,16 +1,15 @@
 {
     "guard":  "checkout-guard",
     "script":  "test/win32/checkout-guard.ps1",
-    "generated":  "2026-11-23T14:12:23-08:00",
-    "commit":  "526b6b7eb",
+    "generated":  "2026-11-23T14:53:51-08:00",
+    "commit":  "fd419aa0b",
     "uncommitted":  [
-                        "test/win32/checkout-guard.ps1",
-                        "test/win32/lib/CheckoutGuard.ps1"
+                        "test/win32/checkout-guard.ps1"
                     ],
     "files":  {
                   "scripts/guard-due.ps1":  "e423e91fb507545b1522247e679a9935d7ead9d6c36924b40d3e8400322f6aac",
                   "scripts/suite-run.ps1":  "ec673a3b7deb5b60d9992dc26273e5a2f0c414d5206bc99de94e2774ef480935",
-                  "test/win32/checkout-guard.ps1":  "cc74dac10b4f143b986118af17f9b96d401b27fd5655af6ca1150533922433ff",
+                  "test/win32/checkout-guard.ps1":  "724f046a0bd26214db4f4805321f3976bb193c5d7be9b8d0a2140179063bd508",
                   "test/win32/lib/BuildMode.ps1":  "2e420213f445ed93f56d853ebdb2cea5652bccaa852f2dc01e5a5f29a794b67e",
                   "test/win32/lib/CheckoutGuard.ps1":  "9536259de2474ff6834dc9112a864b6c40579ae6dcf12cdc123efd4e08089216",
                   "test/win32/lib/TestScore.ps1":  "3fb664ca0d24b67641b761935f5956fecc2773a91915507f5d9b03d8934c10ba"
@@ -18,7 +17,7 @@
     "code":  {
                  "scripts/guard-due.ps1":  "code1:32143e86ca07d543aa509dd354823549c1ab95a87430f7fbbc659caad013cdb4",
                  "scripts/suite-run.ps1":  "code1:f911d863b54f551dab7a97bd29b85a18d44d704d7a3927173d1e64ce3a47419f",
-                 "test/win32/checkout-guard.ps1":  "code1:d0f44b7f8cced4c14ebd58e7fcb881bde56965c55bb5f4078fa82d6143ae7fab",
+                 "test/win32/checkout-guard.ps1":  "code1:f6f94ae2a88891d0d6a40f4e5e9b557dc26498362c37f0d5ef62d786fe87d9bd",
                  "test/win32/lib/BuildMode.ps1":  "code1:a32d94fb10d75a44365afbf0389e798f412445b17cfb5056e4773cf3beb9dbd3",
                  "test/win32/lib/CheckoutGuard.ps1":  "code1:ec666d8ec0b6fda549fd84731fbdc4379322e9768466bc2864ed08534ff15f2b",
                  "test/win32/lib/TestScore.ps1":  "code1:a3da7c202ecac3e5fe84e769f26e567bf4312af623d7719a7a5d4de571595e04"

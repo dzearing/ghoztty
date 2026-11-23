@@ -44,6 +44,11 @@ param(
     [switch]$RequireDocker
 )
 
+# T2007: -Repo defaults to the literal checkout, so a bare run from another
+# worktree (lane B) would grade lane A's files. The guard refuses that before
+# the body reads anything, naming the -Repo to pass instead.
+. (Join-Path $PSScriptRoot 'lib\CheckoutGuard.ps1')
+
 $ErrorActionPreference = 'Continue'
 $script:failures = 0
 $script:skipped = 0
