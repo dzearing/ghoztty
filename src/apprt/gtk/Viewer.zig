@@ -872,7 +872,10 @@ fn onDecidePolicy(view: *wk.WebView, decision: *wk.PolicyDecision, kind: c_int, 
 /// in for the keyboard (`mods <ctrl|ctrl+shift|none>`) - the same seam
 /// shape as `key`, which calls the handler a real press would.
 fn navMods(action: *wk.NavigationAction) links.Mods {
-    const real = links.Mods.fromGdk(wk.webkit_navigation_action_get_modifiers(action));
+    return withTestMods(links.Mods.fromGdk(wk.webkit_navigation_action_get_modifiers(action)));
+}
+
+fn withTestMods(real: links.Mods) links.Mods {
     if (comptime build_config.is_debug) {
         if (steps.mods_override) |m| return .{ .ctrl = real.ctrl or m.ctrl, .shift = real.shift or m.shift };
     }
@@ -965,7 +968,7 @@ fn onFileLinkMessage(_: *wk.UserContentManager, value: *wk.JSCValue, ud: ?*anyop
     const href = parsed.value.href;
     const page: ?[]const u8 = if (wk.webkit_web_view_get_uri(self.view)) |p| std.mem.span(p) else null;
     const d = links.decide(self.mode, page, href, .link_clicked, false);
-    const mods: links.Mods = .{ .ctrl = parsed.value.ctrl, .shift = parsed.value.shift };
+    const mods = withTestMods(.{ .ctrl = parsed.value.ctrl, .shift = parsed.value.shift });
     log.info("viewer: file link {s} -> {s} ctrl={} shift={}", .{ href, @tagName(d), mods.ctrl, mods.shift });
     if (d == .allow) return;
     self.routeDecision(d, href, mods);

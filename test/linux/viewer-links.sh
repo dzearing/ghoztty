@@ -162,16 +162,22 @@ sink="$HL_RUNTIME/links.out"
     echo "wait"
     echo "probe $H"
     click '#out'
+    echo "sleep 300"
     echo "mods ctrl"
     click '#out'
+    echo "sleep 300"
     echo "mods none"
     click '#file'
+    echo "sleep 300"
     echo "mods ctrl+shift"
     click '#file'
+    echo "sleep 300"
     echo "mods none"
     click '#blank'
+    echo "sleep 500"
     echo "mods ctrl"
     click '#sameblank'
+    echo "sleep 500"
     echo "mods none"
     echo "probe (function(){window.open('https://example.test/opened');window.open();return 'opened'})()"
     menu '#out'
@@ -189,10 +195,13 @@ sink="$HL_RUNTIME/links.out"
     echo "wait"
     echo "probe $H"
     click '#port'
+    echo "sleep 300"
     echo "mods ctrl"
     click '#port'
+    echo "sleep 300"
     echo "mods ctrl+shift"
     click '#port'
+    echo "sleep 300"
     echo "mods none"
     click '#host'
     click '#cmd'
