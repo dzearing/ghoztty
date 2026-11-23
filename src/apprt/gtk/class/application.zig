@@ -758,11 +758,11 @@ pub const Application = extern struct {
             // answers "not performed".
             .undo => return CloseUndo.undo(switch (target) {
                 .app => null,
-                .surface => |core| core.rt_surface.surface,
+                .surface => |v| v.rt_surface.surface,
             }),
             .redo => return CloseUndo.redo(switch (target) {
                 .app => null,
-                .surface => |core| core.rt_surface.surface,
+                .surface => |v| v.rt_surface.surface,
             }),
 
             .goto_split => return Action.gotoSplit(target, value),
