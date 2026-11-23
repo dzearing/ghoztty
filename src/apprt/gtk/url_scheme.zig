@@ -120,6 +120,7 @@ fn show(dialog: *adw.AlertDialog, parent: ?*gtk.Widget, flag: *bool) void {
 }
 
 fn dialogClosed(_: *adw.Dialog, flag: *bool) callconv(.c) void {
+    log.info("scheme dialog closed", .{});
     flag.* = false;
 }
 
@@ -239,7 +240,8 @@ fn afterShown(failure: grammar.Failure, dialog: *adw.AlertDialog) void {
 
 fn closeDialog(ud: ?*anyopaque) callconv(.c) c_int {
     const dialog: *adw.AlertDialog = @ptrCast(@alignCast(ud));
-    _ = dialog.as(adw.Dialog).close();
+    const closed = dialog.as(adw.Dialog).close();
+    log.info("test seam: closing the scheme dialog: close() -> {}", .{closed});
     return 0;
 }
 

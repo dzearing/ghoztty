@@ -127,7 +127,7 @@ hl_check "E6 a cold click (no instance answers) exits 1 and launches nothing" $?
 : > "$dialogs"
 out=$(env -u GHOZTTY_IPC_SOCKET timeout 30 "$app" "ghoztty-debug://focus/nothing-here" 2>&1); rc=$?
 [ $rc = 1 ] && grep -q "^shown Can't focus \"nothing-here\"|No open Ghoztty window or pane has that name" "$dialogs"
-hl_check "E7 a miss shows the shared 'Can't focus' dialog, then exits 1" $? "rc=$rc dialogs=$(cat "$dialogs") out=$(echo "$out" | tail -3)"
+hl_check "E7 a miss shows the shared 'Can't focus' dialog, then exits 1" $? "rc=$rc dialogs=$(cat "$dialogs") out=$(echo "$out" | grep -E 'seam|dialog|CRITICAL|WARNING|adw' | tail -6)"
 
 # A burst of clicks is one dialog: each Exec click is its own process.
 : > "$dialogs"
