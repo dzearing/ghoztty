@@ -42,9 +42,7 @@ dump="$HL_RUNTIME/banner-dump"
 
 export SHELL=/bin/sh
 export GHOZTTY_TEST_BANNER_DUMP="$dump"
-cd "$fixture"
 hl_launch APP "$app" --gtk-single-instance=false --working-directory="$fixture" -e /bin/sh -c 'PS1="hl$ " exec /bin/sh -i'
-cd - > /dev/null
 unset GHOZTTY_TEST_BANNER_DUMP
 hl_wait_for 30 test -S "$sock"
 f3=$?
