@@ -1,0 +1,16 @@
+{
+  "version": "1.56.12",
+  "sections": [
+    { "title": "New",
+      "items": [
+        { "text": "Linux viewer panes come back with the session, on the page they showed and with Home where they were opened." },
+        { "text": "On Linux the viewer's feedback button opens a composer that files the report into the worktree." },
+        { "text": "On Linux, selecting text in a viewer pane offers Quote and Copy; Quote drops the passage into the feedback composer." }
+      ] },
+    { "title": "Fixes",
+      "items": [
+        { "text": "Tooltips can no longer drag a background window in front of the one you are using." },
+        { "text": "The reboot-restore TUI test now checks that its app panes actually started." }
+      ] }
+  ]
+}
