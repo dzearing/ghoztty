@@ -81,11 +81,20 @@ cat > "$fx/page.html" <<'EOF'
 <a id="blank" target="_blank" href="https://example.test/pop">blank</a>
 <a id="sameblank" target="_blank" href="sub/two.html">sameblank</a>
 <iframe id="fr" src="frame.html"></iframe>
+<script>addEventListener("message",function(e){if(typeof e.data==="string"&&e.data.indexOf("fromPop|")===0)(window.__fromPop=window.__fromPop||[]).push(e.data)})</script>
 </body></html>
 EOF
 printf '<!DOCTYPE html><html><body><a id="fl" href="https://example.test/framed">framed</a><script>addEventListener("message",function(){document.getElementById("fl").dispatchEvent(new MouseEvent("contextmenu",{bubbles:true,cancelable:true}))})</script></body></html>
 ' > "$fx/frame.html"
-printf '<!DOCTYPE html><html><body><h1>Page Two</h1></body></html>\n' > "$fx/sub/two.html"
+# Pages served from a custom scheme are cross-origin to each other, so an
+# adopted popup (T3447) reports to its opener, and is told to close, by
+# postMessage - which only reaches it through a real window.opener.
+cat > "$fx/sub/two.html" <<'EOF'
+<!DOCTYPE html><html><body><h1>Page Two</h1><script>
+addEventListener("load",function(){setTimeout(function(){if(window.opener)window.opener.postMessage("fromPop|"+window.name+"|"+document.querySelector("h1").textContent+"|"+innerWidth,"*")},500)});
+addEventListener("message",function(e){if(e.data==="close")window.close()});
+</script></body></html>
+EOF
 
 port=$((20000 + $$ % 20000))
 port2=$((port + 1))
@@ -186,15 +195,15 @@ sink="$HL_RUNTIME/links.out"
     # Adopted popups (T3447): a page-relative one at a requested size, and a
     # bare one the opener writes into; then the page closes the first.
     echo "mark popups"
-    echo "probe (function(){var w=window.open('sub/two.html','','width=500,height=400');window.__pop=w;return w?'adopted':'null'})()"
-    echo "sleep 2500"
-    echo "probe (function(){var w=window.__pop;try{var h=w.document.querySelector('h1');return 'pop '+(h?h.textContent:'NOH1')+'|'+(w.opener===window)+'|'+w.innerWidth}catch(e){return 'pop ERR '+e}})()"
+    echo "probe (function(){var w=window.open('sub/two.html','sized','width=500,height=400');window.__pop=w;return w?'adopted':'null'})()"
+    echo "sleep 3000"
+    echo "probe (function(){return 'pop '+(window.__fromPop||[]).join(' ')})()"
     echo "probe (function(){var w=window.open();if(!w)return 'blank null';w.document.write('<h1>Written</h1>');w.document.close();window.__blank=w;return 'blank wrote'})()"
     echo "sleep 1000"
     echo "probe (function(){try{var w=window.__blank;return 'blankread '+w.document.querySelector('h1').textContent+'|'+(w.opener===window)}catch(e){return 'blankread ERR '+e}})()"
     echo "mark popups-open"
     echo "sleep 4000"
-    echo "probe (function(){window.__pop.eval('window.close()');return 'closing'})()"
+    echo "probe (function(){window.__pop.postMessage('close','*');return 'closing'})()"
     echo "sleep 2000"
     echo "probe (function(){return 'closed '+window.__pop.closed})()"
     echo "mark popups-closed"
@@ -313,15 +322,15 @@ grep -q 'viewer: popup adopted location=about:blank' "$APP_LOG" &&
     ! grep -q 'not adopted' "$APP_LOG"
 hl_check "K24 a popup that must stay in Ghoztty (bare window.open, a Ctrl-clicked same-site one) is adopted" $? "$(grep 'popup' "$APP_LOG" | tr '\n' ' ')"
 # T3447: the adopted popups themselves.
-grep -qx 'probe OK adopted' "$out" && grep -q '^probe OK pop Page Two|true|' "$out"
+grep -qx 'probe OK adopted' "$out" && grep -q '^probe OK pop .*fromPop|sized|Page Two|' "$out"
 hl_check "K24a window.open into the page's folder gets a window whose page sees window.opener" $? "$(grep -E '^probe .*(adopted|pop )' "$out" | tr '\n' ' ')"
 [ "$(echo "$pop_leaves" | grep -cF "|viewer|$fx/sub/two.html|")" -ge 2 ] && echo "$pop_leaves" | grep -qF "|viewer|about:blank|"
 hl_check "K24b the adopted popups are viewer windows of their own (+list)" $? "$(echo "$pop_leaves" | tr '\n' ' ')"
 grep -qx 'probe OK blankread Written|true' "$out"
 hl_check "K24c a bare window.open() hands back a window the opener writes into" $? "$(grep -E '^probe .*blank' "$out" | tr '\n' ' ')"
-w=$(grep '^probe OK pop ' "$out" | head -1 | awk -F'|' '{print $3}')
-[ -n "$w" ] && [ "$w" -ge 440 ] && [ "$w" -le 500 ] && grep -q 'viewer: popup ready to show at 500x400 (asked 500x400)' "$APP_LOG"
-hl_check "K24d width=500,height=400 opens the window at that size (page innerWidth $w)" $? "$(grep 'ready to show' "$APP_LOG" | tr '\n' ' ')"
+w=$(grep -o 'fromPop|sized|Page Two|[0-9]*' "$out" | head -1 | awk -F'|' '{print $4}')
+[ -n "$w" ] && [ "$w" -ge 440 ] && [ "$w" -le 500 ] && grep -q 'viewer: popup ready to show at 500x400 (asked 500x400)' "$APP_LOG" && grep -q 'viewer: popup ready to show at the default size' "$APP_LOG"
+hl_check "K24d width=500,height=400 opens the window at that size, and a popup that asked for none gets the default (page innerWidth $w)" $? "$(grep 'ready to show' "$APP_LOG" | tr '\n' ' ')"
 before=$(echo "$pop_leaves" | grep -cF "|viewer|$fx/sub/two.html|")
 after=$(echo "$closed_leaves" | grep -cF "|viewer|$fx/sub/two.html|")
 grep -qx 'probe OK closed true' "$out" && [ "$after" = $((before - 1)) ] && grep -q 'viewer popup: the page closed its pane' "$APP_LOG"

@@ -233,24 +233,30 @@ pub const PopupSize = popup.Size;
 
 /// The size an adopted popup's page asked for (`window.open(u, n,
 /// "width=W,height=H")`), from WebKit's window-properties geometry, or null
-/// when it asked for none (WebKit leaves a dimension it was not given at 0).
+/// when it asked for none. WebKit fills the geometry in either way (a bare
+/// `window.open()` and a `target="_blank"` link both report one, measured
+/// 2026-11-23), so `featured` - the page passed window features, which WebKit
+/// reports as hidden tool/menu bars, the signal Epiphany sizes popups by -
+/// is what says the size was ASKED for (Mac: `windowFeatures.width != nil`).
 /// win32's `requestedSize` and its clamp, at scale 1: the geometry is CSS
 /// pixels and a GTK window is sized in logical pixels, which are the same
 /// unit - the compositor does the scaling Windows makes the app do by hand.
-pub fn popupSize(width: c_int, height: c_int) ?PopupSize {
-    if (width <= 0 or height <= 0) return null;
+pub fn popupSize(featured: bool, width: c_int, height: c_int) ?PopupSize {
+    if (!featured or width <= 0 or height <= 0) return null;
     return popup.requestedSize(true, @intCast(width), @intCast(height), 1.0);
 }
 
 test "popupSize: what the page asked for, clamped like win32's, or nothing" {
-    try testing.expectEqual(PopupSize{ .w = 500, .h = 400 }, popupSize(500, 400).?);
-    // A dimension the page did not give is 0: no size, the ordinary default.
-    try testing.expect(popupSize(0, 400) == null);
-    try testing.expect(popupSize(500, 0) == null);
-    try testing.expect(popupSize(-1, -1) == null);
+    try testing.expectEqual(PopupSize{ .w = 500, .h = 400 }, popupSize(true, 500, 400).?);
+    // No features: WebKit's own geometry is not a request.
+    try testing.expect(popupSize(false, 800, 600) == null);
+    try testing.expect(popupSize(false, 100, 100) == null);
+    try testing.expect(popupSize(true, 0, 400) == null);
+    try testing.expect(popupSize(true, 500, 0) == null);
+    try testing.expect(popupSize(true, -1, -1) == null);
     // Too small to use is raised to the floor; absurd is held to the cap.
-    try testing.expectEqual(PopupSize{ .w = popup.min_dim, .h = popup.min_dim }, popupSize(20, 20).?);
-    try testing.expectEqual(popup.max_dim, popupSize(std.math.maxInt(c_int), 300).?.w);
+    try testing.expectEqual(PopupSize{ .w = popup.min_dim, .h = popup.min_dim }, popupSize(true, 20, 20).?);
+    try testing.expectEqual(popup.max_dim, popupSize(true, std.math.maxInt(c_int), 300).?.w);
 }
 
 // -------------------------------------------------------------------------
