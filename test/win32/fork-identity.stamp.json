@@ -1,16 +1,20 @@
 {
     "guard":  "fork-identity",
     "script":  "test/win32/fork-identity.ps1",
-    "generated":  "2026-10-14T16:33:21-07:00",
-    "commit":  "603050a36",
+    "generated":  "2026-11-23T11:53:51-08:00",
+    "commit":  "cd0791e8c",
     "uncommitted":  [
                         "scripts/fork-identity.ps1",
                         "scripts/fork-identity-coverage.json",
                         "test/win32/fork-identity.ps1"
                     ],
     "files":  {
-                  "scripts/fork-identity.ps1":  "3a6d62da446fa39923b07b6c4c36852016acb8db2d0cd4b4fd4e992c36bb4866",
-                  "scripts/fork-identity-coverage.json":  "07224a124645a64097070719b2cb53721ef44e153bb91bd6c644234107d3ac11",
-                  "test/win32/fork-identity.ps1":  "d150389bc74791d70f406cef6275fb9ec1e4d69ba52ba6f6382ca7a356a830a3"
-              }
+                  "scripts/fork-identity.ps1":  "229e1f428c4dcb47e51b54b4786c2850275e09b34126470db2f64c0efe546981",
+                  "scripts/fork-identity-coverage.json":  "fcbefcfaeffe88db9f2d3288f1d77022c14e86cd9ba2018355ae6f192b32abe1",
+                  "test/win32/fork-identity.ps1":  "df30a89bb4f346f495f6c7ab761ed0e43bb6345750252150eb6059cf8b2c6c28"
+              },
+    "code":  {
+                 "scripts/fork-identity.ps1":  "code1:c7ba17893189b6d3322d4ff2bc118e02e7a4949c4392c0731f81430b22ee1415",
+                 "test/win32/fork-identity.ps1":  "code1:675270f6f1d1883d637877ca8b9291c95edf2b224178f938d33c711e3844eece"
+             }
 }

@@ -108,8 +108,18 @@ $ReproManifestRelative = 'test\win32\fork-identity-repro.json'
 function Invoke-GitIn {
     param([string]$At, [string[]]$GitArgs)
     $ErrorActionPreference = 'SilentlyContinue'
-    $out = @(& git -C $At @GitArgs 2>$null)
-    return [pscustomobject]@{ Code = $LASTEXITCODE; Text = ($out -join "`n"); Lines = $out }
+    # git writes UTF-8; PowerShell decodes native output with the CONSOLE's
+    # encoding. Under acceptance-parallel's redirected workers that is not
+    # UTF-8, so the display-name emoji in a fork-point blob arrived mangled,
+    # the rule could not match it, and C4 reported a file as regressed that
+    # reproduces exactly (T1933). Same pin as Get-DeltaHunks in the overlay.
+    $prevEnc = [Console]::OutputEncoding
+    try {
+        [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
+        $out = @(& git -C $At @GitArgs 2>$null)
+        $code = $LASTEXITCODE
+    } finally { [Console]::OutputEncoding = $prevEnc }
+    return [pscustomobject]@{ Code = $code; Text = ($out -join "`n"); Lines = $out }
 }
 
 # Per-record capture (T883): a merged 2>&1 stream on a native command is
@@ -470,6 +480,32 @@ try {
             "    .none => none,`n" + `
             "    .gtk => gtk,`n" + `
             "};") | Out-Null
+    # T1933: the product name in user-visible prose, one upstream line per class.
+    Write-Fixture $dTree 'macos/Ghostty.xcodeproj/project.pbxproj' `
+    ("				productName = Ghostty;`n" + `
+            "				EXECUTABLE_NAME = ghostty;`n" + `
+            "				INFOPLIST_KEY_CFBundleDisplayName = `"Ghostty[DEBUG]`";`n" + `
+            "				INFOPLIST_KEY_NSCameraUsageDescription = `"A program running within Ghostty would like to use the camera.`";`n" + `
+            "				PRODUCT_BUNDLE_IDENTIFIER = com.mitchellh.GhosttyUITests;`n" + `
+            '				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Ghostty.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/ghostty";') | Out-Null
+    Write-Fixture $dTree 'macos/Sources/App/macOS/MainMenu.xib' `
+        '                            <menuItem title="Quit Ghostty" id="4sb-4s-VLi">' | Out-Null
+    Write-Fixture $dTree 'macos/Ghostty.sdef' `
+        '  <suite name="Ghostty Suite" code="Ghst" description="Ghostty scripting support.">' | Out-Null
+    Write-Fixture $dTree 'macos/Sources/App/macOS/AppDelegate.swift' `
+    ('        alert.messageText = "Quit Ghostty?"' + "`n" + `
+            '        guard let url = URL(string: "https://ghostty.org/docs") else { return }') | Out-Null
+    Write-Fixture $dTree 'macos/Sources/Helpers/Fullscreen.swift' `
+        '    static let fullscreenDidEnter = Notification.Name("com.mitchellh.fullscreenDidEnter")' | Out-Null
+    Write-Fixture $dTree 'macos/Sources/Features/Update/UpdateViewModel.swift' `
+        '           let url = URL(string: "https://github.com/ghostty-org/ghostty/compare/\(currentHash)...\(newHash)") {' | Out-Null
+    Write-Fixture $dTree 'README.md' '  <br>Ghostty' | Out-Null
+    Write-Fixture $dTree 'src/apprt/gtk/ipc/new_window.zig' `
+        '// gdbus call --session --dest com.mitchellh.ghostty --object-path /com/mitchellh/ghostty --method org.gtk.Actions.Activate new-window [] []' | Out-Null
+    Write-Fixture $dTree 'src/build/GhosttyExe.zig' '        .name = "ghostty",' | Out-Null
+    Write-Fixture $dTree 'src/main_ghostty.zig' `
+    ('    try stdout.print("Usage: ghostty +<action> [flags]\n\n", .{});' + "`n" + `
+            '/// To see a list of available themes, run `ghostty +list-themes`.') | Out-Null
 
     $dChk = Invoke-Overlay @('check', '-Path', $dTree, '-Json')
     Assert 'D1 check FAILS on the upstream fixture' ($dChk.Code -eq 1) "exit=$($dChk.Code)"
@@ -478,7 +514,9 @@ try {
     $firedRules = @()
     if ($dObj) { $firedRules = @($dObj.findings | ForEach-Object { $_.Rule } | Sort-Object -Unique) }
     foreach ($r in @('surface-uti', 'bundle-id', 'logger-subsystem', 'appcast-url', 'display-name',
-            'display-name-literal', 'shell-bin', 'cli-name', 'apprt-arm')) {
+            'display-name-literal', 'shell-bin', 'cli-name', 'apprt-arm',
+            'xcode-product', 'macos-menu-titles', 'macos-scripting-dictionary', 'macos-ui-strings',
+            'macos-links', 'readme-title', 'gtk-object-path', 'exe-name', 'cli-prose')) {
         Assert "D2:$r reports on the upstream form" ($firedRules -contains $r) ("fired=" + ($firedRules -join ','))
     }
     # src\apprt.zig maps members to modules, so no .none arm can be widened for
@@ -513,6 +551,32 @@ try {
     Assert 'D16 startup log line rewritten' ((Read-Fixture 'src/global.zig') -cmatch 'ghoztty version=\{s\}')
     Assert 'D17 apprt arm widened' ((Read-Fixture 'src/font/face.zig') -cmatch '\.none, \.win32 => void,')
     Assert 'D18 module-mapping switch left alone' ((Read-Fixture 'src/apprt.zig') -cmatch '(?m)^\s*\.none => none,\s*$')
+
+    # T1933: each prose class lands on exactly the fork's spelling.
+    $pbx = Read-Fixture 'macos/Ghostty.xcodeproj/project.pbxproj'
+    Assert 'D21 Xcode product name, executable and display name rewritten' `
+    ($pbx -cmatch 'productName = Ghoztty;' -and $pbx -cmatch 'EXECUTABLE_NAME = ghoztty;' -and $pbx -cmatch 'DisplayName = "Ghoztty\[DEBUG\]"') $pbx
+    Assert 'D22 privacy prompt, test bundle id and test host rewritten' `
+    ($pbx -cmatch 'running within Ghoztty would' -and $pbx -cmatch 'com\.dzearing\.GhozttyUITests;' -and
+        $pbx -cmatch ([regex]::Escape('/Ghoztty.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/ghoztty"'))) $pbx
+    Assert 'D23 menu title rewritten' ((Read-Fixture 'macos/Sources/App/macOS/MainMenu.xib') -cmatch 'title="Quit Ghoztty"')
+    Assert 'D24 scripting suite rewritten' `
+    ((Read-Fixture 'macos/Ghostty.sdef') -cmatch 'name="Ghoztty Suite" code="Ghst" description="Ghoztty scripting support\."')
+    $appDel = Read-Fixture 'macos/Sources/App/macOS/AppDelegate.swift'
+    Assert 'D25 alert text and docs link rewritten' `
+    ($appDel -cmatch '"Quit Ghoztty\?"' -and $appDel -cmatch '"https://dzearing\.github\.io/ghoztty/"') $appDel
+    Assert 'D26 fullscreen notification renamed into the fork namespace' `
+    ((Read-Fixture 'macos/Sources/Helpers/Fullscreen.swift') -cmatch '"com\.dzearing\.ghoztty\.fullscreenDidEnter"')
+    Assert 'D27 changelog compare link points at the fork' `
+    ((Read-Fixture 'macos/Sources/Features/Update/UpdateViewModel.swift') -cmatch 'github\.com/dzearing/ghoztty/compare/')
+    Assert 'D28 README title rewritten' ((Read-Fixture 'README.md') -cmatch '<br>Ghoztty')
+    $gdbus = Read-Fixture 'src/apprt/gtk/ipc/new_window.zig'
+    Assert 'D29 gdbus line: dotted AND slashed identity both rewritten' `
+    ($gdbus -cmatch '--dest com\.dzearing\.ghoztty --object-path /com/dzearing/ghoztty ') $gdbus
+    Assert 'D30 installed executable name rewritten' ((Read-Fixture 'src/build/GhosttyExe.zig') -cmatch '\.name = "ghoztty"')
+    $mainG = Read-Fixture 'src/main_ghostty.zig'
+    Assert 'D31 CLI usage and help prose rewritten' `
+    ($mainG -cmatch 'Usage: ghoztty \+<action>' -and $mainG -cmatch '`ghoztty \+list-themes`') $mainG
 
     $dChk2 = Invoke-Overlay @('check', '-Path', $dTree, '-Json')
     $dObj2 = $null
@@ -572,6 +636,27 @@ try {
             "                step.linkSystemLibrary2(`"opengl32`", .{});`n" + `
             "            },`n" + `
             "        }") | Out-Null
+    # T1933: prose that NAMES something other than the product, beside the
+    # prose rules that would rewrite the product name on the same lines.
+    Write-Fixture $eTree 'macos/Ghostty.xcodeproj/project.pbxproj' `
+    ("				productName = GhosttyTests;`n" + `
+            "				path = Ghostty.xcodeproj; sourceTree = `"<group>`";`n" + `
+            "				name = GhosttyKit.xcframework;") | Out-Null
+    Write-Fixture $eTree 'macos/Ghostty.sdef' `
+    ('      <property name="front window" code="GFWn" type="window" access="r" description="The frontmost Ghostty window.">' + "`n" + `
+            '      <cocoa class="GhosttyScriptWindow"/>') | Out-Null
+    Write-Fixture $eTree 'macos/Sources/Features/Settings/SettingsPages.swift' `
+    ('                    ("auto", "Match the theme"), ("dark", "Dark"), ("ghostty", "Ghostty"),' + "`n" + `
+            '        let currentName = selection?.light ?? (colorScheme == .dark ? "Ghostty Default Style Dark" : "")') | Out-Null
+    Write-Fixture $eTree 'macos/Tests/Ghostty/MenuShortcutManagerTests.swift' `
+        '        let hideItem = NSMenuItem(title: "Hide Ghostty", action: "hide:", keyEquivalent: "h")' | Out-Null
+    Write-Fixture $eTree 'src/build/GhosttyLib.zig' '        .name = "ghostty",' | Out-Null
+    Write-Fixture $eTree 'src/config/Config.zig' `
+        '///   * `ghostty` - Use the background and foreground colors specified in the' | Out-Null
+    Write-Fixture $eTree 'src/extra/fish.zig' `
+        '            try writer.writeAll(" -f  -a \"(ghostty +list-fonts | grep ''^[A-Z]'')\"")' | Out-Null
+    Write-Fixture $eTree 'src/apprt/gtk/class/application.zig' `
+        '/// The primary entrypoint for the Ghostty GTK application.' | Out-Null
 
     $eBefore = @{}
     foreach ($f in (Get-ChildItem -LiteralPath $eTree -Recurse -File)) { $eBefore[$f.FullName] = Get-FileHashHex $f.FullName }

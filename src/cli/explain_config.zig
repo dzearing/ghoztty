@@ -36,10 +36,10 @@ pub const Options = struct {
 ///
 /// Examples:
 ///
-///   ghostty +explain-config font-size
-///   ghostty +explain-config copy_to_clipboard
-///   ghostty +explain-config --option=font-size
-///   ghostty +explain-config --keybind=copy_to_clipboard
+///   ghoztty +explain-config font-size
+///   ghoztty +explain-config copy_to_clipboard
+///   ghoztty +explain-config --option=font-size
+///   ghoztty +explain-config --keybind=copy_to_clipboard
 ///
 /// Flags:
 ///

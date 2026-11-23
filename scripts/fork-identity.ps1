@@ -206,7 +206,9 @@ $script:Rules = @(
         Why     = 'A bare "Ghostty" Swift string literal is a user-visible name; the Xcode module reference is never a string.'
         Include = @('macos/**/*.swift')
         Exclude = @()
-        Allow   = @()
+        # The Settings window-theme picker labels the `ghostty` theme VALUE
+        # (config.zig's WindowTheme) - the name of a theme, not of the product.
+        Allow   = @('\("ghostty", "Ghostty"\)')
         Pairs   = @(
             @{ Find = '"Ghostty"'; Replace = '"Ghoztty"' }
         )
@@ -240,6 +242,150 @@ $script:Rules = @(
             @{ Find = 'ghostty build optimize=\{s\}'; Replace = 'ghoztty build optimize={s}' },
             # The documented/tested shape of the XTVERSION response.
             @{ Find = 'ghostty 1\.2\.3'; Replace = 'ghoztty 1.2.3' }
+        )
+    },
+    # -----------------------------------------------------------------------
+    # T1933: the product name in user-visible prose. T1027's coverage sweep
+    # found 163 branded strings no rule above reproduced. The fork renamed its
+    # prose SELECTIVELY - `Ghostty Default Style Dark` is a theme name, the
+    # `ghostty` window-theme value is config, `customModule="Ghostty"` is the
+    # Xcode module, and the AppleScript dictionary still says "a Ghostty
+    # window" in ten places - so none of these is a blanket word rename. Each
+    # pattern is anchored on the phrase the fork actually rebranded, mostly
+    # with lookarounds so only the name itself is rewritten, and scoped to the
+    # files that carry it. test\win32\fork-identity.ps1 fires every class in
+    # section D (D21-D31) and holds its must-survive fixtures in section E.
+    # -----------------------------------------------------------------------
+    [pscustomobject]@{
+        Name    = 'xcode-product'
+        Kind    = 'regex'
+        Why     = 'The Xcode project names the app bundle, executable, display names, test bundle ids and the privacy usage prompts macOS shows the user. Module names (Ghostty.xcodeproj, GhosttyKit, the Ghostty target folders) are not products and survive.'
+        Include = @('macos/**/*.pbxproj')
+        Exclude = @()
+        Allow   = @()
+        Pairs   = @(
+            @{ Find = '\bGhostty(?=\.app\b)'; Replace = 'Ghoztty' },
+            @{ Find = '(?<=productName = )Ghostty(?=;)'; Replace = 'Ghoztty' },
+            @{ Find = '(?<=EXECUTABLE_NAME = )ghostty(?=;)'; Replace = 'ghoztty' },
+            @{ Find = '(?<=INFOPLIST_KEY_CFBundleDisplayName = "?)Ghostty\b'; Replace = 'Ghoztty' },
+            @{ Find = '(?<=running within )Ghostty\b'; Replace = 'Ghoztty' },
+            @{ Find = '(?<=/\$\(BUNDLE_EXECUTABLE_FOLDER_PATH\)/)ghostty(?=")'; Replace = 'ghoztty' },
+            # The test bundles. Capital G, so bundle-id (lowercase) never sees it.
+            @{ Find = 'com\.mitchellh\.Ghostty(?=(?:UI)?Tests\b)'; Replace = 'com.dzearing.Ghoztty' }
+        )
+    },
+    [pscustomobject]@{
+        Name    = 'macos-menu-titles'
+        Kind    = 'regex'
+        Why     = 'Menu titles and their labels in the .xib files (Quit/About/Hide Ghoztty, the app menu). customModule="Ghostty" is the Xcode module and is never a title.'
+        Include = @('macos/**/*.xib')
+        Exclude = @()
+        Allow   = @()
+        Pairs   = @(
+            @{ Find = '(?<=\b(?:title|userLabel)="[^"]*)\bGhostty\b'; Replace = 'Ghoztty' }
+        )
+    },
+    [pscustomobject]@{
+        Name    = 'macos-scripting-dictionary'
+        Kind    = 'regex'
+        Why     = 'The AppleScript dictionary title, suite and application class. The per-object descriptions ("a Ghostty window") were left as upstream wrote them, so only these four phrases move.'
+        Include = @('macos/**/*.sdef')
+        Exclude = @()
+        Allow   = @()
+        Pairs   = @(
+            @{ Find = '\bGhostty(?= Scripting Dictionary| Suite"| scripting support\.| application\.)'; Replace = 'Ghoztty' }
+        )
+    },
+    [pscustomobject]@{
+        Name    = 'macos-ui-strings'
+        Kind    = 'regex'
+        Why     = 'Alerts, banners, accessibility labels and intent errors the Mac app shows. Phrase-anchored: Settings still offers a "Ghostty" window theme and a "Ghostty Default Style Dark" theme, which are names of things, not the product.'
+        Include = @('macos/**/*.swift')
+        Exclude = @()
+        Allow   = @()
+        Pairs   = @(
+            @{ Find = '(?<=Quit |Close |Allow |debug build of |Debug builds of |If you''re executing )Ghostty\b'; Replace = 'Ghoztty' },
+            @{ Find = '(?<=interact with )Ghostty(?=\?)'; Replace = 'Ghoztty' },
+            @{ Find = '\bGhostty(?= failed to initialize| app isn''t properly| doesn''t allow Shortcuts| app delegate is unavailable| can automatically check| Application Icon| and Restart)'; Replace = 'Ghoztty' },
+            @{ Find = '(?<=`)ghostty(?= \+(?:help|boo)`)'; Replace = 'ghoztty' }
+        )
+    },
+    [pscustomobject]@{
+        Name    = 'macos-links'
+        Kind    = 'regex'
+        Why     = 'Where the Mac app sends the user: the docs link, and the changelog compare/commit links the updater opens. Plus the fullscreen notification names, which carry the reverse-DNS identity.'
+        Include = @('macos/**/*.swift')
+        Exclude = @()
+        Allow   = @()
+        Pairs   = @(
+            @{ Find = '"https://ghostty\.org/docs"'; Replace = '"https://dzearing.github.io/ghoztty/"' },
+            @{ Find = 'https://github\.com/ghostty-org/ghostty/(?=(?:compare|commit)/)'; Replace = 'https://github.com/dzearing/ghoztty/' },
+            @{ Find = '"com\.mitchellh\.(?=fullscreenDid(?:Enter|Exit)")'; Replace = '"com.dzearing.ghoztty.' }
+        )
+    },
+    [pscustomobject]@{
+        Name    = 'readme-title'
+        Kind    = 'regex'
+        Why     = 'The product name under the README logo.'
+        Include = @('README.md')
+        Exclude = @()
+        Allow   = @()
+        Pairs   = @(
+            @{ Find = '(?<=<br>)Ghostty\b'; Replace = 'Ghoztty' }
+        )
+    },
+    [pscustomobject]@{
+        Name    = 'gtk-object-path'
+        Kind    = 'regex'
+        Why     = 'The GTK resource and D-Bus object path, the slash-separated twin of the bundle id. Runs after bundle-id, which rewrites the dotted half of the same gdbus lines.'
+        Include = @('src/**')
+        Exclude = @()
+        Allow   = @()
+        Pairs   = @(
+            @{ Find = '/com/mitchellh/ghostty\b'; Replace = '/com/dzearing/ghoztty' }
+        )
+    },
+    [pscustomobject]@{
+        Name    = 'exe-name'
+        Kind    = 'regex'
+        Why     = 'The executable the build installs is ghoztty. Only GhosttyExe and the resources step name it: GhosttyLib and GhosttyDocs also say .name = "ghostty", and that is the library and the man page, which stay upstream.'
+        Include = @('src/build/GhosttyExe.zig', 'src/build/GhosttyResources.zig')
+        Exclude = @()
+        Allow   = @()
+        Pairs   = @(
+            @{ Find = '(?<=\.name = ")ghostty(?=")'; Replace = 'ghoztty' },
+            @{ Find = '(?<="\{s\}/bin/)ghostty(?=")'; Replace = 'ghoztty' }
+        )
+    },
+    [pscustomobject]@{
+        Name    = 'cli-prose'
+        Kind    = 'regex'
+        Why     = 'The command name in CLI help, usage text, log lines and the config reference. Backticked `ghostty +x` / `ghostty -e` is always the command; a bare backticked `ghostty` is often the window-theme VALUE, so that shape is matched by phrase only. The completion generators in src/extra and the +boo frame comment were left upstream and are out of scope.'
+        Include = @('src/**/*.zig')
+        Exclude = @('src/build/GhosttyFrameData.zig', 'src/extra/**')
+        Allow   = @()
+        Pairs   = @(
+            @{ Find = '(?<=`)ghostty(?= [+-])'; Replace = 'ghoztty' },
+            @{ Find = '(?<=^\s*///\s+)ghostty(?= [+-])'; Replace = 'ghoztty' },
+            @{ Find = '(?<=`ghoztty -e )ghostty(?= \+command`)'; Replace = 'ghoztty' },
+            @{ Find = '(?<=Usage: )ghostty(?= \+<action>)'; Replace = 'ghoztty' },
+            @{ Find = '(?<=Example: )ghostty(?= --keybind=)'; Replace = 'ghoztty' },
+            @{ Find = '(?<=running `)ghostty(?=` within Ghostty)'; Replace = 'ghoztty' },
+            @{ Find = '(?<=` within )Ghostty(?= works)'; Replace = 'Ghoztty' },
+            @{ Find = '(?<=The main entrypoint for the `)ghostty(?=` application)'; Replace = 'ghoztty' },
+            @{ Find = '(?<=using the `|CLI argument to `|This ensures the `|each new `|The default is `)ghostty(?=`(?: CLI|,| process|\.|\r?$))'; Replace = 'ghoztty' },
+            @{ Find = '(?<=each new )ghostty(?= process)'; Replace = 'ghoztty' },
+            @{ Find = '(?<=This is the )Ghostty(?= helper CLI)'; Replace = 'Ghoztty' },
+            @{ Find = '(?<=accompanies the graphical )Ghostty(?= app)'; Replace = 'Ghoztty' },
+            @{ Find = '(?<=i\.e\. |open -na )[Gg]hostty(?=\.app)'; Replace = 'Ghoztty' },
+            @{ Find = '(?<=will be passed to |directory to pass to )Ghostty(?=\.)'; Replace = 'Ghoztty' },
+            @{ Find = '(?<=Add )Ghostty(?=''s binary directory)'; Replace = 'Ghoztty' },
+            @{ Find = '(?<=the )Ghostty(?= GTK application will run in single-instance)'; Replace = 'Ghoztty' },
+            @{ Find = '(?<=^\s*///\s+)Ghostty(?= configuration\. This is only supported on Linux)'; Replace = 'Ghoztty' },
+            @{ Find = '(?<=failed to initialize )ghostty(?= error=)'; Replace = 'ghoztty' },
+            @{ Find = '(?<=too old\. )Ghostty(?= requires OpenGL)'; Replace = 'Ghoztty' },
+            @{ Find = '(?<=log\.warn\(")ghostty(?= terminfo not found)'; Replace = 'ghoztty' },
+            @{ Find = '(?<=\.text = ")ghostty(?= ")'; Replace = 'ghoztty' }
         )
     },
     [pscustomobject]@{
@@ -607,7 +753,18 @@ $script:UpstreamToken = '(?i)ghostty|mitchellh'
 
 # Pairs that no rule mechanizes and that is deliberate. Each entry names the
 # file (a scope glob) and a pattern on the FORK line; both must match.
-$script:Acknowledged = @()
+$script:Acknowledged = @(
+    # T1933. Upstream links release notes to a docs page keyed by a version
+    # SLUG (`1-2-3`); the fork links its GitHub release keyed by the semver tag
+    # (`v1.2.3`). The interpolated variable changes, not just the host, so the
+    # line is code a human re-applies at a merge stage, and the Swift test
+    # beside it fails loudly if they do not.
+    [pscustomobject]@{
+        File    = 'macos/**/*.swift'
+        Pattern = 'https://github\.com/dzearing/ghoztty/releases/tag/v(?:\\\(semver\)|1\.2\.3)'
+        Why     = 'release-notes link re-keyed from the docs slug to the GitHub release tag - a code change, not a rename'
+    }
+)
 
 # Run every in-scope rule over one line, exactly as `apply` would. The apprt
 # arm rule is structural in `apply`; at line level it is the same rewrite of a
