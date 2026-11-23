@@ -1044,8 +1044,9 @@ pub const Surface = extern struct {
             banner.destroy();
             return null;
         };
-        box.as(gtk.Orientable).setOrientation(.vertical);
-        box.prepend(@ptrCast(@alignCast(banner.box)));
+        const box_w: *wk.GtkWidget = @ptrCast(box);
+        wk.gtk_orientable_set_orientation(box_w, 1); // GTK_ORIENTATION_VERTICAL
+        wk.gtk_box_prepend(box_w, banner.box);
         banner.owner = self;
         banner.on_link = &bannerLink;
         banner.pane_id = self.paneId();

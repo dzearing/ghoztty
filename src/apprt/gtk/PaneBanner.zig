@@ -198,8 +198,8 @@ fn blockWidget(self: *PaneBanner, arena: Allocator, block: md.Block, lines: *std
             try dumpLine(arena, lines, "table", try std.fmt.allocPrint(arena, "cols={d} rows={d} header={}", .{ cols, t.rows.len, t.hasVisibleHeader() }));
             var row: c_int = 0;
             if (t.hasVisibleHeader()) {
-                for (t.header, 0..) |cell, col| {
-                    const m = try markup.markup(arena, cell, "weight=\"bold\"");
+                for (t.header, 0..) |hcell, col| {
+                    const m = try markup.markup(arena, hcell, "weight=\"bold\"");
                     try dumpLine(arena, lines, "  th", m);
                     wk.gtk_grid_attach(grid, self.cell(m, t.alignments[col]), @intCast(col), row, 1, 1);
                 }
@@ -208,8 +208,8 @@ fn blockWidget(self: *PaneBanner, arena: Allocator, block: md.Block, lines: *std
                 row += 1;
             }
             for (t.rows) |cells| {
-                for (cells, 0..) |cell, col| {
-                    const m = try markup.markup(arena, cell, null);
+                for (cells, 0..) |bcell, col| {
+                    const m = try markup.markup(arena, bcell, null);
                     try dumpLine(arena, lines, "  td", m);
                     wk.gtk_grid_attach(grid, self.cell(m, t.alignments[col]), @intCast(col), row, 1, 1);
                 }
