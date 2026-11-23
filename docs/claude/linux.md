@@ -318,6 +318,18 @@ private runtime dir, so a test app can never meet the user's.
   `+new-window --target` equals `$GHOZTTY_TEST_ASK_TO_CLOSE` with its real
   close confirmation up. Acceptance: `wsl-run.ps1 -CommandFile
   test\linux\cli-close-focus.sh`, ends `CLI CLOSE FOCUS: ALL PASS`.
+- **Pane tints (T3382)**: `+new-window --color`, `--split-color` and `+split
+  --color` (`#rgb`, `#rrggbb`, `random`) go through
+  `Surface.applyBackgroundTint`, win32's steps over win32's pure
+  `color_math.zig`: background, black/white contrast foreground, WCAG-adjusted
+  base 16, regenerated 16-255, the renderer's contrast floor. A new pane's GL
+  area realizes after the handler returns, so the tint is stored and applied in
+  `initSurface` once the core surface exists. A split inherits its parent's
+  tint in `SplitTree.newSplitAt` (keyboard splits too). `+list` reports
+  `background_tint`. Not yet: the window gradient (T3566), restore (T3589). A
+  test that reads a split's colour must set `unfocused-split-opacity = 1`: a
+  split opened without `--focus` is dimmed. Acceptance: `wsl-run.ps1
+  -CommandFile test\linux\cli-color.sh`, ends `CLI COLOR: ALL PASS` (26 checks).
 - **`+rearrange` (T3368)** is win32's `handleRearrange`: the shared
   `validateLayout` / `firstDuplicate` checks and sentences, then the window
   (`--target`, else the caller's window, else the front one), then every leaf
