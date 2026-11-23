@@ -39860,3 +39860,6 @@ Reproduce-first: agent-recovery.ps1 is ALL PASS (104 assertions) on HEAD 15640bd
 
 - confirm-dialogs, context-menu, mouse-nc-routing, wheel-scroll, hero-mode, hero-nav and scrollback-narrow each have a guard-due row naming the module that decides their behavior, score through lib/TestScore.ps1, and stamp only a complete green run. context-menu-real-input gets an ADVISORY row (input-desktop exception, NOT RUN).
 - Evidence: acceptance-parallel 20261122-172506 all seven green and stamped; -NegativeControl runs of mouse-nc-routing and hero-nav red with stamps unchanged. uncovered 15 -> 7.
+## 2026-11-22 18:30 lane b - T1780: BannerOverlay.zig's split is planned as seven planes
+- BannerOverlay.zig re-measured at 4,639 lines (~840 of them tests). Its code sits in one nested struct, which split-plane.py cannot cut, so T3523 first turns the file into a file-as-struct (importers unchanged), then T3524-T3530 move one `banner_overlay_*.zig` plane each, every range named by first and last function with the T3436 split/proof tooling and the guard-due Covers note.
+- T3531 re-measures the owner once all land (it depends on them). No code change in this turn.
