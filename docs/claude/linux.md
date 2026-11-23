@@ -1085,6 +1085,74 @@ never installed: an installed gnome-keyring registers
 app there stores secrets. Each opt-in test appends a line to a marker file when
 it ran, so a skipped test cannot read as a pass. Ends `SECRET STORE: ALL PASS`.
 
+## Packaging and the `ghoztty://` scheme (T3343)
+
+**The tarball.** `scripts/linux/package.sh` builds the GTK app into a private
+prefix and tars it as `zig-out/dist/ghoztty-linux-<arch>-<release|debug>-<sha>.tar.gz`
+(one top-level `ghoztty/`: `bin/`, `share/`, plus `install.sh`).
+`PKG_OPTIMIZE=ReleaseFast` (default) or `Debug`; `PKG_OUT` moves it.
+
+```powershell
+powershell -NoProfile -File scripts\linux\wsl-run.ps1 -CommandFile scripts\linux\package.sh
+```
+
+**Installing it** (`ghoztty/install.sh`, from the unpacked tree; never sudo,
+nothing outside `$HOME`): the tree goes to `~/.local/opt/ghoztty`, a symlink to
+`~/.local/bin/ghoztty`, and the desktop entry, D-Bus service, systemd user unit
+and icons to `$XDG_DATA_HOME`, each with its `Exec`/`TryExec`/`ExecStart`
+rewritten to the installed binary (the build bakes in its staging prefix).
+Then the entry becomes the default `x-scheme-handler/<scheme>` - `xdg-mime
+default`, or a `[Default Applications]` line written by hand when xdg-mime is
+absent (`GHOZTTY_INSTALL_NO_XDG_MIME=1` forces that path). Every file outside
+`opt/` is listed in `opt/ghoztty/.install-manifest`; `--uninstall` removes
+those, the tree, and the handler line only if it is ours. **A Debug package
+is refused without `--dev`** (exit 3): it answers on the debug app id, socket
+and `ghoztty-debug://` scheme, the same names as a `zig-out` dev build.
+
+**The templates.** `dist/linux/app.desktop.in` carries
+`MimeType=x-scheme-handler/@URL_SCHEME@;` (`ghoztty`, or `ghoztty-debug` for
+Debug/ReleaseSafe - the app-id split) and `Exec=... %u`. Upstream's
+`bin/ghostty` in the entry, D-Bus service and systemd unit is now
+`bin/ghoztty`, the file the build actually makes; Name is `Ghoztty`.
+
+**How a link reaches the app** (`src/apprt/gtk/url_scheme.zig`; pure half
+`url_activation.zig`, none lane). Focus-only, as on every platform; nothing is
+ever created.
+
+- **D-Bus `Open`.** The entry is `DBusActivatable`, so GIO launchers call
+  `org.freedesktop.Application.Open` on the running app. The app now sets
+  `G_APPLICATION_HANDLES_OPEN` and implements `open`, which runs the shared
+  `verbs.focus` in process. Only a single-instance app owns its bus name; the
+  test runs one on a private `dbus-daemon`.
+- **The `Exec` line.** Anything else runs `ghoztty <url>`: `main_ghostty`'s
+  `runUrlSchemeActivation` hook (win32's) makes that an activation process -
+  it sends `focus` over the IPC socket and exits 0 focused, 1 nothing has that
+  name (a cold click too: it never launches a terminal), 2 unsupported. The
+  scan stops at `-e`/`--`.
+- **A miss** shows the shared `Failure` wording in a `GtkAlertDialog`, one per
+  burst: a flag in process, an `flock` on
+  `$XDG_RUNTIME_DIR/ghoztty[-debug]-url-warning.lock` across activation
+  processes. Not an `AdwAlertDialog`: under libadwaita 1.5 a parentless one
+  closed with `adw_dialog_close` never emitted `closed`, so the process never
+  exited; `GtkAlertDialog.choose` completes however the dialog ends.
+  `GHOZTTY_URL_SCHEME_QUIET=1` logs instead; a debug build's
+  `GHOZTTY_TEST_URL_SCHEME_DIALOG=<file>` records `shown <title>|<body>` and
+  ends the dialog through its cancellable 500 ms later.
+
+Acceptance:
+
+```powershell
+powershell -NoProfile -File scripts\linux\wsl-run.ps1 -CommandFile test\linux\url-scheme.sh
+powershell -NoProfile -File scripts\linux\wsl-run.ps1 -CommandFile test\linux\package-install.sh
+```
+
+`URL SCHEME: ALL PASS` (both paths, by name and pane id, both spellings, every
+miss, burst coalescing in and out of process) and `PACKAGE INSTALL: ALL PASS`
+(a Debug package into a throwaway `HOME`; `desktop-file-validate`, xdg-mime
+and `gio mime` agree). Not covered: a release package (T3578), .deb/AppImage
+(T3578), and a real desktop's browser handing a click to xdg-open - the
+harness has no browser, so that last hop is the person at the keyboard's.
+
 ## Distro state (2026-11-21)
 
 - Ubuntu 24.04.1 LTS, runs as `root` (`$HOME=/root`), 32 cores, 47 GB visible.
