@@ -8480,6 +8480,20 @@ $GuardTable = @(
             'test\win32\pane-sidebar-all-windows.ps1'
         )
     },
+    # Another window's row in the all-windows outline is a drag source, and
+    # another window's group a join target (T1879): a pane carried between
+    # three windows through one sidebar is only answered on the box.
+    [pscustomobject]@{
+        Name   = 'pane-sidebar-foreign-drag'
+        Script = 'test\win32\pane-sidebar-foreign-drag.ps1'
+        Stamp  = 'test\win32\pane-sidebar-foreign-drag.stamp.json'
+        Covers = @(
+            'src\apprt\win32\pane_drop.zig',
+            'src\apprt\win32\pane_sidebar.zig',
+            'src\apprt\win32\PaneSidebar.zig',
+            'test\win32\pane-sidebar-foreign-drag.ps1'
+        )
+    },
     # A press in a background window's sidebar that raises ANOTHER window
     # leaves the background window where it is (T2863): the verb is
     # unit-tested in every lane; that WM_MOUSEACTIVATE reads the press the

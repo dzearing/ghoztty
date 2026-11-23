@@ -715,6 +715,35 @@ pub const Layout = struct {
         return self.items[i];
     }
 
+    /// Window group `gi`'s span in the expanded outline (T1879, Mac
+    /// `PaneSidebarGroupFrames`): its header and every row under it that is
+    /// shown, unclipped. A folded group is its header alone. Empty when the
+    /// group has neither - the single roster, the rail, a group a search hid.
+    pub fn groupSpan(self: *const Layout, gi: usize) Rect {
+        var span: Rect = .{};
+        var any = false;
+        for (self.heads[0..self.head_count]) |hd| {
+            if (hd.kind != .window or hd.index != gi or hd.rect.width() <= 0) continue;
+            span = if (any) unionRect(span, hd.rect) else hd.rect;
+            any = true;
+        }
+        for (0..self.count) |i| {
+            if (self.group[i] != gi or !self.shown(i)) continue;
+            span = if (any) unionRect(span, self.items[i]) else self.items[i];
+            any = true;
+        }
+        return if (any) span else .{};
+    }
+
+    fn unionRect(a: Rect, b: Rect) Rect {
+        return .{
+            .left = @min(a.left, b.left),
+            .top = @min(a.top, b.top),
+            .right = @max(a.right, b.right),
+            .bottom = @max(a.bottom, b.bottom),
+        };
+    }
+
     /// The rail of all windows is one tile per WINDOW (T2445, Mac 9e2e2902a
     /// `PaneSidebarWindowTile`): no pane tiles, folded or open.
     pub fn windowTiles(self: *const Layout) bool {
@@ -2578,6 +2607,27 @@ test "pane_sidebar: the outline stacks heads and indented rows in order, no hair
         try testing.expectEqual(@as(usize, 3), l.stash_end);
         // The all-windows toggle sits inside the header.
         try testing.expect(l.scope.top >= l.header.top and l.scope.bottom <= l.header.bottom);
+    }
+}
+
+test "pane_sidebar: a window group's span is its header and its rows; folded, the header alone (T1879)" {
+    for (scales) |s| {
+        const f = outlineFixture(s);
+        const l = layoutWith(.expanded, px(240, s), px(900, s), &f.items, &f.lines, f.tm, s);
+        const other = l.groupSpan(1);
+        try testing.expectEqual(l.heads[1].rect.top, other.top);
+        try testing.expectEqual(l.items[4].bottom, other.bottom);
+        try testing.expectEqual(l.heads[1].rect.left, other.left);
+        // It does not reach up into this window's group.
+        try testing.expect(other.top > l.items[2].bottom);
+        const own = l.groupSpan(0);
+        try testing.expectEqual(l.heads[0].rect.top, own.top);
+        try testing.expectEqual(l.items[2].bottom, own.bottom);
+        // A group that is not laid out has no span.
+        try testing.expectEqual(@as(i32, 0), l.groupSpan(7).height());
+        // Folded: the header alone.
+        const folded = layoutWith(.expanded, px(240, s), px(900, s), &f.items, f.lines[0..5], f.tm, s);
+        try testing.expectEqual(folded.heads[1].rect, folded.groupSpan(1));
     }
 }
 

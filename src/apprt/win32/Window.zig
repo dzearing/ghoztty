@@ -5668,6 +5668,35 @@ pub fn beginSidebarDrag(self: *Window, pane: *PaneView, press: w32.POINT, cur: w
     self.updateRearrangeDrag(c.x, c.y);
 }
 
+/// Start a pane drag from ANOTHER window's sidebar (T1879, Mac: a foreign
+/// row in the all-windows list is a drag source that is not a list drag -
+/// `followsPointer: !isForeign`, so it shows the preview). The pane is this
+/// window's, in tab `tab` (the outline lists every tab of every window), so
+/// the drag is this window's: the same resolver and every window a candidate,
+/// which is how a release over the sidebar's own grid brings the pane there
+/// and one over a window group sends it into that window. Both points are in
+/// screen coordinates; the press has already travelled past the threshold.
+pub fn beginForeignSidebarDrag(self: *Window, pane: *PaneView, tab: usize, press: w32.POINT, cur: w32.POINT) bool {
+    if (self.closing or self.rearrange_drag != null) return false;
+    if (tab >= self.tab_count) return false;
+    // Re-found, not trusted from the sidebar's last refresh.
+    const found = blk: {
+        var it = self.tab_trees[tab].iterator();
+        while (it.next()) |entry| if (entry.view == pane) break :blk true;
+        break :blk false;
+    };
+    if (!found) return false;
+    const hwnd = self.hwnd orelse return false;
+    var p = press;
+    _ = w32.ScreenToClient(hwnd, &p);
+    var c = cur;
+    _ = w32.ScreenToClient(hwnd, &c);
+    self.beginRearrangeDrag(pane, p.x, p.y);
+    if (self.rearrange_drag) |*d| d.source_tab = tab;
+    self.updateRearrangeDrag(c.x, c.y);
+    return true;
+}
+
 /// Escape during a live pane drag (T1844): cancel it. False when there is no
 /// live drag, so the key goes where it was going - and in rearrange mode,
 /// whose own Escape already cancels the drag by leaving the mode (T1531);

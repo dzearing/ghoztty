@@ -2182,12 +2182,29 @@ pub fn dropGeometry(
         list_out[nl] = .{ .id = e.pane.paneId(), .rect = toScreen(l.items[li], origin) };
         nl += 1;
     }
+    // The expanded outline's OTHER window groups (T1879, Mac `windowGroups`
+    // over `PaneSidebarGroupFrames`): a drop anywhere on one - its header or
+    // its rows - sends the pane into that window tab. This window's own group
+    // stays the list's and the tray's.
+    var nt: usize = 0;
+    if (l.outline) {
+        for (self.groups.items, 0..) |g, gi| {
+            if (nt == tiles_out.len) break;
+            if (g.own) continue;
+            const v = scroll_mod.visible(&l, l.groupSpan(gi));
+            if (v.height() <= 0) continue;
+            const hwnd = g.window.hwnd orelse continue;
+            tiles_out[nt] = .{ .window = @intFromPtr(hwnd), .tab = g.key, .rect = toScreen(v, origin) };
+            nt += 1;
+        }
+    }
     return .{
         .sidebar = area,
         .rows = rows_out[0..n],
         .slot = slot,
         .list = list_out[0..nl],
         .tray_top = if (trayTop(&l, last_list)) |y| y + origin.y else null,
+        .tiles = tiles_out[0..nt],
     };
 }
 
@@ -2258,17 +2275,31 @@ fn maybeStartRowDrag(self: *PaneSidebar, hwnd: w32.HWND, x: i32, y: i32) bool {
     // A window's rail tile only raises it: reordering is the expanded
     // list's alone (T2445, Mac 9e2e2902a).
     if (self.tileGroup(i) != null) return false;
-    // Another window's pane is not dragged from here yet: dropping it into
-    // this grid or onto another window's group is the cross-window move,
-    // which is its own follow-up (T1829 split).
-    if (!self.entries.items[i].own) return false;
-    const pane = self.entries.items[i].pane;
-    self.pressed = .none;
-    _ = w32.InvalidateRect(hwnd, null, 0);
+    const e = self.entries.items[i];
+    const pane = e.pane;
     var press = w32.POINT{ .x = self.press_x, .y = self.press_y };
     _ = w32.ClientToScreen(hwnd, &press);
     var cur = w32.POINT{ .x = x, .y = y };
     _ = w32.ClientToScreen(hwnd, &cur);
+    // Another window's row (T1879, Mac `followsPointer: !isForeign`): the
+    // drag is ITS window's, carried with a preview rather than held to this
+    // list - into this grid brings the pane here, onto a window group sends
+    // it there. The window is asked about first: it can close between a
+    // refresh and a press. Another TAB of this window is the same move
+    // (a tab is what Mac calls a window), across tabs.
+    if (!e.own) {
+        if (!self.window.app.hasWindow(e.window)) return false;
+        if (!e.window.beginForeignSidebarDrag(pane, e.tab, press, cur)) {
+            log.info("pane sidebar foreign drag refused item={d}", .{i});
+            return false;
+        }
+        self.pressed = .none;
+        _ = w32.InvalidateRect(hwnd, null, 0);
+        log.info("pane sidebar row drag start item={d} section={s} foreign=1", .{ i, @tagName(e.section) });
+        return true;
+    }
+    self.pressed = .none;
+    _ = w32.InvalidateRect(hwnd, null, 0);
     log.info("pane sidebar row drag start item={d} section={s}", .{ i, @tagName(self.entries.items[i].section) });
     // The row itself follows the pointer from here (T2304).
     self.stopReorderClock();
@@ -5060,6 +5091,12 @@ fn paintHead(self: *PaneSidebar, hdc: w32.HDC, hd: pane_sidebar.Head, k: usize, 
         const shows = pane_sidebar.headShowsBusy(hd.kind, folded, g.busy);
         const radius = pane_sidebar.px(toc.row_corner_dip, self.scale);
         self.paintOverlay(hdc, hd.rect, radius, self.sheenFor(windowFade(g), shows, hd.rect), null, t);
+        // A pane dragged over this window's group would join it (T1879, Mac
+        // `PaneSidebarWindowHeader.isDropTarget`): the header's 2pt accent
+        // ring, as the rail's tile rings (T2449).
+        if (self.join_tile) |jk| if (jk == g.key) {
+            strokeRound(hdc, hd.rect, radius, rgb(t.accent), @max(pane_sidebar.px(join_ring_dip, self.scale), 1));
+        };
     }
     glyph(hdc, self.scale, hd.chevron, if (folded) glyph_chevron_right else glyph_chevron_down, 8, t.secondary);
     // A window's icon, in its panes' icon column (T2340, Mac 28f6cde09).

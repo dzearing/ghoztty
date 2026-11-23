@@ -934,7 +934,12 @@ pub fn listTarget(point: Point, own: Candidate, dragged: []const u8) ?Target {
         .x = r.left + @divFloor(r.width(), 2),
         .y = std.math.clamp(point.y, r.top, r.bottom - 1),
     };
-    return sidebarHit(own, held, dragged);
+    // A list drag never leaves its window (Mac `listTarget` rebuilds the
+    // sidebar without its `windowGroups`): another window's group under the
+    // held row is still this list's place, not a join (T1879).
+    var list_only = own;
+    list_only.window_tiles = &.{};
+    return sidebarHit(list_only, held, dragged);
 }
 
 /// Where in the list a drop at `point` lands: the number of list rows, the
@@ -1725,6 +1730,20 @@ test "T2449: tiles only count on the sidebar that shows them" {
     const cands = [_]Candidate{c};
     const t = resolve(.{ .x = 5010, .y = 10 }, &cands, dragged_id, m1);
     try testing.expect(t == null or t.? != .join_window);
+}
+
+test "T1879: a list drag held over another window's group stays in its own list" {
+    // Mac `listTarget` drops the sidebar's `windowGroups`: an own row dragged
+    // past another window's group in the outline is placed in the list (or
+    // the tray), never sent away. A free drag over the same point joins.
+    const groups = [_]WindowTile{.{ .window = 2, .tab = 0xB, .rect = .{ .left = 0, .top = 300, .right = 200, .bottom = 500 } }};
+    var c = sidebarCandidate(&.{}, &.{});
+    c.window_tiles = &groups;
+    const held = listTarget(.{ .x = 900, .y = 400 }, c, dragged_id).?;
+    try testing.expect(held != .join_window);
+    const cands = [_]Candidate{c};
+    const free = resolve(.{ .x = 20, .y = 400 }, &cands, dragged_id, m1).?;
+    try testing.expectEqual(@as(u64, 0xB), free.join_window.tab);
 }
 
 test "Target.window answers for a stash" {
