@@ -4,10 +4,11 @@ Name=@NAME@
 Type=Application
 Comment=A terminal emulator
 TryExec=@GHOSTTY@
-Exec=@GHOSTTY@ --gtk-single-instance=true
+Exec=@GHOSTTY@ --gtk-single-instance=true %u
 Icon=com.dzearing.ghoztty
 Categories=System;TerminalEmulator;
 Keywords=terminal;tty;pty;
+MimeType=x-scheme-handler/@URL_SCHEME@;
 StartupNotify=true
 StartupWMClass=@APPID@
 Terminal=false

@@ -305,22 +305,26 @@ fn addLinuxAppResources(
     // Background:
     // https://developer.gnome.org/documentation/guidelines/maintainer/integrating.html
 
-    const name = b.fmt("Ghostty{s}", .{
-        switch (cfg.optimize) {
-            .Debug, .ReleaseSafe => " (Debug)",
-            .ReleaseFast, .ReleaseSmall => "",
-        },
-    });
+    const debug_suffix = switch (cfg.optimize) {
+        .Debug, .ReleaseSafe => true,
+        .ReleaseFast, .ReleaseSmall => false,
+    };
 
-    const app_id = b.fmt("com.dzearing.ghoztty{s}", .{
-        switch (cfg.optimize) {
-            .Debug, .ReleaseSafe => "-debug",
-            .ReleaseFast, .ReleaseSmall => "",
-        },
-    });
+    const name = b.fmt("Ghoztty{s}", .{if (debug_suffix) " (Debug)" else ""});
 
+    const app_id = b.fmt("com.dzearing.ghoztty{s}", .{if (debug_suffix) "-debug" else ""});
+
+    // Ghoztty (T3343): the `ghoztty://` scheme the desktop entry registers.
+    // A debug build registers `ghoztty-debug` (the same split as the app id
+    // and the IPC socket, `apprt/ipc/url_scheme.zig`), so a dev build never
+    // takes the user's links.
+    const url_scheme = if (debug_suffix) "ghoztty-debug" else "ghoztty";
+
+    // The executable is `ghoztty` (GhosttyExe.zig); upstream's `ghostty`
+    // name here left the desktop entry, the D-Bus service and the systemd
+    // unit pointing at a file that does not exist (T3343).
     const exe_abs_path = b.fmt(
-        "{s}/bin/ghostty",
+        "{s}/bin/ghoztty",
         .{b.install_prefix},
     );
 
@@ -393,6 +397,7 @@ fn addLinuxAppResources(
             .NAME = name,
             .APPID = app_id,
             .GHOSTTY = exe_abs_path,
+            .URL_SCHEME = url_scheme,
         });
 
         // Template output has a single header line we want to remove.

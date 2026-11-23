@@ -29,6 +29,9 @@ APT_PKGS=(
     python3-gi gir1.2-gtk-4.0 gir1.2-adw-1
     mesa-utils weston
     git curl xz-utils
+    # T3343: install.sh registers the ghoztty:// handler with xdg-mime, and
+    # the packaging test validates the desktop entry.
+    desktop-file-utils xdg-utils
 )
 
 missing=()

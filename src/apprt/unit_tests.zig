@@ -598,6 +598,10 @@ test {
     // GTK imports, like viewer_chrome.zig.
     _ = @import("gtk/viewer_links.zig");
 
+    // The GTK `ghoztty://` front door's pure half - which argv is the link,
+    // what a focus reply means (T3343). No GTK imports.
+    _ = @import("gtk/url_activation.zig");
+
     // The GTK pane banner's pure half - banner markdown to Pango markup, the
     // heading sizes, a cell's alignment, a link's local path (T3339). No GTK
     // imports.

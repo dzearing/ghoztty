@@ -58,6 +58,14 @@ pub fn init(
     return;
 }
 
+/// A `ghoztty://` link on the command line (the desktop file's `Exec ... %u`
+/// line, T3343): forward a focus to the running instance, report a miss, and
+/// exit with the code returned. Null for an ordinary launch. `main_ghostty`
+/// asks this before any app setup, as it does win32's.
+pub fn runUrlSchemeActivation(alloc: Allocator) ?u8 {
+    return @import("url_scheme.zig").runActivation(alloc);
+}
+
 pub fn run(self: *App) !void {
     try self.app.run();
 }

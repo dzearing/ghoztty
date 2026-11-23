@@ -43,6 +43,7 @@ const CloseConfirmationDialog = @import("close_confirmation_dialog.zig").CloseCo
 const ConfigErrorsDialog = @import("config_errors_dialog.zig").ConfigErrorsDialog;
 const GlobalShortcuts = @import("global_shortcuts.zig").GlobalShortcuts;
 const OpenURI = @import("../portal.zig").OpenURI;
+const url_scheme = @import("../url_scheme.zig");
 
 const log = std.log.scoped(.gtk_ghostty_application);
 
@@ -324,6 +325,11 @@ pub const Application = extern struct {
         const app_flags: gio.ApplicationFlags = app_flags: {
             var flags: gio.ApplicationFlags = .flags_default_flags;
             if (!single_instance) flags.non_unique = true;
+            // Ghoztty (T3343): the desktop file is DBusActivatable and
+            // registers `x-scheme-handler/ghoztty`, so a launcher hands a
+            // clicked link to the running app as a D-Bus `Open`, which GLib
+            // routes to `open` only with this flag.
+            flags.handles_open = true;
             break :app_flags flags;
         };
 
@@ -1566,6 +1572,25 @@ pub const Application = extern struct {
         );
     }
 
+    /// Ghoztty (T3343): a `ghoztty://` link from the desktop (D-Bus `Open`).
+    /// Focus-only and never creates a window - `url_scheme.openInApp`. Not
+    /// chained to the parent, whose default only warns that `open` is
+    /// unimplemented.
+    fn open(
+        self: *Self,
+        files: [*]*gio.File,
+        n_files: c_int,
+        hint: [*:0]const u8,
+    ) callconv(.c) void {
+        _ = hint;
+        const n: usize = @intCast(@max(n_files, 0));
+        for (files[0..n]) |file| {
+            const uri = file.getUri();
+            defer glib.free(uri);
+            url_scheme.openInApp(self, std.mem.span(uri));
+        }
+    }
+
     fn dispose(self: *Self) callconv(.c) void {
         const priv = self.private();
         if (priv.config_errors_dialog.get()) |diag| {
@@ -1970,6 +1995,7 @@ pub const Application = extern struct {
 
             // Virtual methods
             gio.Application.virtual_methods.activate.implement(class, &activate);
+            gio.Application.virtual_methods.open.implement(class, &open);
             gio.Application.virtual_methods.startup.implement(class, &startup);
             gobject.Object.virtual_methods.dispose.implement(class, &dispose);
             gobject.Object.virtual_methods.finalize.implement(class, &finalize);
