@@ -54,7 +54,6 @@ pub extern fn webkit_web_view_new() *GtkWidget;
 // `window.close()` survive. The size the page asked for is on its window
 // properties by `ready-to-show`.
 pub const WindowProperties = opaque {};
-pub const GdkRectangle = extern struct { x: c_int, y: c_int, width: c_int, height: c_int };
 pub extern fn webkit_web_view_get_type() usize;
 pub extern fn webkit_web_view_get_related_view(view: *WebView) ?*WebView;
 pub extern fn g_object_new(object_type: usize, first_property_name: ?[*:0]const u8, ...) ?*anyopaque;

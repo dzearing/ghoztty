@@ -278,9 +278,9 @@ pub fn createPopup(alloc: Allocator, opener: *Viewer, location: []const u8) !*Vi
     const obj = wk.g_object_new(
         wk.webkit_web_view_get_type(),
         "related-view",
-        opener.view,
-        "user-content-manager",
-        ucm,
+        @as(*anyopaque, opener.view),
+        @as([*:0]const u8, "user-content-manager"),
+        @as(*anyopaque, ucm),
         @as(?[*:0]const u8, null),
     ) orelse {
         wk.g_object_unref(ucm);
