@@ -39836,3 +39836,6 @@ Reproduce-first: agent-recovery.ps1 is ALL PASS (104 assertions) on HEAD 15640bd
 
 - T3444 named the same windows-cross lld-link red (glslang_default_resource, spv::Builder::postProcess) that lane B's T3440 had already root-caused as a poisoned Zig cache restored from a cancelled run. Its fix 66dbaa796 is on the trunk.
 - Evidence: Fork CI windows-cross success on run 45090156745 (a2da9d233) and 45091958206 (a425fd09e). No code change in this turn.
+## 2026-11-22 16:50 lane b - T3440: a push no longer cancels the Fork CI run already building
+- The cache fix's own runs never finished: every Fork CI run since 23:55Z (12 in a row) was cancelled by the next push. The lanes push every 3-5 minutes, a cold windows-cross takes ~15, and since the cache fix a cancelled run saves nothing, so every run was cold and none could ever reach a verdict.
+- fork-ci.yml: cancel-in-progress is now `github.event_name == 'pull_request'`. A push lets the in-flight run finish and GitHub keeps only the newest pending one, so a verdict lands about every compile-length. release-artifacts.ps1 E15 locks it; ALL PASS.

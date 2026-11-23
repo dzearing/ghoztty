@@ -703,6 +703,14 @@ Assert "E14 windows-cross saves its Zig cache only after a green compile" ($szM.
     $saveM.Value -notmatch 'always\(\)|failure\(\)|cancelled\(\)' -and
     $restoreKey -ne '' -and $restoreKey -eq $saveKey)
 
+# E15 (T3440): a PUSH must not cancel the run in flight. With E14 a cancelled
+# run saves no cache, so under cancel-in-progress every run on the loop's
+# branch was cold, was cancelled by the next push, and no commit ever got a
+# verdict (2026-11-22). Pushes queue; only pull requests cancel.
+$cancelM = [regex]::Match($forkCi,'(?m)^concurrency:\r?\n(?:  .*\r?\n)*?  cancel-in-progress: (.+)$')
+Assert "E15 a push never cancels the Fork CI run in flight" ($cancelM.Success -and
+    $cancelM.Groups[1].Value.Trim() -eq "`${{ github.event_name == 'pull_request' }}")
+
 # E7: the runbook expects CI to have proven the build, not the release.
 Assert "E7 release.md points at the windows-cross job" ($releaseMd -match 'windows-cross')
 

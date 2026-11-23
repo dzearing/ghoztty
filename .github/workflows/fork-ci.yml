@@ -12,9 +12,18 @@ on:
 name: Fork CI
 
 # We only want the latest commit to test for any non-main ref.
+#
+# A PUSH never cancels the run already in flight, though (T3440): the loop
+# lanes push to the Windows branch every few minutes, a cold windows-cross
+# compile takes ~15, and a cancelled run must not save its cache (see the
+# cache steps below). With cancel-in-progress on, every run was cancelled
+# before it finished and no commit got a verdict at all (2026-11-22: twelve
+# cancelled runs in a row). With it off for pushes the in-flight run
+# finishes and GitHub keeps only the NEWEST pending run, so a verdict lands
+# about every compile-length. Pull requests still cancel: nobody stacks them.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref_name != 'main' && github.ref || github.run_id }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 # This workflow is owned by the fork. Upstream's test.yml/nix.yml are
 # deliberately left untouched: every one of their jobs is gated on
