@@ -117,6 +117,10 @@ location: [:0]u8,
 current: [:0]u8,
 /// The file behind a file mode; null for a website.
 file_path: ?[]u8 = null,
+/// The directory the pane was opened FROM (`--working-directory`): the
+/// repository a diff spec reads, the worktree fallback for a page with no
+/// directory of its own. Kept here so the session layout records it (T3420).
+origin_dir: ?[]u8 = null,
 /// The read grant both schemes resolve against.
 assets_dir: ?[]u8 = null,
 base_dir: ?[]u8 = null,
@@ -328,6 +332,27 @@ pub fn currentLocation(self: *const Viewer) []const u8 {
     return self.current;
 }
 
+/// Where the pane was OPENED - the Home button's target (T3420). The
+/// session layout records it beside `currentLocation`, because a restore
+/// navigates to where the pane IS and would otherwise re-home it there.
+pub fn homeLocation(self: *const Viewer) []const u8 {
+    return self.location;
+}
+
+/// The directory the pane was opened from, or null (T3420).
+pub fn originDirectory(self: *const Viewer) ?[]const u8 {
+    return self.origin_dir;
+}
+
+/// Restore-only (T3420): make `home` what Home goes back to, without
+/// navigating - the pane stays where the restore put it.
+pub fn setHomeLocation(self: *Viewer, home: []const u8) void {
+    if (home.len == 0 or std.mem.eql(u8, home, self.location)) return;
+    const z = self.alloc.dupeZ(u8, home) catch return;
+    self.alloc.free(self.location);
+    self.location = z;
+}
+
 /// The pane's title: the file's name, a website's host, a diff's subject
 /// (win32's `initialTitle`, the Mac's `mode.title`). Borrowed from the viewer.
 pub fn paneTitle(self: *const Viewer) []const u8 {
@@ -360,6 +385,7 @@ fn deinit(self: *Viewer) void {
     if (self.file_path) |p| alloc.free(p);
     if (self.assets_dir) |p| alloc.free(p);
     if (self.base_dir) |p| alloc.free(p);
+    if (self.origin_dir) |p| alloc.free(p);
     alloc.destroy(self);
 }
 
@@ -714,6 +740,11 @@ fn syncChrome(self: *Viewer) void {
 /// (T3417). Called by the pane right after `create`, before the template has
 /// loaded, so the first listing already has it.
 pub fn setOriginDirectory(self: *Viewer, dir: ?[]const u8) void {
+    if (self.origin_dir) |d| self.alloc.free(d);
+    self.origin_dir = null;
+    if (dir) |d| if (d.len > 0) {
+        self.origin_dir = self.alloc.dupe(u8, d) catch null;
+    };
     self.diff.setOriginDirectory(dir);
     self.feedback.setOriginDirectory(dir);
     // The first answer, from the location the pane was opened on: the button
@@ -2008,7 +2039,9 @@ fn onTestRendered(self: *Viewer, ok: bool, detail: []const u8) void {
     log.info("viewer test window: rendered ok={} detail={s}", .{ ok, detail });
     if (!ok) {
         var buf: [512]u8 = undefined;
-        writeDump(std.fmt.bufPrint(&buf, "FAIL {s}", .{detail}) catch "FAIL");
+        const line = std.fmt.bufPrint(&buf, "FAIL {s}", .{detail}) catch "FAIL";
+        writeDump(line);
+        appendDumpAll(self, line);
         return;
     }
     const probe = std.posix.getenv("GHOZTTY_TEST_VIEWER_PROBE") orelse "document.body.innerText";
@@ -2022,8 +2055,29 @@ fn onTestProbed(source: ?*wk.GObject, result: *wk.GAsyncResult, ud: ?*anyopaque)
     // The first render's dump is down: the steps, if any, start now.
     if (comptime build_config.is_debug) {
         const self: *Viewer = @ptrCast(@alignCast(ud orelse return));
+        appendDumpAll(self, line);
         steps.start(self);
     }
+}
+
+/// DEBUG-ONLY (T3420): `GHOZTTY_TEST_VIEWER_DUMP` holds the LAST viewer's
+/// first render, which is all a one-viewer test needs. A test that opens
+/// several at once - a session restore - also sets
+/// `GHOZTTY_TEST_VIEWER_DUMP_ALL`, and every viewer's first render is
+/// appended there as `<current location>\t<OK value | FAIL why>`.
+fn appendDumpAll(self: *const Viewer, text: []const u8) void {
+    if (comptime !build_config.is_debug) return;
+    const path = std.posix.getenv("GHOZTTY_TEST_VIEWER_DUMP_ALL") orelse return;
+    const f = std.fs.createFileAbsolute(path, .{ .truncate = false }) catch |err| {
+        log.warn("viewer test window: cannot append {s} err={}", .{ path, err });
+        return;
+    };
+    defer f.close();
+    f.seekFromEnd(0) catch return;
+    var buf: [4096]u8 = undefined;
+    const line = std.fmt.bufPrint(&buf, "{s}\t{s}\n", .{ self.current, text }) catch return;
+    // One write of the whole line: two viewers never interleave inside one.
+    f.writeAll(line) catch {};
 }
 
 /// `OK <value>` / `FAIL <why>` for an evaluated probe. Caller frees.

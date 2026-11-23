@@ -9,8 +9,11 @@
 //! What it records, per window: its target name, pinned title, maximized
 //! state and selected tab; per tab its split tree with exact directions and
 //! ratios; per terminal pane its agent session id, pane id, target name,
-//! pinned title and the directory its shell is in; per viewer pane where it
-//! is (viewer restore proper is T3420). At quit each pane's screen is
+//! pinned title and the directory its shell is in; per viewer pane its pane
+//! id and name, where it is, where it was opened (Home) and the directory it
+//! was opened from (T3420) - re-opening there IS a viewer's restore, so an
+//! image comes back at best fit, a diff re-runs in that directory and a file
+//! deleted meanwhile shows the viewer's own error card. At quit each pane's screen is
 //! snapshotted too, so a re-attached pane paints its last frame at once while
 //! the agent gap-fills from the snapshot's offset.
 //!
@@ -179,6 +182,8 @@ fn captureLeaf(
     if (surface.getViewer()) |viewer| return .{
         .kind = schema.kind_viewer,
         .viewer_location = try arena.dupe(u8, viewer.currentLocation()),
+        .viewer_home_location = try arena.dupe(u8, viewer.homeLocation()),
+        .viewer_origin_directory = if (viewer.originDirectory()) |d| try arena.dupe(u8, d) else null,
         .ipc_name = name,
         .pane_id = try arena.dupe(u8, surface.paneId()),
     };
@@ -382,7 +387,7 @@ fn restoreWindow(app: *Application, ctx: *Ctx, win: schema.Window) bool {
         if (tab.nodes.len == 0) continue;
         const first = firstLeaf(tab.nodes, 0, 0) orelse continue;
         const view = ctx.viewLocation(first);
-        if (!first.isViewer()) ctx.setPending(first);
+        ctx.setPending(first);
         const t: *Tab = if (window) |w| (w.newTabForRestore(view) orelse continue) else t: {
             const w = app.newWindowForIpc(null, null, &.{}, view);
             window = w;
@@ -435,7 +440,7 @@ fn buildSubtree(
     const dir: Surface.Tree.Split.Direction = if (std.mem.eql(u8, sp.layout, "vertical")) .down else .right;
     const right = firstLeaf(nodes, sp.right, 0) orelse return error.CorruptLayout;
     const view = ctx.viewLocation(right);
-    if (!right.isViewer()) ctx.setPending(right);
+    ctx.setPending(right);
     const new_pane = tree.newSplitAt(dir, null, .{
         .view = view,
         .at = anchor,
@@ -466,8 +471,13 @@ fn ctxViewLocation(ctx: *Ctx, leaf: schema.Leaf) ?[:0]const u8 {
 
 /// Hand the next `Surface.new` its recorded pane: ATTACH its session when
 /// the agent still has it and no other pane took it, else a fresh shell in
-/// its directory. Either way it keeps its pane id.
+/// its directory. Either way it keeps its pane id. A viewer (T3420) has no
+/// session: it keeps its pane id, its Home and its origin directory.
 fn ctxSetPending(ctx: *Ctx, leaf: schema.Leaf) void {
+    if (leaf.isViewer()) {
+        Surface.pending_restore = viewerRestore(leaf);
+        return;
+    }
     const sid: ?[]const u8 = if (leaf.session_id) |id|
         (if (ctx.attach.claim(id, ctx.claimed, ctx.arena)) id else null)
     else
@@ -492,6 +502,37 @@ fn ctxSetPending(ctx: *Ctx, leaf: schema.Leaf) void {
         .snapshot = snap,
         .snapshot_offset = offset,
     };
+}
+
+/// A viewer leaf's restore (T3420; win32's `restoreViewerOpen`): the
+/// recorded pane id (scripts address it by id), the recorded Home (the
+/// restore navigates to where the pane IS, which would otherwise re-home it)
+/// and the origin directory, which arrives as the pane's working directory -
+/// the repository a diff spec re-runs in. Pure.
+fn viewerRestore(leaf: schema.Leaf) Surface.Restore {
+    return .{
+        .pane_id = leaf.pane_id,
+        .working_directory = leaf.viewer_origin_directory,
+        .viewer_home = leaf.viewer_home_location,
+    };
+}
+
+test "viewerRestore keeps a viewer's id, Home and origin directory; never a session" {
+    const r = viewerRestore(.{
+        .kind = schema.kind_viewer,
+        .session_id = "stray",
+        .pane_id = "p-1",
+        .working_directory = "/terminal/only",
+        .viewer_location = "https://example.com/",
+        .viewer_home_location = "/repo/README.md",
+        .viewer_origin_directory = "/repo",
+    });
+    try std.testing.expect(r.session_id == null);
+    try std.testing.expectEqualStrings("p-1", r.pane_id.?);
+    try std.testing.expectEqualStrings("/repo", r.working_directory.?);
+    try std.testing.expectEqualStrings("/repo/README.md", r.viewer_home.?);
+    const bare = viewerRestore(.{ .kind = schema.kind_viewer });
+    try std.testing.expect(bare.viewer_home == null and bare.working_directory == null);
 }
 
 test "layoutPathFrom: debug, release and a lineage, under XDG_CONFIG_HOME" {

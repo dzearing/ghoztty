@@ -83,6 +83,11 @@ pub const Surface = extern struct {
         /// it reflects (WP-D3). Only meaningful with `session_id`.
         snapshot: ?[]const u8 = null,
         snapshot_offset: u64 = 0,
+        /// A VIEWER pane's recorded Home (T3420): where it was opened, which
+        /// the restore keeps apart from where it now is (the `view` it is
+        /// built on). Its `working_directory` is the viewer's origin
+        /// directory - the repository a diff spec re-runs in.
+        viewer_home: ?[]const u8 = null,
     };
 
     /// The restore the NEXT `Surface.new` adopts (T3397), set by the session
@@ -798,7 +803,15 @@ pub const Surface = extern struct {
         const restore = pending_restore;
         pending_restore = null;
         if (overrides.view) |location| {
-            self.attachViewer(location, overrides.working_directory);
+            // A restored viewer (T3420) keeps its pane id, its Home and its
+            // origin directory; re-opening its location IS its restore.
+            const wd: ?[]const u8 = overrides.working_directory orelse
+                if (restore) |r| r.working_directory else null;
+            if (restore) |r| self.adoptPaneId(r.pane_id);
+            self.attachViewer(location, wd);
+            if (restore) |r| if (r.viewer_home) |home| {
+                if (priv.viewer) |v| v.setHomeLocation(home);
+            };
             return self;
         }
         priv.overrides = .{
@@ -816,9 +829,7 @@ pub const Surface = extern struct {
     /// leaves the fresh one `init` minted.
     fn adoptRestore(self: *Self, alloc: Allocator, r: Restore) void {
         const priv = self.private();
-        if (r.pane_id) |id| {
-            if (id.len == pane_id_mod.len and pane_id_mod.isValid(id)) @memcpy(&priv.pane_id, id);
-        }
+        self.adoptPaneId(r.pane_id);
         if (r.session_id) |sid| {
             priv.restore_session_id = alloc.dupe(u8, sid) catch null;
             if (r.snapshot) |snap| if (r.snapshot_offset > 0) {
@@ -829,6 +840,13 @@ pub const Surface = extern struct {
             if (priv.overrides.working_directory == null and wd.len > 0)
                 priv.overrides.working_directory = alloc.dupeZ(u8, wd) catch null;
         }
+    }
+
+    /// Take on a recorded pane id; one that is not well-formed leaves the
+    /// fresh id `init` minted.
+    fn adoptPaneId(self: *Self, recorded: ?[]const u8) void {
+        const id = recorded orelse return;
+        if (id.len == pane_id_mod.len and pane_id_mod.isValid(id)) @memcpy(&self.private().pane_id, id);
     }
 
     /// The title pinned on this pane (`--title`, the title prompt), or null
