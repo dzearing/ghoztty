@@ -547,8 +547,10 @@ pub fn openWindow(
     // command, cwd or environment for. The inline split's pane is still a
     // terminal, as on win32.
     const view = try viewLocation(arena, args);
+    // A viewer keeps the cwd, though: it is the repository a `git-diff:` /
+    // `git-status:` view diffs (T3417).
     const window = if (view) |location|
-        app.newWindowForIpc(null, null, &.{}, location)
+        app.newWindowForIpc(null, try workingDirectory(arena, args.working_directory), &.{}, location)
     else
         app.newWindowForIpc(
             try paneCommand(arena, app, args.e_args, args.command, args.shell),
@@ -696,6 +698,8 @@ pub fn createSplit(
     if (try viewLocation(arena, args)) |location| {
         const surface = tab.getSplitTree().newSplitAt(treeDirection(spec.direction), at.surface, .{
             .view = location,
+            // The repository a diff view diffs (T3417).
+            .working_directory = try workingDirectory(arena, args.working_directory),
             .at = at.surface,
             .ratio = spec.ratio,
             .focus = args.focus,

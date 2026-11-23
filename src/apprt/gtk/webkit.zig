@@ -359,6 +359,45 @@ pub extern fn g_bytes_get_size(bytes: *GBytes) usize;
 pub extern fn g_bytes_unref(bytes: *GBytes) void;
 pub extern fn g_memory_input_stream_new_from_bytes(bytes: *GBytes) *GInputStream;
 
+// --- Git diff panes: the changed-files panel (T3417) ------------------------
+//
+// The panel is a `GtkPaned`'s start child beside the page: a header, a search
+// entry for the filter, and a `GtkListBox` of the file tree's rows.
+
+pub extern fn gtk_paned_new(orientation: c_int) *GtkWidget;
+pub extern fn gtk_paned_set_start_child(paned: *GtkWidget, child: ?*GtkWidget) void;
+pub extern fn gtk_paned_set_end_child(paned: *GtkWidget, child: ?*GtkWidget) void;
+pub extern fn gtk_paned_set_resize_start_child(paned: *GtkWidget, resize: c_int) void;
+pub extern fn gtk_paned_set_shrink_start_child(paned: *GtkWidget, shrink: c_int) void;
+pub extern fn gtk_paned_set_shrink_end_child(paned: *GtkWidget, shrink: c_int) void;
+pub extern fn gtk_paned_set_position(paned: *GtkWidget, position: c_int) void;
+pub extern fn gtk_paned_get_position(paned: *GtkWidget) c_int;
+pub extern fn gtk_scrolled_window_new() *GtkWidget;
+pub extern fn gtk_scrolled_window_set_child(sw: *GtkWidget, child: ?*GtkWidget) void;
+pub extern fn gtk_scrolled_window_set_policy(sw: *GtkWidget, h: c_int, v: c_int) void;
+pub extern fn gtk_list_box_new() *GtkWidget;
+pub extern fn gtk_list_box_append(box: *GtkWidget, child: *GtkWidget) void;
+pub extern fn gtk_list_box_remove_all(box: *GtkWidget) void;
+pub extern fn gtk_list_box_get_row_at_index(box: *GtkWidget, index: c_int) ?*GtkWidget;
+pub extern fn gtk_list_box_select_row(box: *GtkWidget, row: ?*GtkWidget) void;
+pub extern fn gtk_list_box_get_selected_row(box: *GtkWidget) ?*GtkWidget;
+pub extern fn gtk_list_box_row_get_index(row: *GtkWidget) c_int;
+pub extern fn gtk_list_box_row_set_activatable(row: *GtkWidget, activatable: c_int) void;
+pub extern fn gtk_list_box_row_set_selectable(row: *GtkWidget, selectable: c_int) void;
+pub extern fn gtk_search_entry_new() *GtkWidget;
+pub extern fn gtk_search_entry_set_search_delay(entry: *GtkWidget, delay: c_uint) void;
+pub extern fn gtk_search_entry_set_placeholder_text(entry: *GtkWidget, text: ?[*:0]const u8) void;
+pub extern fn gtk_button_set_icon_name(button: *GtkWidget, icon: [*:0]const u8) void;
+pub extern fn gtk_widget_remove_css_class(widget: *GtkWidget, class: [*:0]const u8) void;
+pub extern fn gtk_widget_set_size_request(widget: *GtkWidget, width: c_int, height: c_int) void;
+pub extern fn gtk_label_set_ellipsize(label: *GtkWidget, mode: c_int) void;
+
+/// `GtkPolicyType`.
+pub const policy_never: c_int = 2;
+pub const policy_automatic: c_int = 1;
+/// `PangoEllipsizeMode`.
+pub const ellipsize_middle: c_int = 2;
+
 /// The web view as the GTK widget it is.
 pub fn asWidget(view: *WebView) *GtkWidget {
     return @ptrCast(view);

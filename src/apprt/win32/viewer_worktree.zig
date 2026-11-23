@@ -271,6 +271,17 @@ pub fn parseRoot(buf: []u8, stdout: []const u8) ?[]const u8 {
     return buf[0..trimmed.len];
 }
 
+/// `parseRoot` for a POSIX host (the Linux viewer, T3417): trimmed and nothing
+/// else, since a Linux path's `/` IS its separator. The module otherwise
+/// reasons only about Windows paths; this is the one answer that comes back
+/// from a git running on the other kind of host.
+pub fn parseRootPosix(buf: []u8, stdout: []const u8) ?[]const u8 {
+    const trimmed = std.mem.trim(u8, stdout, " \t\r\n");
+    if (trimmed.len == 0 or trimmed.len > buf.len) return null;
+    @memcpy(buf[0..trimmed.len], trimmed);
+    return buf[0..trimmed.len];
+}
+
 // -----------------------------------------------------------------------------
 // Repo root -> revision (T636)
 // -----------------------------------------------------------------------------
@@ -621,6 +632,13 @@ test "the repo root is trimmed and normalized to backslashes" {
     // A directory in no repo prints nothing.
     try testing.expect(parseRoot(&buf, "") == null);
     try testing.expect(parseRoot(&buf, "\n") == null);
+}
+
+test "a POSIX repo root is trimmed and keeps its slashes" {
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    try testing.expectEqualStrings("/home/u/repo", parseRootPosix(&buf, "/home/u/repo\n").?);
+    try testing.expectEqualStrings("/tmp/a b", parseRootPosix(&buf, "  /tmp/a b \r\n").?);
+    try testing.expect(parseRootPosix(&buf, "\n") == null);
 }
 
 test "the revision query names the root, and the two argvs differ by one flag" {

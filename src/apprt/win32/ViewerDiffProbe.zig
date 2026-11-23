@@ -27,7 +27,9 @@
 const Probe = @This();
 
 const std = @import("std");
+const builtin = @import("builtin");
 const Allocator = std.mem.Allocator;
+const is_windows = builtin.os.tag == .windows;
 
 const w32 = @import("win32.zig");
 const diff = @import("viewer_diff.zig");
@@ -210,8 +212,13 @@ alloc: Allocator,
 
 /// Where a completion is posted. Null until the pane has a host window, which
 /// is also every unit test — such a probe runs nothing.
-hwnd: ?w32.HWND = null,
+hwnd: if (is_windows) ?w32.HWND else void = if (is_windows) null else {},
 message: u32 = 0,
+/// The other way to be told (the Linux viewer, T3417): called ON THE WORKER
+/// THREAD once a job's answer is ready, so it must only hand off to the UI
+/// loop (GTK: `g_idle_add`) - `complete` still runs on the UI thread, as on
+/// Windows.
+notify: ?Notify = null,
 
 // --- published state, read by the pane on the GUI thread ------------------
 
@@ -295,6 +302,24 @@ pub fn deinit(self: *Probe) void {
 pub fn attach(self: *Probe, hwnd: w32.HWND, message: u32) void {
     self.hwnd = hwnd;
     self.message = message;
+}
+
+/// A completion callback in place of a window (T3417). See `notify`.
+pub const Notify = struct {
+    ctx: *anyopaque,
+    func: *const fn (ctx: *anyopaque) void,
+};
+
+pub fn attachNotify(self: *Probe, n: Notify) void {
+    self.notify = n;
+}
+
+/// Something will collect a worker's answer. Without it a worker is a spawn
+/// nobody asked for, so none is started.
+fn canComplete(self: *const Probe) bool {
+    if (self.notify != null) return true;
+    if (comptime is_windows) return self.hwnd != null;
+    return false;
 }
 
 fn clearListing(self: *Probe) void {
@@ -432,7 +457,7 @@ pub fn requestPatch(self: *Probe, location: []const u8, index: usize, scroll_to:
 fn startListing(self: *Probe, location: []const u8, directory: ?[]const u8, poll: bool) void {
     // No window is no completion, and a worker whose answer nothing can collect
     // is a process spawn nobody asked for. This is also every unit test.
-    if (self.hwnd == null) return;
+    if (!self.canComplete()) return;
     const job = self.alloc.create(Job) catch return;
     job.* = .{
         .alloc = self.alloc,
@@ -467,7 +492,7 @@ fn reusableRoot(self: *const Probe, directory: ?[]const u8) ?[]u8 {
 }
 
 fn startPatch(self: *Probe, location: []const u8, index: usize, scroll_to: ?[]const u8) void {
-    if (self.hwnd == null) return;
+    if (!self.canComplete()) return;
     const repo = self.repo orelse return;
     const entry = self.files.items[index];
     const job = self.alloc.create(Job) catch return;
@@ -647,11 +672,12 @@ fn work(self: *Probe, job: *Job) void {
     job.out_git = git_run.spawned_on_thread - before;
     // A cancelled job's pane is being torn down; nobody will read this post.
     if (job.cancel.isRequested()) return;
-    if (self.hwnd) |h| {
+    if (self.notify) |n| return n.func(n.ctx);
+    if (comptime is_windows) if (self.hwnd) |h| {
         if (w32.PostMessageW(h, self.message, 0, 0) == 0) {
             log.debug("diff completion could not be posted", .{});
         }
-    }
+    };
 }
 
 fn workListing(job: *Job) void {
@@ -970,7 +996,8 @@ fn repositoryRoot(alloc: Allocator, dir: []const u8, buf: []u8) ?[]const u8 {
         const argv = worktree.rootArgv(i, dir);
         var out_buf: [std.fs.max_path_bytes + 64]u8 = undefined;
         const out = git_run.capture(alloc, &argv, &out_buf) orelse continue;
-        return worktree.parseRoot(buf, out);
+        // A Linux host's root keeps its slashes (T3417).
+        return if (comptime is_windows) worktree.parseRoot(buf, out) else worktree.parseRootPosix(buf, out);
     }
     return null;
 }

@@ -750,8 +750,9 @@ pub const Surface = extern struct {
         title: ?[:0]const u8 = null,
         env: []const []const u8 = &.{},
         /// Open a VIEWER pane on this location instead of a terminal
-        /// (`--view`, T3411). Already resolved; command, cwd and env are
-        /// ignored, since a viewer has no shell.
+        /// (`--view`, T3411). Already resolved; command and env are
+        /// ignored, since a viewer has no shell. The cwd is kept: it is the
+        /// repository a `git-diff:` / `git-status:` view diffs (T3417).
         view: ?[:0]const u8 = null,
 
         pub const none: @This() = .{};
@@ -762,7 +763,7 @@ pub const Surface = extern struct {
         const alloc = Application.default().allocator();
         const priv: *Private = self.private();
         if (overrides.view) |location| {
-            self.attachViewer(location);
+            self.attachViewer(location, overrides.working_directory);
             return self;
         }
         priv.overrides = .{
@@ -778,7 +779,7 @@ pub const Surface = extern struct {
     /// realized and no core surface or pty ever starts. Everything that
     /// speaks to the core already tolerates its absence (it is the state
     /// every surface is in before its first resize).
-    fn attachViewer(self: *Self, location: []const u8) void {
+    fn attachViewer(self: *Self, location: []const u8, working_directory: ?[]const u8) void {
         const priv = self.private();
         const viewer = Viewer.create(std.heap.c_allocator, location) catch |err| {
             // Only OOM: there is nothing to show, so say so where the
@@ -789,6 +790,9 @@ pub const Surface = extern struct {
             return;
         };
         priv.viewer = viewer;
+        // Before the template finishes loading, so a diff's first listing
+        // already knows its repository.
+        viewer.setOriginDirectory(working_directory);
 
         const gl = priv.gl_area.as(gtk.Widget);
         gl.setVisible(0);

@@ -94,6 +94,7 @@ const links = @import("viewer_links.zig");
 const banner_link = @import("../win32/banner_link.zig");
 const ViewerImage = @import("ViewerImage.zig");
 const image_rules = @import("viewer_image.zig");
+const ViewerDiff = @import("ViewerDiff.zig");
 
 const log = std.log.scoped(.gtk_viewer);
 
@@ -187,6 +188,9 @@ file_link_handler_id: c_ulong = 0,
 /// An image pane's state: its zoom, what the page measured, which decoder
 /// serves the picture (T3416, `ViewerImage.zig`).
 image: ViewerImage = .{},
+/// A diff pane's state: its git worker, the changed-files panel, the
+/// layout and the filter (T3417, `ViewerDiff.zig`).
+diff: ViewerDiff = .{},
 
 /// The find card's widgets. All owned by `box` (through the overlay).
 const FindCard = struct {
@@ -251,7 +255,9 @@ pub fn create(alloc: Allocator, location: []const u8) !*Viewer {
     wk.gtk_overlay_set_child(overlay, w);
     wk.gtk_overlay_add_overlay(overlay, self.find.card);
     wk.gtk_box_append(box, self.bar.row);
-    wk.gtk_box_append(box, overlay);
+    // A diff pane's changed-files panel sits beside the page (T3417); it is
+    // hidden in every other mode, so the paned is the page alone there.
+    wk.gtk_box_append(box, self.diff.buildUi(self, overlay, self.bar.row));
     self.installFindScript();
     self.installLinks();
 
@@ -320,6 +326,7 @@ fn deinit(self: *Viewer) void {
         if (steps.viewer == self) steps.viewer = null;
     }
     self.watch.stop();
+    self.diff.deinit();
     if (self.ucm) |m| {
         if (self.message_handler != 0) wk.g_signal_handler_disconnect(m, self.message_handler);
         wk.webkit_user_content_manager_unregister_script_message_handler(m, bridge.handler_name, null);
@@ -681,6 +688,14 @@ fn syncChrome(self: *Viewer) void {
     wk.gtk_widget_set_sensitive(self.bar.forward, wk.webkit_web_view_can_go_forward(self.view));
     wk.gtk_widget_set_visible(self.bar.reveal, @intFromBool(chrome.showsReveal(self.mode) and self.file_path != null));
     self.syncAddress(false);
+    self.diff.syncMode(self);
+}
+
+/// Which repository a diff spec applies to: the pane's `--working-directory`
+/// (T3417). Called by the pane right after `create`, before the template has
+/// loaded, so the first listing already has it.
+pub fn setOriginDirectory(self: *Viewer, dir: ?[]const u8) void {
+    self.diff.setOriginDirectory(dir);
 }
 
 /// Put the pane's location in the address field - unless someone is typing
@@ -695,7 +710,7 @@ fn syncAddress(self: *Viewer, force: bool) void {
     wk.gtk_editable_set_text(self.bar.address, z.ptr);
 }
 
-fn focusWidget(self: *const Viewer) ?*wk.GtkWidget {
+pub fn focusWidget(self: *const Viewer) ?*wk.GtkWidget {
     const root = wk.gtk_widget_get_root(self.box) orelse return null;
     return wk.gtk_root_get_focus(root);
 }
@@ -1366,6 +1381,7 @@ pub fn handleKey(self: *Viewer, keyval: u32, state: u32) bool {
     const action = chrome.classify(keyval, state, .{
         .address = self.addressHasFocus(),
         .find = self.findHasFocus(),
+        .diff_filter = self.diff.filterHasFocus(self),
         .find_open = self.find_open,
     }) orelse return false;
     switch (action) {
@@ -1385,8 +1401,8 @@ pub fn handleKey(self: *Viewer, keyval: u32, state: u32) bool {
             .close_find => self.closeFind(),
             .find_next => self.stepFind(1),
             .find_previous => self.stepFind(-1),
-            // No diff filter on Linux yet (T3417).
-            .clear_diff_filter => return false,
+            // The whole file list back, the caret to the diff (T3417).
+            .clear_diff_filter => self.diff.clearFilter(self),
         },
     }
     log.debug("viewer: key {x} state {x} -> {s}", .{ keyval, state, @tagName(action) });
@@ -1448,6 +1464,8 @@ fn onScriptMessage(_: *wk.UserContentManager, value: *wk.JSCValue, ud: ?*anyopaq
         .link_menu => |href| self.armLinkMenu(href),
         // `image.js` (T3416): a measurement or a gesture to answer.
         .image => |m| self.image.onMessage(self, m),
+        // `diff.js` ran out of changes: roll into the adjacent file (T3417).
+        .diff_nav_overflow => |forward| self.diff.navOverflow(self, forward),
         else => {},
     }
 }
@@ -1686,7 +1704,7 @@ fn renderTemplate(self: *Viewer) void {
             }
         },
         .image => self.image.start(self),
-        .diff => self.showError("Diff viewer panes are not on Linux yet (T3417)", self.current),
+        .diff => self.diff.start(self),
         .web, .html => self.finishRender(true, ""),
     }
 }
@@ -1702,6 +1720,11 @@ fn fail(self: *Viewer, title: []const u8, detail: []const u8) void {
     log.warn("viewer: {s}: {s}", .{ title, detail });
     self.syncChrome();
     self.finishRender(false, title);
+}
+
+/// A page call that counts as a render (the test hooks wait on it).
+pub fn evaluateRender(self: *Viewer, js: []const u8) void {
+    self.evaluate(js);
 }
 
 fn evaluate(self: *Viewer, js: []const u8) void {
@@ -2020,7 +2043,16 @@ fn writeDump(text: []const u8) void {
 ///   wait            until the next render finishes (10 s): `wait ok=<bool>`
 ///   image           an image pane's zoom state (T3416): `image rev= loads=
 ///                   route= zoom= fitting= fit= natural=WxH viewport=WxH`
-///   state           `state mode= current= address= back= forward= reveal=
+///   diff            a diff pane's state (T3417): `diff files= file= style=
+///                   rows= selected= panel= listings= patches= unchanged=
+///                   git= width= busy= header= filter=`
+///   rows            the changed-files panel: `rows <kind>:<title>|...`
+///   filter <text>   replace the panel's filter text, as typing would
+///   filter-submit   Return in the filter (opens the top hit)
+///   filter-focus    put the caret in the filter
+///   row <id>        click the panel row with that id (a file's path)
+///   click diff-prev|diff-next|diff-layout   the bar's diff controls
+///   state          `state mode= current= address= back= forward= reveal=
 ///                   zoom= focus=address|find|content|other sel=<start>-<end>
 ///                   reloads=<dead-process reloads> card=none|pending|shown
 ///                   find=open|closed findq=<query> findsel=<start>-<end>
@@ -2133,6 +2165,9 @@ const steps = if (build_config.is_debug) struct {
                 .{ "find-previous", v.find.previous },
                 .{ "find-next", v.find.next },
                 .{ "find-close", v.find.close },
+                .{ "diff-prev", if (v.diff.ui) |u| u.prev else null },
+                .{ "diff-next", if (v.diff.ui) |u| u.next else null },
+                .{ "diff-layout", if (v.diff.ui) |u| u.layout else null },
             };
             var b: ?*wk.GtkWidget = null;
             inline for (named) |n| {
@@ -2160,6 +2195,33 @@ const steps = if (build_config.is_debug) struct {
             // zoom= fitting= fit= natural=WxH viewport=WxH`.
             var buf: [512]u8 = undefined;
             out("image {s}", .{v.image.describe(&buf)});
+        } else if (std.mem.eql(u8, verb, "diff")) {
+            // A diff pane's state (T3417), `ViewerDiff.describe`.
+            var buf: [2048]u8 = undefined;
+            out("diff {s}", .{v.diff.describe(&buf)});
+        } else if (std.mem.eql(u8, verb, "rows")) {
+            var buf: [3500]u8 = undefined;
+            out("rows {s}", .{v.diff.describeRows(&buf)});
+        } else if (std.mem.eql(u8, verb, "filter")) {
+            // Replace the filter field's text, as typing would; its
+            // `search-changed` narrows the tree.
+            if (v.diff.filterWidget()) |fw| {
+                var zbuf: [1024]u8 = undefined;
+                const z = std.fmt.bufPrintZ(&zbuf, "{s}", .{arg}) catch "";
+                wk.gtk_editable_set_text(fw, z.ptr);
+            }
+            out("filter {s}", .{arg});
+        } else if (std.mem.eql(u8, verb, "filter-submit")) {
+            // Return in the filter: the entry's own `activate`.
+            if (v.diff.filterWidget()) |fw| wk.g_signal_emit_by_name(fw, "activate");
+            out("filter-submit", .{});
+        } else if (std.mem.eql(u8, verb, "filter-focus")) {
+            const ok = if (v.diff.filterWidget()) |fw| wk.gtk_widget_grab_focus(fw) != 0 else false;
+            out("filter-focus ok={}", .{ok});
+        } else if (std.mem.eql(u8, verb, "row")) {
+            // Click the panel row whose id is `arg` (a file's path, a folder
+            // key `<origin>:<path>`).
+            out("row {s} found={}", .{ arg, v.diff.activateRowById(v, arg) });
         } else if (std.mem.eql(u8, verb, "terminate")) {
             out("terminate", .{});
             wk.webkit_web_view_terminate_web_process(v.view);

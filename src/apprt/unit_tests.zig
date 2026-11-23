@@ -602,6 +602,10 @@ test {
     // decoder a format goes to, the Linux missing-codec card, and the Mac's
     // keep-the-zoom-on-a-same-size-reload rule (T3416). No GTK imports.
     _ = @import("gtk/viewer_image.zig");
+    // The GTK diff pane's pure half: the panel header, a row's count column
+    // and status tint, and the UTF-8 repair a Latin-1 patch needs before
+    // WebKit will take it (T3417). No GTK imports.
+    _ = @import("gtk/viewer_diff_text.zig");
 
     // Pure win32 image-viewer zoom rules — what 100% means, best-fit's refusal
     // to upscale, the double-click toggle and the step/clamp (T1183), same

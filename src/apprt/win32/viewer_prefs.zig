@@ -44,10 +44,23 @@ pub const FORMAT_BUF_LEN: usize = 16;
 /// One preference file's path under `%LOCALAPPDATA%\ghoztty`. Debug builds get
 /// their own (the debug-IPC-pipe coexistence pattern) so dev/test panes never
 /// move the release app's chrome.
+///
+/// On Linux (the GTK viewer reads the same preferences, T3417) the directory
+/// is `$XDG_STATE_HOME/ghoztty`, else `~/.local/state/ghoztty`: a taste the app
+/// remembers is state, not configuration the user writes.
 fn prefPath(alloc: Allocator, comptime stem: []const u8) ?[]u8 {
+    const name = if (builtin.mode == .Debug) stem ++ "-debug" else stem;
+    if (comptime builtin.os.tag != .windows) {
+        if (std.process.getEnvVarOwned(alloc, "XDG_STATE_HOME")) |dir| {
+            defer alloc.free(dir);
+            if (dir.len > 0 and dir[0] == '/') return std.fs.path.join(alloc, &.{ dir, "ghoztty", name }) catch null;
+        } else |_| {}
+        const home = std.process.getEnvVarOwned(alloc, "HOME") catch return null;
+        defer alloc.free(home);
+        return std.fs.path.join(alloc, &.{ home, ".local", "state", "ghoztty", name }) catch null;
+    }
     const dir = std.process.getEnvVarOwned(alloc, "LOCALAPPDATA") catch return null;
     defer alloc.free(dir);
-    const name = if (builtin.mode == .Debug) stem ++ "-debug" else stem;
     return std.fs.path.join(alloc, &.{ dir, "ghoztty", name }) catch null;
 }
 

@@ -26,9 +26,13 @@
 //! everything else — a filesystem that stopped responding, a hook, a helper
 //! nobody anticipated. Mac's `ViewerProcess.run` has carried the same belt as a
 //! 15 s `DispatchWorkItem` since it was written.
+//!
+//! Also the Linux viewer's (T3417): POSIX builds use a process group where
+//! Windows uses a job object (see `Running`), and nothing else differs.
 const std = @import("std");
 const builtin = @import("builtin");
 const windows = std.os.windows;
+const is_windows = builtin.os.tag == .windows;
 const Allocator = std.mem.Allocator;
 const worker_pool = @import("worker_pool.zig");
 
@@ -193,14 +197,28 @@ const win_job = struct {
 ///
 /// No job (an OS or policy that refuses one) falls back to the process alone:
 /// the behavior from before this change, never worse.
+///
+/// POSIX has no job object; the same guarantee comes from a PROCESS GROUP.
+/// git is started as the leader of a group of its own (`pgid = 0`), whatever
+/// it starts inherits the group, and the kill signals the whole group - so a
+/// helper still holding the stdout pipe ends with it.
 const Running = struct {
     child: *std.process.Child,
-    job: ?windows.HANDLE = null,
+    job: if (is_windows) ?windows.HANDLE else void = if (is_windows) null else {},
 
     /// End the tree. Safe to call more than once and from any thread while
     /// the handles are open, which `Cancel`'s mutex and `Deadline.stop`
     /// guarantee.
     fn kill(self: *const Running) void {
+        if (comptime !is_windows) {
+            // The negative pid names the group. The leader is not reaped
+            // until `finish` waits, which runs after `Deadline.stop` and
+            // `untrack`, so its pid cannot have been reused by then.
+            std.posix.kill(-self.child.id, std.posix.SIG.KILL) catch {
+                std.posix.kill(self.child.id, std.posix.SIG.KILL) catch {};
+            };
+            return;
+        }
         if (self.job) |j| {
             if (win_job.TerminateJobObject(j, 1) != 0) return;
         }
@@ -214,6 +232,15 @@ const Running = struct {
 /// else.
 fn launch(child: *std.process.Child, running: *Running) bool {
     if (cancel_on_thread) |c| if (c.isRequested()) return false;
+    if (comptime !is_windows) {
+        // A process group of its own, so `kill` reaches everything it starts.
+        child.pgid = 0;
+        child.spawn() catch return false;
+        spawned_on_thread += 1;
+        running.* = .{ .child = child };
+        if (cancel_on_thread) |c| c.track(running);
+        return true;
+    }
     child.start_suspended = true;
     child.spawn() catch return false;
     spawned_on_thread += 1;
@@ -251,8 +278,10 @@ fn makeJob(process: windows.HANDLE) ?windows.HANDLE {
 fn finish(running: *Running) struct { term: ?std.process.Child.Term, cancelled: bool } {
     if (cancel_on_thread) |c| c.untrack();
     const term = running.child.wait() catch null;
-    if (running.job) |j| windows.CloseHandle(j);
-    running.job = null;
+    if (comptime is_windows) {
+        if (running.job) |j| windows.CloseHandle(j);
+        running.job = null;
+    }
     const cancelled = if (cancel_on_thread) |c| c.isRequested() else false;
     return .{ .term = term, .cancelled = cancelled };
 }
