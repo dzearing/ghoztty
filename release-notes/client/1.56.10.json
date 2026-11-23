@@ -1,0 +1,18 @@
+{
+  "version": "1.56.10",
+  "sections": [
+    { "title": "New",
+      "items": [
+        { "text": "On Linux, viewer panes get the navigation bar and the browser keys." },
+        { "text": "On Linux, a document pane updates itself when its file is saved, answers +reload, and recovers when its web process dies." },
+        { "text": "On Linux, a document, code or website pane can be searched with Ctrl+F." },
+        { "text": "On Linux, links in a document or web pane go where they do on Mac and Windows, and right-clicking one gives Ghoztty's link menu." }
+      ] },
+    { "title": "Fixes",
+      "items": [
+        { "text": "After an update, the leftover installer copy is cleaned up in the background instead of lingering until the next launch." },
+        { "text": "Fork CI's Windows cross-compile no longer inherits a broken build cache from a cancelled run." },
+        { "text": "Fork CI lets a running check finish instead of cancelling it on every push." }
+      ] }
+  ]
+}
