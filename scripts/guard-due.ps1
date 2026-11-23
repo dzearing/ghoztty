@@ -521,7 +521,10 @@ $GuardTable = @(
         Covers = @(
             'test\win32\chooser-kill-hover.ps1',
             'src\apprt\win32\MachineChooser.zig',
-            'src\apprt\win32\SessionRoster.zig'
+            'src\apprt\win32\SessionRoster.zig',
+            'src\apprt\win32\session_roster_input.zig',
+            'src\apprt\win32\session_roster_paint.zig',
+            'src\apprt\win32\session_roster_rows.zig'
         )
     },
     # The Sign Out link's underline clears when the pointer leaves the window
@@ -590,7 +593,10 @@ $GuardTable = @(
         Stamp  = 'test\win32\chooser-roster-refetch.stamp.json'
         Covers = @(
             'test\win32\chooser-roster-refetch.ps1',
-            'src\apprt\win32\SessionRoster.zig'
+            'src\apprt\win32\SessionRoster.zig',
+            'src\apprt\win32\session_roster_input.zig',
+            'src\apprt\win32\session_roster_paint.zig',
+            'src\apprt\win32\session_roster_rows.zig'
         )
     },
     # The session roster end to end: off-thread load, painted cards, Kill, and
@@ -602,6 +608,9 @@ $GuardTable = @(
         Covers = @(
             'test\win32\chooser-sessions.ps1',
             'src\apprt\win32\SessionRoster.zig',
+            'src\apprt\win32\session_roster_input.zig',
+            'src\apprt\win32\session_roster_paint.zig',
+            'src\apprt\win32\session_roster_rows.zig',
             'src\apprt\win32\chooser_sessions.zig'
         )
     },
@@ -7299,6 +7308,9 @@ $GuardTable = @(
         Stamp  = 'test\win32\chooser-resume.stamp.json'
         Covers = @(
             'src\apprt\win32\SessionRoster.zig',
+            'src\apprt\win32\session_roster_input.zig',
+            'src\apprt\win32\session_roster_paint.zig',
+            'src\apprt\win32\session_roster_rows.zig',
             'src\apprt\win32\chooser_sessions.zig',
             'test\win32\chooser-resume.ps1',
             'test\win32\lib\ChooserCursor.ps1'
@@ -7320,6 +7332,9 @@ $GuardTable = @(
         Stamp  = 'test\win32\chooser-resume-remote.stamp.json'
         Covers = @(
             'src\apprt\win32\SessionRoster.zig',
+            'src\apprt\win32\session_roster_input.zig',
+            'src\apprt\win32\session_roster_paint.zig',
+            'src\apprt\win32\session_roster_rows.zig',
             'src\apprt\win32\chooser_sessions.zig',
             'src\apprt\win32\host_defaults.zig',
             'test\win32\chooser-resume-remote.ps1',
@@ -7346,6 +7361,9 @@ $GuardTable = @(
         Stamp  = 'test\win32\chooser-orphan-badge.stamp.json'
         Covers = @(
             'src\apprt\win32\SessionRoster.zig',
+            'src\apprt\win32\session_roster_input.zig',
+            'src\apprt\win32\session_roster_paint.zig',
+            'src\apprt\win32\session_roster_rows.zig',
             'src\apprt\win32\chooser_sessions.zig',
             'test\win32\chooser-orphan-badge.ps1',
             'test\win32\lib\ChooserCursor.ps1'
@@ -7845,6 +7863,9 @@ $GuardTable = @(
             'src\apprt\win32\chooser_sessions.zig',
             'src\apprt\win32\MachineChooser.zig',
             'src\apprt\win32\SessionRoster.zig',
+            'src\apprt\win32\session_roster_input.zig',
+            'src\apprt\win32\session_roster_paint.zig',
+            'src\apprt\win32\session_roster_rows.zig',
             'test\win32\chooser-selection.ps1',
             # T1372: its focused-fill wait polls through this
             'test\win32\lib\PaintWait.ps1'

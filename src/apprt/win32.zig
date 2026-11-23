@@ -54,6 +54,12 @@ test {
     _ = @import("win32/viewer_feedback_focus.zig");
     _ = @import("win32/viewer_feedback_carousel.zig");
     _ = @import("win32/viewer_feedback_composer.zig");
+    // The session roster's planes (T1783, split out of SessionRoster.zig),
+    // listed for the same reason: the roster imports them, which compiles
+    // them and runs none of the tests that moved with them.
+    _ = @import("win32/session_roster_input.zig");
+    _ = @import("win32/session_roster_rows.zig");
+    _ = @import("win32/session_roster_paint.zig");
     // The one place the viewer runs `git` (T636), and since T818 the one place
     // a wedged git is given up on. Listed in its own right for the reason this
     // list exists: ViewerPane already imported it, so it compiled, and its
