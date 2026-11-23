@@ -80,9 +80,16 @@ else
     check "S9 without /dev/dxg the app leaves Mesa's driver choice alone" $?
 fi
 
+hl_stop
+
 # T3350: a driver the user chose wins - here llvmpipe, which the app must keep
-# (and leave in the shell's environment, since it was the user's).
+# (and leave in the shell's environment, since it was the user's). A FRESH
+# harness: the window's shell runs under the ghoztty-agent the first app
+# spawned, with that agent's environment, so a second app on the same harness
+# would hand its shell to an agent that never saw the user's variable.
 if [ $dxg = 1 ]; then
+    hl_start
+    check "S4b a second private headless Weston is up" $?
     umark="$HL_RUNTIME/user-shell-ran"
     hl_launch UAPP env GALLIUM_DRIVER=llvmpipe timeout 30 "$app" --gtk-single-instance=false -e /bin/sh -c "env > $umark.env; tty > $umark; sleep 60"
     hl_wait_for 20 test -s "$umark"
@@ -91,10 +98,9 @@ if [ $dxg = 1 ]; then
     case "$r" in *llvmpipe*) true ;; *) false ;; esac && grep -q 'wslg: GPU driver left to the environment' "$UAPP_LOG"
     check "S12 a user's GALLIUM_DRIVER=llvmpipe wins over the app's default" $? "renderer=$r"
     grep -q '^GALLIUM_DRIVER=llvmpipe$' "$umark.env"
-    check "S13 the user's GALLIUM_DRIVER still reaches the shell" $?
+    check "S13 the user's GALLIUM_DRIVER still reaches the shell" $? "$(grep '^GALLIUM_DRIVER=' "$umark.env" 2>/dev/null || echo 'not in the shell env')"
+    hl_stop
 fi
-
-hl_stop
 
 if [ $fails = 0 ]; then echo "GTK SMOKE: ALL PASS"; exit 0; fi
 echo "GTK SMOKE: $fails FAILURE(S)"; exit 1
