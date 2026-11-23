@@ -95,6 +95,7 @@ const banner_link = @import("../win32/banner_link.zig");
 const ViewerImage = @import("ViewerImage.zig");
 const image_rules = @import("viewer_image.zig");
 const ViewerDiff = @import("ViewerDiff.zig");
+const ViewerTOC = @import("ViewerTOC.zig");
 
 const log = std.log.scoped(.gtk_viewer);
 
@@ -191,6 +192,8 @@ image: ViewerImage = .{},
 /// A diff pane's state: its git worker, the changed-files panel, the
 /// layout and the filter (T3417, `ViewerDiff.zig`).
 diff: ViewerDiff = .{},
+/// A markdown pane's table of contents (T3418).
+toc: ViewerTOC = .{},
 
 /// The find card's widgets. All owned by `box` (through the overlay).
 const FindCard = struct {
@@ -253,6 +256,9 @@ pub fn create(alloc: Allocator, location: []const u8) !*Viewer {
     wk.gtk_widget_set_hexpand(overlay, 1);
     wk.gtk_widget_set_vexpand(overlay, 1);
     wk.gtk_overlay_set_child(overlay, w);
+    // The contents card (T3418) floats over the page's top-left, under the
+    // find card; its button is the bar's first item.
+    self.toc.buildUi(self, overlay, self.bar.row);
     wk.gtk_overlay_add_overlay(overlay, self.find.card);
     wk.gtk_box_append(box, self.bar.row);
     // A diff pane's changed-files panel sits beside the page (T3417); it is
@@ -327,6 +333,7 @@ fn deinit(self: *Viewer) void {
     }
     self.watch.stop();
     self.diff.deinit();
+    self.toc.deinit();
     if (self.ucm) |m| {
         if (self.message_handler != 0) wk.g_signal_handler_disconnect(m, self.message_handler);
         wk.webkit_user_content_manager_unregister_script_message_handler(m, bridge.handler_name, null);
@@ -689,6 +696,7 @@ fn syncChrome(self: *Viewer) void {
     wk.gtk_widget_set_visible(self.bar.reveal, @intFromBool(chrome.showsReveal(self.mode) and self.file_path != null));
     self.syncAddress(false);
     self.diff.syncMode(self);
+    self.toc.syncMode(self);
 }
 
 /// Which repository a diff spec applies to: the pane's `--working-directory`
@@ -1450,7 +1458,8 @@ fn installFindScript(self: *Viewer) void {
 }
 
 /// A message from the page. The template's `viewer.js` posts on the same
-/// handler (headings, the active heading); only `find` is acted on here, and
+/// handler: `find`, the link menu, an image or diff report, and the heading
+/// index and scroll spy (T3418) are acted on here, and
 /// anything a website posts that does not parse is ignored (`bridge.parse`).
 fn onScriptMessage(_: *wk.UserContentManager, value: *wk.JSCValue, ud: ?*anyopaque) callconv(.c) void {
     const self: *Viewer = @ptrCast(@alignCast(ud orelse return));
@@ -1466,6 +1475,9 @@ fn onScriptMessage(_: *wk.UserContentManager, value: *wk.JSCValue, ud: ?*anyopaq
         .image => |m| self.image.onMessage(self, m),
         // `diff.js` ran out of changes: roll into the adjacent file (T3417).
         .diff_nav_overflow => |forward| self.diff.navOverflow(self, forward),
+        // `viewer.js` (T3418): the heading index, and the scroll spy.
+        .headings => |h| self.toc.setHeadings(self, h),
+        .active => |id| self.toc.setActive(id),
         else => {},
     }
 }
@@ -1783,7 +1795,10 @@ fn onLoadChanged(view: *wk.WebView, event: wk.LoadEvent, ud: ?*anyopaque) callco
         },
     }
     switch (event) {
-        .started => self.page_live = false,
+        .started => {
+            self.page_live = false;
+            self.toc.pageGone();
+        },
         .committed => self.syncCommitted(),
         .finished => {
             self.page_live = true;
@@ -2168,6 +2183,7 @@ const steps = if (build_config.is_debug) struct {
                 .{ "diff-prev", if (v.diff.ui) |u| u.prev else null },
                 .{ "diff-next", if (v.diff.ui) |u| u.next else null },
                 .{ "diff-layout", if (v.diff.ui) |u| u.layout else null },
+                .{ "contents", v.toc.buttonWidget() },
             };
             var b: ?*wk.GtkWidget = null;
             inline for (named) |n| {
@@ -2199,6 +2215,32 @@ const steps = if (build_config.is_debug) struct {
             // A diff pane's state (T3417), `ViewerDiff.describe`.
             var buf: [2048]u8 = undefined;
             out("diff {s}", .{v.diff.describe(&buf)});
+        } else if (std.mem.eql(u8, verb, "toc")) {
+            // The contents card's state (T3418), `ViewerTOC.describe`.
+            var buf: [1024]u8 = undefined;
+            out("toc {s}", .{v.toc.describe(&buf)});
+        } else if (std.mem.eql(u8, verb, "toc-rows")) {
+            var buf: [3500]u8 = undefined;
+            out("toc-rows {s}", .{v.toc.describeRows(&buf)});
+        } else if (std.mem.eql(u8, verb, "toc-row")) {
+            // Click the contents row for heading id `arg`.
+            out("toc-row {s} found={}", .{ arg, v.toc.clickRowById(v, arg) });
+        } else if (std.mem.eql(u8, verb, "toc-drag")) {
+            // Drag the card's right edge `arg` px, as the gesture would:
+            // begin, then end at that offset.
+            const dx = std.fmt.parseFloat(f64, arg) catch 0;
+            v.toc.beginDrag();
+            v.toc.endDrag(v, dx);
+            out("toc-drag {s}", .{arg});
+        } else if (std.mem.eql(u8, verb, "resize")) {
+            // Resize the pane's window to `WxH`, as dragging its edge would.
+            var it = std.mem.splitScalar(u8, arg, 'x');
+            const rw = std.fmt.parseInt(c_int, it.next() orelse "", 10) catch 0;
+            const rh = std.fmt.parseInt(c_int, it.next() orelse "", 10) catch 0;
+            const root = wk.gtk_widget_get_root(v.box);
+            const ok = root != null and rw > 0 and rh > 0;
+            if (ok) wk.gtk_window_set_default_size(root.?, rw, rh);
+            out("resize {s} ok={}", .{ arg, ok });
         } else if (std.mem.eql(u8, verb, "rows")) {
             var buf: [3500]u8 = undefined;
             out("rows {s}", .{v.diff.describeRows(&buf)});

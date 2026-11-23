@@ -606,6 +606,10 @@ test {
     // and status tint, and the UTF-8 repair a Latin-1 patch needs before
     // WebKit will take it (T3417). No GTK imports.
     _ = @import("gtk/viewer_diff_text.zig");
+    // The GTK contents card's pure half: gutter vs overlay for a pane width,
+    // the button and the row click, the drag clamp, heading depths (T3418).
+    // No GTK imports.
+    _ = @import("gtk/viewer_toc.zig");
     // ... and the POSIX half of win32's git runner it spawns git through:
     // the deadline and the cancel end the whole process group (T3417).
     // Off Windows only, whose win32 lane covers the job object - importing it

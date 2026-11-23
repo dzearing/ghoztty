@@ -392,6 +392,38 @@ pub extern fn gtk_widget_remove_css_class(widget: *GtkWidget, class: [*:0]const 
 pub extern fn gtk_widget_set_size_request(widget: *GtkWidget, width: c_int, height: c_int) void;
 pub extern fn gtk_label_set_ellipsize(label: *GtkWidget, mode: c_int) void;
 
+// --- The table-of-contents card (T3418) -------------------------------------
+
+pub const GtkAdjustment = opaque {};
+/// `graphene_rect_t`.
+pub const GrapheneRect = extern struct { x: f32 = 0, y: f32 = 0, w: f32 = 0, h: f32 = 0 };
+
+pub extern fn gtk_box_prepend(box: *GtkWidget, child: *GtkWidget) void;
+pub extern fn gtk_drawing_area_new() *GtkWidget;
+pub extern fn gtk_widget_set_can_target(widget: *GtkWidget, can_target: c_int) void;
+pub extern fn gtk_widget_get_width(widget: *GtkWidget) c_int;
+pub extern fn gtk_widget_set_cursor_from_name(widget: *GtkWidget, name: ?[*:0]const u8) void;
+pub extern fn gtk_widget_set_overflow(widget: *GtkWidget, overflow: c_int) void;
+pub extern fn gtk_widget_compute_bounds(widget: *GtkWidget, target: *GtkWidget, out: *GrapheneRect) c_int;
+pub extern fn gtk_scrolled_window_set_propagate_natural_height(sw: *GtkWidget, propagate: c_int) void;
+pub extern fn gtk_scrolled_window_set_max_content_height(sw: *GtkWidget, height: c_int) void;
+pub extern fn gtk_scrolled_window_get_vadjustment(sw: *GtkWidget) *GtkAdjustment;
+pub extern fn gtk_adjustment_get_value(adj: *GtkAdjustment) f64;
+pub extern fn gtk_adjustment_get_page_size(adj: *GtkAdjustment) f64;
+pub extern fn gtk_adjustment_set_value(adj: *GtkAdjustment, value: f64) void;
+pub extern fn gtk_label_set_wrap(label: *GtkWidget, wrap: c_int) void;
+pub extern fn gtk_label_set_wrap_mode(label: *GtkWidget, mode: c_int) void;
+pub extern fn gtk_label_set_lines(label: *GtkWidget, lines: c_int) void;
+pub extern fn gtk_label_set_max_width_chars(label: *GtkWidget, n_chars: c_int) void;
+pub extern fn gtk_gesture_drag_new() *GtkEventController;
+pub extern fn gtk_list_box_set_activate_on_single_click(box: *GtkWidget, single: c_int) void;
+
+/// `GtkOverflow`.
+pub const overflow_hidden: c_int = 1;
+/// `PangoEllipsizeMode` / `PangoWrapMode`.
+pub const ellipsize_end: c_int = 3;
+pub const wrap_word_char: c_int = 2;
+
 /// `GtkPolicyType`.
 pub const policy_never: c_int = 2;
 pub const policy_automatic: c_int = 1;
