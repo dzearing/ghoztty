@@ -657,7 +657,8 @@ window (a `file://` link: reveal / side pane / its app).
 - **The link menu**: the shared `links.js` is a user script in EVERY frame
   (an iframe's link gets the menu too); it declines a `#fragment`, a click in
   a selection and schemes with no action, and posts `linkMenu` on
-  `viewerTOC`. `ghoztty-page:` is in its scheme list for this platform. The
+  `viewerTOC` - the one message an iframe's post is acted on for (T3554,
+  below). `ghoztty-page:` is in its scheme list for this platform. The
   href is resolved to what the menu acts on first (a relative doc link or a
   page link is the FILE, a broken doc link the file it meant), then a
   `GtkPopoverMenu` pops at the last pointer position over the page, rows,
@@ -687,6 +688,44 @@ powershell -NoProfile -File scripts\linux\wsl-run.ps1 -CommandFile test\linux\vi
 ```
 
 Ends `VIEWER LINKS: ALL PASS` (42 checks).
+
+### Which frame posted: the private-world relay (T3554)
+
+WebKitGTK's `script-message-received` carries the value and no frame, and a
+handler registered in the page's own world is visible to EVERY iframe. So the
+page bridge is split the way win32's `ViewerPane.onFrameMessage` splits it -
+a subframe may post the link menu and nothing else - with the shared page
+scripts untouched (`src/apprt/gtk/viewer_frames.zig`, none lane):
+
+- The native handlers, `ghozttyTop` and `ghozttySubframe`, are registered in
+  the private script world `ghoztty`. No page script, in any frame, can see
+  them.
+- `shim_js` (page world, every frame, document start - before any page
+  script) defines `window.webkit.messageHandlers` with the two names our
+  scripts post on, `viewerTOC` and `ghozttyFileLink`. `postMessage`
+  serialises the value and fires `__ghozttyBridge` on the frame's OWN
+  document as `"<name>\n<json>"`.
+- `relay_js` (private world, every frame, document start) hears that event
+  in its frame and forwards the string on `ghozttyTop` when
+  `window.top === window`, else on `ghozttySubframe`. A cross-origin iframe
+  cannot fire an event on the top document, so its only road ends at
+  `ghozttySubframe`, which takes `linkMenu` (`links.js` runs in every frame)
+  and logs `viewer: dropped a subframe's <kind> post` for the rest - a quote,
+  headings, active, find, or a file link.
+- Anything new that posts from a page goes through the shim's names; a new
+  handler name means a new entry in `shim_js` and `split`, never a page-world
+  registration. Code the app evaluates (`evaluate_javascript`, test probes)
+  still runs in the page world, so `window.webkit.messageHandlers.viewerTOC`
+  there is the shim.
+
+```powershell
+powershell -NoProfile -File scripts\linux\wsl-run.ps1 -CommandFile test\linux\viewer-subframe.sh
+```
+
+Ends `VIEWER SUBFRAME: ALL PASS` (16 checks): a cross-origin iframe's quote
+(and one forged by firing the relay's event itself), headings, active, find
+and Ctrl+Shift file link are all dropped and its link still gets the menu,
+while the same quote and file link from the top page are acted on.
 
 ### Image panes (T3416)
 
