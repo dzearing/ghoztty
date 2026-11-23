@@ -543,6 +543,7 @@ pub extern fn gtk_viewport_scroll_to(viewport: *GtkWidget, descendant: *GtkWidge
 /// `GtkContentFit`.
 pub const content_fit_contain: c_int = 1;
 pub extern fn gtk_button_new() *GtkWidget;
+pub extern fn gtk_image_new_from_icon_name(icon: [*:0]const u8) *GtkWidget;
 
 // --- The pane banner's widgets (T3339) --------------------------------------
 

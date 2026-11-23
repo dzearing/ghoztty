@@ -2466,6 +2466,7 @@ const steps = if (build_config.is_debug) struct {
                 .{ "feedback", v.feedback.buttonWidget() },
                 .{ "feedback-send", v.feedback.sendButtonWidget() },
                 .{ "feedback-shot", v.feedback.shotButtonWidget() },
+                .{ "feedback-folder", v.feedback.linkButtonWidget() },
             };
             var b: ?*wk.GtkWidget = null;
             inline for (named) |n| {

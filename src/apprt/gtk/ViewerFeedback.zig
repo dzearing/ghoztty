@@ -108,6 +108,22 @@ sending: bool = false,
 /// Reports filed from this pane, and the folder of the last one.
 sends: u32 = 0,
 filed: ?[]u8 = null,
+/// The draft's staging-folder name (T3553, Mac's `feedbackDraftStem`, win32
+/// T645): minted when the composer opens, cleared when a report is filed.
+/// Stable for the draft's whole life, so the footer link, the files the user
+/// drops into that folder and the send's one atomic rename all name ONE
+/// folder. The folder itself is made lazily - on the link's click or on the
+/// send - so a composer opened and closed without a word leaves nothing.
+stem_buf: [report.stem_len]u8 = undefined,
+stem_len: usize = 0,
+/// The footer: the draft-folder link (shown while no status is) and its
+/// label, beside the status line and the key hints.
+link_button: ?*wk.GtkWidget = null,
+link_label: ?*wk.GtkWidget = null,
+/// How many times the link opened the draft folder, and the last folder it
+/// staged - the steps seam's `reveals=`/`staged=`.
+reveals: u32 = 0,
+staged: ?[]u8 = null,
 /// Every passage quoted into this composer (T3545), and where the live ones
 /// sit in `text` as byte spans - the page's own report of its quote blocks
 /// after every edit, so a deleted block drops out and an edited one stays.
@@ -237,6 +253,8 @@ pub fn deinit(self: *ViewerFeedback) void {
     self.status_text = null;
     if (self.filed) |f| alloc.free(f);
     self.filed = null;
+    if (self.staged) |f| alloc.free(f);
+    self.staged = null;
     self.cache.deinit();
     if (self.origin_dir) |d| alloc.free(d);
     self.origin_dir = null;
@@ -523,12 +541,48 @@ pub fn buildComposerUi(self: *ViewerFeedback, v: *Viewer) *wk.GtkWidget {
     wk.gtk_scrolled_window_set_child(strip, row);
     wk.gtk_box_append(band, strip);
 
+    // The footer (Mac's `footer`): the draft-folder link OR the status line
+    // (a "Filed ..." or a failure takes the link's place, T3553), then the
+    // key hints at the trailing edge.
+    const footer = wk.gtk_box_new(wk.orientation_horizontal, 6);
+
+    // The link: a flat button holding a folder icon and the underlined path,
+    // middle-truncated so a narrow pane keeps both ends of it readable.
+    const link_b = wk.gtk_button_new();
+    wk.gtk_widget_add_css_class(link_b, "flat");
+    wk.gtk_widget_add_css_class(link_b, "dim-label");
+    wk.gtk_widget_add_css_class(link_b, "caption");
+    wk.gtk_widget_set_focus_on_click(link_b, 0);
+    wk.gtk_widget_set_tooltip_text(link_b, host.staging_tooltip);
+    wk.gtk_widget_set_visible(link_b, 0);
+    const link_row = wk.gtk_box_new(wk.orientation_horizontal, 4);
+    wk.gtk_box_append(link_row, wk.gtk_image_new_from_icon_name("folder-symbolic"));
+    const link_l = wk.gtk_label_new("");
+    wk.gtk_label_set_ellipsize(link_l, wk.ellipsize_middle);
+    wk.gtk_box_append(link_row, link_l);
+    wk.gtk_button_set_child(link_b, link_row);
+    _ = wk.g_signal_connect_data(link_b, "clicked", @ptrCast(&onLinkClicked), v, null, 0);
+    wk.gtk_box_append(footer, link_b);
+
     const status = wk.gtk_label_new("");
     wk.gtk_label_set_xalign(status, 0);
+    wk.gtk_label_set_ellipsize(status, wk.ellipsize_middle);
     wk.gtk_widget_add_css_class(status, "dim-label");
     wk.gtk_widget_add_css_class(status, "caption");
-    wk.gtk_box_append(band, status);
+    wk.gtk_box_append(footer, status);
 
+    // The hints take the slack, so they sit at the trailing edge whichever of
+    // the two before them is showing.
+    const hints = wk.gtk_label_new(host.footer_hints);
+    wk.gtk_label_set_xalign(hints, 1);
+    wk.gtk_widget_set_hexpand(hints, 1);
+    wk.gtk_widget_add_css_class(hints, "dim-label");
+    wk.gtk_widget_add_css_class(hints, "caption");
+    wk.gtk_box_append(footer, hints);
+    wk.gtk_box_append(band, footer);
+
+    self.link_button = link_b;
+    self.link_label = link_l;
     self.band = band;
     self.slot = slot;
     self.send_button = send_b;
@@ -580,10 +634,22 @@ pub fn openComposer(self: *ViewerFeedback, v: *Viewer) void {
     self.open = true;
     self.close_gen +%= 1;
     wk.gtk_widget_set_visible(band, 1);
-    var buf: [std.fs.max_path_bytes + 32]u8 = undefined;
-    self.setStatus(host.destinationText(&buf, rules.worktreeName(root)));
+    // Minted here so the footer link names a concrete folder from the moment
+    // the composer appears (T3553); the folder is made on the link's click or
+    // the send.
+    if (self.stem_len == 0) {
+        const stem = report.makeStem(
+            &self.stem_buf,
+            @intCast(@max(0, std.time.timestamp())),
+            std.crypto.random.int(u24),
+        );
+        self.stem_len = stem.len;
+    }
+    // A "Filed ..." from the last report is not true of this one: the footer
+    // goes back to the draft's link.
+    self.setStatus("");
     if (self.view == null) self.createView(v) else self.focusComposer();
-    log.info("viewer feedback: composer open worktree={s} chars={d}", .{ root, self.text.items.len });
+    log.info("viewer feedback: composer open worktree={s} chars={d} stem={s}", .{ root, self.text.items.len, self.draftStem() orelse "-" });
 }
 
 pub fn closeComposer(self: *ViewerFeedback, v: *Viewer) void {
@@ -1063,6 +1129,85 @@ fn setStatus(self: *ViewerFeedback, text: []const u8) void {
     if (self.status_text) |t| alloc.free(t);
     self.status_text = alloc.dupeZ(u8, text) catch null;
     if (self.status) |l| wk.gtk_label_set_text(l, if (self.status_text) |t| t.ptr else "");
+    self.refreshFooter();
+}
+
+/// The footer shows the status line when there is one, else the draft's
+/// folder link (Mac's `switch model.status`).
+fn refreshFooter(self: *ViewerFeedback) void {
+    const has_status = if (self.status_text) |t| t.len != 0 else false;
+    if (self.status) |l| wk.gtk_widget_set_visible(l, @intFromBool(has_status));
+    const b = self.link_button orelse return;
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const text: ?[]const u8 = if (has_status) null else self.linkText(&buf);
+    if (text) |t| {
+        var zbuf: [std.fs.max_path_bytes + 1]u8 = undefined;
+        const z = std.fmt.bufPrintZ(&zbuf, "{s}", .{t}) catch "";
+        if (self.link_label) |l| wk.gtk_label_set_text(l, z.ptr);
+    }
+    wk.gtk_widget_set_visible(b, @intFromBool(text != null));
+}
+
+/// `<worktree name>/temp/feedback/.staging/<stem>`, or null with no draft or
+/// no worktree - the two states with nothing to link to.
+fn linkText(self: *const ViewerFeedback, buf: []u8) ?[]const u8 {
+    const stem = self.draftStem() orelse return null;
+    const root = self.root orelse return null;
+    return host.stagingLinkText(buf, rules.worktreeName(root), stem);
+}
+
+/// The draft's staging-folder name, or null when no draft is in progress.
+pub fn draftStem(self: *const ViewerFeedback) ?[]const u8 {
+    if (self.stem_len == 0) return null;
+    return self.stem_buf[0..self.stem_len];
+}
+
+pub fn linkButtonWidget(self: *const ViewerFeedback) ?*wk.GtkWidget {
+    return self.link_button;
+}
+
+fn onLinkClicked(_: *wk.GtkWidget, ud: ?*anyopaque) callconv(.c) void {
+    const v: *Viewer = @ptrCast(@alignCast(ud orelse return));
+    v.feedback.revealDraft(v);
+}
+
+/// Open the draft's folder in the file manager, materializing it first - the
+/// draft's pictures plus a work-in-progress `report.json` - so it never opens
+/// empty or stale (T3553, Mac's `revealFeedbackStagingFolder`, win32 T645).
+/// The point is not only seeing where the report lands: files the user drops
+/// in ride along, because the send publishes the folder whole.
+///
+/// The staged `report.json` carries no branch/commit and no page selection:
+/// those cost two git spawns and a script round trip, and this runs on the UI
+/// thread. The published report gets them from the send.
+pub fn revealDraft(self: *ViewerFeedback, v: *Viewer) void {
+    const root = self.root orelse return;
+    const stem = self.draftStem() orelse return;
+    var arena = std.heap.ArenaAllocator.init(alloc);
+    defer arena.deinit();
+    const aa = arena.allocator();
+    const parts = self.draftParts(v, aa, root, null) catch {
+        self.setStatus("Could not open this draft's folder");
+        return;
+    };
+    const folder = report.stage(
+        aa,
+        parts.ctx,
+        parts.body,
+        parts.quotes,
+        parts.images,
+        stem,
+        @intCast(@max(0, std.time.timestamp())),
+    ) catch |err| {
+        log.warn("viewer feedback: staging failed err={}", .{err});
+        self.setStatus("Could not open this draft's folder");
+        return;
+    };
+    self.reveals += 1;
+    if (self.staged) |f| alloc.free(f);
+    self.staged = alloc.dupe(u8, folder) catch null;
+    log.info("viewer feedback: reveal stem={s} folder={s}", .{ stem, folder });
+    Viewer.openWithAppFrom(alloc, self.link_button orelse wk.asWidget(v.view), folder);
 }
 
 // ---- sending ---------------------------------------------------------------
@@ -1116,6 +1261,8 @@ const SendJob = struct {
     ok: bool = false,
     folder: []const u8 = "",
     stem: []const u8 = "",
+    /// The composer's draft folder (T3553); null mints a fresh one.
+    draft_stem: ?[]const u8 = null,
     err_name: []const u8 = "",
 
     fn destroy(self: *SendJob) void {
@@ -1164,6 +1311,28 @@ fn beginSend(self: *ViewerFeedback, v: *Viewer, selection: ?[]const u8) void {
 
 fn fillJob(self: *ViewerFeedback, v: *Viewer, job: *SendJob, root: []const u8, selection: ?[]const u8) !void {
     const aa = job.arena.allocator();
+    const parts = try self.draftParts(v, aa, root, selection);
+    job.ctx = parts.ctx;
+    job.body = parts.body;
+    job.quotes = parts.quotes;
+    job.images = parts.images;
+    // The send publishes the draft's own folder (T3553), so whatever the
+    // user dropped into it through the footer link rides along.
+    if (self.draftStem()) |s| job.draft_stem = try aa.dupe(u8, s);
+}
+
+/// What the composer holds right now, rendered the way a report wants it -
+/// shared by the send and by the draft folder's staging write, so the folder
+/// the user opens holds the report the send would file (win32's
+/// `feedbackSnapshot`). Everything is copied into `aa`.
+const DraftParts = struct {
+    ctx: report.Context,
+    body: []const u8,
+    quotes: []report.Quote,
+    images: []report.Image,
+};
+
+fn draftParts(self: *ViewerFeedback, v: *Viewer, aa: Allocator, root: []const u8, selection: ?[]const u8) !DraftParts {
     const loc: []const u8 = v.current;
     const kind = host.kindFor(loc, content.modeFor(loc) == .image);
     const file = host.filePath(loc);
@@ -1193,15 +1362,17 @@ fn fillJob(self: *ViewerFeedback, v: *Viewer, job: *SendJob, root: []const u8, s
         const buf = try aa.alloc(u8, p.len);
         ctx.relative_path = report.relativePath(buf, p, root_d);
     }
-    job.ctx = ctx;
     // Each live quote renders as a markdown blockquote in the body, and
     // carries its referential context in `quotes` (T3545).
     // ...and each live chip as an image link to its file in the folder, the
     // PNGs copied into the job (T3546).
     const imgs = try shot.reportImages(aa, self.text.items, &self.images);
-    job.images = imgs.images;
-    job.body = try shot.renderBody(aa, self.text.items, self.spans.items, imgs.numbers);
-    job.quotes = try quoting.reportQuotes(aa, self.text.items, self.spans.items, self.quotes.entries.items);
+    return .{
+        .ctx = ctx,
+        .images = imgs.images,
+        .body = try shot.renderBody(aa, self.text.items, self.spans.items, imgs.numbers),
+        .quotes = try quoting.reportQuotes(aa, self.text.items, self.spans.items, self.quotes.entries.items),
+    };
 }
 
 /// ON THE WORKER: the revision as of NOW (a branch switched under an
@@ -1217,7 +1388,7 @@ fn sendWork(job: *SendJob) void {
             quoting.resolveSourceLines(aa, source, job.quotes);
         } else |err| log.debug("viewer feedback: source read failed path={s} err={}", .{ path, err });
     };
-    if (report.write(aa, job.ctx, job.body, job.quotes, job.images, job.epoch, job.suffix, null)) |w| {
+    if (report.write(aa, job.ctx, job.body, job.quotes, job.images, job.epoch, job.suffix, job.draft_stem)) |w| {
         job.ok = true;
         job.folder = w.folder;
         job.stem = w.stem;
@@ -1277,6 +1448,9 @@ fn onSent(data: ?*anyopaque) callconv(.c) c_int {
     self.spans.clearRetainingCapacity();
     // The pictures went with the report; the next one starts at #1.
     self.images.deinit(alloc);
+    // The draft folder was RENAMED into the queue, so the stem now names a
+    // filed report; the next composer opens a new draft (T3553).
+    self.stem_len = 0;
     self.selected = null;
     self.refreshStrip(null);
     if (self.ready) self.pushSeed(false);
@@ -1323,7 +1497,13 @@ pub fn describeComposer(self: *const ViewerFeedback, buf: []u8) []const u8 {
     }
     var nbuf: [128]u8 = undefined;
     var tbuf2: [128]u8 = undefined;
-    return std.fmt.bufPrint(buf, "open={} view={} ready={} lines={d} sending={} sends={d} quotes={d} quoted={d} images={s} tiles={s} sel={?d} shots={d} shot={d}x{d} style={s} bg={s} vars={d} filed={s} status={s} text={s}", .{
+    // The footer link as it is ON SCREEN: its label while the button shows.
+    const link_shown = if (self.link_button) |b| wk.gtk_widget_get_visible(b) != 0 else false;
+    const link_text: []const u8 = if (link_shown)
+        (if (self.link_label) |l| std.mem.span(wk.gtk_label_get_text(l)) else "-")
+    else
+        "-";
+    return std.fmt.bufPrint(buf, "open={} view={} ready={} lines={d} sending={} sends={d} quotes={d} quoted={d} images={s} tiles={s} sel={?d} shots={d} shot={d}x{d} style={s} bg={s} vars={d} stem={s} link={s} reveals={d} staged={s} filed={s} status={s} text={s}", .{
         self.open,
         self.view != null,
         self.ready,
@@ -1341,6 +1521,10 @@ pub fn describeComposer(self: *const ViewerFeedback, buf: []u8) []const u8 {
         if (self.palette_dark) "dark" else "light",
         &self.palette_bg,
         self.palette_pushes,
+        self.draftStem() orelse "-",
+        link_text,
+        self.reveals,
+        if (self.staged) |f| f else "-",
         if (self.filed) |f| f else "-",
         if (self.status_text) |s| s else "-",
         tbuf[0..n],

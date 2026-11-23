@@ -149,10 +149,24 @@ pub fn filedText(buf: []u8, stem: []const u8) []const u8 {
     return std.fmt.bufPrint(buf, "Filed temp/feedback/new/{s}", .{stem}) catch "Filed";
 }
 
-/// The footer's idle line: which worktree a send would file into.
-pub fn destinationText(buf: []u8, worktree_name: []const u8) []const u8 {
-    return std.fmt.bufPrint(buf, "Ctrl+Enter sends to {s}", .{worktree_name}) catch "Ctrl+Enter sends";
+/// The footer's idle line (T3553, Mac's `stagingLink`): the draft's own
+/// folder, `<worktree name>/temp/feedback/.staging/<stem>`, shown as a link
+/// that opens it - so the user can drop a log or a recording in, and the send
+/// publishes the folder whole. Null when it does not fit `buf`.
+pub fn stagingLinkText(buf: []u8, worktree_name: []const u8, stem: []const u8) ?[]const u8 {
+    return std.fmt.bufPrint(buf, "{s}/{s}/{s}", .{ worktree_name, staging_relative_path, stem }) catch null;
 }
+
+/// The staging area, relative to the worktree (win32's
+/// `viewer_feedback_report.staging_relative_path`; a test holds them equal).
+pub const staging_relative_path = "temp/feedback/.staging";
+
+/// The link's tooltip, as the Mac words it (Finder -> the file manager).
+pub const staging_tooltip = "Open this draft's folder - drop files here to include them in the report";
+
+/// The key hints at the footer's trailing edge (the Mac's "send / shot /
+/// close" hints, in the chords this build uses).
+pub const footer_hints = "Ctrl+Enter send \u{00b7} Ctrl+Shift+S shot \u{00b7} Esc close";
 
 /// A report is worth sending when its text is more than whitespace (images
 /// are a later card on Linux, so text is the whole report today).
@@ -240,7 +254,17 @@ test "viewportText" {
 test "footer lines" {
     var buf: [128]u8 = undefined;
     try testing.expectEqualStrings("Filed temp/feedback/new/abc", filedText(&buf, "abc"));
-    try testing.expectEqualStrings("Ctrl+Enter sends to repo", destinationText(&buf, "repo"));
+    try testing.expectEqualStrings(
+        "repo/temp/feedback/.staging/20260809T004912Z-a3f9c2",
+        stagingLinkText(&buf, "repo", "20260809T004912Z-a3f9c2").?,
+    );
+    var tiny: [8]u8 = undefined;
+    try testing.expect(stagingLinkText(&tiny, "repo", "x") == null);
+}
+
+test "the staging path agrees with the report module's" {
+    const report = @import("../win32/viewer_feedback_report.zig");
+    try testing.expectEqualStrings(report.staging_relative_path, staging_relative_path);
 }
 
 test "hasContent ignores whitespace" {

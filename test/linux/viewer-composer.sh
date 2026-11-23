@@ -142,8 +142,8 @@ has "$s" "open=false view=false"
 hl_check "C8 before any click there is no composer and no second web view (D43)" $? "$s"
 
 s=$(co 2)
-has "$s" "open=true view=true ready=true" && has "$s" "status=Ctrl+Enter sends to repo"
-hl_check "C9 clicking the button opens the composer; its page loads and says ready; the footer names the worktree" $? "$s"
+has "$s" "open=true view=true ready=true" && has "$s" "link=repo/temp/feedback/.staging/" && has "$s" "status= text="
+hl_check "C9 clicking the button opens the composer; its page loads and says ready; the footer links the draft's folder in the worktree (T3553)" $? "$s"
 
 s=$(co 3)
 has "$s" 'text=first line\nsecond line' && has "$s" "lines=2"
@@ -166,7 +166,7 @@ hl_check "C13 reopening re-seeds a fresh page with the kept text" $? "$s / $p"
 hl_check "C14 the page's heading is selected (the report's selection)" $? "$(nth probe 2)"
 
 s=$(co 7)
-has "$s" "sends=1" && has "$s" "sending=false" && has "$s" "status=Filed temp/feedback/new/" && has "$s" "text=" && ! has "$s" "text=first"
+has "$s" "sends=1" && has "$s" "sending=false" && has "$s" "status=Filed temp/feedback/new/" && has "$s" "text=" && ! has "$s" "text=first" && has "$s" "stem=- link=-"
 hl_check "C15 Ctrl+Enter files the report, clears the composer and shows Filed" $? "$s"
 
 s=$(co 8)
