@@ -1,8 +1,8 @@
 {
     "guard":  "unwired-hook",
     "script":  "test/win32/unwired-hook-audit.ps1",
-    "generated":  "2026-11-22T17:03:39-08:00",
-    "commit":  "a425fd09e",
+    "generated":  "2026-11-22T17:38:25-08:00",
+    "commit":  "b1d0e1f8d",
     "uncommitted":  [
 
                     ],
@@ -1521,7 +1521,7 @@
                   "test/win32/relay-account.ps1":  "aeda41ced1deeedcf6a9a0c1cbd0d9caafff4b1c341a6bb521eaedd6ca5bbdbf",
                   "test/win32/relay-signin-live.ps1":  "6bf109569944c01f2e026bf80c1ed5f912c2ebac3f8763299a9f9cae2eff8585",
                   "test/win32/relay-window-relaunch.ps1":  "4beadd83eb1cd6cba1975068b4182453fd6263c391533c9f21b5d42b850b1341",
-                  "test/win32/release-artifacts.ps1":  "f3fda16c62bd66f1c0307ad40866311c25e9a56ac3a5ba75e89efb467010f1e7",
+                  "test/win32/release-artifacts.ps1":  "3f4d154d7da9adce11a9995f7af2b8d1c4f359dc48fe5f0d18ecc7268a30024a",
                   "test/win32/release-parity.ps1":  "92babe2c0e154c766dd02f9578073f6a04ec281ee706aa8a8dc83c505d579f9f",
                   "test/win32/release-symbols.ps1":  "7c1a87e8cf563ea02c3f1e97d098729af03ddafd75144ce221afb945fc0fb862",
                   "test/win32/remote-cwd-follow.ps1":  "321a7f5001288ccde0fdb0f3045e43e50a0818d4cdb2cdd56c1a2285502bc100",
