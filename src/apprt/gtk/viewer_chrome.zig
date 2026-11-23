@@ -102,6 +102,16 @@ pub fn showsReveal(mode: content.Mode) bool {
     return mode.isFile();
 }
 
+/// Whether a pane in `mode` has text to search (Mac's `canFind`). A picture
+/// does not, and the honest answer to Ctrl+F there is to DECLINE the chord -
+/// it falls through to the app's bindings and no card appears - rather than
+/// open a card that can only ever say "No results". Ctrl+G is declined there
+/// for the same reason. Every other mode searches: markdown, code, a local
+/// page, a website, a diff.
+pub fn canFind(mode: content.Mode) bool {
+    return mode != .image;
+}
+
 // -------------------------------------------------------------------------
 // Keys: a GDK event onto the shared tables
 // -------------------------------------------------------------------------
@@ -296,6 +306,25 @@ test "T3412: Escape and Return follow the shared field precedence" {
     // Return in the address bar is the entry's own activate, not the pane's.
     try testing.expect(classify(keyval.Return, 0, .{ .address = true }) == null);
     try testing.expectEqual(KeyAction{ .field = .find_previous }, classify(keyval.Return, shift, .{ .find = true, .find_open = true }).?);
+}
+
+test "T3414: every mode but a picture has text to find" {
+    inline for (.{ .markdown, .code, .html, .web, .diff }) |m| try testing.expect(canFind(m));
+    try testing.expect(!canFind(.image));
+}
+
+test "T3414: the find card's keys follow the shared precedence" {
+    // Return steps only from the find field; Shift+Return goes back.
+    try testing.expectEqual(KeyAction{ .field = .find_next }, classify(keyval.Return, 0, .{ .find = true, .find_open = true }).?);
+    try testing.expectEqual(KeyAction{ .field = .find_next }, classify(keyval.KP_Enter, 0, .{ .find = true, .find_open = true }).?);
+    try testing.expect(classify(keyval.Return, 0, .{ .find_open = true }) == null);
+    // Escape closes find from the field AND from the page.
+    try testing.expectEqual(KeyAction{ .field = .close_find }, classify(keyval.Escape, 0, .{ .find = true, .find_open = true }).?);
+    // F3 / Shift+F3 are the Windows (and GTK browser) spelling of Ctrl+G.
+    try testing.expectEqual(KeyAction{ .pane = .find_next }, classify(keyval.F3, 0, .{}).?);
+    try testing.expectEqual(KeyAction{ .pane = .find_previous }, classify(keyval.F3, shift, .{}).?);
+    // Zoom is not claimed while the caret is in the find field.
+    try testing.expect(classify('=', ctrl, .{ .find = true, .find_open = true }) == null);
 }
 
 test "T3412: zoom steps are the Mac's" {

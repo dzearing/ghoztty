@@ -31,15 +31,21 @@
 //! controller on the viewer's box sees a chord before the page does, and asks
 //! `viewer_chrome.classify` - the shared win32 tables - what it means. Ctrl+R
 //! reloads, Ctrl+L / Alt+D focus the address with it selected, Ctrl +/-/0
-//! zoom the page, Escape in the address reverts it. Find (Ctrl+F/G, F3) is
-//! T3414's and declined until then, so it falls through like any unclaimed
-//! chord. GTK has no "beep on an unhandled key" (AppKit's `NSBeep`), so the
-//! Mac's no-beep rule is already this platform's behavior.
+//! zoom the page, Escape in the address reverts it. GTK has no "beep on an
+//! unhandled key" (AppKit's `NSBeep`), so the Mac's no-beep rule is already
+//! this platform's behavior.
+//!
+//! **Find in page** (T3414): Ctrl+F opens a card floating at the page's
+//! top-trailing corner (an overlay, so it never reflows the text), with a
+//! live "3/17" count; Enter / Shift+Enter, the chevrons, Ctrl+G /
+//! Ctrl+Shift+G and F3 / Shift+F3 step, wrapping; Escape closes it and keeps
+//! the query. The search is the shared `find.js`, injected as a user script
+//! into every document so it reaches websites too. A picture declines the
+//! chords.
 //!
 //! A viewer PANE is a `Surface` that hosts one of these in place of its
 //! terminal (T3411), so it splits, resizes, focuses, zooms and closes through
-//! the split tree's own code. Not here yet, by design: find (T3414), link
-//! routing (T3415).
+//! the split tree's own code. Not here yet, by design: link routing (T3415).
 //!
 //! **Reloads** (T3413): a file pane watches its file (`viewer_watch.zig`) and
 //! re-renders on a save, keeping the scroll; `+reload` and Ctrl+R are the
@@ -68,6 +74,8 @@ const view_arg = @import("../../cli/view_arg.zig");
 const reload_gate = @import("../win32/reload_gate.zig");
 const reload_policy = @import("viewer_reload.zig");
 const Watch = @import("viewer_watch.zig");
+const vfind = @import("../win32/viewer_find.zig");
+const bridge = @import("../win32/viewer_bridge.zig");
 
 const log = std.log.scoped(.gtk_viewer);
 
@@ -125,6 +133,35 @@ render_count: u32 = 0,
 on_location_changed: ?*const fn (*Viewer) void = null,
 owner: ?*anyopaque = null,
 
+/// The find card (T3414), floating over the page's top-trailing corner.
+find: FindCard,
+/// The card is showing.
+find_open: bool = false,
+/// What the user typed. Outlives the card being closed, so Ctrl+G resumes
+/// the last search and Ctrl+F comes back to it selected (Mac's `findQuery`).
+find_query: [vfind.max_query]u8 = undefined,
+find_query_len: usize = 0,
+/// The page's last answer for `find_query` (`find.js` -> `post`).
+find_result: vfind.Result = .none,
+/// The view's content manager and the `script-message-received` handler on
+/// it, disconnected when the viewer goes so a late message finds nobody.
+ucm: ?*wk.UserContentManager = null,
+message_handler: c_ulong = 0,
+
+/// The find card's widgets. All owned by `box` (through the overlay).
+const FindCard = struct {
+    /// The card itself: the row, then the honesty note under it.
+    card: *wk.GtkWidget,
+    entry: *wk.GtkWidget,
+    count: *wk.GtkWidget,
+    previous: *wk.GtkWidget,
+    next: *wk.GtkWidget,
+    close: *wk.GtkWidget,
+    /// What the page is NOT searching (`find.js` -> `scopeNote`): a second
+    /// line, shown only while the page has something to disclose.
+    note: *wk.GtkWidget,
+};
+
 /// The nav bar's widgets. All owned by `box`.
 const Bar = struct {
     row: *wk.GtkWidget,
@@ -155,6 +192,7 @@ pub fn create(alloc: Allocator, location: []const u8) !*Viewer {
         .view = wk.asWebView(w),
         .box = box,
         .bar = buildBar(),
+        .find = buildFindCard(),
         .mode = content.modeFor(location),
         .location = loc,
         .current = cur,
@@ -163,8 +201,18 @@ pub fn create(alloc: Allocator, location: []const u8) !*Viewer {
 
     wk.gtk_widget_set_hexpand(w, 1);
     wk.gtk_widget_set_vexpand(w, 1);
+    // The page sits in an overlay so the find card FLOATS over it rather than
+    // adding a band: a band would reflow the very text about to be searched.
+    // The overlay hangs off the page's top, below the bar, so the card moves
+    // with the content and never covers the address.
+    const overlay = wk.gtk_overlay_new();
+    wk.gtk_widget_set_hexpand(overlay, 1);
+    wk.gtk_widget_set_vexpand(overlay, 1);
+    wk.gtk_overlay_set_child(overlay, w);
+    wk.gtk_overlay_add_overlay(overlay, self.find.card);
     wk.gtk_box_append(box, self.bar.row);
-    wk.gtk_box_append(box, w);
+    wk.gtk_box_append(box, overlay);
+    self.installFindScript();
 
     // DEBUG-ONLY test seam: with `GHOZTTY_TEST_VIEWER_DUMP` set, every
     // viewer - a pane's too (T3411) - writes its probe result there once it
@@ -187,6 +235,10 @@ pub fn create(alloc: Allocator, location: []const u8) !*Viewer {
     _ = wk.g_signal_connect_data(self.bar.home, "clicked", @ptrCast(&onHomeClicked), self, null, 0);
     _ = wk.g_signal_connect_data(self.bar.reveal, "clicked", @ptrCast(&onRevealClicked), self, null, 0);
     _ = wk.g_signal_connect_data(self.bar.address, "activate", @ptrCast(&onAddressActivate), self, null, 0);
+    _ = wk.g_signal_connect_data(self.find.entry, "changed", @ptrCast(&onFindChanged), self, null, 0);
+    _ = wk.g_signal_connect_data(self.find.previous, "clicked", @ptrCast(&onFindPreviousClicked), self, null, 0);
+    _ = wk.g_signal_connect_data(self.find.next, "clicked", @ptrCast(&onFindNextClicked), self, null, 0);
+    _ = wk.g_signal_connect_data(self.find.close, "clicked", @ptrCast(&onFindCloseClicked), self, null, 0);
 
     // The pane's chords, before the page or a field sees them.
     const keys = wk.gtk_event_controller_key_new();
@@ -227,6 +279,13 @@ fn deinit(self: *Viewer) void {
         if (steps.viewer == self) steps.viewer = null;
     }
     self.watch.stop();
+    if (self.ucm) |m| {
+        if (self.message_handler != 0) wk.g_signal_handler_disconnect(m, self.message_handler);
+        wk.webkit_user_content_manager_unregister_script_message_handler(m, bridge.handler_name, null);
+        // The ref `installFindScript` took: the web view may already have
+        // dropped its own by the time its `destroy` reaches us.
+        wk.g_object_unref(m);
+    }
     const alloc = self.alloc;
     alloc.free(self.location);
     alloc.free(self.current);
@@ -720,24 +779,300 @@ fn onKeyPressed(
 /// One key press in the pane. True when the pane claimed it; false leaves it
 /// to the page or the focused field, and from there to the app's bindings.
 pub fn handleKey(self: *Viewer, keyval: u32, state: u32) bool {
-    const action = chrome.classify(keyval, state, .{ .address = self.addressHasFocus() }) orelse return false;
+    const action = chrome.classify(keyval, state, .{
+        .address = self.addressHasFocus(),
+        .find = self.findHasFocus(),
+        .find_open = self.find_open,
+    }) orelse return false;
     switch (action) {
         .pane => |c| switch (c) {
             .reload => self.reloadContent(.chrome),
             .focus_address => self.focusAddress(),
-            // Find in page is T3414's: declined until it lands, so the chord
-            // falls through exactly as an unclaimed one does.
-            .find, .find_next, .find_previous => return false,
+            // A chord this pane cannot answer (a picture has no text; Ctrl+G
+            // with no search yet) falls through, as an unclaimed one does.
+            .find => if (!self.openFind()) return false,
+            .find_next => if (!self.stepFindFromKeyboard(1)) return false,
+            .find_previous => if (!self.stepFindFromKeyboard(-1)) return false,
         },
         .zoom => |z| self.zoom(z),
         .field => |f| switch (f) {
             .revert_address => self.cancelAddressEdit(),
-            // No diff filter (T3417) or find card (T3414) on Linux yet.
-            .clear_diff_filter, .close_find, .find_next, .find_previous => return false,
+            .close_find => self.closeFind(),
+            .find_next => self.stepFind(1),
+            .find_previous => self.stepFind(-1),
+            // No diff filter on Linux yet (T3417).
+            .clear_diff_filter => return false,
         },
     }
     log.debug("viewer: key {x} state {x} -> {s}", .{ keyval, state, @tagName(action) });
     return true;
+}
+
+// -------------------------------------------------------------------------
+// Find in page (T3414)
+// -------------------------------------------------------------------------
+//
+// The search is the shared `src/viewer/find.js` - the index, the matching,
+// the Custom Highlight painting, the live re-scan, the 5000 cap and the
+// honesty note are all its, for every platform at once. This side is the
+// card, the chords, and the bridge the count comes back up. Every decision is
+// the Mac's (`ViewerView` "Find in page") by way of win32's pure
+// `viewer_find.zig`: how the count reads, which field Escape/Return belong
+// to, the exact JavaScript pushed into the page.
+
+/// Inject `find.js` into every document this view loads - the template AND a
+/// website, which is why it cannot live in `viewer.js` - and listen on the
+/// `viewerTOC` handler it posts to. Mac: a `WKUserScript` at document end,
+/// main frame only (a subframe copy would be a second search with its own
+/// count; `find.js` says "frames not searched" instead). Must run before the
+/// first navigation: a script added mid-load does not reach that page.
+fn installFindScript(self: *Viewer) void {
+    const m = wk.webkit_web_view_get_user_content_manager(self.view);
+    _ = wk.g_object_ref(m);
+    self.ucm = m;
+    const script = wk.webkit_user_script_new(bridge.find_js, wk.inject_top_frame, wk.inject_at_document_end, null, null);
+    wk.webkit_user_content_manager_add_script(m, script);
+    wk.webkit_user_script_unref(script);
+    if (wk.webkit_user_content_manager_register_script_message_handler(m, bridge.handler_name, null) == 0) {
+        // The page still searches and paints; only the count goes quiet.
+        log.warn("viewer: could not register the {s} message handler; find shows no count", .{bridge.handler_name});
+        return;
+    }
+    self.message_handler = wk.g_signal_connect_data(
+        m,
+        "script-message-received::" ++ bridge.handler_name,
+        @ptrCast(&onScriptMessage),
+        self,
+        null,
+        0,
+    );
+}
+
+/// A message from the page. The template's `viewer.js` posts on the same
+/// handler (headings, the active heading); only `find` is acted on here, and
+/// anything a website posts that does not parse is ignored (`bridge.parse`).
+fn onScriptMessage(_: *wk.UserContentManager, value: *wk.JSCValue, ud: ?*anyopaque) callconv(.c) void {
+    const self: *Viewer = @ptrCast(@alignCast(ud orelse return));
+    const json = wk.jsc_value_to_json(value, 0) orelse return;
+    defer wk.g_free(json);
+    const parsed = bridge.parse(self.alloc, std.mem.span(json)) orelse return;
+    defer parsed.deinit();
+    switch (parsed.message) {
+        .find => |f| self.applyFindMessage(f),
+        else => {},
+    }
+}
+
+fn buildFindCard() FindCard {
+    const card = wk.gtk_box_new(wk.orientation_vertical, 2);
+    wk.gtk_widget_add_css_class(card, "card");
+    wk.gtk_widget_set_halign(card, wk.align_end);
+    wk.gtk_widget_set_valign(card, wk.align_start);
+    // win32's `margin_dip`: off the page's top and trailing edges.
+    wk.gtk_widget_set_margin_top(card, 8);
+    wk.gtk_widget_set_margin_end(card, 8);
+
+    const row = wk.gtk_box_new(wk.orientation_horizontal, 4);
+    wk.gtk_widget_set_margin_start(row, 8);
+    wk.gtk_widget_set_margin_end(row, 4);
+    wk.gtk_widget_set_margin_top(row, 6);
+    wk.gtk_widget_set_margin_bottom(row, 6);
+
+    const f: FindCard = .{
+        .card = card,
+        .entry = wk.gtk_entry_new(),
+        .count = wk.gtk_label_new(""),
+        .previous = barButton("go-up-symbolic", "Previous Match (Shift+Enter)"),
+        .next = barButton("go-down-symbolic", "Next Match (Enter)"),
+        .close = barButton("window-close-symbolic", "Close (Escape)"),
+        .note = wk.gtk_label_new(""),
+    };
+    wk.gtk_entry_set_placeholder_text(f.entry, "Find");
+    wk.gtk_editable_set_width_chars(f.entry, 18);
+    wk.gtk_widget_add_css_class(f.count, "dim-label");
+    wk.gtk_widget_add_css_class(f.count, "numeric");
+    wk.gtk_widget_set_visible(f.count, 0);
+    inline for (.{ "entry", "count", "previous", "next", "close" }) |name| {
+        wk.gtk_box_append(row, @field(f, name));
+    }
+    wk.gtk_widget_add_css_class(f.note, "dim-label");
+    wk.gtk_widget_add_css_class(f.note, "caption");
+    wk.gtk_label_set_xalign(f.note, 0);
+    wk.gtk_widget_set_margin_start(f.note, 10);
+    wk.gtk_widget_set_margin_end(f.note, 8);
+    wk.gtk_widget_set_margin_bottom(f.note, 6);
+    wk.gtk_widget_set_visible(f.note, 0);
+    wk.gtk_box_append(card, row);
+    wk.gtk_box_append(card, f.note);
+    wk.gtk_widget_set_visible(card, 0);
+    return f;
+}
+
+fn findQuery(self: *const Viewer) []const u8 {
+    return self.find_query[0..self.find_query_len];
+}
+
+fn findHasFocus(self: *const Viewer) bool {
+    if (!self.find_open) return false;
+    const f = self.focusWidget() orelse return false;
+    return f == self.find.entry or wk.gtk_widget_is_ancestor(f, self.find.entry) != 0;
+}
+
+/// Ctrl+F: open the card and put the caret in it with whatever query is
+/// already there selected, so the next keystroke replaces it (the browser
+/// rule, and the one `focusAddress` follows). Re-running the search on open
+/// is what makes Ctrl+F, Escape, Ctrl+F come back to the same highlights.
+/// False for a pane with nothing to search (a picture), so the chord falls
+/// through rather than being swallowed.
+pub fn openFind(self: *Viewer) bool {
+    if (!chrome.canFind(self.mode)) return false;
+    if (!self.find_open) {
+        self.find_open = true;
+        self.find_result = .none;
+        self.syncFindCount();
+        self.setFindNote(null);
+        wk.gtk_widget_set_visible(self.find.card, 1);
+    }
+    _ = wk.gtk_widget_grab_focus(self.find.entry);
+    wk.gtk_editable_select_region(self.find.entry, 0, -1);
+    if (self.find_query_len > 0) self.pushFindQuery();
+    // The acceptance script's oracle: there are no pixels in the harness.
+    log.info("viewer: find state=open query={s}", .{self.findQuery()});
+    return true;
+}
+
+/// Escape: close the card, clear the page's highlights, keep the query.
+/// The page is cleared unconditionally, ahead of the open check - the
+/// highlights are the PAGE's state, and close must never leave them painted
+/// on a pane with no card to remove them with.
+pub fn closeFind(self: *Viewer) void {
+    self.runQuiet(vfind.clear_call);
+    self.find_result = .none;
+    if (!self.find_open) return;
+    const had_focus = if (self.focusWidget()) |f| f == self.box or wk.gtk_widget_is_ancestor(f, self.box) != 0 else false;
+    self.find_open = false;
+    wk.gtk_widget_set_visible(self.find.card, 0);
+    log.info("viewer: find state=closed query={s}", .{self.findQuery()});
+    // Focus back to the page, so the pane is usable again.
+    if (had_focus) self.focusContent();
+}
+
+/// Step to the next (+1) or previous (-1) match, wrapping.
+pub fn stepFind(self: *Viewer, delta: i32) void {
+    if (self.find_query_len == 0) return;
+    self.runQuiet(if (delta < 0) vfind.step_previous_call else vfind.step_next_call);
+}
+
+/// Ctrl+G / F3 and their shifted twins: step the last search, re-opening the
+/// card if it was closed. False when there is nothing to step, so the chord
+/// falls through to the app's bindings instead of being eaten.
+pub fn stepFindFromKeyboard(self: *Viewer, delta: i32) bool {
+    if (!chrome.canFind(self.mode) or self.find_query_len == 0) return false;
+    if (!self.find_open and !self.openFind()) return false;
+    self.stepFind(delta);
+    return true;
+}
+
+/// The user typed in the card. Pushed straight through, no debounce: the page
+/// caches its text index between keystrokes and rebuilds it only when the DOM
+/// moves (Mac's `setFindQuery`).
+fn findQueryChanged(self: *Viewer) void {
+    const text = vfind.truncateUtf8(std.mem.span(wk.gtk_editable_get_text(self.find.entry)), vfind.max_query);
+    if (std.mem.eql(u8, text, self.findQuery())) return;
+    @memcpy(self.find_query[0..text.len], text);
+    self.find_query_len = text.len;
+    // An emptied field takes the count with it before the page answers.
+    if (text.len == 0) self.find_result = .none;
+    self.syncFindCount();
+    self.pushFindQuery();
+}
+
+fn pushFindQuery(self: *Viewer) void {
+    var buf: [vfind.search_call_cap]u8 = undefined;
+    self.runQuiet(vfind.searchCall(&buf, self.findQuery()));
+}
+
+/// `find.js` reported a count. A report for a query the user has already
+/// typed past is stale - the push for the current one is on its way.
+fn applyFindMessage(self: *Viewer, msg: bridge.Find) void {
+    if (!std.mem.eql(u8, msg.query, self.findQuery())) return;
+    if (!self.find_open) return;
+    self.find_result = .{ .total = msg.total, .index = msg.index, .truncated = msg.truncated };
+    self.syncFindCount();
+    self.setFindNote(msg.note);
+    log.info("viewer: find state=count query={s} total={d} index={d} truncated={} note={s}", .{
+        msg.query,
+        msg.total,
+        msg.index,
+        msg.truncated,
+        msg.note orelse "-",
+    });
+}
+
+/// After a load: the script was re-injected into the new document with no
+/// state, so an open card would be counting a page that is gone. A pane that
+/// navigated to something it cannot search closes the card instead.
+fn refreshFindAfterLoad(self: *Viewer) void {
+    if (!self.find_open) return;
+    if (!chrome.canFind(self.mode)) return self.closeFind();
+    if (self.find_query_len == 0) return;
+    self.find_result = .none;
+    self.syncFindCount();
+    self.pushFindQuery();
+}
+
+/// The count as a browser reads it: "3/17", "12/5000+", "No results", or
+/// nothing at all while the field is empty.
+fn syncFindCount(self: *Viewer) void {
+    var buf: [vfind.Result.label_cap]u8 = undefined;
+    const label = self.find_result.label(&buf, self.find_query_len > 0) orelse {
+        wk.gtk_widget_set_visible(self.find.count, 0);
+        wk.gtk_label_set_text(self.find.count, "");
+        return;
+    };
+    var zbuf: [vfind.Result.label_cap + 1]u8 = undefined;
+    const z = std.fmt.bufPrintZ(&zbuf, "{s}", .{label}) catch return;
+    wk.gtk_label_set_text(self.find.count, z.ptr);
+    wk.gtk_widget_set_visible(self.find.count, 1);
+}
+
+/// The honesty note's own line under the row, shown only with something in it.
+fn setFindNote(self: *Viewer, note: ?[]const u8) void {
+    const text = note orelse {
+        wk.gtk_widget_set_visible(self.find.note, 0);
+        wk.gtk_label_set_text(self.find.note, "");
+        return;
+    };
+    var zbuf: [257]u8 = undefined;
+    const z = std.fmt.bufPrintZ(&zbuf, "{s}", .{vfind.truncateUtf8(text, 256)}) catch return;
+    wk.gtk_label_set_text(self.find.note, z.ptr);
+    wk.gtk_widget_set_visible(self.find.note, 1);
+}
+
+/// Evaluate a page call whose result nobody reads: find's calls must never
+/// count as a render the way `evaluate`'s do.
+fn runQuiet(self: *Viewer, js: []const u8) void {
+    wk.webkit_web_view_evaluate_javascript(self.view, js.ptr, @intCast(js.len), null, null, null, null, null);
+}
+
+fn onFindChanged(_: *wk.GtkWidget, ud: ?*anyopaque) callconv(.c) void {
+    const self: *Viewer = @ptrCast(@alignCast(ud orelse return));
+    self.findQueryChanged();
+}
+
+fn onFindPreviousClicked(_: *wk.GtkWidget, ud: ?*anyopaque) callconv(.c) void {
+    const self: *Viewer = @ptrCast(@alignCast(ud orelse return));
+    self.stepFind(-1);
+}
+
+fn onFindNextClicked(_: *wk.GtkWidget, ud: ?*anyopaque) callconv(.c) void {
+    const self: *Viewer = @ptrCast(@alignCast(ud orelse return));
+    self.stepFind(1);
+}
+
+fn onFindCloseClicked(_: *wk.GtkWidget, ud: ?*anyopaque) callconv(.c) void {
+    const self: *Viewer = @ptrCast(@alignCast(ud orelse return));
+    self.closeFind();
 }
 
 // -------------------------------------------------------------------------
@@ -838,6 +1173,9 @@ fn onLoadChanged(view: *wk.WebView, event: wk.LoadEvent, ud: ?*anyopaque) callco
         .finished => {
             self.page_live = true;
             self.syncChrome();
+            // Ahead of the template's render: the page's own observer picks
+            // the rendered document up 200 ms later, so the count follows it.
+            self.refreshFindAfterLoad();
             if (self.mode.usesTemplate()) {
                 if (self.needs_render) self.renderTemplate();
             } else self.finishRender(true, "");
@@ -1071,13 +1409,16 @@ fn writeDump(text: []const u8) void {
 ///                   (`<Control>l`): `key <accel> handled=<bool>`
 ///   type <text>     replace the address field's text, as typing would
 ///   activate        press Return in the address field (its `activate`)
-///   click <button>  back|forward|reload|home|reveal - emits the button's own
-///                   `clicked`, as a pointer click does
+///   find <text>     replace the find field's text, as typing would
+///   click <button>  back|forward|reload|home|reveal|find-previous|find-next|
+///                   find-close - emits the button's own `clicked`, as a
+///                   pointer click does
 ///   wait            until the next render finishes (10 s): `wait ok=<bool>`
 ///   state           `state mode= current= address= back= forward= reveal=
-///                   zoom= focus=address|content|other sel=<start>-<end>
+///                   zoom= focus=address|find|content|other sel=<start>-<end>
 ///                   reloads=<dead-process reloads> card=none|pending|shown
-///                   barh=<bar height>`
+///                   find=open|closed findq=<query> findsel=<start>-<end>
+///                   count=<label>|- note=<note>|- barh=<bar height>`
 ///   probe <js>      evaluate in the page: `probe OK <value>`
 ///   terminate       kill the page's web process through WebKit's API, as a
 ///                   crash would: `terminate`
@@ -1156,13 +1497,33 @@ const steps = if (build_config.is_debug) struct {
             const z = std.fmt.bufPrintZ(&zbuf, "{s}", .{arg}) catch "";
             wk.gtk_editable_set_text(v.bar.address, z.ptr);
             out("type {s}", .{arg});
+        } else if (std.mem.eql(u8, verb, "find")) {
+            // Replace the find field's text, as typing would: its `changed`
+            // runs the search. An empty argument empties the field.
+            var zbuf: [2048]u8 = undefined;
+            const z = std.fmt.bufPrintZ(&zbuf, "{s}", .{arg}) catch "";
+            wk.gtk_editable_set_text(v.find.entry, z.ptr);
+            out("find {s}", .{arg});
         } else if (std.mem.eql(u8, verb, "activate")) {
             // What Return in the field does: GtkText re-emits it as the
             // entry's own `activate` (`gtk_widget_activate` does not).
             wk.g_signal_emit_by_name(v.bar.address, "activate");
             out("activate", .{});
         } else if (std.mem.eql(u8, verb, "click")) {
-            const b: ?*wk.GtkWidget = if (std.mem.eql(u8, arg, "back")) v.bar.back else if (std.mem.eql(u8, arg, "forward")) v.bar.forward else if (std.mem.eql(u8, arg, "reload")) v.bar.reload else if (std.mem.eql(u8, arg, "home")) v.bar.home else if (std.mem.eql(u8, arg, "reveal")) v.bar.reveal else null;
+            const named = .{
+                .{ "back", v.bar.back },
+                .{ "forward", v.bar.forward },
+                .{ "reload", v.bar.reload },
+                .{ "home", v.bar.home },
+                .{ "reveal", v.bar.reveal },
+                .{ "find-previous", v.find.previous },
+                .{ "find-next", v.find.next },
+                .{ "find-close", v.find.close },
+            };
+            var b: ?*wk.GtkWidget = null;
+            inline for (named) |n| {
+                if (std.mem.eql(u8, arg, n[0])) b = n[1];
+            }
             if (b) |w| {
                 const sens = wk.gtk_widget_get_sensitive(w) != 0;
                 const vis = wk.gtk_widget_get_visible(w) != 0;
@@ -1207,11 +1568,19 @@ const steps = if (build_config.is_debug) struct {
         _ = wk.gtk_editable_get_selection_bounds(v.bar.address, &start_i, &end_i);
         const focus: []const u8 = if (v.addressHasFocus())
             "address"
+        else if (v.findHasFocus())
+            "find"
         else if (v.focusWidget()) |f|
             (if (f == wk.asWidget(v.view) or wk.gtk_widget_is_ancestor(f, wk.asWidget(v.view)) != 0) "content" else "other")
         else
             "none";
-        out("state mode={s} current={s} address={s} back={} forward={} reveal={} zoom={d:.3} focus={s} sel={d}-{d} reloads={d} card={s} barh={d}", .{
+        var fs: c_int = 0;
+        var fe: c_int = 0;
+        _ = wk.gtk_editable_get_selection_bounds(v.find.entry, &fs, &fe);
+        const count_text = std.mem.span(wk.gtk_label_get_text(v.find.count));
+        const note_text = std.mem.span(wk.gtk_label_get_text(v.find.note));
+        // barh stays LAST: viewer-nav.sh reads it as the line's tail.
+        out("state mode={s} current={s} address={s} back={} forward={} reveal={} zoom={d:.3} focus={s} sel={d}-{d} reloads={d} card={s} find={s} findq={s} findsel={d}-{d} count={s} note={s} barh={d}", .{
             @tagName(v.mode),
             v.current,
             std.mem.span(wk.gtk_editable_get_text(v.bar.address)),
@@ -1224,6 +1593,12 @@ const steps = if (build_config.is_debug) struct {
             end_i,
             v.process_reloads,
             @tagName(v.crash_card),
+            if (v.find_open) "open" else "closed",
+            v.findQuery(),
+            fs,
+            fe,
+            if (wk.gtk_widget_get_visible(v.find.count) != 0 and count_text.len > 0) count_text else "-",
+            if (wk.gtk_widget_get_visible(v.find.note) != 0 and note_text.len > 0) note_text else "-",
             wk.gtk_widget_get_height(v.bar.row),
         });
     }

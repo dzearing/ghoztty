@@ -118,7 +118,6 @@ key <Control>0
 state
 key <Control><Shift>r
 key <Control>d
-key <Control>f
 key <Control>g
 key <Alt>d
 state
@@ -216,9 +215,8 @@ echo "$k" | grep -q '^key <Control>l handled=true' &&
 hl_check "N18 the pane claims its own chords" $? "$(echo "$k" | tr '\n' ' ')"
 echo "$k" | grep -q '^key <Control><Shift>r handled=false' &&
     echo "$k" | grep -q '^key <Control>d handled=false' &&
-    echo "$k" | grep -q '^key <Control>f handled=false' &&
     echo "$k" | grep -q '^key <Control>g handled=false'
-hl_check "N19 Ctrl+Shift+R, Ctrl+D (split) and find (T3414) are declined, so they fall through" $? "$(echo "$k" | tr '\n' ' ')"
+hl_check "N19 Ctrl+Shift+R, Ctrl+D (split) and Ctrl+G with no search yet are declined, so they fall through" $? "$(echo "$k" | tr '\n' ' ')"
 echo "$k" | grep -q '^key <Alt>d handled=true' && has "$(st 12)" "focus=address"
 hl_check "N20 Alt+D focuses the address too (the browser pair)" $? "$(st 12)"
 

@@ -86,6 +86,44 @@ pub extern fn webkit_web_view_load_alternate_html(
     base_uri: ?[*:0]const u8,
 ) void;
 
+// --- User scripts and script messages (find in page, T3414) ---------------
+//
+// Mac's `WKUserScript` + `WKScriptMessageHandler`, in WebKitGTK's spelling:
+// a script added to the view's own content manager runs in every document the
+// view loads from then on, and `postMessage` to a registered handler name
+// arrives as `script-message-received::<name>` carrying a `JSCValue`.
+
+pub const UserContentManager = opaque {};
+pub const UserScript = opaque {};
+
+/// `WebKitUserContentInjectedFrames`.
+pub const inject_all_frames: c_int = 0;
+pub const inject_top_frame: c_int = 1;
+/// `WebKitUserScriptInjectionTime`.
+pub const inject_at_document_start: c_int = 0;
+pub const inject_at_document_end: c_int = 1;
+
+pub extern fn webkit_web_view_get_user_content_manager(view: *WebView) *UserContentManager;
+pub extern fn webkit_user_script_new(
+    source: [*:0]const u8,
+    injected_frames: c_int,
+    injection_time: c_int,
+    allow_list: ?*const anyopaque,
+    block_list: ?*const anyopaque,
+) *UserScript;
+pub extern fn webkit_user_script_unref(script: *UserScript) void;
+pub extern fn webkit_user_content_manager_add_script(manager: *UserContentManager, script: *UserScript) void;
+pub extern fn webkit_user_content_manager_register_script_message_handler(
+    manager: *UserContentManager,
+    name: [*:0]const u8,
+    world_name: ?[*:0]const u8,
+) c_int;
+pub extern fn webkit_user_content_manager_unregister_script_message_handler(
+    manager: *UserContentManager,
+    name: [*:0]const u8,
+    world_name: ?[*:0]const u8,
+) void;
+
 // --- WebKitWebContext / security -----------------------------------------
 
 pub extern fn webkit_web_context_get_default() *WebContext;
@@ -116,6 +154,8 @@ pub extern fn webkit_uri_scheme_request_finish_error(req: *URISchemeRequest, err
 
 /// Caller frees with `g_free`.
 pub extern fn jsc_value_to_string(value: *JSCValue) ?[*:0]u8;
+/// The value as JSON text (a posted message object). Caller frees with `g_free`.
+pub extern fn jsc_value_to_json(value: *JSCValue, indent: c_uint) ?[*:0]u8;
 
 // --- GLib / GIO / GObject / GTK, the few calls this file's users need ----
 
@@ -125,6 +165,7 @@ pub extern fn g_error_new_literal(domain: u32, code: c_int, message: [*:0]const 
 pub extern fn g_error_free(err: *GError) void;
 pub extern fn g_free(mem: ?*anyopaque) void;
 pub extern fn g_object_unref(obj: *anyopaque) void;
+pub extern fn g_object_ref(obj: *anyopaque) *anyopaque;
 pub extern fn g_object_set_data(obj: *anyopaque, key: [*:0]const u8, data: ?*anyopaque) void;
 pub extern fn g_object_get_data(obj: *anyopaque, key: [*:0]const u8) ?*anyopaque;
 pub extern fn g_signal_connect_data(
@@ -215,6 +256,23 @@ pub extern fn g_signal_emit_by_name(instance: *anyopaque, signal: [*:0]const u8,
 pub extern fn g_idle_add(function: *const fn (?*anyopaque) callconv(.c) c_int, data: ?*anyopaque) c_uint;
 pub extern fn g_timeout_add(interval_ms: c_uint, function: *const fn (?*anyopaque) callconv(.c) c_int, data: ?*anyopaque) c_uint;
 pub extern fn g_source_remove(id: c_uint) c_int;
+
+// --- The find card (T3414) -------------------------------------------------
+
+/// `GtkAlign`.
+pub const align_start: c_int = 1;
+pub const align_end: c_int = 2;
+
+pub extern fn gtk_overlay_new() *GtkWidget;
+pub extern fn gtk_overlay_set_child(overlay: *GtkWidget, child: ?*GtkWidget) void;
+pub extern fn gtk_overlay_add_overlay(overlay: *GtkWidget, widget: *GtkWidget) void;
+pub extern fn gtk_label_new(text: ?[*:0]const u8) *GtkWidget;
+pub extern fn gtk_label_set_text(label: *GtkWidget, text: [*:0]const u8) void;
+pub extern fn gtk_label_get_text(label: *GtkWidget) [*:0]const u8;
+pub extern fn gtk_label_set_xalign(label: *GtkWidget, xalign: f32) void;
+pub extern fn gtk_editable_set_width_chars(editable: *GtkWidget, n_chars: c_int) void;
+pub extern fn gtk_widget_set_halign(widget: *GtkWidget, a: c_int) void;
+pub extern fn gtk_widget_set_valign(widget: *GtkWidget, a: c_int) void;
 
 // --- File monitoring, for live reload (T3413) ------------------------------
 
