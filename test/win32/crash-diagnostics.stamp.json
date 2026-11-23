@@ -1,17 +1,18 @@
 {
     "guard":  "crash-diagnostics",
     "script":  "test/win32/crash-diagnostics.ps1",
-    "generated":  "2026-11-22T05:44:39-08:00",
-    "commit":  "1577c31bc",
+    "generated":  "2026-11-22T22:12:31-08:00",
+    "commit":  "b8f5c19c0",
     "uncommitted":  [
+                        "scripts/lib/CrashDiag.ps1",
                         "test/win32/crash-diagnostics.ps1"
                     ],
     "files":  {
-                  "scripts/lib/CrashDiag.ps1":  "dcc1adba72d7a3a3d7086ab93f857fb3aee79b7745df5cfd3f77b8451b9d5e45",
-                  "test/win32/crash-diagnostics.ps1":  "c05cea8bb12af4d565da9b669a740fb4f5ca6963b4cd364e035ea78e4abeb7ee"
+                  "scripts/lib/CrashDiag.ps1":  "2a4a5aa89744faabd1d178da50305b793249cd73d75d88c8f31b96e2a7a52e79",
+                  "test/win32/crash-diagnostics.ps1":  "337e9b2ef4ebd393e94adcfe2200edb774f5d5a6d1d4352d2aba2742c28333de"
               },
     "code":  {
-                 "scripts/lib/CrashDiag.ps1":  "code1:393f266b7fc2d3a173f3a9a9ff9ca29f0d2d08e7c7f01de8fe716cee7d127283",
-                 "test/win32/crash-diagnostics.ps1":  "code1:b392e8e3483716e84dbd986523ef40f760327c79405e8ebd86a79e0a14855303"
+                 "scripts/lib/CrashDiag.ps1":  "code1:9176752b43a04f2e89c72142b74096c4d93eeec606f81ed5d4c011b9edc4f4c2",
+                 "test/win32/crash-diagnostics.ps1":  "code1:791d23d7230c0a4a213f0a9e989708ddd3a9ed7311f090c7353f8995d3b73934"
              }
 }

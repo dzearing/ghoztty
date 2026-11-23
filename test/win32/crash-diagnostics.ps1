@@ -74,6 +74,25 @@ Check 'decode raw 0xC0000005 -> access violation' ($raw.Count -eq 1 -and $raw[0]
 Check 'exit 1 is not decoded as a crash' ((@(Get-NtStatusCandidate -Code 1)).Count -eq 0)
 Check 'exit 7 is not decoded as a crash' ((@(Get-NtStatusCandidate -Code 7)).Count -eq 0)
 
+# ------------------------------- 1b. naming a lane process's FULL exit (T1824)
+
+# A lane's root process hands back the whole code, not zig's low byte, so the
+# name is exact. An ordinary exit stays an ordinary exit.
+$fx = Format-ProcessExitCode -Code 1
+Check 'full exit 1 reads as a plain exit code' ($fx -eq 'exit code 1') "got '$fx'"
+$fx = Format-ProcessExitCode -Code -1073741819
+Check 'full 0xC0000005 is named access violation' ($fx -match '^exit code 0xC0000005 STATUS_ACCESS_VIOLATION \(-1073741819\)$') "got '$fx'"
+$fx = Format-ProcessExitCode -Code -1073741510
+Check 'full 0xC000013A is named Ctrl+C exit (a kill, not a crash)' ($fx -match '0xC000013A STATUS_CONTROL_C_EXIT') "got '$fx'"
+$fx = Format-ProcessExitCode -Code -1073741523
+Check 'full 0xC000012D is named commitment limit' ($fx -match '0xC000012D STATUS_COMMITMENT_LIMIT') "got '$fx'"
+$fx = Format-ProcessExitCode -Code 3221225725
+Check 'an unsigned spelling of a status decodes the same' ($fx -match '0xC00000FD STATUS_STACK_OVERFLOW \(-1073741571\)') "got '$fx'"
+$fx = Format-ProcessExitCode -Code -536870912
+Check 'an unknown status is printed in hex, never guessed' ($fx -match '^exit code 0xE0000000 \(-536870912; not a status') "got '$fx'"
+$fx = Format-ProcessExitCode -Code $null
+Check 'an unreadable exit code is said, not guessed' ($fx -eq 'an exit code that could not be read') "got '$fx'"
+
 # ---------------------------------------------------- 2. reading zig's phrasing
 
 $logDir = Join-Path $env:TEMP ("crashdiag-" + [guid]::NewGuid().ToString('N').Substring(0, 8))
@@ -171,6 +190,15 @@ $laneOut = & powershell -NoProfile -File (Join-Path $Repo 'scripts\floor-lane.ps
 $laneText = ($laneOut | Out-String)
 Check 'floor-lane self-test still passes with the diagnostic wired in' ($laneText -match 'ALL PASS') `
     "tail: $(($laneOut | Select-Object -Last 3) -join ' / ')"
+
+# T1824: a lane that dies with no error line and no named test must say HOW it
+# ended. A real process ending on 0xC000013A, through the real wrapper.
+$e2eOut = & powershell -NoProfile -File (Join-Path $Repo 'scripts\floor-lane.ps1') -Command 'cmd /c exit -1073741510' -NoCatch 2>&1
+$e2eText = ($e2eOut | Out-String)
+Check 'a lane that dies without an error line names its exit status in the detail block' `
+    ($e2eText -match "no 'error:' line in that log - the lane died without one \(it ended with exit code 0xC000013A STATUS_CONTROL_C_EXIT") `
+    "tail: $(($e2eOut | Select-Object -Last 4) -join ' / ')"
+Check 'the same run still scores FAIL' ($e2eText -match 'FLOOR SUMMARY: command=FAIL')
 # The body's last statement (body-complete-audit): an unwind above skips it,
 # so the verdict reads DID NOT FINISH instead of green.
 Complete-TestBody

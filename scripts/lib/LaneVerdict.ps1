@@ -60,7 +60,10 @@ function Get-LaneFailureDetail {
         [int]$MaxErrors = 6,
         [string]$Result = 'FAIL',
         [string[]]$Diagnostic = @(),
-        [int]$MaxTraceLines = 12
+        [int]$MaxTraceLines = 12,
+        # T1824: how the lane's root process ended, already worded by
+        # CrashDiag's Format-ProcessExitCode. Empty when the caller has none.
+        [string]$ExitText = ''
     )
     $errors = @()
     $total = 0
@@ -92,6 +95,7 @@ function Get-LaneFailureDetail {
         FailedTest     = $failedTest
         Trace          = $trace
         TraceTruncated = [bool]$traceTruncated
+        ExitText       = $ExitText
     }
 }
 
@@ -249,10 +253,17 @@ function Format-FloorFailureDetail {
         $verdict = if ($d.PSObject.Properties['Result'] -and $d.Result) { $d.Result } else { 'FAIL' }
         $out += "  lane $($d.Lane): $verdict - $where"
         $out += "    lane $($d.Lane): $(Get-LaneVerdictMeaning -Result $verdict)"
+        $exitText = if ($d.PSObject.Properties['ExitText']) { $d.ExitText } else { '' }
         if ($d.Errors.Count -eq 0) {
             if ($verdict -eq 'FAIL' -or $verdict -eq 'CRASH') {
-                $out += "    lane $($d.Lane): no 'error:' line in that log - the lane died without one (a crash or a kill)"
+                # T1824: the exit code is what tells a kill from a crash from
+                # an ordinary non-zero exit, so it is named when it is known.
+                $how = if ($exitText) { "it ended with $exitText" } else { 'a crash or a kill' }
+                $out += "    lane $($d.Lane): no 'error:' line in that log - the lane died without one ($how)"
             }
+        }
+        elseif ($exitText -and ($verdict -eq 'FAIL' -or $verdict -eq 'CRASH')) {
+            $out += "    lane $($d.Lane): the lane process ended with $exitText"
         }
         else {
             foreach ($e in $d.Errors) { $out += "    lane $($d.Lane): $e" }

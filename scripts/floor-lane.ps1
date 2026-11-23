@@ -766,6 +766,7 @@ function Invoke-Lane {
     # run, over a fullscreen game. Start-LaneProcess caches the handle (without
     # it $proc.ExitCode reads empty after the child exits, which is how gating
     # on exit codes fabricates failures).
+    $script:LastLaneExitCode = $null
     $proc = Start-LaneProcess -CommandLine ('cmd.exe /c ' + $cmd)
     $rootPid = $proc.Id
     # Windows this lane's tree showed on the INPUT desktop, keyed by hwnd. The
@@ -803,6 +804,9 @@ function Invoke-Lane {
             Start-Sleep -Seconds ([math]::Max(1, $SampleSeconds))
 
             if ($proc.HasExited) {
+                # Kept (T1824): the full code is what tells a kill from a crash
+                # from zig's ordinary exit 1 when the log names no test.
+                $script:LastLaneExitCode = $proc.ExitCode
                 $result = if ($proc.ExitCode -eq 0) { 'PASS' } else { 'FAIL' }
                 break
             }
@@ -980,6 +984,7 @@ function Invoke-Lane {
         Write-Host "-- errors (lane $Name, log $log) --"
         Select-String -Path $log -Pattern 'error:' -ErrorAction SilentlyContinue |
             Select-Object -First 15 | ForEach-Object { Write-Host "  lane ${Name}: $($_.Line)" }
+        Write-Host "  lane ${Name}: the lane process ended with $(Format-ProcessExitCode -Code $script:LastLaneExitCode)"
         # A lane can fail with nothing but "exited with error code 5" -- which is
         # a CRASHED child, not a silent compiler (T444). Decode the code and name
         # the process that died, so a red lane is never a bare number.
@@ -1146,8 +1151,11 @@ function Invoke-SoloConfirm {
 
     $names = @(Get-FailedTestName -LogPath $LogPath)
     if ($names.Count -eq 0) {
-        Write-Host "  solo confirm: skipped - the log names no failing test (a build error, a crash, or a shape this parser does not know)"
-        return 'unknown: no test named in the log'
+        # T1824: say how the lane ended, since that is the one fact left that
+        # can tell a kill from a crash from zig's ordinary exit 1.
+        $how = Format-ProcessExitCode -Code $script:LastLaneExitCode
+        Write-Host "  solo confirm: skipped - the log names no failing test (a build error, a crash, or a shape this parser does not know); the lane ended with $how"
+        return "unknown: no test named in the log; ended with $how"
     }
     if ($names.Count -gt $MaxTests) {
         Write-Host "  solo confirm: skipped - $($names.Count) tests failed, which is a lane-wide break rather than one slow wait"
@@ -1584,7 +1592,8 @@ if ($Command) {
     if ($r -ne 'PASS') {
         foreach ($line in (Format-FloorFailureDetail -Details @(
                     Get-LaneFailureDetail -LaneName 'command' -LogPath $script:LastLaneLog `
-                        -Result $r -Diagnostic $script:LastLaneDiagnostic))) {
+                        -Result $r -Diagnostic $script:LastLaneDiagnostic `
+                    -ExitText $(if ($r -in 'FAIL', 'CRASH') { Format-ProcessExitCode -Code $script:LastLaneExitCode } else { '' })))) {
             Write-Host $line
         }
     }
@@ -1782,7 +1791,8 @@ foreach ($l in $lanes) {
             $summary += (Format-LaneSummaryToken -LaneName $l -Iteration $i -Result $r -LogPath $script:LastLaneLog)
             if ($r -ne 'PASS') {
                 $failureDetails += (Get-LaneFailureDetail -LaneName $l -LogPath $script:LastLaneLog `
-                        -Result $r -Diagnostic $script:LastLaneDiagnostic)
+                        -Result $r -Diagnostic $script:LastLaneDiagnostic `
+                    -ExitText $(if ($r -in 'FAIL', 'CRASH') { Format-ProcessExitCode -Code $script:LastLaneExitCode } else { '' }))
             }
             switch ($r) {
                 { $_ -in 'FAIL', 'CRASH' } { if ($worst -lt $EXIT_FAIL) { $worst = $EXIT_FAIL } }
@@ -1842,7 +1852,8 @@ foreach ($l in $lanes) {
         }
         if ($r -ne 'PASS') {
             $failureDetails += (Get-LaneFailureDetail -LaneName $l -LogPath $script:LastLaneLog `
-                    -Result $r -Diagnostic $script:LastLaneDiagnostic)
+                    -Result $r -Diagnostic $script:LastLaneDiagnostic `
+                    -ExitText $(if ($r -in 'FAIL', 'CRASH') { Format-ProcessExitCode -Code $script:LastLaneExitCode } else { '' }))
         }
         switch ($r) {
             { $_ -in 'FAIL', 'CRASH' } { if ($worst -lt $EXIT_FAIL) { $worst = $EXIT_FAIL } }

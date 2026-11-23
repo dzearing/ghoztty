@@ -1,23 +1,21 @@
 {
     "guard":  "test-binary-soak",
     "script":  "test/win32/test-binary-soak.ps1",
-    "generated":  "2026-11-21T13:20:31-08:00",
-    "commit":  "7529293f2",
+    "generated":  "2026-11-22T22:31:50-08:00",
+    "commit":  "b8f5c19c0",
     "uncommitted":  [
-                        "scripts/lib/CrashDiag.ps1",
-                        "scripts/test-binary-soak.ps1",
-                        "test/win32/test-binary-soak.ps1"
+                        "scripts/lib/CrashDiag.ps1"
                     ],
     "files":  {
-                  "scripts/lib/CrashDiag.ps1":  "dcc1adba72d7a3a3d7086ab93f857fb3aee79b7745df5cfd3f77b8451b9d5e45",
+                  "scripts/lib/CrashDiag.ps1":  "2a4a5aa89744faabd1d178da50305b793249cd73d75d88c8f31b96e2a7a52e79",
                   "scripts/lib/ProcessFamily.ps1":  "63beb65412f8da3f6cbc32d025be1adde445e46327e5ec2c5361bc0a6972cfac",
                   "scripts/test-binary-soak.ps1":  "33f993218dc93cb72fdc0233fb00a85daf2062e48e527ae6d0999cc7640f309b",
                   "test/win32/test-binary-soak.ps1":  "e9c98bf87a0216e367b8bdde320fc7c01253286b7f6be286914ec378bb016a16"
               },
     "code":  {
-                 "scripts/lib/CrashDiag.ps1":  "code1:393f266b7fc2d3a173f3a9a9ff9ca29f0d2d08e7c7f01de8fe716cee7d127283",
+                 "scripts/lib/CrashDiag.ps1":  "code1:9176752b43a04f2e89c72142b74096c4d93eeec606f81ed5d4c011b9edc4f4c2",
                  "scripts/lib/ProcessFamily.ps1":  "code1:1fcb4fad53b58054eca35291cb6d22418b01e5062e471b6afd0ee39d1125217b",
-                 "scripts/test-binary-soak.ps1":  "code1:26b282ebfd2a8d3f2e7c80107aa6a01c8f07c525d79860e4e06736c59199df7c",
+                 "scripts/test-binary-soak.ps1":  "code1:1512bb7d1ab1fbbe0654c1c373eca6ae94d913198deac9c23e02227d5facd6d3",
                  "test/win32/test-binary-soak.ps1":  "code1:1ba5360ea57e5fba1ba19025fd18922258193f4fbb7b443bcc36b8be81d036ac"
              }
 }

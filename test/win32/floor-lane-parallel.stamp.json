@@ -1,23 +1,24 @@
 {
     "guard":  "lane-parallel",
     "script":  "test/win32/floor-lane-parallel.ps1",
-    "generated":  "2026-11-21T13:25:18-08:00",
-    "commit":  "7529293f2",
+    "generated":  "2026-11-22T22:28:31-08:00",
+    "commit":  "b8f5c19c0",
     "uncommitted":  [
+                        "scripts/floor-lane.ps1",
                         "scripts/lib/CrashDiag.ps1"
                     ],
     "files":  {
                   "scripts/build-cache.ps1":  "d94c8308363992f42d7ef2c3b729dbce0a7cad28b41f415a7bad39cfab16013a",
-                  "scripts/floor-lane.ps1":  "3f13136d4cdb634f08e3a4402d33f80b36d4ccf2014695c139bbf82cf045ca06",
+                  "scripts/floor-lane.ps1":  "75a211e4acdccc226d1cfd4e5a915cae8acc330ef7ef6e530876d302af448786",
                   "scripts/lib/BuildCache.ps1":  "ee9ec82ca0da753164d67b9ab808265d29f45e0ec74512987d07bdeaf6fcf0a0",
-                  "scripts/lib/CrashDiag.ps1":  "dcc1adba72d7a3a3d7086ab93f857fb3aee79b7745df5cfd3f77b8451b9d5e45",
+                  "scripts/lib/CrashDiag.ps1":  "2a4a5aa89744faabd1d178da50305b793249cd73d75d88c8f31b96e2a7a52e79",
                   "test/win32/floor-lane-parallel.ps1":  "e4821c99f31c4708e5402a8f7d0682586f130592268f8d3b5a2a2e11aab3161d"
               },
     "code":  {
                  "scripts/build-cache.ps1":  "code1:a881a2551b853c41020487d2e38b7e1c2abf97aebba4d8ce002511c6d6e92bb5",
-                 "scripts/floor-lane.ps1":  "code1:a28f55ce1ea24230caf0c302d741d80bd63a03b46c4e58e76c06d34e3d9bc642",
+                 "scripts/floor-lane.ps1":  "code1:012b7aabf50181fcf0163bb7ce283bfbcff55c58136c421037eda823b0e6b251",
                  "scripts/lib/BuildCache.ps1":  "code1:5ffaa24da9edbe853545916aa6b63591156044ac630695e790da2bc3cc83d8e1",
-                 "scripts/lib/CrashDiag.ps1":  "code1:393f266b7fc2d3a173f3a9a9ff9ca29f0d2d08e7c7f01de8fe716cee7d127283",
+                 "scripts/lib/CrashDiag.ps1":  "code1:9176752b43a04f2e89c72142b74096c4d93eeec606f81ed5d4c011b9edc4f4c2",
                  "test/win32/floor-lane-parallel.ps1":  "code1:1052e6fc90a26384a0f3ee3226257f02eb36211338f5a4c4138e7d7acec43b8e"
              }
 }

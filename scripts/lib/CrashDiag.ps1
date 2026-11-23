@@ -119,6 +119,64 @@ function Get-NtStatusCandidate {
         })
 }
 
+# Full (untruncated) exit statuses a lane's ROOT process can end on. The lane
+# root is `cmd.exe /c zig build ...`, and cmd hands zig's exit code back whole,
+# so here - unlike the low byte zig prints for its own children - the status is
+# exact and needs no corroboration to be named. The crash statuses come from
+# the low-byte table above; these are the ones that end a process WITHOUT a
+# crash record, which is the shape T1824 recorded: no test named, no
+# Application Error event, and a log that simply stops.
+# Keyed by the 8-digit hex STRING: in PowerShell 5.1 a literal like 0xC000013A
+# is a negative Int32, so numeric keys cannot be cast to one unsigned form.
+$script:NT_STATUS_EXIT_EXTRA = @{
+    '0xC000013A' = 'STATUS_CONTROL_C_EXIT (console Ctrl+C / Ctrl+Break, or the console closed)'
+    '0x40010004' = 'DBG_TERMINATE_PROCESS (killed by a debugger or TerminateProcess with this code)'
+    '0xC0000017' = 'STATUS_NO_MEMORY'
+    '0xC000012D' = 'STATUS_COMMITMENT_LIMIT (the box ran out of commit - see T453)'
+}
+
+function Format-ProcessExitCode {
+    <#
+    .SYNOPSIS
+        One phrase naming how a process ended, from its FULL exit code.
+    .DESCRIPTION
+        T1824. A red lane whose log names no failing test used to be reported
+        as `unknown: no test named in the log`, and the one fact that could
+        tell a kill from a crash from an ordinary `exit 1` - the lane process's
+        own exit code - was read, compared with zero, and thrown away.
+
+        A small positive code is an ordinary exit and is said as such: zig
+        build exits 1 when a step failed. A code that is an NTSTATUS (negative
+        as an Int32, or above 0xFFFF) is named exactly when it is a known one,
+        and printed in hex when it is not, so it can be looked up rather than
+        read as a decimal nobody recognises. $null means the exit code could
+        not be read at all, which is said rather than guessed.
+    .OUTPUTS
+        A string such as `exit code 1`, or
+        `exit code 0xC0000005 STATUS_ACCESS_VIOLATION (-1073741819)`.
+    #>
+    param([AllowNull()][object]$Code)
+
+    if ($null -eq $Code -or "$Code" -eq '') { return 'an exit code that could not be read' }
+    $n = 0L
+    if (-not [long]::TryParse("$Code", [ref]$n)) { return "exit code '$Code' (not a number)" }
+    if ($n -ge 0 -and $n -le 0xFFFF) { return "exit code $n" }
+
+    $u = $n -band 0xFFFFFFFFL
+    $hex = '0x{0:X8}' -f $u
+    $signed = if ($u -ge 0x80000000L) { $u - 0x100000000L } else { $u }
+    $name = $script:NT_STATUS_EXIT_EXTRA[$hex]
+    if (-not $name) {
+        foreach ($set in $script:NT_STATUS_BY_LOW_BYTE.Values) {
+            foreach ($s in $set) {
+                if (('0x{0:X8}' -f ([long]$s.Status -band 0xFFFFFFFFL)) -eq $hex) { $name = $s.Name }
+            }
+        }
+    }
+    if ($name) { return "exit code $hex $name ($signed)" }
+    return "exit code $hex ($signed; not a status this decoder names)"
+}
+
 function Get-ProcessCrashEvent {
     <#
     .SYNOPSIS
