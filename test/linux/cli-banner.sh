@@ -135,7 +135,7 @@ hl_check "B2 the card is shown" $? "$(last_block | head -3 | tr '\n' '|')"
 
 dump_has '  heading <span weight="bold" size="large">Build status</span>'
 hl_check "B3 an ## heading draws bold and large" $? "$(last_block | tr '\n' '|' | head -c 600)"
-dump_has '<b>PR</b> <i>three</i> <u>files</u> <tt>code</tt> <a href="https://example.com/pr/1">view</a>'
+dump_has '<b>PR</b> <i>three</i> <u>files</u> <tt>code</tt> <a href="https://example.com/pr/1"><u>view</u></a>'
 hl_check "B4 inline styles and an explicit link become Pango markup" $? "$(last_block | grep -m1 '  text' )"
 dump_has '  item [x]' && dump_has '  item [ ]' && dump_has '  item 1.' && dump_has '  content lint'
 hl_check "B5 a list draws native checkboxes and its number marker in the gutter" $? "$(last_block | grep -E '  (item|content)' | tr '\n' '|')"
@@ -143,7 +143,7 @@ dump_has '  rule'
 hl_check "B6 --- draws a separator" $?
 dump_has '  table cols=2 rows=1 header=true' && dump_has '  th <span weight="bold">Job</span>' && dump_has '  td ok'
 hl_check "B7 a pipe table draws a grid with a bold header" $? "$(last_block | grep -E '  (table|th|td)' | tr '\n' '|')"
-dump_has "<a href=\"$fixture/docs/a.md\">./docs/a.md</a>" && dump_has "<a href=\"$HOME/x.txt\">~/x.txt</a>"
+dump_has "<a href=\"$fixture/docs/a.md\"><u>./docs/a.md</u></a>" && dump_has "<a href=\"$HOME/x.txt\"><u>~/x.txt</u></a>"
 hl_check "B8 ./ and ~/ autolink against the pane's cwd and home, POSIX-joined" $? "$(last_block | grep -m1 'open' )"
 
 got=$(leaf banner)
@@ -151,7 +151,9 @@ want=$(printf '%b' "$text")
 [ "$got" = "$want" ]
 hl_check "B9 +list --json reports the banner's source verbatim" $? "got=$(echo "$got" | head -c 120)"
 
-rows1=$(rows)
+# The resize reaches the pty a moment after the card lays out: poll.
+rows_until() { local i r; for i in $(seq 1 15); do r=$(rows); if [ -n "$r" ] && eval "[ $r $1 $rows0 ]"; then echo "$r"; return 0; fi; done; echo "$r"; return 1; }
+rows1=$(rows_until -lt)
 [ -n "$rows1" ] && [ -n "$rows0" ] && [ "$rows1" -lt "$rows0" ]
 hl_check "B10 the terminal is laid out below the card: fewer rows than before" $? "before=$rows0 after=$rows1"
 
@@ -170,7 +172,7 @@ lrc=$?
 [ $rc = 0 ] && [ $lrc = 0 ] && [ "$(leaf banner)" = "<absent>" ]
 hl_check "C1 --clear removes the card and the banner field" $? "rc=$rc out=$out banner=$(leaf banner)"
 
-rows2=$(rows)
+rows2=$(rows_until =)
 [ -n "$rows2" ] && [ "$rows2" = "$rows0" ]
 hl_check "C2 the terminal takes its rows back" $? "before=$rows0 cleared=$rows2"
 
