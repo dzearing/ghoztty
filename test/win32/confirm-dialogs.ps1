@@ -41,6 +41,7 @@ param([string]$ExePath, [switch]$NegativeControl, [switch]$Interactive)
 # of any isolation setup, because it drops an inherited $GHOZTTY_IPC_SOCKET - a
 # test never wants the caller pane's endpoint.
 . (Join-Path $PSScriptRoot 'lib\CleanSlate.ps1')
+. (Join-Path $PSScriptRoot 'lib\TestScore.ps1')   # T271/T1768: arms the run, so the stamp below is refused for a body that unwound or asserted nothing
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
 $exe = Join-Path $repo 'zig-out\bin\ghoztty.exe'
@@ -265,6 +266,10 @@ try {
             }
         }
     }
+
+    # The try's last statement (body-complete-audit D1): an unwind above skips
+    # it, so the verdict reads DID NOT FINISH instead of green.
+    Complete-TestBody
 } finally {
     Remove-TestDesktop
     Kill-RepoInstances
@@ -282,5 +287,13 @@ if (-not $Interactive -and $env:GHOZTTY_TEST_INTERACTIVE -ne '1') {
 }
 
 Write-Host ''
-if ($script:fail -eq 0) { Write-Host "ALL PASS ($script:pass assertions)" }
-else { Write-Host "$script:fail FAILURE(S) ($script:pass passed)" -ForegroundColor Red; exit 1 }
+if ($script:fail -eq 0 -and -not $NegativeControl -and (Test-TestBodyComplete)) {
+    # A clean green run stamps the covered files (T783/T1768); red, an unwound
+    # body or a negative control stays due. Continue: under Stop, a stderr line
+    # from the native call through 2>&1 would throw in PowerShell 5.1.
+    $ErrorActionPreference = 'Continue'
+    $gdRepo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $gdRepo 'scripts\guard-due.ps1') `
+        update -Guard confirm-dialogs -Repo $gdRepo 2>&1 | ForEach-Object { "  $_" }
+}
+Write-TestVerdict -Label 'CONFIRM-DIALOGS ACCEPTANCE' -Pass $script:pass -Fail $script:fail

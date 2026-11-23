@@ -39855,3 +39855,8 @@ Reproduce-first: agent-recovery.ps1 is ALL PASS (104 assertions) on HEAD 15640bd
 ## 2026-11-22 18:12 lane b - T1779: MachineChooser.zig's split is planned as eleven planes
 - MachineChooser.zig re-measured at 5,478 lines (six banners, ~300 lines of tests), so like T1775-T1778 it is split per plane: T3511-T3521, one new `machine_chooser_*.zig` file each (named apart from the existing pure-model `chooser_*.zig` files), every range named by first and last function, all using the T3436 split/proof tooling and each told to repoint the guard-due Covers rows.
 - T3522 re-measures the owner (imports, fields, open(), lifecycle) once all eleven land (it depends on them). No code change in this turn.
+
+## 2026-11-22 17:45 - T1768: input, menu, dialog and hero harnesses get guard rows
+
+- confirm-dialogs, context-menu, mouse-nc-routing, wheel-scroll, hero-mode, hero-nav and scrollback-narrow each have a guard-due row naming the module that decides their behavior, score through lib/TestScore.ps1, and stamp only a complete green run. context-menu-real-input gets an ADVISORY row (input-desktop exception, NOT RUN).
+- Evidence: acceptance-parallel 20261122-172506 all seven green and stamped; -NegativeControl runs of mouse-nc-routing and hero-nav red with stamps unchanged. uncovered 15 -> 7.

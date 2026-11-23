@@ -55,6 +55,7 @@ $wheelLines = 3
 # script scrolls a pane and counts lines against what it just wrote — a pane
 # RESTORED from the previous run arrives with a scrollback nobody here filled.
 . (Join-Path $PSScriptRoot 'lib\CleanSlate.ps1')
+. (Join-Path $PSScriptRoot 'lib\TestScore.ps1')   # T271/T1768: arms the run, so the stamp below is refused for a body that unwound or asserted nothing
 
 # T441: a per-run IPC endpoint on top of CleanSlate's T118 unbaking, so this run
 # cannot collide with another debug instance (they all share the one derived
@@ -142,6 +143,10 @@ if ($result) {
     Assert ($down -eq 2 * $wheelLines) "two notches down scroll 6 lines ($down == $(2 * $wheelLines))"
 }
 
+# The body's last statement: a terminating error above (ErrorActionPreference
+# Stop) never reaches it, so the verdict reads DID NOT FINISH instead of green.
+Complete-TestBody
+
 # --- Teardown -----------------------------------------------------------------
 & $exe +close --target=$pane 2>$null | Out-Null
 Start-Sleep -Milliseconds 500
@@ -149,5 +154,13 @@ if (-not $proc.HasExited) { Stop-Process -Id $proc.Id -Force -ErrorAction Silent
 Remove-Item $counter -ErrorAction SilentlyContinue
 Remove-TestDesktop | Out-Null
 
-if ($script:fail -eq 0) { Write-Host "ALL PASS ($script:pass assertions)" }
-else { Write-Host "$script:fail FAILURE(S) of $($script:pass + $script:fail)"; exit 1 }
+if ($script:fail -eq 0 -and (Test-TestBodyComplete)) {
+    # A clean green run stamps the covered files (T783/T1768); red stays due.
+    # Continue: under Stop, a stderr line from the native call through 2>&1
+    # would throw in PowerShell 5.1.
+    $ErrorActionPreference = 'Continue'
+    $gdRepo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $gdRepo 'scripts\guard-due.ps1') `
+        update -Guard wheel-scroll -Repo $gdRepo 2>&1 | ForEach-Object { "  $_" }
+}
+Write-TestVerdict -Label 'T40 WHEEL SCROLL' -Pass $script:pass -Fail $script:fail

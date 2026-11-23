@@ -1,0 +1,16 @@
+{
+    "guard":  "scrollback-narrow",
+    "script":  "test/win32/scrollback-narrow.ps1",
+    "generated":  "2026-11-22T17:26:15-08:00",
+    "commit":  "1d5d07c73",
+    "uncommitted":  [
+                        "test/win32/scrollback-narrow.ps1"
+                    ],
+    "files":  {
+                  "src/termio/history_guard.zig":  "f06519c1f847bf49afb69a8252e45c15f1aa482d2203c6b7d29bd6f0c30e40d0",
+                  "test/win32/scrollback-narrow.ps1":  "67ef6dceb10f8a735bed4c59fdfccd2b23f67102fd7bf0b0bc07e7e25754689d"
+              },
+    "code":  {
+                 "test/win32/scrollback-narrow.ps1":  "code1:16a07311921a56a253cdf1ea328c7fa056e7f654580f74fc1783173cafe9bb5b"
+             }
+}

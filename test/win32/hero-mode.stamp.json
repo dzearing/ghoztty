@@ -1,0 +1,18 @@
+{
+    "guard":  "hero-mode",
+    "script":  "test/win32/hero-mode.ps1",
+    "generated":  "2026-11-22T17:25:50-08:00",
+    "commit":  "1d5d07c73",
+    "uncommitted":  [
+                        "test/win32/hero-mode.ps1"
+                    ],
+    "files":  {
+                  "src/apprt/win32/hero_math.zig":  "8ad9c3c4d9a953d7ee37c2fdc930eaef3de769209325b18391c15f5b439ed932",
+                  "src/apprt/win32/hero_snap_schedule.zig":  "c1eb3f178e825a6f7003d0e4cb92bc32492fe91aab289390f970e5b15ac4883f",
+                  "src/apprt/win32/HeroCarousel.zig":  "b6a6247d3b4d94c4df3e9b9c52b4ad645229a54b546a68e9f6039cdb9cc00135",
+                  "test/win32/hero-mode.ps1":  "432c9aae1b7b318598f54ecb4ca444a22831eb0f6d863a1c18e896b7f3f3bb6c"
+              },
+    "code":  {
+                 "test/win32/hero-mode.ps1":  "code1:a47d569f6a2eb2844988a42013e2e502cf0835d1910623e90ca2c83f419060af"
+             }
+}

@@ -1594,6 +1594,107 @@ $GuardTable = @(
             'src\apprt\win32\tray_notify.zig'
         )
     },
+    # T1768: the input, menu, dialog and hero family. Same rule as the blocks
+    # above: each row names the module where its behavior is decided, and
+    # Window.zig / Surface.zig are left out on purpose (hero navigation's step
+    # and the wheel handler live there, so those rows hold the pure geometry or
+    # the harness alone, the font-inherit precedent).
+    # The dark confirm prompts (T80): close-surface, window close and About
+    # open dark, and Enter on the default button never approves.
+    [pscustomobject]@{
+        Name   = 'confirm-dialogs'
+        Script = 'test\win32\confirm-dialogs.ps1'
+        Stamp  = 'test\win32\confirm-dialogs.stamp.json'
+        Covers = @(
+            'test\win32\confirm-dialogs.ps1',
+            'src\apprt\win32\ConfirmDialog.zig'
+        )
+    },
+    # The right-click context menu (T102): item list, enable/check flags and
+    # the action each item dispatches, driven by posted messages.
+    [pscustomobject]@{
+        Name   = 'context-menu'
+        Script = 'test\win32\context-menu.ps1'
+        Stamp  = 'test\win32\context-menu.stamp.json'
+        Covers = @(
+            'test\win32\context-menu.ps1',
+            'src\apprt\win32\context_menu.zig'
+        )
+    },
+    # The same menu under a PHYSICAL right-click (T240). ADVISORY: it is an
+    # @input-desktop-exception script, and go.md forbids taking the user's
+    # foreground while they are present, so an unattended turn cannot answer
+    # it. Reported as due after a context_menu edit, never a gate.
+    [pscustomobject]@{
+        Name     = 'context-menu-real-input'
+        Script   = 'test\win32\context-menu-real-input.ps1'
+        Stamp    = 'test\win32\context-menu-real-input.stamp.json'
+        Advisory = $true
+        Covers   = @(
+            'test\win32\context-menu-real-input.ps1',
+            'src\apprt\win32\context_menu.zig'
+        )
+    },
+    # Send-TestMouse routes a click the way Windows does: the caption band gets
+    # the WM_NC* family with the window's own hit code, the terminal gets the
+    # client form (T263). The subject is the harness library and the caption
+    # hit geometry it is measured against.
+    [pscustomobject]@{
+        Name   = 'mouse-nc-routing'
+        Script = 'test\win32\mouse-nc-routing.ps1'
+        Stamp  = 'test\win32\mouse-nc-routing.stamp.json'
+        Covers = @(
+            'test\win32\mouse-nc-routing.ps1',
+            'test\win32\lib\TestDesktop.ps1',
+            'src\apprt\win32\caption_layout.zig'
+        )
+    },
+    # One wheel notch scrolls exactly 3 lines (T40). The handler is in
+    # Surface.zig, left out on purpose, so the row holds the harness alone.
+    [pscustomobject]@{
+        Name   = 'wheel-scroll'
+        Script = 'test\win32\wheel-scroll.ps1'
+        Stamp  = 'test\win32\wheel-scroll.stamp.json'
+        Covers = @(
+            'test\win32\wheel-scroll.ps1'
+        )
+    },
+    # Hero mode's true-port oracle (T58/T59a): layout, hidden-pane snapshots,
+    # the divider drag and toggle-off restoring the tree.
+    [pscustomobject]@{
+        Name   = 'hero-mode'
+        Script = 'test\win32\hero-mode.ps1'
+        Stamp  = 'test\win32\hero-mode.stamp.json'
+        Covers = @(
+            'test\win32\hero-mode.ps1',
+            'src\apprt\win32\HeroCarousel.zig',
+            'src\apprt\win32\hero_math.zig',
+            'src\apprt\win32\hero_snap_schedule.zig'
+        )
+    },
+    # Hero navigation reads the LIVE split tree, moves one tile per press and
+    # only in the window it was aimed at (T126, T560).
+    [pscustomobject]@{
+        Name   = 'hero-nav'
+        Script = 'test\win32\hero-nav.ps1'
+        Stamp  = 'test\win32\hero-nav.stamp.json'
+        Covers = @(
+            'test\win32\hero-nav.ps1',
+            'src\apprt\win32\HeroCarousel.zig',
+            'src\apprt\win32\hero_math.zig'
+        )
+    },
+    # Resizing a ConPTY pane never destroys scrollback (T431): the guard that
+    # keeps imported history out of the child's post-resize repaint.
+    [pscustomobject]@{
+        Name   = 'scrollback-narrow'
+        Script = 'test\win32\scrollback-narrow.ps1'
+        Stamp  = 'test\win32\scrollback-narrow.stamp.json'
+        Covers = @(
+            'test\win32\scrollback-narrow.ps1',
+            'src\termio\history_guard.zig'
+        )
+    },
     # The overview action (T708): the only thing that proves a bound
     # `toggle_tab_overview` actually opens hero mode, from a terminal AND from
     # a focused viewer. Covers the harness, the forwarding decision it rides

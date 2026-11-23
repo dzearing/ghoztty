@@ -300,4 +300,14 @@ finally {
 }
 
 Write-Host ''
-Write-TestVerdict -Pass $script:pass -Fail $script:fail
+if ($script:fail -eq 0 -and (Test-TestBodyComplete)) {
+    # A clean green run stamps the covered files (T783/T1768); red or an unwound
+    # body stays due (the not-installed SKIP above exits before reaching this).
+    # Continue: under Stop, a stderr line from the native call through 2>&1
+    # would throw in PowerShell 5.1.
+    $ErrorActionPreference = 'Continue'
+    $gdRepo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $gdRepo 'scripts\guard-due.ps1') `
+        update -Guard scrollback-narrow -Repo $gdRepo 2>&1 | ForEach-Object { "  $_" }
+}
+Write-TestVerdict -Label 'T431 SCROLLBACK NARROW' -Pass $script:pass -Fail $script:fail

@@ -44,6 +44,7 @@ param([string]$ExePath, [switch]$NegativeControl)
 # of any isolation setup, because it drops an inherited $GHOZTTY_IPC_SOCKET - a
 # test never wants the caller pane's endpoint.
 . (Join-Path $PSScriptRoot 'lib\CleanSlate.ps1')
+. (Join-Path $PSScriptRoot 'lib\TestScore.ps1')   # T271/T1768: arms the run, so the stamp below is refused for a body that unwound or asserted nothing
 # T1100: this script's whole oracle is a PHYSICAL right-click, so it needs the
 # input desktop's two capabilities - SendInput actually landing, and a window it
 # can bring to the foreground. Neither exists on a background desktop, and on the
@@ -351,8 +352,20 @@ if ($menu -ne [IntPtr]::Zero) { Cancel-Menu $g }
 Assert (-not $g.Proc.HasExited) 'C: no crash'
 Stop-Process -Id $g.Pid -Force -ErrorAction SilentlyContinue
 
+# The body's last statement: a terminating error above (ErrorActionPreference
+# Stop) never reaches it, so the verdict reads DID NOT FINISH instead of green.
+Complete-TestBody
+
 foreach ($id in $launched) { Stop-Process -Id $id -Force -ErrorAction SilentlyContinue }
 Kill-RepoInstances
 
-if ($script:fail -eq 0) { Write-Host "ALL PASS ($script:pass)" }
-else { Write-Host "$script:fail FAILURE(S) ($script:pass passed)" -ForegroundColor Red; exit 1 }
+if ($script:fail -eq 0 -and -not $NegativeControl -and (Test-TestBodyComplete)) {
+    # A clean green run stamps the covered files (T783/T1768); red or a
+    # negative control stays due. Continue: under Stop, a stderr line from the
+    # native call through 2>&1 would throw in PowerShell 5.1.
+    $ErrorActionPreference = 'Continue'
+    $gdRepo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $gdRepo 'scripts\guard-due.ps1') `
+        update -Guard context-menu-real-input -Repo $gdRepo 2>&1 | ForEach-Object { "  $_" }
+}
+Write-TestVerdict -Label 'T240 CONTEXT MENU REAL INPUT' -Pass $script:pass -Fail $script:fail
