@@ -23,9 +23,12 @@
 #   powershell -NoProfile -File scripts\linux\wsl-run.ps1 -CommandFile test\linux\viewer-links.sh
 #
 # Everything runs inside the private headless Weston (test/linux/lib/headless.sh).
-# Weston headless has no seat, so clicks are the page's own: `a.click()` and a
-# dispatched MouseEvent carrying ctrlKey/shiftKey, which WebKit reports as the
-# same LINK_CLICKED navigation, with those modifiers, that a pointer click is.
+# Weston headless has no seat, so clicks are the page's own: a dispatched
+# click MouseEvent, which WebKit reports as the same LINK_CLICKED navigation a
+# pointer click is. WebKit deliberately drops the modifiers of a script-made
+# click (a page must not fake a Ctrl-click), so the steps' `mods ctrl` /
+# `mods ctrl+shift` stand in for the keyboard; reading a real click's
+# modifiers off WebKit is the one thing not exercised here.
 # Nothing ever leaves the app: the debug build's GHOZTTY_TEST_VIEWER_LINKS sink
 # records every hand-off to the browser or a default app INSTEAD of running it
 # (inside WSL xdg-open can reach the Windows browser), and a test run without
@@ -77,7 +80,8 @@ cat > "$fx/page.html" <<'EOF'
 <iframe id="fr" src="frame.html"></iframe>
 </body></html>
 EOF
-printf '<!DOCTYPE html><html><body><a id="fl" href="https://example.test/framed">framed</a></body></html>\n' > "$fx/frame.html"
+printf '<!DOCTYPE html><html><body><a id="fl" href="https://example.test/framed">framed</a><script>addEventListener("message",function(){document.getElementById("fl").dispatchEvent(new MouseEvent("contextmenu",{bubbles:true,cancelable:true}))})</script></body></html>
+' > "$fx/frame.html"
 printf '<!DOCTYPE html><html><body><h1>Page Two</h1></body></html>\n' > "$fx/sub/two.html"
 
 port=$((20000 + $$ % 20000))
@@ -158,13 +162,20 @@ sink="$HL_RUNTIME/links.out"
     echo "wait"
     echo "probe $H"
     click '#out'
-    click '#out' true
+    echo "mods ctrl"
+    click '#out'
+    echo "mods none"
     click '#file'
+    echo "mods ctrl+shift"
+    click '#file'
+    echo "mods none"
     click '#blank'
-    click '#sameblank' true
+    echo "mods ctrl"
+    click '#sameblank'
+    echo "mods none"
     echo "probe (function(){window.open('https://example.test/opened');window.open();return 'opened'})()"
     menu '#out'
-    echo "probe (function(){var d=document.getElementById('fr').contentDocument;var a=d&&d.getElementById('fl');if(!a)return 'NOFRAME';return a.dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,cancelable:true}))?'kept':'suppressed'})()"
+    echo "probe (function(){document.getElementById('fr').contentWindow.postMessage('rc','*');return 'posted'})()"
     menu '#sib'
     echo "sleep 500"
     click '#sib'
@@ -178,8 +189,11 @@ sink="$HL_RUNTIME/links.out"
     echo "wait"
     echo "probe $H"
     click '#port'
-    click '#port' true
-    click '#port' true true
+    echo "mods ctrl"
+    click '#port'
+    echo "mods ctrl+shift"
+    click '#port'
+    echo "mods none"
     click '#host'
     click '#cmd'
     echo "sleep 1500"
@@ -258,8 +272,8 @@ sunk "browser https://example.test/out"
 hl_check "K20 a rendered page's link off its folder goes to the browser" $? "$(grep '^browser' "$sink" | tr '\n' ' ')"
 sunk "split https://example.test/out"
 hl_check "K21 Ctrl on that link opens a side pane instead" $? "$(grep '^split' "$sink" | tr '\n' ' ')"
-sunk "reveal /etc/hostname"
-hl_check "K22 a file:// link off a page is revealed, not opened" $? "$(grep '^reveal' "$sink" | tr '\n' ' ')"
+sunk "reveal /etc/hostname" && sunk "app /etc/hostname"
+hl_check "K22 a file:// link off a page is revealed, not opened; Ctrl+Shift hands it to its app" $? "$(grep -E '^(reveal|app)' "$sink" | tr '\n' ' ')"
 sunk "browser https://example.test/pop" && sunk "browser https://example.test/opened"
 hl_check "K23 a target=_blank link and window.open(url) go to the default browser" $? "$(grep '^browser' "$sink" | tr '\n' ' ')"
 grep -q 'viewer: a popup with no URL is not adopted on Linux yet (T3447)' "$APP_LOG" &&

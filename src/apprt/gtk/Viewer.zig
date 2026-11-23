@@ -176,6 +176,8 @@ pointer_y: f64 = 0,
 /// `armLinkMenu`). Owned.
 menu_target: ?[:0]u8 = null,
 menu_kind: links.Kind = .web,
+/// The `file://`-link hook's message handler (`installFileLinkHook`).
+file_link_handler_id: c_ulong = 0,
 
 /// The find card's widgets. All owned by `box` (through the overlay).
 const FindCard = struct {
@@ -312,6 +314,10 @@ fn deinit(self: *Viewer) void {
     if (self.ucm) |m| {
         if (self.message_handler != 0) wk.g_signal_handler_disconnect(m, self.message_handler);
         wk.webkit_user_content_manager_unregister_script_message_handler(m, bridge.handler_name, null);
+        if (self.file_link_handler_id != 0) {
+            wk.g_signal_handler_disconnect(m, self.file_link_handler_id);
+            wk.webkit_user_content_manager_unregister_script_message_handler(m, file_link_handler, null);
+        }
         // The ref `installFindScript` took: the web view may already have
         // dropped its own by the time its `destroy` reaches us.
         wk.g_object_unref(m);
@@ -818,6 +824,7 @@ fn installLinks(self: *Viewer) void {
         const script = wk.webkit_user_script_new(bridge.links_js, wk.inject_all_frames, wk.inject_at_document_end, null, null);
         wk.webkit_user_content_manager_add_script(m, script);
         wk.webkit_user_script_unref(script);
+        self.installFileLinkHook(m);
     }
 
     // DEBUG-ONLY: a headless test has no user gesture to give, and WebKit's
@@ -853,8 +860,28 @@ fn onDecidePolicy(view: *wk.WebView, decision: *wk.PolicyDecision, kind: c_int, 
     if (d == .allow) return 0;
 
     wk.webkit_policy_decision_ignore(decision);
-    const mods = links.Mods.fromGdk(wk.webkit_navigation_action_get_modifiers(action));
+    const mods = navMods(action);
     log.info("viewer: link {s} -> {s} ctrl={} shift={}", .{ uri, @tagName(d), mods.ctrl, mods.shift });
+    self.routeDecision(d, uri, mods);
+    return 1;
+}
+
+/// The modifiers held for a navigation. WebKit reports them only for a
+/// TRUSTED event (a page cannot fake a Ctrl-click into a side pane), and a
+/// seatless Weston can make none, so a debug build's steps runner can stand
+/// in for the keyboard (`mods <ctrl|ctrl+shift|none>`) - the same seam
+/// shape as `key`, which calls the handler a real press would.
+fn navMods(action: *wk.NavigationAction) links.Mods {
+    const real = links.Mods.fromGdk(wk.webkit_navigation_action_get_modifiers(action));
+    if (comptime build_config.is_debug) {
+        if (steps.mods_override) |m| return .{ .ctrl = real.ctrl or m.ctrl, .shift = real.shift or m.shift };
+    }
+    return real;
+}
+
+/// Carry out a link decision the navigation policy (or the file-link hook)
+/// made.
+fn routeDecision(self: *Viewer, d: links.Decision, uri: []const u8, mods: links.Mods) void {
     switch (d) {
         .allow => unreachable,
         .command => self.focusLink(uri),
@@ -868,7 +895,80 @@ fn onDecidePolicy(view: *wk.WebView, decision: *wk.PolicyDecision, kind: c_int, 
         .drop => {},
         .live_link => self.routeLivePageLink(uri, mods),
     }
-    return 1;
+}
+
+/// `file://` links, which WebKit refuses to navigate to from any page that
+/// is not itself a `file:` page ("Not allowed to load local resource") -
+/// before the navigation policy is ever asked, so `decide-policy` never sees
+/// the click and the link would be dead. Mac's pages ARE `file:` pages; ours
+/// are served from custom schemes, and a website is never one. So this hook
+/// takes the click at the page instead: a TRUSTED left click on a `file:`
+/// link in the top frame of a non-`file:` page, posted with its modifiers,
+/// then routed by the same `links.decide` the policy uses. Untrusted (script
+/// made) clicks are ignored, so a page cannot fake a click into launching a
+/// local file's app; a debug test run allows them (`__ghozttyTestClicks`).
+const file_link_handler = "ghozttyFileLink";
+const file_link_js =
+    \\(function () {
+    \\  "use strict";
+    \\  if (window.__ghozttyFileLinks) return;
+    \\  window.__ghozttyFileLinks = true;
+    \\  document.addEventListener("click", function (event) {
+    \\    if (event.defaultPrevented || event.button !== 0) return;
+    \\    if (!event.isTrusted && !window.__ghozttyTestClicks) return;
+    \\    if (location.protocol === "file:") return;
+    \\    const t = event.target;
+    \\    const a = t && t.closest ? t.closest("a[href]") : null;
+    \\    if (!a) return;
+    \\    let url;
+    \\    try { url = new URL(a.href); } catch (e) { return; }
+    \\    if (url.protocol !== "file:") return;
+    \\    const h = window.webkit && window.webkit.messageHandlers &&
+    \\      window.webkit.messageHandlers.ghozttyFileLink;
+    \\    if (!h) return;
+    \\    event.preventDefault();
+    \\    h.postMessage(JSON.stringify({ href: a.href, ctrl: event.ctrlKey, shift: event.shiftKey }));
+    \\  }, false);
+    \\})();
+;
+
+fn installFileLinkHook(self: *Viewer, m: *wk.UserContentManager) void {
+    const test_js: [:0]const u8 = "window.__ghozttyTestClicks = true;\n" ++ file_link_js;
+    const js: [:0]const u8 = if (build_config.is_debug and std.posix.getenv("GHOZTTY_TEST_VIEWER_LINKS") != null)
+        test_js
+    else
+        file_link_js;
+    const script = wk.webkit_user_script_new(js, wk.inject_top_frame, wk.inject_at_document_end, null, null);
+    wk.webkit_user_content_manager_add_script(m, script);
+    wk.webkit_user_script_unref(script);
+    if (wk.webkit_user_content_manager_register_script_message_handler(m, file_link_handler, null) == 0) {
+        log.warn("viewer: could not register the {s} handler; file:// links in pages stay dead", .{file_link_handler});
+        return;
+    }
+    self.file_link_handler_id = wk.g_signal_connect_data(
+        m,
+        "script-message-received::" ++ file_link_handler,
+        @ptrCast(&onFileLinkMessage),
+        self,
+        null,
+        0,
+    );
+}
+
+fn onFileLinkMessage(_: *wk.UserContentManager, value: *wk.JSCValue, ud: ?*anyopaque) callconv(.c) void {
+    const self: *Viewer = @ptrCast(@alignCast(ud orelse return));
+    const s = wk.jsc_value_to_string(value) orelse return;
+    defer wk.g_free(s);
+    const Msg = struct { href: []const u8, ctrl: bool = false, shift: bool = false };
+    const parsed = std.json.parseFromSlice(Msg, self.alloc, std.mem.span(s), .{ .ignore_unknown_fields = true }) catch return;
+    defer parsed.deinit();
+    const href = parsed.value.href;
+    const page: ?[]const u8 = if (wk.webkit_web_view_get_uri(self.view)) |p| std.mem.span(p) else null;
+    const d = links.decide(self.mode, page, href, .link_clicked, false);
+    const mods: links.Mods = .{ .ctrl = parsed.value.ctrl, .shift = parsed.value.shift };
+    log.info("viewer: file link {s} -> {s} ctrl={} shift={}", .{ href, @tagName(d), mods.ctrl, mods.shift });
+    if (d == .allow) return;
+    self.routeDecision(d, href, mods);
 }
 
 /// `create`: the page asked for a new window (`target="_blank"`,
@@ -883,7 +983,7 @@ fn onCreate(view: *wk.WebView, action: *wk.NavigationAction, ud: ?*anyopaque) ca
         break :blk if (u.len == 0) null else u;
     };
     const page: ?[]const u8 = if (wk.webkit_web_view_get_uri(view)) |p| std.mem.span(p) else null;
-    const mods = links.Mods.fromGdk(wk.webkit_navigation_action_get_modifiers(action));
+    const mods = navMods(action);
     const gesture = wk.webkit_navigation_action_is_user_gesture(action) != 0;
     const route = links.decidePopup(self.mode, page, uri, mods, gesture);
     log.info("viewer: popup {s} -> {s} ctrl={} gesture={}", .{ uri orelse "(none)", @tagName(route), mods.ctrl, gesture });
@@ -1898,6 +1998,9 @@ fn writeDump(text: []const u8) void {
 ///   probe <js>      evaluate in the page: `probe OK <value>`
 ///   terminate       kill the page's web process through WebKit's API, as a
 ///                   crash would: `terminate`
+///   mods <m>        `ctrl`, `ctrl+shift` or `none`: the modifiers the next
+///                   link clicks carry (WebKit reports none for a script-made
+///                   click, and Weston has no seat to make a real one)
 ///   menu-pick <row> run a row of the last link menu (`open_browser`,
 ///                   `reveal`, `side_pane`, `new_window`, `open_default_app`,
 ///                   `copy`, `focus`) on its target: `menu-pick <row>`
@@ -1914,6 +2017,8 @@ const steps = if (build_config.is_debug) struct {
     var index: usize = 0;
     var waiting = false;
     var wait_gen: u32 = 0;
+    /// `mods <...>`: held "keys" for link clicks; null = none.
+    var mods_override: ?links.Mods = null;
 
     fn start(v: *Viewer) void {
         if (started) return;
@@ -2023,6 +2128,16 @@ const steps = if (build_config.is_debug) struct {
         } else if (std.mem.eql(u8, verb, "terminate")) {
             out("terminate", .{});
             wk.webkit_web_view_terminate_web_process(v.view);
+        } else if (std.mem.eql(u8, verb, "mods")) {
+            // Stand in for the keyboard during the next link clicks (T3415):
+            // WebKit reports no modifiers for a script-made click.
+            mods_override = if (std.mem.eql(u8, arg, "ctrl"))
+                links.Mods{ .ctrl = true }
+            else if (std.mem.eql(u8, arg, "ctrl+shift"))
+                links.Mods{ .ctrl = true, .shift = true }
+            else
+                null;
+            out("mods {s}", .{arg});
         } else if (std.mem.eql(u8, verb, "menu-pick")) {
             // Choose a row of the last link menu (T3415), as a click on it
             // would: the menu itself cannot pop up on a seatless Weston.
@@ -2120,6 +2235,7 @@ const steps = if (build_config.is_debug) struct {
     }
 } else struct {
     var viewer: ?*Viewer = null;
+    var mods_override: ?links.Mods = null;
     fn start(_: *Viewer) void {}
     fn onRendered(_: *Viewer, _: bool) void {}
 };
