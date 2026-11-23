@@ -865,10 +865,25 @@ half): a pill holding the SHARED `src/viewer/composer.js` page in a second
   Adwaita's own (#ffffff / #363636). `notify::dark` re-pushes while a
   composer page exists. Note the app's default `window-theme = auto` picks
   dark from the default background, so the composer is dark out of the box.
-- Not yet: the draft folder + footer link (T3553). Quoting and pictures are
-  the next sections.
+- **The draft folder and the footer link (T3553; Mac `feedbackDraftStem` +
+  `stagingLink`, win32 T645).** Opening the composer mints a draft stem
+  (`ViewerFeedback.stem_buf`); the footer shows
+  `<worktree name>/temp/feedback/.staging/<stem>` as a flat link (folder icon,
+  middle-ellipsized) whenever there is no status line, and the status takes its
+  place after a send or a failure; the key hints sit at the trailing edge.
+  Nothing is written until the link is clicked: `revealDraft` stages the
+  draft (`report.stage`, from the same `draftParts` the send uses, minus
+  branch/commit/selection) and opens the folder with `Viewer.openWithAppFrom`,
+  which a test run refuses and logs (`a test run refused to hand <folder> to
+  the desktop (app)`). The send passes the stem to `report.write`, so files the
+  user dropped in ride along into `temp/feedback/new/<stem>/`; a filed report
+  retires the stem, and the next open mints a new one. Staging also sweeps any
+  other draft folder untouched for a day (`pruneStaleStaging`).
+  Quoting and pictures are the next sections.
 - **Steps seam**: `composer` prints `open= view= ready= lines= sending=
-  sends= quotes= quoted= style= bg= vars= filed= status=... text=...`
+  sends= quotes= quoted= style= bg= vars= stem= link= reveals= staged= filed=
+  status=... text=...` (`link` = the footer link's label while it shows, `-`
+  otherwise; `click feedback-folder` clicks it)
   (`vars` = palette pushes) once the page is up and
   no send is out (`quotes` = live blocks, `quoted` = ever registered);
   `composer-type <text>` types through `insertText` (`\n` = newline);
@@ -881,7 +896,10 @@ powershell -NoProfile -File scripts\linux\wsl-run.ps1 -CommandFile test\linux\vi
 ```
 
 Ends `VIEWER COMPOSER: ALL PASS` (27 checks, about 2 minutes; C24-C27 are
-the style).
+the style). The draft folder has its own script, `test\linux\viewer-composer-draft.sh`:
+ends `VIEWER COMPOSER DRAFT: ALL PASS` (17 checks, about 2 minutes; it drops a
+`crash.log` into the staged folder between the click and the send, and seeds
+a two-day-old and an hour-old draft folder for the sweep).
 
 ### Quoting a page selection (T3545)
 
