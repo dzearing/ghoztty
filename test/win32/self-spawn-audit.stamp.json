@@ -1,8 +1,8 @@
 {
     "guard":  "self-spawn",
     "script":  "test/win32/self-spawn-audit.ps1",
-    "generated":  "2026-11-23T13:13:35-08:00",
-    "commit":  "723bc2478",
+    "generated":  "2026-11-23T13:18:25-08:00",
+    "commit":  "a6f719ffe",
     "uncommitted":  [
 
                     ],
@@ -68,7 +68,8 @@
                   "src/apprt/gtk/portal/OpenURI.zig":  "53fead4541a2afbefe7e731ba0d4ae595d95586099e632f3df2b46f856e90541",
                   "src/apprt/gtk/post_fork.zig":  "2fbb12016b45d893cccc5949d1eeaf01ff2cd09af1769539a05699a31ea4454c",
                   "src/apprt/gtk/pre_exec.zig":  "1ef8451b7a579afd9cae9c2c4ceb57a0da347780eca52567f65cd93a1fa5fac6",
-                  "src/apprt/gtk/SessionLayout.zig":  "d01ac33fafb48dd4a5d53fd2c44476f95765b845cfd6b894c5d1ecef4e87773e",
+                  "src/apprt/gtk/session_layout_rules.zig":  "b04696fd2b9a91ae63e8b96cafe01292d5d9f51419214580cdff92296ddbea37",
+                  "src/apprt/gtk/SessionLayout.zig":  "253d9a547810d56fe853ce3716d64fc39a97c31a40b03324c38fa8632c2a6d53",
                   "src/apprt/gtk/Surface.zig":  "06aa46f48a21569b307d1cf1b8db60b78b2f854ed36d369c4b432ea8bf14f5ea",
                   "src/apprt/gtk/url_activation.zig":  "eb7e237ecfff43e95f7d335b69136a7cbb2a178369988890f81126c53dee2082",
                   "src/apprt/gtk/url_scheme.zig":  "7ff0b669d159f5099ea6a203fdeccad49ecb46a6c522947977569a966b818142",
@@ -116,7 +117,7 @@
                   "src/apprt/runtime.zig":  "0814accb262d8fdd4ed3e675dbcd9076177a9ac848e6a637c1505e8e22c30480",
                   "src/apprt/structs.zig":  "5690ddd03492459eb0416624b5a11ccba92e1f840a6b6c338e6983f08b4f5d61",
                   "src/apprt/surface.zig":  "7a465159bfaeb123ab88dfffdd810ab0b593800ce58df9911264ff3ab0b8d494",
-                  "src/apprt/unit_tests.zig":  "83efec07c15744764820e3293d4930942f353a52c532b2fc12f1eebf77f5d0c7",
+                  "src/apprt/unit_tests.zig":  "289520142facf519057e1a09c213ca5b27b463d5a18bcfbda8d3c376c30f6f30",
                   "src/apprt/win32.zig":  "28def0d56445c6e9247d6ed94b51d4fccf914d79aa9461758b1cd11e6c381ada",
                   "src/apprt/win32/about_links.zig":  "9bb9ec60b7b6099fda1350ec165c06d9404a32c4f53de1bb2fd0ce697a52683a",
                   "src/apprt/win32/about_rows.zig":  "1de3a206f3363acd1957233f53ff207dad9cb8984b5579f7198c5222ccf91078",

@@ -1114,6 +1114,11 @@ exec pty.
 `src/apprt/gtk/SessionLayout.zig` keeps a session-layout manifest and rebuilds
 from it at launch, the Mac's `SessionLayoutManifest` in win32's on-disk schema
 (`apprt/win32/session_layout.zig`, std-only, shared rather than copied).
+Its pure half - the file's path, a tree's first leaf, the recorded window size,
+a viewer leaf's restore - is `gtk/session_layout_rules.zig` (T3551), std-only
+and referenced from `apprt/unit_tests.zig`, so every lane runs its tests:
+`SessionLayout.zig` imports GTK classes, and nothing ever compiled the tests
+it used to carry (a `-Dtest-filter=firstLeaf` run matched no tests).
 
 - **The file** is `<config root>/ghoztty/session-layout[-debug][-<lineage>].json`,
   beside the agent's state dir under the same root, so the harness's private
