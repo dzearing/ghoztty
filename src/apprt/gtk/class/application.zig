@@ -1287,22 +1287,23 @@ pub const Application = extern struct {
     }
 
     /// Open a window for an IPC `+new-window` (T3370) and return it.
-    /// `activate` false shows it without asking for focus: a script's window
-    /// opens in the background unless it passed `--focus` (T1797, T3381).
+    /// `take_focus` false shows it without asking for focus: a script's
+    /// window opens in the background unless it passed `--focus` (T1797,
+    /// T3381).
     pub fn newWindowForIpc(
         self: *Self,
         command: ?configpkg.Command,
         working_directory: ?[:0]const u8,
         env: []const []const u8,
         view: ?[:0]const u8,
-        activate: bool,
+        take_focus: bool,
     ) *Window {
         return Action.newWindowForIpc(self, .{
             .command = command,
             .working_directory = working_directory,
             .env = env,
             .view = view,
-            .activate = activate,
+            .activate = take_focus,
         });
     }
 
