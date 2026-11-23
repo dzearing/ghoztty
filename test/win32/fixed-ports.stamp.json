@@ -1,20 +1,20 @@
 {
     "guard":  "fixed-ports",
     "script":  "test/win32/fixed-ports.ps1",
-    "generated":  "2026-11-21T22:33:17-08:00",
-    "commit":  "f81eb427a",
+    "generated":  "2026-11-23T13:31:30-08:00",
+    "commit":  "807908fec",
     "uncommitted":  [
                         "test/win32/fixed-ports.ps1",
                         "test/win32/lib/FixedPortAudit.ps1"
                     ],
     "files":  {
-                  "test/win32/fixed-ports.ps1":  "03635f28d25ffc5cc840e515f8db32f2e8e5f4022b96da7c1498e49591097ca1",
-                  "test/win32/lib/FixedPortAudit.ps1":  "cadc33dc1f1dcc9692bfa32ea15bea11f6130870c5edb779159648353e33d98d",
+                  "test/win32/fixed-ports.ps1":  "d5a5cfd37acfdbed0168b4fa5d1041f37fb1e0d751db451d15bd004ad3d0377e",
+                  "test/win32/lib/FixedPortAudit.ps1":  "cb281251d420e45228f6b14b65324f08f5cc89b2ad538d109eac3ad27c58b621",
                   "test/win32/lib/FreePort.ps1":  "1f6d3230171a1f76c1f1327e8ad01ddd9c65aba78cbe70f7b7716b9a1a2109c7"
               },
     "code":  {
-                 "test/win32/fixed-ports.ps1":  "code1:ebfb00205cfd89ad04b2827604d637959119b343b5aa6eb1b7f872bae43d16f9",
-                 "test/win32/lib/FixedPortAudit.ps1":  "code1:e2e53d8ed417607b20be9f6af18085d59af45d15f7fcfc7bff35bc0139645207",
+                 "test/win32/fixed-ports.ps1":  "code1:58303a00fa3ad60af6e112841329de78a146a97d5109f880364c662218d660df",
+                 "test/win32/lib/FixedPortAudit.ps1":  "code1:35d1cc5d9333684b5a0ab77824d79ce60273dc657edc3e2d1711870bfeab58c0",
                  "test/win32/lib/FreePort.ps1":  "code1:344294cf1ef88f977216c749e9b637ce185188ae00d0ac44634b348448dab1f9"
              }
 }
