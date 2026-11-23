@@ -67,6 +67,7 @@ const transition = @import("pane_sidebar_transition.zig");
 const xf = @import("pane_sidebar_xfade.zig");
 const list_comp = @import("pane_sidebar_transition_comp.zig");
 const Dib32 = @import("dib32.zig");
+const desk_palette = @import("desk_palette.zig");
 const chrome_comp = @import("chrome_comp.zig");
 const App = @import("App.zig");
 const toc = @import("viewer_toc_layout.zig");
@@ -738,6 +739,9 @@ last_desk_gen: u32 = 0,
 const CardCache = struct {
     dc: ?w32.HDC = null,
     bmp: ?*anyopaque = null,
+    /// The material's pixels, coverage in each alpha byte: what a translucent
+    /// window's paint reads to tell desk from card (T1905).
+    bits: ?[*]const u32 = null,
     w: i32 = 0,
     h: i32 = 0,
     bg: color_math.Rgb = .{ .r = 0, .g = 0, .b = 0 },
@@ -5502,7 +5506,7 @@ fn ensureMaterial(
         banner_card.render(pixels, banner_card.Metrics.init(w, h, scale), bg);
     }
 
-    cache.* = .{ .dc = mem_dc, .bmp = bmp, .w = w, .h = h, .bg = bg, .scale = scale, .desk_gen = gen, .insets = ins, .material = material };
+    cache.* = .{ .dc = mem_dc, .bmp = bmp, .bits = pixels.ptr, .w = w, .h = h, .bg = bg, .scale = scale, .desk_gen = gen, .insets = ins, .material = material };
 }
 
 /// The desk's first `w` x `h` pixels into `out` - the sidebar's column starts
@@ -5545,6 +5549,9 @@ fn paintBuffered(self: *PaneSidebar, hdc: w32.HDC, width: i32, height: i32, upda
         self.motion_px += @intCast(bw * bh);
         self.motion_client_px += @intCast(width * height);
     }
+    if (self.translucentOpacity()) |o| {
+        if (self.paintPremultiplied(hdc, width, height, .{ .left = left, .top = top, .right = right, .bottom = bottom }, o)) return;
+    }
     const mem = w32.CreateCompatibleDC(hdc) orelse return self.paint(hdc, width, height);
     defer _ = w32.DeleteDC(mem);
     const bmp = w32.CreateCompatibleBitmap(hdc, bw, bh) orelse return self.paint(hdc, width, height);
@@ -5554,6 +5561,64 @@ fn paintBuffered(self: *PaneSidebar, hdc: w32.HDC, width: i32, height: i32, upda
     _ = w32.SetViewportOrgEx(mem, -left, -top, null);
     self.paint(mem, width, height);
     _ = w32.BitBlt(hdc, left, top, bw, bh, mem, left, top, w32.SRCCOPY);
+}
+
+/// The byte `background-opacity` gives the desk when this column's window is
+/// translucent (T1905), or null when it is opaque and the column paints plain.
+fn translucentOpacity(self: *const PaneSidebar) ?u8 {
+    if (!self.window.translucent) return null;
+    return desk_palette.opacityByte(self.window.app.config.@"background-opacity");
+}
+
+/// `paint` into `hdc`'s `rect` as a translucent window shows it (T1905).
+///
+/// The column is a GDI child painting into its top-level's per-pixel-alpha
+/// surface, where GDI writes alpha 0: painted plain it was see-through ink
+/// beside a desk that takes `background-opacity` (T1852). So it is painted
+/// into a 32bpp buffer and every pixel premultiplied the way the grid's desk
+/// is - the column's slice of the desk at `opacity`, the card and everything
+/// painted on it opaque (`desk_palette.translucentPainted`) - and blitted with
+/// that alpha. The card's material is the reference that tells desk from card,
+/// shadow included; mid-glide, when the material is another width, the bare
+/// desk is, which only leaves the card's shadow opaque for those frames. The
+/// flat style has no desk: its terminal background takes the opacity, as the
+/// window's own chrome does (`Window.paintAlphaCorrect`). False when a buffer
+/// cannot be made; the caller then paints plain.
+fn paintPremultiplied(self: *PaneSidebar, hdc: w32.HDC, width: i32, height: i32, rect: w32.RECT, o: u8) bool {
+    const bw = rect.right - rect.left;
+    const bh = rect.bottom - rect.top;
+    if (bw <= 0 or bh <= 0) return true;
+    const buf = Dib32.create(hdc, bw, bh) orelse return false;
+    defer buf.destroy();
+    _ = w32.SetViewportOrgEx(buf.dc, -rect.left, -rect.top, null);
+    self.paint(buf.dc, width, height);
+    _ = w32.GdiFlush();
+
+    const t = self.theme();
+    const bg: u32 = (@as(u32, t.bg.r) << 16) | (@as(u32, t.bg.g) << 8) | t.bg.b;
+    const desk = self.window.deskBackdrop();
+    const uw: usize = @intCast(width);
+    const material: ?[]const u32 = if (desk != null and self.card.bits != null and self.card.w == width and self.card.h == height)
+        self.card.bits.?[0 .. uw * @as(usize, @intCast(height))]
+    else
+        null;
+    const ubw: usize = @intCast(bw);
+    for (0..@intCast(bh)) |row| {
+        const y: usize = row + @as(usize, @intCast(rect.top));
+        const out = buf.pixels[row * ubw ..][0..ubw];
+        for (out, 0..) |*px, col| {
+            const x: usize = col + @as(usize, @intCast(rect.left));
+            const d: u32 = if (desk) |dk| blk: {
+                const dw: usize = @intCast(dk.w);
+                if (x >= dw or y >= @as(usize, @intCast(dk.h))) break :blk bg;
+                break :blk dk.pixels[y * dw + x] & 0x00FF_FFFF;
+            } else bg;
+            const ref = if (material) |m| m[y * uw + x] else d;
+            px.* = desk_palette.translucentPainted(px.*, ref, d, o);
+        }
+    }
+    _ = w32.BitBlt(hdc, rect.left, rect.top, bw, bh, buf.dc, rect.left, rect.top, w32.SRCCOPY);
+    return true;
 }
 
 // -------------------------------------------------------------------------
@@ -7105,7 +7170,12 @@ fn wndProc(hwnd: w32.HWND, msg: u32, wparam: usize, lparam: isize) callconv(.win
             if (wparam == 0) return 0;
             var r: w32.RECT = undefined;
             if (w32.GetClientRect(hwnd, &r) == 0) return 0;
-            self.paint(@ptrFromInt(wparam), r.right - r.left, r.bottom - r.top);
+            const into: w32.HDC = @ptrFromInt(wparam);
+            // What the window shows, alpha and all (T1905).
+            if (self.translucentOpacity()) |o| {
+                if (self.paintPremultiplied(into, r.right - r.left, r.bottom - r.top, r, o)) return 0;
+            }
+            self.paint(into, r.right - r.left, r.bottom - r.top);
             return 0;
         },
         // The edge's sizer (T1846): over the band, and for the whole drag.

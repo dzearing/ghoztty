@@ -1,8 +1,8 @@
 {
     "guard":  "session-blades",
     "script":  "test/win32/session-blades.ps1",
-    "generated":  "2026-11-23T03:14:52-08:00",
-    "commit":  "011782120",
+    "generated":  "2026-11-23T04:37:44-08:00",
+    "commit":  "c2931276a",
     "uncommitted":  [
 
                     ],
@@ -14,6 +14,6 @@
                   "test/win32/session-blades.ps1":  "621d8785c63f028ceb9b9465ee6720e2725a3f26b6a9fe067e20acff617e6ce3"
               },
     "code":  {
-                 "test/win32/session-blades.ps1":  "code1:511f9005f69137adb4b67aeb1ae76484a58648cc842144917f26619afaf3978b"
+                 "test/win32/session-blades.ps1":  "code1:cc02ebee32295143cdb3401b198c261ce31b9994f8204a3e931e35ead66fd84e"
              }
 }

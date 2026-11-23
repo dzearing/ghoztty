@@ -45,6 +45,10 @@
 #      casts the card's trailing shadow: at mid-height the margin between the
 #      sidebar's card and the pane's is symmetric (checked in steps 2, 3 and 6
 #      too), and on a light theme as well.
+#   9. TRANSLUCENT (T1905). At background-opacity 0.5 the rail's slice of the
+#      desk paints at half strength (premultiplied), exactly as the grid's
+#      desk does (pane-elevation.ps1 run 1b2), while its solid card reads the
+#      same as on the window toggled opaque.
 #
 # Runs on a BACKGROUND desktop (lib\TestDesktop.ps1) and never takes the
 # user's foreground - asserted by the foreground watcher, not assumed.
@@ -72,6 +76,7 @@ function Assert($name, $cond) {
 [void](Set-GhozttyTestIsolation -Tag 't1850')
 . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
 . (Join-Path $PSScriptRoot 'lib\ChromeGeometry.ps1')
+. (Join-Path $PSScriptRoot 'lib\PaintWait.ps1')
 Add-Type -AssemblyName System.Drawing
 
 function Get-Panes($top) { @(Get-TestChildWindows -Window $top -Class 'GhozttyTerminal' | Where-Object Visible) }
@@ -419,6 +424,59 @@ try {
         try { Test-MarginShadow $shot $sb 'light rail' } finally { Close-TestWindowPixels $shot }
     }
 
+    Assert "no crash" (-not ($app.Process -and $app.Process.HasExited))
+    $launched += $script:GhozttyTestDesktopPids
+    [void](Stop-RepoGhoztty -Exe $Exe -AppOnly -SettleMs 500)
+
+    "== 9: on a translucent window the rail's desk takes background-opacity, its card stays opaque (T1905)"
+    # pane-elevation.ps1 run 1b2's shape: ONE window (every new window draws a
+    # random desk variant), read translucent, toggled opaque, read again. Solid
+    # panes, so the card is coverage 255 and must not move at all.
+    $errlog5 = Join-Path $tmp 'app-stderr-translucent.log'
+    $app = Start-OnTestDesktop -Exe $Exe -StdErr $errlog5 -Arguments @('--config-default-files=false',
+        '--session-persistence=false', '--background=#000000', '--unfocused-split-opacity=1', '--macos-pane-glass=false',
+        '--background-opacity=0.5', '--keybind=ctrl+alt+f8=toggle_background_opacity')
+    Start-Sleep -Seconds 3
+    $top = Wait-TestWindow -ProcessId $app.Pid -Class 'GhozttyWindow'
+    if ($top -eq [IntPtr]::Zero) { "  SETUP FAIL: translucent top window not found"; $script:failures++; return }
+    [void](Set-TestWindowSize -Window $top -Width (Px 1100) -Height (Px 700))
+    Start-Sleep -Milliseconds 800
+    $sb = Get-Sidebar $top
+    $p = (@(Get-Panes $top))[0]
+    Assert "translucent: a sidebar and a pane" ($null -ne $sb -and $null -ne $p)
+    if ($null -eq $sb -or $null -eq $p) { return }
+    $m = Get-MarginPx
+    $ty = [int](($sb.Top + $sb.Bottom) / 2)
+    $leadX = $sb.Left + [int][math]::Floor($m / 2)
+    $cardX = $sb.Left + $m + (Px 22)
+    $cardY = $sb.Bottom - (Px 60)
+    function Read-Column($shot) {
+        return @{ Lead = (Get-TestPixel -Shot $shot -X $leadX -Y $ty -ChildOk); Card = (Get-TestPixel -Shot $shot -X $cardX -Y $cardY -ChildOk) }
+    }
+    $shot = Get-TestWindowPixels -Window $top -Sync
+    try { $tr = Read-Column $shot; $shot.Bitmap.Save((Join-Path $env:TEMP 't1905-translucent.png'), [System.Drawing.Imaging.ImageFormat]::Png) } catch { } finally { Close-TestWindowPixels $shot }
+    "  translucent: leading inset=$(Fmt $tr.Lead) card=$(Fmt $tr.Card)"
+    Assert "translucent: toggle_background_opacity delivered" (Send-TestKeys -Window $top -Target ([IntPtr]$p.Hwnd) -Modifiers ctrl, alt -Key f8)
+    $op = $null
+    if ($null -ne $tr.Lead) {
+        $trSum = $tr.Lead.R + $tr.Lead.G + $tr.Lead.B
+        $w = Wait-TestPaint -Window $top -KeepShot -Until {
+            param($s)
+            $c = Get-TestPixel -Shot $s -X $leadX -Y $ty -ChildOk
+            ($null -ne $c) -and ([math]::Abs(($c.R + $c.G + $c.B) - $trSum) -gt 12)
+        }
+        try { $op = Read-Column $w.Shot } finally { Close-TestWindowPixels $w.Shot }
+        "  toggled opaque after $($w.ElapsedMs)ms (met=$($w.Met)): leading inset=$(Fmt $op.Lead) card=$(Fmt $op.Card)"
+    }
+    if ($null -eq $tr.Lead -or $null -eq $op -or $null -eq $op.Lead -or $null -eq $tr.Card -or $null -eq $op.Card) {
+        Assert "translucent: the column's pixels were on both captures" $false
+    } else {
+        Assert "translucent: toggled opaque, the rail's leading inset is the ocean desk" (Test-DeskPixel $op.Lead)
+        $dev = [math]::Max([math]::Max([math]::Abs($tr.Lead.R - $op.Lead.R / 2), [math]::Abs($tr.Lead.G - $op.Lead.G / 2)), [math]::Abs($tr.Lead.B - $op.Lead.B / 2))
+        Assert "translucent: the rail's desk is half the opaque desk, as the grid's is (max channel deviation $dev)" ($dev -le 3)
+        $dc = Get-ColorDistance $tr.Card $op.Card
+        Assert "translucent: the rail's card is the same opaque card either way (distance $dc)" ($dc -le 3)
+    }
     Assert "no crash" (-not ($app.Process -and $app.Process.HasExited))
     $launched += $script:GhozttyTestDesktopPids
     $script:reachedEnd = $true

@@ -129,6 +129,19 @@ pub fn translucentSpan(out: []u32, comp: []const u32, desk: []const u32, opacity
     for (out, comp, desk) |*o, c, d| o.* = translucentPixel(c, d, opacity);
 }
 
+/// One pixel of a GDI-painted child that sits on the desk - the pane sidebar
+/// (T1905) - as a translucent window shows it. `ref` is the pixel with
+/// nothing painted over the material: the desk composite, coverage in its
+/// alpha byte (the bare desk, coverage 0, where there is no material). A pixel
+/// the painter left alone is `translucentPixel` of it, so the column's slice
+/// of the desk takes `opacity` exactly as the grid's does and its card keeps
+/// its own strength. One the painter touched (a row, its text, the edge bar)
+/// is opaque: GDI ink carries no coverage, and a row is part of the card.
+pub fn translucentPainted(px: u32, ref: u32, desk: u32, opacity: u8) u32 {
+    if ((px ^ ref) & 0x00FF_FFFF != 0) return px | 0xFF00_0000;
+    return translucentPixel(ref, desk, opacity);
+}
+
 /// `background-opacity` as the byte `translucentPixel` takes.
 pub fn opacityByte(opacity: f64) u8 {
     return @intFromFloat(@round(std.math.clamp(opacity, 0, 1) * 255));
@@ -164,6 +177,24 @@ test "T1852: a half-covered pixel composites like a layer over a translucent des
     try testing.expect(@abs(@as(i32, @intCast(px & 0xFF)) - 64) <= 1);
     // Never a channel above its alpha (premultiplied invariant).
     try testing.expect((px & 0xFF) <= (px >> 24));
+}
+
+test "T1905: a GDI-painted column's desk slice takes the opacity, its card and ink stay opaque" {
+    const desk: u32 = packRgb(200, 100, 50);
+    // Bare desk the painter left alone: exactly the grid desk's pixel.
+    try testing.expectEqual(translucentPixel(desk, desk, 128), translucentPainted(desk, desk, desk, 128));
+    // Card material (coverage 255) untouched: the card, opaque.
+    const card = withCoverage(packRgb(30, 30, 30), 1);
+    try testing.expectEqual(@as(u32, 0xFF1E1E1E), translucentPainted(card & 0x00FF_FFFF, card, desk, 128));
+    // A shadow pixel (coverage 0.5) composites like the grid desk's shadow.
+    const shadow = withCoverage(packRgb(100, 50, 25), 0.5);
+    try testing.expectEqual(translucentPixel(shadow, desk, 128), translucentPainted(shadow & 0x00FF_FFFF, shadow, desk, 128));
+    // GDI ink over bare desk (alpha byte zeroed by GDI): opaque ink, never
+    // see-through - the pre-T1905 symptom.
+    const ink: u32 = packRgb(230, 230, 230);
+    try testing.expectEqual(ink | 0xFF00_0000, translucentPainted(ink, desk, desk, 128));
+    // The alpha byte of the painted pixel is ignored: GDI may leave anything.
+    try testing.expectEqual(translucentPixel(desk, desk, 128), translucentPainted(desk | 0x4200_0000, desk, desk, 128));
 }
 
 test "T1852: coverage accumulates source-over" {
