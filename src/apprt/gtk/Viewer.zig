@@ -101,6 +101,7 @@ const ViewerDiff = @import("ViewerDiff.zig");
 const ViewerTOC = @import("ViewerTOC.zig");
 const ViewerFeedback = @import("ViewerFeedback.zig");
 const quoting = @import("viewer_quote.zig");
+const frames = @import("viewer_frames.zig");
 
 const log = std.log.scoped(.gtk_viewer);
 
@@ -215,8 +216,9 @@ pointer_y: f64 = 0,
 /// `armLinkMenu`). Owned.
 menu_target: ?[:0]u8 = null,
 menu_kind: links.Kind = .web,
-/// The `file://`-link hook's message handler (`installFileLinkHook`).
-file_link_handler_id: c_ulong = 0,
+/// The subframe relay's message handler (T3554, `installFrameRelay`): a
+/// subframe's posts arrive here, and only its link menu is acted on.
+subframe_handler_id: c_ulong = 0,
 
 /// An image pane's state: its zoom, what the page measured, which decoder
 /// serves the picture (T3416, `ViewerImage.zig`).
@@ -440,11 +442,9 @@ fn deinit(self: *Viewer) void {
     self.feedback.deinit();
     if (self.ucm) |m| {
         if (self.message_handler != 0) wk.g_signal_handler_disconnect(m, self.message_handler);
-        wk.webkit_user_content_manager_unregister_script_message_handler(m, bridge.handler_name, null);
-        if (self.file_link_handler_id != 0) {
-            wk.g_signal_handler_disconnect(m, self.file_link_handler_id);
-            wk.webkit_user_content_manager_unregister_script_message_handler(m, file_link_handler, null);
-        }
+        if (self.subframe_handler_id != 0) wk.g_signal_handler_disconnect(m, self.subframe_handler_id);
+        wk.webkit_user_content_manager_unregister_script_message_handler(m, frames.top_handler, frames.world);
+        wk.webkit_user_content_manager_unregister_script_message_handler(m, frames.subframe_handler, frames.world);
         // The ref `installFindScript` took: the web view may already have
         // dropped its own by the time its `destroy` reaches us.
         wk.g_object_unref(m);
@@ -1081,7 +1081,8 @@ fn routeDecision(self: *Viewer, d: links.Decision, uri: []const u8, mods: links.
 /// then routed by the same `links.decide` the policy uses. Untrusted (script
 /// made) clicks are ignored, so a page cannot fake a click into launching a
 /// local file's app; a debug test run allows them (`__ghozttyTestClicks`).
-const file_link_handler = "ghozttyFileLink";
+/// It posts on `ghozttyFileLink` through the frame shim (T3554), so only the
+/// TOP frame's post is routed; a subframe calling the same name is dropped.
 const file_link_js =
     \\(function () {
     \\  "use strict";
@@ -1106,7 +1107,7 @@ const file_link_js =
     \\})();
 ;
 
-fn installFileLinkHook(self: *Viewer, m: *wk.UserContentManager) void {
+fn installFileLinkHook(_: *Viewer, m: *wk.UserContentManager) void {
     const test_js: [:0]const u8 = "window.__ghozttyTestClicks = true;\n" ++ file_link_js;
     const js: [:0]const u8 = if (build_config.is_debug and std.posix.getenv("GHOZTTY_TEST_VIEWER_LINKS") != null)
         test_js
@@ -1115,26 +1116,12 @@ fn installFileLinkHook(self: *Viewer, m: *wk.UserContentManager) void {
     const script = wk.webkit_user_script_new(js, wk.inject_top_frame, wk.inject_at_document_end, null, null);
     wk.webkit_user_content_manager_add_script(m, script);
     wk.webkit_user_script_unref(script);
-    if (wk.webkit_user_content_manager_register_script_message_handler(m, file_link_handler, null) == 0) {
-        log.warn("viewer: could not register the {s} handler; file:// links in pages stay dead", .{file_link_handler});
-        return;
-    }
-    self.file_link_handler_id = wk.g_signal_connect_data(
-        m,
-        "script-message-received::" ++ file_link_handler,
-        @ptrCast(&onFileLinkMessage),
-        self,
-        null,
-        0,
-    );
 }
 
-fn onFileLinkMessage(_: *wk.UserContentManager, value: *wk.JSCValue, ud: ?*anyopaque) callconv(.c) void {
-    const self: *Viewer = @ptrCast(@alignCast(ud orelse return));
-    const s = wk.jsc_value_to_string(value) orelse return;
-    defer wk.g_free(s);
+/// A top-frame `ghozttyFileLink` post: the JSON text `file_link_js` built.
+fn handleFileLink(self: *Viewer, text: []const u8) void {
     const Msg = struct { href: []const u8, ctrl: bool = false, shift: bool = false };
-    const parsed = std.json.parseFromSlice(Msg, self.alloc, std.mem.span(s), .{ .ignore_unknown_fields = true }) catch return;
+    const parsed = std.json.parseFromSlice(Msg, self.alloc, text, .{ .ignore_unknown_fields = true }) catch return;
     defer parsed.deinit();
     const href = parsed.value.href;
     const page: ?[]const u8 = if (wk.webkit_web_view_get_uri(self.view)) |p| std.mem.span(p) else null;
@@ -1677,30 +1664,99 @@ fn installFindScript(self: *Viewer) void {
     const sel = wk.webkit_user_script_new(quoting.selection_script, wk.inject_top_frame, wk.inject_at_document_end, null, null);
     wk.webkit_user_content_manager_add_script(m, sel);
     wk.webkit_user_script_unref(sel);
-    if (wk.webkit_user_content_manager_register_script_message_handler(m, bridge.handler_name, null) == 0) {
+    self.installFrameRelay(m);
+}
+
+/// Which frame posted (T3554; win32's `onFrameMessage`). WebKitGTK's message
+/// carries no frame, and a handler in the page's world is visible to every
+/// iframe, so the native handlers live in a private world the page cannot
+/// see: the page-world shim (`frames.shim_js`, every frame) hands each post
+/// to the private-world relay (`frames.relay_js`, every frame) of the SAME
+/// frame, which forwards it on the top or the subframe handler. Both run at
+/// document start, so the shim is in place before any page script runs.
+fn installFrameRelay(self: *Viewer, m: *wk.UserContentManager) void {
+    const shim = wk.webkit_user_script_new(frames.shim_js, wk.inject_all_frames, wk.inject_at_document_start, null, null);
+    wk.webkit_user_content_manager_add_script(m, shim);
+    wk.webkit_user_script_unref(shim);
+    const relay = wk.webkit_user_script_new_for_world(frames.relay_js, wk.inject_all_frames, wk.inject_at_document_start, frames.world, null, null);
+    wk.webkit_user_content_manager_add_script(m, relay);
+    wk.webkit_user_script_unref(relay);
+    if (wk.webkit_user_content_manager_register_script_message_handler(m, frames.top_handler, frames.world) == 0) {
         // The page still searches and paints; only the count goes quiet.
-        log.warn("viewer: could not register the {s} message handler; find shows no count", .{bridge.handler_name});
+        log.warn("viewer: could not register the {s} message handler; find shows no count", .{frames.top_handler});
         return;
     }
     self.message_handler = wk.g_signal_connect_data(
         m,
-        "script-message-received::" ++ bridge.handler_name,
-        @ptrCast(&onScriptMessage),
+        "script-message-received::" ++ frames.top_handler,
+        @ptrCast(&onTopMessage),
+        self,
+        null,
+        0,
+    );
+    if (wk.webkit_user_content_manager_register_script_message_handler(m, frames.subframe_handler, frames.world) == 0) {
+        log.warn("viewer: could not register the {s} message handler; an iframe's links get no menu", .{frames.subframe_handler});
+        return;
+    }
+    self.subframe_handler_id = wk.g_signal_connect_data(
+        m,
+        "script-message-received::" ++ frames.subframe_handler,
+        @ptrCast(&onSubframeMessage),
         self,
         null,
         0,
     );
 }
 
-/// A message from the page. The template's `viewer.js` posts on the same
+/// The top frame's posts: everything the page and our scripts send.
+fn onTopMessage(_: *wk.UserContentManager, value: *wk.JSCValue, ud: ?*anyopaque) callconv(.c) void {
+    const self: *Viewer = @ptrCast(@alignCast(ud orelse return));
+    const s = wk.jsc_value_to_string(value) orelse return;
+    defer wk.g_free(s);
+    const r = frames.split(std.mem.span(s)) orelse return;
+    switch (r.route) {
+        .toc => self.handleTocMessage(r.json),
+        .file_link => {
+            const t = frames.fileLinkText(self.alloc, r.json) orelse return;
+            defer self.alloc.free(t);
+            self.handleFileLink(t);
+        },
+    }
+}
+
+/// A subframe's posts: its link menu (`links.js` runs in every frame) and
+/// nothing else - win32's `onFrameMessage`. A subframe is content this pane
+/// did not render: it does not get to file a quote, set the contents, report
+/// a find count or open a local file.
+fn onSubframeMessage(_: *wk.UserContentManager, value: *wk.JSCValue, ud: ?*anyopaque) callconv(.c) void {
+    const self: *Viewer = @ptrCast(@alignCast(ud orelse return));
+    const s = wk.jsc_value_to_string(value) orelse return;
+    defer wk.g_free(s);
+    const r = frames.split(std.mem.span(s)) orelse return;
+    if (r.route != .toc) {
+        log.info("viewer: dropped a subframe's {s} post", .{@tagName(r.route)});
+        return;
+    }
+    const parsed = bridge.parse(self.alloc, r.json) orelse {
+        log.info("viewer: dropped a subframe's unparsed post", .{});
+        return;
+    };
+    defer parsed.deinit();
+    if (!frames.subframeAccepts(parsed.message)) {
+        log.info("viewer: dropped a subframe's {s} post", .{@tagName(parsed.message)});
+        return;
+    }
+    switch (parsed.message) {
+        .link_menu => |href| self.armLinkMenu(href),
+        else => {},
+    }
+}
+
+/// A top-frame message. The template's `viewer.js` posts on the same
 /// handler: `find`, the link menu, an image or diff report, and the heading
 /// index and scroll spy (T3418) are acted on here, and
 /// anything a website posts that does not parse is ignored (`bridge.parse`).
-fn onScriptMessage(_: *wk.UserContentManager, value: *wk.JSCValue, ud: ?*anyopaque) callconv(.c) void {
-    const self: *Viewer = @ptrCast(@alignCast(ud orelse return));
-    const json = wk.jsc_value_to_json(value, 0) orelse return;
-    defer wk.g_free(json);
-    const text = std.mem.span(json);
+fn handleTocMessage(self: *Viewer, text: []const u8) void {
     const parsed = bridge.parse(self.alloc, text) orelse {
         // The toolbar's Copy (T3545): GTK owns the clipboard natively.
         if (quoting.copyText(self.alloc, text)) |t| {

@@ -132,6 +132,16 @@ pub extern fn webkit_user_script_new(
     allow_list: ?*const anyopaque,
     block_list: ?*const anyopaque,
 ) *UserScript;
+/// A script in a named (private) world (T3554): page scripts cannot see it,
+/// nor any message handler registered in the same world.
+pub extern fn webkit_user_script_new_for_world(
+    source: [*:0]const u8,
+    injected_frames: c_int,
+    injection_time: c_int,
+    world_name: [*:0]const u8,
+    allow_list: ?*const anyopaque,
+    block_list: ?*const anyopaque,
+) *UserScript;
 pub extern fn webkit_user_script_unref(script: *UserScript) void;
 pub extern fn webkit_user_content_manager_add_script(manager: *UserContentManager, script: *UserScript) void;
 pub extern fn webkit_user_content_manager_register_script_message_handler(

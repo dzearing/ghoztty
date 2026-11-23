@@ -602,6 +602,10 @@ test {
     // which navigation is a click, popups, the link menu's rows (T3415). No
     // GTK imports, like viewer_chrome.zig.
     _ = @import("gtk/viewer_links.zig");
+    // ... and which frame a page message came from: the default-world shim,
+    // the private-world relay, and the subframe's linkMenu-only rule (T3554).
+    // No GTK imports.
+    _ = @import("gtk/viewer_frames.zig");
 
     // The GTK `ghoztty://` front door's pure half - which argv is the link,
     // what a focus reply means (T3343). No GTK imports.
