@@ -19,6 +19,7 @@ const systemd = @import("systemd.zig");
 const kernel_info = @import("kernel_info.zig");
 
 // Namespaces
+pub const agent_exec_argv = @import("agent_exec_argv.zig");
 pub const args = @import("args.zig");
 pub const cgroup = @import("cgroup.zig");
 pub const cli_launch = @import("cli_launch.zig");
@@ -83,6 +84,7 @@ pub const ShellEscapeWriter = shell.ShellEscapeWriter;
 pub const getKernelInfo = kernel_info.getKernelInfo;
 
 test {
+    _ = agent_exec_argv;
     _ = cli_launch;
     _ = desktop;
     _ = file;

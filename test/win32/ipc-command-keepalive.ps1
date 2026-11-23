@@ -395,6 +395,44 @@ try {
     }
 
     # ------------------------------------------------------------------
+    "== L: -e words holding a space reach the program intact (T3402)"
+    # ------------------------------------------------------------------
+    # The agent used to receive `-e` as ONE joined string and run it
+    # `cmd /c <string>`, so a word with a space - a path under a spaced
+    # directory, an argument meant as one - arrived as several. Both halves are
+    # asserted: the script at a spaced path RAN (a split path cannot), and its
+    # one spaced argument arrived as ONE parameter (`[$a]` brackets it, so a
+    # split argument prints `[two]`). Byte-exact argv, so PowerShell 5.1 does
+    # not re-split the words on the way to the CLI either.
+    $argScript = Join-Path $spaceDir 'echo arg.ps1'
+    Set-Content -Encoding ascii -Path $argScript -Value 'param($a) Write-Host "KAMARKERESP[$a]"'
+    $null = Invoke-NativeExact -FilePath $Exe -Arguments @(
+        '+new-window', '--target=kaespace', '-e',
+        'powershell.exe', '-nop', '-ExecutionPolicy', 'Bypass', '-File', $argScript, 'two words')
+    $leaves = @(Get-WindowLeaves 'kaespace')
+    AssertAlways "L +list reports the -e pane" ($leaves.Count -eq 1)
+    if ($leaves.Count -eq 1) {
+        $lTail = Wait-Read $leaves[0].id 'KAMARKERESP\[' 40
+        Assert "L the script at a spaced path ran" ($lTail -match 'KAMARKERESP\[')
+        Assert "L the spaced argument arrived as one word" ($lTail -match 'KAMARKERESP\[two words\]')
+        Assert "L the -e pane is agent-backed (the path the defect lived on)" (
+            -not [string]::IsNullOrEmpty((Wait-SessionId 'kaespace')))
+        if ($lTail -notmatch 'KAMARKERESP\[two words\]') {
+            "    pane tail:"; ($lTail -split "`n" | Select-Object -Last 8) | ForEach-Object { "      $_" }
+        }
+    }
+    # The same through `+split -e`, the second handler that joined the words.
+    $null = Invoke-NativeExact -FilePath $Exe -Arguments @(
+        '+split', '--target=kacmd', '--name=kaespsplit', '--direction=up', '-e',
+        'powershell.exe', '-nop', '-ExecutionPolicy', 'Bypass', '-File', $argScript, 'split words')
+    $lsTail = Wait-Read 'kaespsplit' 'KAMARKERESP\[' 40
+    Assert "L +split -e: the spaced argument arrived as one word" (
+        $lsTail -match 'KAMARKERESP\[split words\]')
+    if ($lsTail -notmatch 'KAMARKERESP\[split words\]') {
+        "    pane tail:"; ($lsTail -split "`n" | Select-Object -Last 8) | ForEach-Object { "      $_" }
+    }
+
+    # ------------------------------------------------------------------
     "== G2: control-of-the-control - persistence OFF, same pane, NO session_id"
     # ------------------------------------------------------------------
     # Arm G is the thing keeping this whole file honest, so it does not get to

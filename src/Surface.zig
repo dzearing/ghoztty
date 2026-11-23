@@ -1240,7 +1240,28 @@ pub fn init(
                 // does). It is the command's FULL invocation, so it goes on the
                 // OPEN only — never on the `notify` fresh-shell open below,
                 // which exists precisely to NOT re-run the recorded command.
-                const command_argv: ?[]const []const u8 = rb.command_argv;
+                //
+                // T3402: and on Windows an `-e` (a `.direct` command) for the
+                // LOCAL agent can ride the same seam as a verbatim argv. As
+                // `OPEN.command` the agent runs it `cmd /c <joined words>`, so
+                // a word holding a space split in two. `agent_exec_argv`
+                // decides: argv only when a word needs quoting AND the program
+                // resolves to a file (so `-e claude`'s `.cmd` shim and cmd
+                // builtins keep today's string). The joined string still
+                // travels as the label. POSIX keeps T3396's quoted string.
+                const direct_argv: ?[]const []const u8 = direct: {
+                    if (comptime builtin.os.tag != .windows) break :direct null;
+                    if (rb.command_argv != null) break :direct null;
+                    if (!rb.local_shell_integration) break :direct null;
+                    if (remote_command == null) break :direct null;
+                    const c = command orelse break :direct null;
+                    const words = (try c.directArgv(alloc)) orelse break :direct null;
+                    defer alloc.free(words);
+                    break :direct try internal_os.agent_exec_argv.agentExecArgv(alloc, words);
+                };
+                // `Remote.init` dupes every word, so ours go at block exit.
+                defer if (direct_argv) |a| internal_os.agent_exec_argv.freeArgv(alloc, a);
+                const command_argv: ?[]const []const u8 = rb.command_argv orelse direct_argv;
                 // Claude Code's fullscreen renderer — local agent only: a
                 // cross-machine pane's Claude decides for itself (it turns the
                 // renderer off where it renders poorly, e.g. Windows remotes).

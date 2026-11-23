@@ -35,6 +35,7 @@ const color_math = @import("color_math.zig");
 const desk_palette = @import("desk_palette.zig");
 const apprt = @import("../../apprt.zig");
 const terminal = @import("../../terminal/main.zig");
+const internal_os = @import("../../os/main.zig");
 
 const log = std.log.scoped(.win32_ipc);
 
@@ -286,6 +287,33 @@ fn keepAliveArgv(
     return out;
 }
 
+/// The `OPEN.argv` a LOCAL-agent pane is sent for a verb that may carry `-e`
+/// or `--command` (T3402): for `-e`, `agent_exec_argv`'s verdict, else
+/// `keepAliveArgv`.
+///
+/// `-e` used to travel only as `joinArgv`'s plain space join in
+/// `OPEN.command`, which the agent runs `cmd /c <string>` - so a word holding
+/// a space (`C:\Program Files\...`, a pwsh script block) arrived as several.
+/// When a word needs quoting and the program resolves to a file, the words go
+/// as a verbatim argv instead and CreateProcess's quoting carries every one
+/// intact; otherwise (nothing to quote, a builtin) the join is kept, so a
+/// command that works today is untouched. The join still travels in
+/// `OPEN.command` as the pane's label either way.
+fn localAgentArgv(
+    ctx: Context,
+    arena: Allocator,
+    e_args: []const [:0]const u8,
+    shell_flag: ?[]const u8,
+    command: ?[]const u8,
+) Allocator.Error!?[]const []const u8 {
+    if (e_args.len > 0) {
+        const words = try arena.alloc([]const u8, e_args.len);
+        for (e_args, 0..) |a, i| words[i] = a;
+        return try internal_os.agent_exec_argv.agentExecArgv(arena, words);
+    }
+    return keepAliveArgv(ctx, arena, shell_flag, command);
+}
+
 extern "user32" fn IsIconic(hWnd: w32.HWND) callconv(.winapi) windows.BOOL;
 
 /// The pane a target names: the pane itself, or a window's focused pane.
@@ -515,7 +543,7 @@ pub fn openWindow(
                 .working_directory = nonEmpty(args.working_directory),
                 .shell = nonEmpty(args.shell),
                 .command = remote_command,
-                .command_argv = try keepAliveArgv(ctx, arena, args.shell, args.command),
+                .command_argv = try localAgentArgv(ctx, arena, args.e_args, args.shell, args.command),
                 .local_agent = true,
             },
             .env = env.items,
@@ -858,7 +886,7 @@ pub fn createSplit(
                 .working_directory = split_cwd,
                 .shell = nonEmpty(args.shell),
                 .command = remote_command,
-                .command_argv = try keepAliveArgv(ctx, arena, args.shell, command),
+                .command_argv = try localAgentArgv(ctx, arena, args.e_args, args.shell, command),
                 .local_agent = true,
             },
             .env = env.items,

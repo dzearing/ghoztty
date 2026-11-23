@@ -91,8 +91,13 @@ function Stop-TestProcs {
     [void](Stop-RepoGhoztty -Exe $Exe -SettleMs 900)
 }
 function Count-TestProcs($name) {
+    # T3402: path-exact, like the kills above. The old '*zig-out*' filter also
+    # counted the OTHER loop lane's apps on this box (and other workers'
+    # mirrors), so D4/E3 read 1-2 strangers as this run's processes.
+    $want = if ($name -ieq 'ghoztty-agent.exe') { $AgentExe } else { $Exe }
+    $want = [System.IO.Path]::GetFullPath($want)
     return @(Get-CimInstance Win32_Process -Filter "Name='$name'" |
-        Where-Object { $_.CommandLine -like '*zig-out*' }).Count
+        Where-Object { $_.ExecutablePath -and ($_.ExecutablePath -ieq $want) }).Count
 }
 # Kill the APP but leave the agent running - the "quit/crash, then relaunch"
 # shape section D needs, since the agent is what keeps the sessions alive for

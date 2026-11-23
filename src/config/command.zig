@@ -137,6 +137,46 @@ pub const Command = union(enum) {
         return try out.toOwnedSliceSentinel(alloc, 0);
     }
 
+    /// The `.direct` words as an argv the caller owns the outer slice of (the
+    /// words are borrowed from `self`), or null for a `.shell` command, which
+    /// is shell syntax rather than an argv.
+    ///
+    /// T3402: the input to `os/agent_exec_argv.zig`, which decides whether a
+    /// WINDOWS local session-persistence agent gets these words as a verbatim
+    /// `OPEN.argv` instead of `string()`'s plain join (which splits a word
+    /// holding a space).
+    pub fn directArgv(
+        self: *const Self,
+        alloc: Allocator,
+    ) Allocator.Error!?[]const []const u8 {
+        const words = switch (self.*) {
+            .shell => return null,
+            .direct => |v| v,
+        };
+        if (words.len == 0) return null;
+        const out = try alloc.alloc([]const u8, words.len);
+        for (words, 0..) |w, i| out[i] = w;
+        return out;
+    }
+
+    test "directArgv: .direct words verbatim, .shell and empty are null" {
+        const testing = std.testing;
+        const alloc = testing.allocator;
+        const argv = [_][:0]const u8{ "C:\\Program Files\\x\\a.exe", "a \"b\"", "" };
+        const c: Self = .{ .direct = &argv };
+        const got = (try c.directArgv(alloc)).?;
+        defer alloc.free(got);
+        try testing.expectEqual(@as(usize, 3), got.len);
+        try testing.expectEqualStrings("C:\\Program Files\\x\\a.exe", got[0]);
+        try testing.expectEqualStrings("a \"b\"", got[1]);
+        try testing.expectEqualStrings("", got[2]);
+
+        const s: Self = .{ .shell = "echo a b" };
+        try testing.expect((try s.directArgv(alloc)) == null);
+        const empty: Self = .{ .direct = &.{} };
+        try testing.expect((try empty.directArgv(alloc)) == null);
+    }
+
     fn posixSafeWord(w: []const u8) bool {
         for (w) |ch| switch (ch) {
             'a'...'z', 'A'...'Z', '0'...'9', '/', '.', '_', '-', '+', ',', ':', '@', '%', '=' => {},

@@ -537,7 +537,10 @@ fn windowsCreateCommandLine(allocator: mem.Allocator, argv: []const []const u8) 
 
     for (argv, 0..) |arg, arg_i| {
         if (arg_i != 0) try writer.writeByte(' ');
-        if (mem.indexOfAny(u8, arg, " \t\n\"") == null) {
+        // T3402: an EMPTY word must be written `""`, or it vanishes from the
+        // command line and every later argument shifts left by one (Zig's
+        // own copy carries the same `arg.len != 0` guard).
+        if (arg.len != 0 and mem.indexOfAny(u8, arg, " \t\n\"") == null) {
             try writer.writeAll(arg);
             continue;
         }
@@ -585,6 +588,43 @@ fn testingStart(self: *DefaultCommand) !void {
         }
         return err;
     };
+}
+
+/// Parse a command line back into words by Windows' own rules
+/// (`std.process.ArgIteratorWindows` implements CommandLineToArgvW's), so a
+/// test asserts what the CHILD receives rather than a quoting spelling.
+fn testWindowsArgvRoundTrip(argv: []const []const u8) !void {
+    const alloc = testing.allocator;
+    const line = try windowsCreateCommandLine(alloc, argv);
+    defer alloc.free(line);
+    const wide = try std.unicode.wtf8ToWtf16LeAllocZ(alloc, line);
+    defer alloc.free(wide);
+    var it = try std.process.ArgIteratorWindows.init(alloc, wide);
+    defer it.deinit();
+    for (argv) |want| {
+        const got = it.next() orelse return error.TestArgvTooShort;
+        try testing.expectEqualStrings(want, got);
+    }
+    try testing.expect(it.next() == null);
+}
+
+test "windowsCreateCommandLine: spaced, quoted and empty words survive (T3402)" {
+    // argv[0] is parsed by a different rule (no escapes), so the round trip
+    // starts with a plain program name and puts the hard words after it.
+    try testWindowsArgvRoundTrip(&.{ "prog", "C:\\Program Files\\x y\\a.exe" });
+    try testWindowsArgvRoundTrip(&.{ "pwsh", "-Command", "Write-Output \"a b\"; exit 3" });
+    try testWindowsArgvRoundTrip(&.{ "prog", "", "after-empty" });
+    try testWindowsArgvRoundTrip(&.{ "prog", "trailing\\ slash\\", "tab\there" });
+    try testWindowsArgvRoundTrip(&.{ "prog", "\\\"already\\\"", "a\"b" });
+    // A spaced program path is quoted too (argv[0] rule: up to the closing quote).
+    try testWindowsArgvRoundTrip(&.{ "C:\\Program Files\\Git\\bin\\bash.exe", "-c", "echo hi" });
+}
+
+test "windowsCreateCommandLine: an empty word is written as a quoted pair (T3402)" {
+    const alloc = testing.allocator;
+    const line = try windowsCreateCommandLine(alloc, &.{ "a", "", "b" });
+    defer alloc.free(line);
+    try testing.expectEqualStrings("a \"\" b", line);
 }
 
 test "createNullDelimitedEnvMap" {
