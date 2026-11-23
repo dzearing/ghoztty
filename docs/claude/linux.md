@@ -538,6 +538,46 @@ powershell -NoProfile -File scripts\linux\wsl-run.ps1 -CommandFile test\linux\vi
 
 Ends `VIEWER LINKS: ALL PASS` (36 checks).
 
+### Image panes (T3416)
+
+`--view=<picture>` (the shared extension table, `win32/viewer_image.zig`) is
+win32's shape, not the Mac's native scroll view: the template's `image.js`
+draws the picture, and every zoom rule is win32's pure `Geometry` - 100% is
+one image pixel per device pixel (an SVG's is its intrinsic size), best-fit
+never upscales, double-click toggles fit <-> 100% (fit <-> 200% for a picture
+smaller than the pane), Ctrl +/- step 1.25x, Ctrl+0 is 100%, a resize re-fits
+a fitted picture and keeps a chosen zoom. The GTK half is
+`src/apprt/gtk/ViewerImage.zig`; its pure rules `viewer_image.zig` (none
+lane).
+
+- **Bytes**: the page loads `ghoztty-viewer://page/__image?v=<revision>`,
+  answered from the viewed file - streamed (`g_file_read`) when WebKit can
+  draw it. TIFF/HEIF (WebKit cannot) and any raster WebKit fails on are
+  decoded on a worker thread by `gdk_texture_new_from_filename` and served as
+  PNG (`route=wic` in the log, win32's name for the host route); an `.icns`
+  serves its largest embedded PNG. Nothing decodes it: the template's
+  `Cannot display this image` card, or - for a real HEIF/AVIF container -
+  `Linux needs a HEIF image loader (heif-gdk-pixbuf) ...`.
+- **Reloads re-decode** (a save, `+reload`, Ctrl+R) as a new revision, and keep
+  the zoom AND the scroll when the pixel size is unchanged (the Mac's
+  `reloadFromDisk`; `image.js` takes a 4th `keep` argument for the scroll).
+  A different size re-fits. win32 does not keep them yet (T3532).
+- The chords zoom the PICTURE, never the page; find declines (no text).
+  Not yet: Ctrl+C copying the picture (T3534). A viewer pane cannot be split
+  narrower than its nav bar, about 260 px (T3533).
+- **Reading it back**: every decision is a `viewer image ...` log line, and
+  the steps seam's `image` step prints `rev= loads= route= zoom= fitting= fit=
+  natural=WxH viewport=WxH`. A picture's `wait` is its decode-and-fit (the
+  `loaded` answer), not the `setImage` call.
+
+Acceptance:
+
+```powershell
+powershell -NoProfile -File scripts\linux\wsl-run.ps1 -CommandFile test\linux\viewer-image.sh
+```
+
+Ends `VIEWER IMAGE: ALL PASS` (28 checks).
+
 Acceptance:
 
 ```powershell
