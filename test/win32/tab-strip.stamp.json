@@ -1,12 +1,16 @@
 {
     "guard":  "tab-strip",
     "script":  "test/win32/tab-strip.ps1",
-    "generated":  "2026-11-20T21:00:16-08:00",
-    "commit":  "3d9b7a570",
+    "generated":  "2026-11-23T09:40:38-08:00",
+    "commit":  "0bea564b8",
     "uncommitted":  [
-                        "test/win32/tab-strip.ps1"
+
                     ],
     "files":  {
+                  "src/apprt/win32/caption_layout.zig":  "39e4484c2478bd4b72a4053f80aaf39c50510637ab9b63f70a5b21ff67744603",
+                  "src/apprt/win32/icon_button.zig":  "6a3a4f1eb1abe83ec20e99cf0bac21916ffc1de249530f199ba65cab4c421c08",
+                  "src/apprt/win32/tab_shape.zig":  "e464dc2c2802550de94229051e1576e343b175039010ba8ae6ea537a9643a837",
+                  "src/apprt/win32/tab_strip_layout.zig":  "ef2d2f198cdba5186e0f8f0f4447be77dcba4e4df38fad5825a245ee10a5bbbe",
                   "test/win32/lib/ChromeGeometry.ps1":  "070bc30356ec1e6ac10382fbbfd7a1a812732ed0af83db7b80a36d11b1120a2a",
                   "test/win32/tab-strip.ps1":  "57a1241476e86fdc749aef34e01e1810ef238ae98bc933144cc13d364d502ffa"
               },

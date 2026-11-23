@@ -6189,13 +6189,22 @@ $GuardTable = @(
     # wildcard and read its text. tab-strip.ps1 is its widest consumer - the
     # derived metrics, DIP rounding, the published regions and the measured
     # extents - so a helper that stopped modelling the app fails here first.
-    # NARROW on purpose: the strip's Zig modules are not here, because the row
-    # is about the helper and a twelve-minute run per layout edit is noise.
+    # T1921: it also covers the pure modules that PLACE the strip - the caption
+    # band it sits in, the tab/button geometry, the tab outline and the strip's
+    # icon buttons. Narrow-only coverage let a layout change (T1900's elevated
+    # default) turn this harness red with nobody due to run it. All four change
+    # a handful of times a month, so the row is not always-due. Window.zig (the
+    # painter, edited constantly) stays out, and the elevated layout under the
+    # strip is pane-sidebar-elevated.ps1's row: this script pins the flat style.
     [pscustomobject]@{
         Name   = 'tab-strip'
         Script = 'test\win32\tab-strip.ps1'
         Stamp  = 'test\win32\tab-strip.stamp.json'
         Covers = @(
+            'src\apprt\win32\caption_layout.zig',
+            'src\apprt\win32\tab_strip_layout.zig',
+            'src\apprt\win32\tab_shape.zig',
+            'src\apprt\win32\icon_button.zig',
             'test\win32\lib\ChromeGeometry.ps1',
             'test\win32\tab-strip.ps1'
         )
