@@ -1,0 +1,21 @@
+{
+  "version": "1.56.15",
+  "sections": [
+    { "title": "New",
+      "items": [
+        { "text": "test/linux/cli-undo.sh is executable like the other Linux test scripts." },
+        { "text": "On Linux a closed pane, or one a +rearrange left out, comes back with Ctrl+Shift+Z." },
+        { "text": "On Linux the session agent now comes back at login without the app." }
+      ] },
+    { "title": "Fixes",
+      "items": [
+        { "text": "Stepping back into the previous file of a diff lands on its last change." },
+        { "text": "The Windows pane sidebar lists up to 512 panes instead of stopping at 64." },
+        { "text": "test(T3398): each launch starts from no saved layout." }
+      ] },
+    { "title": "Improvements",
+      "items": [
+        { "text": "A glass viewer pane is checked on screen: its markdown page is the same sheet of glass as the terminal beside it." }
+      ] }
+  ]
+}
