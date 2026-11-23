@@ -458,6 +458,86 @@ powershell -NoProfile -File scripts\linux\wsl-run.ps1 -CommandFile test\linux\vi
 
 Ends `VIEWER FIND: ALL PASS` (27 checks).
 
+### Links, popups and the link menu (T3415)
+
+Every decision is the shared one - win32's pure `viewer_content.classifyLink`
+/ `livePageLinkAction`, `viewer_popup`, `banner_link` - reached through the
+GTK-only `src/apprt/gtk/viewer_links.zig` (none lane), which does two
+translations and nothing else:
+
+- **Origins.** `canonical` rewrites `ghoztty-viewer://page/...` and
+  `ghoztty-page://page/...` into win32's `https://ghoztty-viewer/...` /
+  `https://ghoztty-page/...` before a URI meets the shared rules, so a
+  relative doc link is `.relative` and a rendered page has a site to leave.
+- **Which navigation is a click.** WebKit reports the Mac's own
+  `navigationType`, so only `LINK_CLICKED` without a redirect is routed;
+  Back/Forward, reloads, form posts, script navigations and the pane's own
+  loads (`OTHER`) are followed in place. No "my own navigation" counter is
+  needed (win32's `self_nav_pending`).
+
+What the user gets: in a markdown/code pane http(s) goes to the default
+browser, a relative `.md`/`.html`/image/diff link opens a viewer split to the
+right, any other file opens in its default app, a link to nothing or a
+`mailto:` does nothing (the missing file is logged), and a `ghoztty://` link
+focuses its target in THIS app (`IpcHandlers.focusLink` -> the shared
+`verbs.focus`, looked up from the clicking pane's window). A live page (a
+website, a rendered `.html`) follows its own site in place - host + port as
+written; a rendered page's site is its folder - and a click off it takes the
+banner's scheme: plain -> browser, Ctrl -> side pane, Ctrl+Shift -> a viewer
+window (a `file://` link: reveal / side pane / its app).
+
+- **`decide-policy`** (navigation actions only) runs `links.decide`, ignores
+  anything not `allow`, and routes it.
+- **`file://` links are refused by WebKit before the policy runs** ("Not
+  allowed to load local resource": a non-`file:` page may not navigate to
+  `file:`, and our pages are custom-scheme pages, unlike the Mac's). A small
+  GTK-only user script (`file_link_js` in `Viewer.zig`, top frame) takes a
+  TRUSTED left click on a `file:` link instead and posts it with its
+  modifiers on the `ghozttyFileLink` handler; the same `links.decide` routes
+  it. Untrusted (script-made) clicks are ignored so a page cannot fake a
+  Ctrl+Shift into launching a local file's app; a debug test run allows them.
+- **Popups**: `create` runs `links.decidePopup` - the browser, unless
+  Ctrl-clicked; a Ctrl-click off-site is a link click (the scheme above); a
+  `ghoztty://` popup focuses. Nothing is ADOPTED yet: `create` always returns
+  no web view (a script sees `window.open()` return null), a Ctrl-clicked
+  same-site popup to http(s) opens a fresh viewer window at its URL (its
+  opener is lost), and a bare `window.open()` or a non-web scheme logs
+  `not adopted on Linux yet (T3447)`. Adoption with `window.opener` and the
+  requested size is T3447.
+- **The link menu**: the shared `links.js` is a user script in EVERY frame
+  (an iframe's link gets the menu too); it declines a `#fragment`, a click in
+  a selection and schemes with no action, and posts `linkMenu` on
+  `viewerTOC`. `ghoztty-page:` is in its scheme list for this platform. The
+  href is resolved to what the menu acts on first (a relative doc link or a
+  page link is the FILE, a broken doc link the file it meant), then a
+  `GtkPopoverMenu` pops at the last pointer position over the page, rows,
+  order and ids `banner_link`'s with Linux titles (`Open Containing Folder`
+  for reveal, the nav bar button's own wording), separators as GMenu
+  sections.
+- **Opening things**: the browser is `GtkUriLauncher`, a default app
+  `GtkFileLauncher`, reveal the bar button's `open_containing_folder` road,
+  a split `SplitTree.newSplitAt(.right, ...)` from the pane's `Tab`, a window
+  `Application.newWindowForIpc` with the location as `view`.
+- **Nothing a test does may leave the app**: inside WSL `xdg-open` can
+  reach the Windows browser. A debug build with `GHOZTTY_TEST_VIEWER_LINKS=<file>`
+  appends every hand-off there (`browser|app|split|window|focus|copy|reveal|menu
+  <target>`) and runs the browser/app ones NOT AT ALL; a debug test run
+  (`GHOZTTY_TEST_VIEWER_DUMP` set) without the sink refuses them and logs
+  `refused to hand`. The menu is not popped under the sink (a seatless
+  Weston cannot grant a popup grab); it records `menu <kind> <target>
+  rows=a|b,c|d`, and the steps' `menu-pick <row>` runs a row. WebKit drops
+  the modifiers of a script-made click, so `mods ctrl|ctrl+shift|none` stands
+  in for the keyboard; reading a REAL click's modifiers off WebKit, and the
+  popover on screen, are the parts only a person at a desktop sees.
+
+Acceptance:
+
+```powershell
+powershell -NoProfile -File scripts\linux\wsl-run.ps1 -CommandFile test\linux\viewer-links.sh
+```
+
+Ends `VIEWER LINKS: ALL PASS` (36 checks).
+
 Acceptance:
 
 ```powershell
