@@ -357,15 +357,33 @@ function Get-SelfSpawnedTestPids {
         return $names.ContainsKey($n.ToLowerInvariant())
     }
 
+    # T1869 (the T1840/T1867 rule): Windows recycles pids and never rewrites
+    # ParentProcessId, so a process OLDER than the one now holding its parent
+    # pid is not that process's child -- its real parent died and the pid was
+    # handed on. Linking it in would drop a stranger's CPU from lane progress
+    # (or count a stranger as the self-spawn's parent). A missing CreationDate
+    # on either side keeps the old answer (link), so an undated tree degrades
+    # to the pid-only walk rather than to no walk.
+    function Test-ParentLink($child, $parent) {
+        if ($null -eq $child -or $null -eq $parent) { return $true }
+        $cBorn = $child.CreationDate
+        $pBorn = $parent.CreationDate
+        if ($null -eq $cBorn -or $null -eq $pBorn) { return $true }
+        return ([datetime]$cBorn -ge [datetime]$pBorn)
+    }
+
     # Roots: a test binary with a test-binary ancestor INSIDE this tree.
     $roots = @()
     foreach ($id in @($byPid.Keys)) {
         if (-not (Test-IsTestBinary $byPid[$id])) { continue }
-        $cur = [int]$byPid[$id].ParentProcessId
+        $child = $byPid[$id]
+        $cur = [int]$child.ParentProcessId
         $guard = 0
         while ($byPid.ContainsKey($cur) -and $guard -lt 64) {
+            if (-not (Test-ParentLink $child $byPid[$cur])) { break }
             if (Test-IsTestBinary $byPid[$cur]) { $roots += [int]$id; break }
-            $cur = [int]$byPid[$cur].ParentProcessId
+            $child = $byPid[$cur]
+            $cur = [int]$child.ParentProcessId
             $guard++
         }
     }
@@ -380,7 +398,10 @@ function Get-SelfSpawnedTestPids {
             if ($out.ContainsKey($cur)) { continue }
             $out[$cur] = $true
             if ($kids.ContainsKey($cur)) {
-                foreach ($c in $kids[$cur]) { $queue.Enqueue([int]$c) }
+                foreach ($c in $kids[$cur]) {
+                    if (-not (Test-ParentLink $byPid[[int]$c] $byPid[$cur])) { continue }
+                    $queue.Enqueue([int]$c)
+                }
             }
         }
     }

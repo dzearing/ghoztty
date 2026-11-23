@@ -1,8 +1,8 @@
 {
     "guard":  "unwired-hook",
     "script":  "test/win32/unwired-hook-audit.ps1",
-    "generated":  "2026-11-22T23:55:25-08:00",
-    "commit":  "e78e4cbdc",
+    "generated":  "2026-11-23T00:07:36-08:00",
+    "commit":  "fda981e15",
     "uncommitted":  [
 
                     ],
@@ -1336,11 +1336,11 @@
                   "test/win32/floor-lane-commit-headroom.ps1":  "081cc99dbb34e21565193d9e242af531ce49fd6e9343106b017cb4a754e96bac",
                   "test/win32/floor-lane-compiler-crash.ps1":  "34827f1ed2d63df665d72275f13211f6a3f8273c44561b09396ffdc3f7505470",
                   "test/win32/floor-lane-desktop.ps1":  "98ad27a978e7689f77af81c616bb81634f405d9a6cf27f30ce02d80e5e96d2fc",
-                  "test/win32/floor-lane-leak-sweep.ps1":  "5de04f1c939d27fbb7c8ab7baf5f11ea9429d76864e400e2683fbf00d7689c0f",
+                  "test/win32/floor-lane-leak-sweep.ps1":  "00c1d64322809c0f7575078a5341d8ac0cddc86e49a6952a38d1a63233b0ca02",
                   "test/win32/floor-lane-parallel.ps1":  "e4821c99f31c4708e5402a8f7d0682586f130592268f8d3b5a2a2e11aab3161d",
                   "test/win32/floor-lane-releasesafe.ps1":  "691cb0b20e21706b03a604b3a91d7a5d409e0ce77f8315d29ddd896bccc0fe3e",
                   "test/win32/floor-lane-solo-confirm.ps1":  "a222a0c597b6f6e265690cbebb3e9d621db1ba6a53217ab62148231a5a9dab9c",
-                  "test/win32/floor-lane-stall-sampling.ps1":  "5861c59b1084742a2a4b6277f62aa530f5b0383ad2f92cd33910814d812989f8",
+                  "test/win32/floor-lane-stall-sampling.ps1":  "868938dc6ffbb2f736af9b76991f796d9621145bdee32d05d2aa58958e9092ea",
                   "test/win32/floor-lane-verdict-detail.ps1":  "a4553943b43928fed9dee5abbac068f64d8adef4c5feff05dbf8e761093faaa5",
                   "test/win32/floor-lane-webview-settle.ps1":  "c45d516f0afb72aeaf60e6ff3389619b722763144eebdfa53e1e5fc523787aec",
                   "test/win32/focus-defer.ps1":  "e1c5d8c081a5d73f04bcff5e085af5c5d1c708f6441f26626a0b9d1618170a5b",

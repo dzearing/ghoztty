@@ -216,6 +216,57 @@ try {
     $empty = @(Get-SelfSpawnedTestPids -Tree @() -ExeNames @($FixtureName))
     Check 'an empty tree answers empty' ($empty.Count -eq 0) "got $($empty.Count)"
 
+    # -- 11b (T1869): pids are recycled and ParentProcessId is never rewritten,
+    #        so a process OLDER than the one now holding its parent pid is a
+    #        stranger, not a child. It must not be read as a self-spawn (its CPU
+    #        dropped from lane progress), must not be swept in under a real
+    #        self-spawn, and must not make an older test binary look like the
+    #        parent of a self-spawn. Undated rows keep the pid-only answer --
+    #        that is the negative control proving the dates are what decide.
+    $t0 = (Get-Date).AddHours(-1)
+    $dated = @(
+        [pscustomobject]@{ ProcessId = 200; ParentProcessId = 1;   Name = 'cmd.exe';           CreationDate = $t0 },
+        [pscustomobject]@{ ProcessId = 201; ParentProcessId = 200; Name = 'zig.exe';           CreationDate = $t0.AddSeconds(1) },
+        [pscustomobject]@{ ProcessId = 202; ParentProcessId = 201; Name = $FixtureName;        CreationDate = $t0.AddSeconds(2) },
+        # 203: a test binary born BEFORE 202, naming 202's pid (reused).
+        [pscustomobject]@{ ProcessId = 203; ParentProcessId = 202; Name = $FixtureName;        CreationDate = $t0.AddSeconds(-30) },
+        # 204: a real self-spawn of 202, with one real child and one stranger.
+        [pscustomobject]@{ ProcessId = 204; ParentProcessId = 202; Name = $FixtureName;        CreationDate = $t0.AddSeconds(5) },
+        [pscustomobject]@{ ProcessId = 205; ParentProcessId = 204; Name = 'msedgewebview2.exe'; CreationDate = $t0.AddSeconds(6) },
+        [pscustomobject]@{ ProcessId = 206; ParentProcessId = 204; Name = 'Spotify.exe';       CreationDate = $t0.AddDays(-3) }
+    )
+    $aged = @(Get-SelfSpawnedTestPids -Tree $dated -ExeNames @($FixtureName))
+    Check 'T1869: an older test binary naming a reused pid is not a self-spawn' `
+        (-not ($aged -contains 203)) "got [$($aged -join ',')]"
+    Check 'T1869: the real self-spawn beside it is still found' `
+        ($aged -contains 204) "got [$($aged -join ',')]"
+    Check "T1869: the self-spawn's real child still counts" `
+        ($aged -contains 205) "got [$($aged -join ',')]"
+    Check 'T1869: an older stranger under a self-spawn pid is not swept in' `
+        (-not ($aged -contains 206)) "got [$($aged -join ',')]"
+    # 302 was born before its claimed test-binary parent 301: the upward walk
+    # must stop there, not crown 302 a self-spawn.
+    $upward = @(
+        [pscustomobject]@{ ProcessId = 301; ParentProcessId = 1;   Name = $FixtureName; CreationDate = $t0 },
+        [pscustomobject]@{ ProcessId = 302; ParentProcessId = 301; Name = 'cmd.exe';    CreationDate = $t0.AddSeconds(-60) },
+        [pscustomobject]@{ ProcessId = 303; ParentProcessId = 302; Name = $FixtureName; CreationDate = $t0.AddSeconds(-50) }
+    )
+    $up = @(Get-SelfSpawnedTestPids -Tree $upward -ExeNames @($FixtureName))
+    Check 'T1869: the upward walk stops at a link that is older than its parent' `
+        ($up.Count -eq 0) "got [$($up -join ',')]"
+    # Negative control: the same rows with no dates link exactly as before.
+    $undated = @($dated | ForEach-Object {
+            [pscustomobject]@{ ProcessId = $_.ProcessId; ParentProcessId = $_.ParentProcessId; Name = $_.Name }
+        })
+    $plain = @(Get-SelfSpawnedTestPids -Tree $undated -ExeNames @($FixtureName))
+    Check 'T1869 control: undated, the reused-pid test binary IS linked (dates decide)' `
+        (($plain -contains 203) -and ($plain -contains 206)) "got [$($plain -join ',')]"
+    $upPlain = @(Get-SelfSpawnedTestPids -Tree @($upward | ForEach-Object {
+                [pscustomobject]@{ ProcessId = $_.ProcessId; ParentProcessId = $_.ParentProcessId; Name = $_.Name } }) `
+            -ExeNames @($FixtureName))
+    Check 'T1869 control: undated, the upward walk links through' `
+        ($upPlain -contains 303) "got [$($upPlain -join ',')]"
+
     # -- 12: which command line means which launcher. This is the line that
     #        turns "it leaked again" into "the code under test spawned itself".
     Check 'the build runner is recognized by --listen=-' `
