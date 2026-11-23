@@ -952,6 +952,9 @@ pub fn closeFind(self: *Viewer) void {
     const had_focus = if (self.focusWidget()) |f| f == self.box or wk.gtk_widget_is_ancestor(f, self.box) != 0 else false;
     self.find_open = false;
     wk.gtk_widget_set_visible(self.find.card, 0);
+    // A closed card counts nothing: `openFind` re-syncs both on the way back.
+    wk.gtk_widget_set_visible(self.find.count, 0);
+    self.setFindNote(null);
     log.info("viewer: find state=closed query={s}", .{self.findQuery()});
     // Focus back to the page, so the pane is usable again.
     if (had_focus) self.focusContent();

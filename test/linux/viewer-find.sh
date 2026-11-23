@@ -201,7 +201,9 @@ s=$(st 3)
 has "$s" "findq=needle" && has "$s" "count=1/3 "
 hl_check "F9 typing searches: the count reads 1/3 (a near miss does not count)" $? "$s"
 
-[ "$(pr 1)" = "probe OK 3/1" ]
+# find.js paints the current match in its own highlight and the rest in the
+# other, so three matches read 2 + 1.
+[ "$(pr 1)" = "probe OK 2/1" ]
 hl_check "F10 every match is painted, and exactly one is the current one" $? "$(pr 1)"
 
 has "$(st 4)" "count=2/3 " && has "$(st 5)" "count=1/3 "
@@ -243,7 +245,7 @@ hl_check "F20 the open search follows a navigation into a code pane" $? "$s"
 s=$(st 19)
 has "$s" "mode=web" && has "$s" "count=1/4 " && has "$s" "note=frames not searched"
 hl_check "F21 find works on a website (4 needles in the page, the frame's not counted) and says frames are not searched" $? "$s"
-[ "$(pr 3)" = "probe OK 4/1" ]
+[ "$(pr 3)" = "probe OK 3/1" ]
 hl_check "F22 the website's matches are painted by the injected script" $? "$(pr 3)"
 
 s=$(st 20)
@@ -251,8 +253,8 @@ has "$s" "count=1/5000+ "
 hl_check "F23 past 5000 matches the count reads 1/5000+, never an exact-looking number" $? "$s"
 
 s=$(st 21)
-has "$s" "mode=image" && has "$s" "find=closed"
-hl_check "F24 navigating to a picture closes the open card" $? "$s"
+has "$s" "mode=image" && has "$s" "find=closed" && has "$s" "count=-"
+hl_check "F24 navigating to a picture closes the open card, count and all" $? "$s"
 echo "$k" | tail -3 | grep -q 'handled=true'
 [ $? != 0 ] && echo "$k" | tail -3 | grep -c 'handled=false' | grep -q '^3$' && has "$(st 22)" "find=closed"
 hl_check "F25 a picture declines Ctrl+F, Ctrl+G and F3" $? "$(echo "$k" | tail -3 | tr '\n' ' ') / $(st 22)"
