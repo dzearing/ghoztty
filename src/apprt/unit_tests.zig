@@ -977,6 +977,12 @@ test {
     // Windows / in the none lane).
     _ = @import("win32/session_layout.zig");
 
+    // The GTK session-layout manifest's pure half on that schema - the
+    // file's path, a tree's first leaf, the recorded window size, a viewer
+    // leaf's restore (T3551). No GTK imports, so every lane runs what
+    // SessionLayout.zig's own tests never could.
+    _ = @import("gtk/session_layout_rules.zig");
+
     // Pure win32 refresh policy: whether a tick should re-persist the panes'
     // screens, wait for their output to go quiet, or do nothing at all (T922),
     // same no-OS-imports deal — it is arithmetic over a cursor and a clock.
