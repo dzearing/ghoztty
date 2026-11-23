@@ -29,7 +29,8 @@
  *                          click produced a real request rather than only DOM text
  *   GET  /api/_unblock     flips the fixture's loop from blocked to working, so
  *                          the blocked bar (T1484) can be shown to CLEAR itself
- *                          through the page's real fetch-and-render path
+ *                          through the page's real fetch-and-render path (and
+ *                          drops the two loop lanes to one, T1995)
  *
  * Usage:
  *   node dashboard-stub-server.js --page <html> --driver <js> --data <json>
@@ -193,6 +194,21 @@ const BOOT_REVIVES = Object.assign({}, BOOT_SIGNIN_OFF, {
 });
 payload.boot = BOOT_SIGNIN_OFF;
 
+/* Two loop lanes (T1984/T1995), injected over whatever lanes THIS box runs -
+   a real, varying fact (one lane, or three) and not a state a test may depend
+   on. Lane a is stopped by request with nothing claimed; lane b is running
+   turn 12 on the fixture's stale task, so the row has to resolve an id to its
+   title. Cleared by /api/_unblock to ONE lane, which must render no lane row:
+   the card already is that lane. */
+const LANES_TWO = [
+  { id: 'a', root: 'X:\\fixture\\ghoztty', self: true, running: false, turn: 3,
+    stopped: true, watchdog: true, tasks: [] },
+  { id: 'b', root: 'X:\\fixture\\ghoztty-b', self: false, running: true, turn: 12,
+    stopped: false, watchdog: false, tasks: ['TX903'] },
+];
+const LANES_ONE = [LANES_TWO[0]];
+payload.lanes = LANES_TWO;
+
 /* Two open pull requests for the Reviews view (T1182), in the shape the real
    server's /api/prs serves (test/win32/task-dashboard.ps1 section H proves that
    shape against the real pr-health.ps1). One says what it does and what to
@@ -225,7 +241,7 @@ payload.reviews = { verdict: PRS.verdict, open: 2, needs: 1 };
 let blockedNow = true;
 const dataJsonBlocked = JSON.stringify(payload);
 const dataJsonClear = JSON.stringify(
-  Object.assign({}, payload, { loop: Object.assign({}, BLOCKED_LOOP, { blocked: null }), boot: BOOT_REVIVES })
+  Object.assign({}, payload, { loop: Object.assign({}, BLOCKED_LOOP, { blocked: null }), boot: BOOT_REVIVES, lanes: LANES_ONE })
 );
 
 /* --- the page ------------------------------------------------------------- */

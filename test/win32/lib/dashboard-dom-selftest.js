@@ -436,6 +436,23 @@
         check('C40 the loop card totals reboot downtime', !!lc &&
           lc.textContent.indexOf('5 of 7 recorded reboots') >= 0 && lc.textContent.indexOf('2d 0h') >= 0,
           lc ? lc.textContent : 'no Reboots: row in the loop card');
+
+        /* --- one row per loop lane (T1984/T1995) -------------------------- */
+        /* The stub serves two lanes until /api/_unblock, then one. */
+        var laneEl = function (id) { return document.querySelector('#view [data-lane="' + id + '"]'); };
+        var la = laneEl('a'), lb = laneEl('b');
+        var latxt = la ? la.textContent : '', lbtxt = lb ? lb.textContent : '';
+        check('C64 two lanes render one [data-lane] row each',
+          document.querySelectorAll('#view [data-lane]').length === 2 && !!la && !!lb,
+          document.querySelectorAll('#view [data-lane]').length + ' lane row(s)');
+        check('C65 the stopped lane says so, is muted, and marks itself as this one',
+          latxt.indexOf('Lane a (this one)') === 0 && latxt.indexOf('stopped by request') >= 0 &&
+          latxt.indexOf('no task claimed') >= 0 && latxt.indexOf('supervisor watching') >= 0 &&
+          !!la && la.classList.contains('muted'), latxt);
+        check('C66 the running lane names its turn and its claimed task by title',
+          lbtxt.indexOf('Lane b: running, turn 12') === 0 &&
+          lbtxt.indexOf('TX903') >= 0 && lbtxt.indexOf('an in-progress task nobody has touched') >= 0 &&
+          lbtxt.indexOf('supervisor down') >= 0 && !!lb && !lb.classList.contains('muted'), lbtxt);
         /* The negative control: the same page, the same render path, a payload
            that is no longer blocked. A bar that cannot go away is worse than
            no bar at all. */
@@ -456,6 +473,13 @@
           .then(function (gone) {
             check('C41 the sign-in bar clears once a reboot signs in by itself', !!gone,
               'the sign-in bar is still up over a box that revives unattended');
+            return waitFor(function () {
+              return !document.querySelector('#view [data-lane]');
+            }, 'lane rows gone');
+          })
+          .then(function (gone) {
+            check('C67 a single lane renders no lane row - the card already is that lane', !!gone,
+              document.querySelectorAll('#view [data-lane]').length + ' lane row(s) over a one-lane payload');
           });
       })
       .then(function () {

@@ -1,8 +1,8 @@
 {
     "guard":  "seam-audit",
     "script":  "test/win32/seam-audit.ps1",
-    "generated":  "2026-11-23T13:29:56-08:00",
-    "commit":  "d8357978d",
+    "generated":  "2026-11-23T13:40:10-08:00",
+    "commit":  "66c33b315",
     "uncommitted":  [
 
                     ],
@@ -558,7 +558,7 @@
                   "src/os/TempDir.zig":  "286d2bf0f75a8cf91f42dc5ec7b182f31f0a3df94899a528f56f7ec8e0775360",
                   "src/os/thread_stack.zig":  "c6698c4d940f87e6fab77e658d7353e403137f047e99baa2aa6fcb2d34157469",
                   "src/os/uri.zig":  "ea8ae6f0e722086f848e2331e692572f0e46f37cbbc70c5054d75f52f22fd90f",
-                  "src/os/user_env.zig":  "627c53a9b88c647cbaa50bfcb01d98833174895ac5914cdc6476b512734de1bd",
+                  "src/os/user_env.zig":  "3872a2f7e6c7447ae783df052eac0c104e7cd225ad8cf89f58c5023a5c0a5d02",
                   "src/os/wasm.zig":  "2401a8b67d11fe69ddfb6979d2ddfd2e94cfc5133bbb137f03ce980747b17ab0",
                   "src/os/windows.zig":  "35300d7822bbf684191fdeacf9a8e57465327d3dd7246222de77b604de2bcccc",
                   "src/os/xdg.zig":  "fc1ea4c4091746fd2de40fa48c5aa38c8246cb56f8d440b2e4784c8300c21c33",
