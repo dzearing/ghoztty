@@ -62,6 +62,10 @@ pub extern fn webkit_web_view_get_window_properties(view: *WebView) *WindowPrope
 pub extern fn webkit_window_properties_get_geometry(props: *WindowProperties, geometry: *GdkRectangle) void;
 pub extern fn webkit_window_properties_get_toolbar_visible(props: *WindowProperties) c_int;
 pub extern fn webkit_window_properties_get_menubar_visible(props: *WindowProperties) c_int;
+pub extern fn webkit_window_properties_get_statusbar_visible(props: *WindowProperties) c_int;
+pub extern fn webkit_window_properties_get_scrollbars_visible(props: *WindowProperties) c_int;
+pub extern fn webkit_window_properties_get_locationbar_visible(props: *WindowProperties) c_int;
+pub extern fn webkit_window_properties_get_resizable(props: *WindowProperties) c_int;
 pub extern fn webkit_web_view_get_context(view: *WebView) *WebContext;
 pub extern fn webkit_web_view_load_uri(view: *WebView, uri: [*:0]const u8) void;
 pub extern fn webkit_web_view_get_uri(view: *WebView) ?[*:0]const u8;

@@ -1195,6 +1195,11 @@ fn onPopupReadyToShow(view: *wk.WebView, ud: ?*anyopaque) callconv(.c) void {
     // that passed window features (a size among them) hides the bars.
     const featured = wk.webkit_window_properties_get_toolbar_visible(props) == 0 or
         wk.webkit_window_properties_get_menubar_visible(props) == 0;
+    log.info("viewer: popup props geo={d},{d} {d}x{d} tool={d} menu={d} status={d} scroll={d} loc={d} resize={d}", .{
+        geo.x,                                                    geo.y,                                                   geo.width,                                                   geo.height,
+        wk.webkit_window_properties_get_toolbar_visible(props),   wk.webkit_window_properties_get_menubar_visible(props),  wk.webkit_window_properties_get_statusbar_visible(props),    wk.webkit_window_properties_get_scrollbars_visible(props),
+        wk.webkit_window_properties_get_locationbar_visible(props), wk.webkit_window_properties_get_resizable(props),
+    });
     const size = links.popupSize(featured, geo.width, geo.height);
     self.popup_state = .hosted;
     if (size) |s|

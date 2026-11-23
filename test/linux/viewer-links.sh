@@ -196,6 +196,7 @@ sink="$HL_RUNTIME/links.out"
     # bare one the opener writes into; then the page closes the first.
     echo "mark popups"
     echo "probe (function(){var w=window.open('sub/two.html','sized','width=500,height=400');window.__pop=w;return w?'adopted':'null'})()"
+    echo "probe (function(){return window.open('sub/two.html','plain')?'plain adopted':'plain null'})()"
     echo "sleep 3000"
     echo "probe (function(){return 'pop '+(window.__fromPop||[]).join(' ')})()"
     echo "probe (function(){var w=window.open();if(!w)return 'blank null';w.document.write('<h1>Written</h1>');w.document.close();window.__blank=w;return 'blank wrote'})()"
