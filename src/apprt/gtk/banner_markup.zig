@@ -36,15 +36,36 @@ pub fn checkboxGlyph(checked: bool) []const u8 {
 /// A link is the outermost tag, so its whole label - bold parts and all - is
 /// one clickable `<a>`; `GtkLabel` emits `activate-link` with the href.
 pub fn appendInline(alloc: Allocator, out: *std.ArrayList(u8), items: []const md.Inline) Allocator.Error!void {
-    for (items) |item| switch (item) {
-        .checkbox => |checked| try out.appendSlice(alloc, checkboxGlyph(checked)),
-        .seg => |s| {
-            if (s.text.len == 0) continue;
-            if (s.link) |href| {
+    // The href of the `<a>` currently open: consecutive runs of one link (a
+    // label with a bold word in it) share a single tag.
+    var open: ?[]const u8 = null;
+    for (items) |item| {
+        const link: ?[]const u8 = switch (item) {
+            .seg => |s| if (s.text.len == 0) open else s.link,
+            .checkbox => null,
+        };
+        const same = if (open != null and link != null) std.mem.eql(u8, open.?, link.?) else open == null and link == null;
+        if (!same) {
+            if (open != null) try out.appendSlice(alloc, "</a>");
+            open = null;
+            if (link) |href| {
                 try out.appendSlice(alloc, "<a href=\"");
                 try appendEscaped(alloc, out, href);
                 try out.appendSlice(alloc, "\">");
+                open = href;
             }
+        }
+        try appendRun(alloc, out, item);
+    }
+    if (open != null) try out.appendSlice(alloc, "</a>");
+}
+
+/// One run's styled text (its link tag is `appendInline`'s).
+fn appendRun(alloc: Allocator, out: *std.ArrayList(u8), item: md.Inline) Allocator.Error!void {
+    switch (item) {
+        .checkbox => |checked| try out.appendSlice(alloc, checkboxGlyph(checked)),
+        .seg => |s| {
+            if (s.text.len == 0) return;
             if (s.style.bold) try out.appendSlice(alloc, "<b>");
             if (s.style.italic) try out.appendSlice(alloc, "<i>");
             if (s.style.underline) try out.appendSlice(alloc, "<u>");
@@ -54,9 +75,8 @@ pub fn appendInline(alloc: Allocator, out: *std.ArrayList(u8), items: []const md
             if (s.style.underline) try out.appendSlice(alloc, "</u>");
             if (s.style.italic) try out.appendSlice(alloc, "</i>");
             if (s.style.bold) try out.appendSlice(alloc, "</b>");
-            if (s.link != null) try out.appendSlice(alloc, "</a>");
         },
-    };
+    }
 }
 
 /// One inline run as a NUL-terminated markup string, optionally wrapped in a
@@ -173,13 +193,19 @@ test "markup: a link owns its whole label and its href is escaped" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const a = arena.allocator();
+    // Link text carries the parser's underline (the Mac draws links so).
     try testing.expectEqualStrings(
-        "see <a href=\"https://x.io/?a=1&amp;b=2\">the <b>PR</b></a>",
+        "see <a href=\"https://x.io/?a=1&amp;b=2\"><u>the </u><b><u>PR</u></b></a>",
         try firstText(a, "see [the **PR**](https://x.io/?a=1&b=2)"),
+    );
+    // Two links side by side stay two tags.
+    try testing.expectEqualStrings(
+        "<a href=\"https://a.io\"><u>a</u></a> <a href=\"https://b.io\"><u>b</u></a>",
+        try firstText(a, "[a](https://a.io) [b](https://b.io)"),
     );
     // Autolinks resolve against the POSIX context the GTK pane supplies.
     try testing.expectEqualStrings(
-        "open <a href=\"/home/u/repo/docs/a.md\">./docs/a.md</a>",
+        "open <a href=\"/home/u/repo/docs/a.md\"><u>./docs/a.md</u></a>",
         try firstText(a, "open ./docs/a.md"),
     );
 }
