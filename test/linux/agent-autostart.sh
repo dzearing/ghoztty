@@ -62,7 +62,13 @@ run_app() {
     fi
     hl_wait_for 30 test -s "$m"
 }
-stop_app() { kill -TERM "$APP" 2>/dev/null; wait "$APP" 2>/dev/null; }
+# Each launch starts from no saved layout: what this test asks is when the
+# login entry is written, not what a relaunch restores (session-restore.sh),
+# and a restored launch loses its own -e command today (T3594).
+stop_app() {
+    kill -TERM "$APP" 2>/dev/null; wait "$APP" 2>/dev/null
+    rm -f "$XDG_CONFIG_HOME"/ghoztty/session-layout*.json
+}
 no_entries() { [ ! -e "$unit" ] && [ ! -L "$wants" ] && [ ! -e "$desk" ]; }
 listing() { (cd "$XDG_CONFIG_HOME" && find systemd autostart 2>/dev/null | tr '\n' ' '); }
 
@@ -150,7 +156,7 @@ xdg_agent=$(hl_agent_pid)
 tr '\0' '\n' < "/proc/${xdg_agent:-0}/environ" 2>/dev/null | grep -qx "GHOSTTY_AGENT_LOCK=$state/agent.lock"
 hl_check "A17 ...with the app's lock path in its environment" $?
 run_app ""
-hl_check "A18 a later app launch runs its pane" $? "$(grep -v -e "^debug" -e color_change "$APP_LOG" | tail -40; ls $HL_RUNTIME; cli +list 2>&1 | head -20 | tr '\n' '|')"
+hl_check "A18 a later app launch runs its pane" $? "$(grep -v -e '^debug' -e color_change "$APP_LOG" | tail -8 | tr '\n' '|')"
 [ "$(hl_agent_pid)" = "$xdg_agent" ]
 hl_check "A19 ...on the agent the login entry started (no second spawn)" $? "entry=$xdg_agent now=$(hl_agent_pid)"
 stop_app
