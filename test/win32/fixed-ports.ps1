@@ -117,15 +117,18 @@ $dirty = Join-Path $tmp 'dirty.ps1'
 param([int]$RelayPort = 47911)
 $ppPort = 47163
 $url = "http://127.0.0.1:47999/opener.html"
+foreach ($p in 7861..7880) { if (Test-PortFree $p) { $Port = $p; break } }
 '@ | Set-Content -LiteralPath $dirty -Encoding ASCII
 $v = @(Get-FixedPortViolations -Path $dirty)
-Assert "B2 all three violating shapes are found (got $($v.Count))" ($v.Count -eq 3)
+Assert "B2 all four violating shapes are found (got $($v.Count))" ($v.Count -eq 4)
 Assert 'B3 the pinned param default is named pinned-default on line 1' (
     @($v | Where-Object { $_.Kind -eq 'pinned-default' -and $_.Line -eq 1 }).Count -eq 1)
 Assert 'B4 the literal assignment is named literal-assignment on line 2' (
     @($v | Where-Object { $_.Kind -eq 'literal-assignment' -and $_.Line -eq 2 }).Count -eq 1)
 Assert 'B5 the baked-in address is named literal-endpoint on line 3' (
     @($v | Where-Object { $_.Kind -eq 'literal-endpoint' -and $_.Line -eq 3 }).Count -eq 1)
+Assert 'B5b the scan of a fixed port band is named guessed-range on line 4 (T1991)' (
+    @($v | Where-Object { $_.Kind -eq 'guessed-range' -and $_.Line -eq 4 }).Count -eq 1)
 
 # Numbers that are not ports, on lines that look port-shaped. A harness that
 # cried wolf over an HRESULT would be turned off within a week.
@@ -137,6 +140,8 @@ $sha = '2389d318249a47333d7bfad9d05ded7247a44011'
 $portWaitMs = 250
 $REPORT_TIMEOUT_MS = 4000
 $support = 8080
+foreach ($i in 1..60) { Start-Sleep -Milliseconds 500 }
+$window = 500..1023
 '@ | Set-Content -LiteralPath $noise -Encoding ASCII
 $v = @(Get-FixedPortViolations -Path $noise)
 Assert "B6 non-port numbers are not violations (got $($v.Count))" ($v.Count -eq 0)

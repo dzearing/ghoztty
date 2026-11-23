@@ -51,6 +51,7 @@ param(
 $ErrorActionPreference = 'Stop'
 $Repo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 . (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
+. (Join-Path $PSScriptRoot 'lib\FreePort.ps1')
 
 $script:pass = 0
 $script:fail = 0
@@ -83,22 +84,11 @@ foreach ($f in @($dash, $page, $stub, $driver)) {
     if (-not (Test-Path $f)) { Write-TestAssertedNothing -Reason "missing $f" }
 }
 
-# --- pick a port that is verifiably FREE ------------------------------------
-function Test-PortFree([int]$p) {
-    $l = $null
-    try {
-        $l = New-Object System.Net.Sockets.TcpListener ([System.Net.IPAddress]::Loopback, $p)
-        $l.Start()
-        return $true
-    } catch { return $false }
-    finally { if ($l) { $l.Stop() } }
-}
-if ($Port -eq 0) {
-    foreach ($p in 7861..7880) { if (Test-PortFree $p) { $Port = $p; break } }
-}
-if ($Port -eq 0) {
-    Write-TestAssertedNothing -Reason 'no free port in 7861-7880, so the stub server cannot be started'
-}
+# --- draw a port the OS just handed out -------------------------------------
+# Drawn, never scanned out of a fixed range (T1991): this script and
+# task-dashboard.ps1 both used to take the first free port in 7861-7880, so
+# side by side in the acceptance pool one answered the other's requests.
+$Port = Resolve-TestPort -Name 'stub' -Port $Port
 $Base = "http://127.0.0.1:$Port"
 
 function Get-Http([string]$url, [int]$timeoutSec = 30) {

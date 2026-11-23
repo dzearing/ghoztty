@@ -6,7 +6,7 @@ is the thing that keeps the remedy from rotting: a copy-paste of an old script,
 or a new fixture written from memory, reintroduces a fixed number in one line
 and nothing would otherwise notice until two scripts collided on a Tuesday.
 
-THREE SHAPES ARE VIOLATIONS, on any line that is not a comment:
+FOUR SHAPES ARE VIOLATIONS, on any line that is not a comment:
 
   pinned-default     [int]$RelayPort = 47911
                      a param default nobody passes, so it IS the port.
@@ -19,6 +19,14 @@ THREE SHAPES ARE VIOLATIONS, on any line that is not a comment:
                      deliberately never binds ("nothing is listening here")
                      belongs to `Get-FreePort`, which at least VERIFIED the
                      port was free; a guessed one may quietly have an owner.
+
+  guessed-range      foreach ($p in 7861..7880) { if (Test-PortFree $p) ... }
+                     a scan for "the first free one" in a fixed band. It
+                     looks safe and is the worst of the four: two scripts
+                     scanning the same band pick the SAME port when they run
+                     side by side, because each checks before either binds.
+                     task-dashboard.ps1 and dashboard-dom.ps1 did exactly that
+                     and went red together in the acceptance pool (T1991).
 
 A port of 0 is the whole point and is never a violation. Values outside
 1024-65535 are not ports (a sha, an HRESULT, a timeout in ms), so they are
@@ -83,6 +91,12 @@ function Get-FixedPortViolations {
         if (-not $kind -and $raw -match '(?:127\.0\.0\.1|localhost):(\d+)') {
             $num = $matches[1]
             if (Test-IsPortNumber $num) { $kind = 'literal-endpoint' }
+        }
+        # A range is a port band only when BOTH ends are port numbers: 1..60
+        # is a retry count, 7861..7880 is a guess (T1991).
+        if (-not $kind -and $raw -match '\b(\d+)\s*\.\.\s*(\d+)\b') {
+            $lo = $matches[1]; $hi = $matches[2]
+            if ((Test-IsPortNumber $lo) -and (Test-IsPortNumber $hi)) { $kind = 'guessed-range' }
         }
 
         if ($kind) {

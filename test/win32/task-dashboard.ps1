@@ -45,6 +45,7 @@ param(
 $ErrorActionPreference = 'Stop'
 $Repo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 . (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
+. (Join-Path $PSScriptRoot 'lib\FreePort.ps1')
 
 $script:pass = 0
 $script:fail = 0
@@ -65,24 +66,14 @@ if (-not $node) {
 $dash = Join-Path $Repo 'scripts\task-dashboard.js'
 $page = Join-Path $Repo 'scripts\task-dashboard.page.html'
 
-# --- pick a port that is verifiably FREE ------------------------------------
+# --- draw a port the OS just handed out -------------------------------------
 # The server's EADDRINUSE branch exits 0 with "(already serving)", so starting
-# it on a busy port silently tests whatever old server holds it.
-function Test-PortFree([int]$p) {
-    $l = $null
-    try {
-        $l = New-Object System.Net.Sockets.TcpListener ([System.Net.IPAddress]::Loopback, $p)
-        $l.Start()
-        return $true
-    } catch { return $false }
-    finally { if ($l) { $l.Stop() } }
-}
-if ($Port -eq 0) {
-    foreach ($p in 7841..7860) { if (Test-PortFree $p) { $Port = $p; break } }
-}
-if ($Port -eq 0) {
-    Write-TestAssertedNothing -Reason 'no free port in 7841-7860, so a fresh server cannot be started'
-}
+# it on a busy port silently tests whatever other server holds it. Every port
+# here is DRAWN (lib\FreePort.ps1), never scanned out of a fixed range: until
+# T1991 this script and dashboard-dom.ps1 both took the first free port in
+# 7861-7880, so side by side in the acceptance pool one of them answered the
+# other's requests and this script went red 9 times.
+$Port = Resolve-TestPort -Name 'dashboard' -Port $Port
 $Base = "http://127.0.0.1:$Port"
 
 # --- HTTP helper: status + body, no throw on 4xx ----------------------------
@@ -482,94 +473,88 @@ try {
     # noticing a task-file write.
     $fxDir = Join-Path $env:TEMP "dashboard-fixture-$PID"
     New-Item -ItemType Directory -Force -Path $fxDir | Out-Null
-    $fxPort = 0
-    foreach ($p2 in 7861..7880) { if (Test-PortFree $p2) { $fxPort = $p2; break } }
+    $fxPort = Resolve-TestPort -Name 'fixture'
     $fxSrv = $null
     try {
-        if ($fxPort -eq 0) {
-            Write-Host 'SKIP  G2: no free port in 7861-7880 for the fixture server'
-            $script:skipped++
+        function Write-FxTask([string]$id, [string]$status) {
+            $t = "---`nid: $id`ntitle: `"fixture $id`"`nstatus: `"$status`"`nseat: `"win`"`n---`n`n# $id`n"
+            [System.IO.File]::WriteAllText((Join-Path $fxDir "$id.md"), $t)
+        }
+        Write-FxTask 'T9001' 'todo'
+        Write-FxTask 'T9002' 'done'
+        # Section H's open PR (T1182): ONE pull request, so the PS 5.1
+        # one-element-array collapse is crossed on the way through node.
+        $prBody = "## What it does`n`nThe banner fades when it collapses.`n`n## What to test`n`n- [ ] collapse a banner`n"
+        $prFx = @(@{ number = 77; title = 'Banner fades'; url = 'https://github.com/dzearing/ghoztty/pull/77'; headRefName = 'feature/fade';
+            createdAt = '2026-10-20T12:00:00Z'; updatedAt = (Get-Date).ToUniversalTime().ToString('o'); isDraft = $false; reviewDecision = 'REVIEW_REQUIRED';
+            mergeable = 'MERGEABLE'; mergeStateStatus = 'BLOCKED'; body = $prBody; additions = 12; deletions = 1;
+            statusCheckRollup = @(@{ __typename = 'CheckRun'; name = 'build-test'; status = 'COMPLETED'; conclusion = 'SUCCESS' });
+            commits = @(@{ oid = 'abcdef0123456789abcdef0123456789abcdef01'; messageHeadline = 'banner: fade' });
+            files = @(@{ path = 'src/apprt/win32/Banner.zig'; additions = 12; deletions = 1 }) })
+        $prFile = Join-Path $fxDir 'prs.json'
+        [System.IO.File]::WriteAllText($prFile, (ConvertTo-Json -InputObject $prFx -Depth 6))
+        $env:GHOZTTY_TASK_DIR = $fxDir
+        $env:GHOZTTY_PRS_JSON = $prFile
+        $fxSrv = Start-Process -FilePath $node.Source -ArgumentList ('"' + $dash + '" --port ' + $fxPort) `
+            -WorkingDirectory $Repo -WindowStyle Hidden -PassThru
+        Remove-Item Env:GHOZTTY_TASK_DIR, Env:GHOZTTY_PRS_JSON -ErrorAction SilentlyContinue
+        $fxBase = "http://127.0.0.1:$fxPort"
+        $fxUp = $false
+        foreach ($i in 1..60) {
+            if ((Get-Http "$fxBase/" 5).Status -eq 200) { $fxUp = $true; break }
+            Start-Sleep -Milliseconds 500
+        }
+        if (-not $fxUp) {
+            Assert 'G2 the fixture server came up' $false 'never answered GET /'
         } else {
-            function Write-FxTask([string]$id, [string]$status) {
-                $t = "---`nid: $id`ntitle: `"fixture $id`"`nstatus: `"$status`"`nseat: `"win`"`n---`n`n# $id`n"
-                [System.IO.File]::WriteAllText((Join-Path $fxDir "$id.md"), $t)
-            }
-            Write-FxTask 'T9001' 'todo'
-            Write-FxTask 'T9002' 'done'
-            # Section H's open PR (T1182): ONE pull request, so the PS 5.1
-            # one-element-array collapse is crossed on the way through node.
-            $prBody = "## What it does`n`nThe banner fades when it collapses.`n`n## What to test`n`n- [ ] collapse a banner`n"
-            $prFx = @(@{ number = 77; title = 'Banner fades'; url = 'https://github.com/dzearing/ghoztty/pull/77'; headRefName = 'feature/fade';
-                createdAt = '2026-10-20T12:00:00Z'; updatedAt = (Get-Date).ToUniversalTime().ToString('o'); isDraft = $false; reviewDecision = 'REVIEW_REQUIRED';
-                mergeable = 'MERGEABLE'; mergeStateStatus = 'BLOCKED'; body = $prBody; additions = 12; deletions = 1;
-                statusCheckRollup = @(@{ __typename = 'CheckRun'; name = 'build-test'; status = 'COMPLETED'; conclusion = 'SUCCESS' });
-                commits = @(@{ oid = 'abcdef0123456789abcdef0123456789abcdef01'; messageHeadline = 'banner: fade' });
-                files = @(@{ path = 'src/apprt/win32/Banner.zig'; additions = 12; deletions = 1 }) })
-            $prFile = Join-Path $fxDir 'prs.json'
-            [System.IO.File]::WriteAllText($prFile, (ConvertTo-Json -InputObject $prFx -Depth 6))
-            $env:GHOZTTY_TASK_DIR = $fxDir
-            $env:GHOZTTY_PRS_JSON = $prFile
-            $fxSrv = Start-Process -FilePath $node.Source -ArgumentList ('"' + $dash + '" --port ' + $fxPort) `
-                -WorkingDirectory $Repo -WindowStyle Hidden -PassThru
-            Remove-Item Env:GHOZTTY_TASK_DIR, Env:GHOZTTY_PRS_JSON -ErrorAction SilentlyContinue
-            $fxBase = "http://127.0.0.1:$fxPort"
-            $fxUp = $false
-            foreach ($i in 1..60) {
-                if ((Get-Http "$fxBase/" 5).Status -eq 200) { $fxUp = $true; break }
-                Start-Sleep -Milliseconds 500
-            }
-            if (-not $fxUp) {
-                Assert 'G2 the fixture server came up' $false 'never answered GET /'
-            } else {
-                $before = ((Get-Http "$fxBase/api/data" 120).Body | ConvertFrom-Json)
-                Write-FxTask 'T9003' 'todo'
-                $after = ((Get-Http "$fxBase/api/data" 120).Body | ConvertFrom-Json)
-                Assert 'G2 a task written between two polls shows up in the next payload' `
-                    ($null -ne $before -and $null -ne $after -and
-                     $before.tasks.Count -eq 2 -and $after.tasks.Count -eq 3) `
-                    "before=$($before.tasks.Count) after=$($after.tasks.Count)"
-                # And the live half is never frozen by the cache: the stamp the
-                # page shows as "updated Ns ago" has to move on every answer.
-                Start-Sleep -Milliseconds 1100
-                $again = ((Get-Http "$fxBase/api/data" 120).Body | ConvertFrom-Json)
-                Assert 'G3 a cache-hit answer still carries a fresh generatedAt' `
-                    ($null -ne $again -and $again.generatedAt -gt $after.generatedAt) `
-                    "after=$($after.generatedAt) again=$($again.generatedAt)"
+            $before = ((Get-Http "$fxBase/api/data" 120).Body | ConvertFrom-Json)
+            Write-FxTask 'T9003' 'todo'
+            $after = ((Get-Http "$fxBase/api/data" 120).Body | ConvertFrom-Json)
+            Assert 'G2 a task written between two polls shows up in the next payload' `
+                ($null -ne $before -and $null -ne $after -and
+                 $before.tasks.Count -eq 2 -and $after.tasks.Count -eq 3) `
+                "before=$($before.tasks.Count) after=$($after.tasks.Count)"
+            # And the live half is never frozen by the cache: the stamp the
+            # page shows as "updated Ns ago" has to move on every answer.
+            Start-Sleep -Milliseconds 1100
+            $again = ((Get-Http "$fxBase/api/data" 120).Body | ConvertFrom-Json)
+            Assert 'G3 a cache-hit answer still carries a fresh generatedAt' `
+                ($null -ne $again -and $again.generatedAt -gt $after.generatedAt) `
+                "after=$($after.generatedAt) again=$($again.generatedAt)"
 
-                # --- section H: /api/prs, the Reviews view's read (T1182) ---
-                # The server spawns the real pr-health.ps1 -Detail against the
-                # capture, so the parse, the spawn and the shaping are all live.
-                $pr = $null
-                $pRaw = (Get-Http "$fxBase/api/prs" 90).Body
-                try { $pr = $pRaw | ConvertFrom-Json } catch {}
-                # @() OUTSIDE the if: an if-expression unrolls its result, and a
-                # one-element answer would come back as a bare object.
-                $one = @(if ($pr) { $pr.prs | ForEach-Object { $_ } })
-                Assert 'H1 /api/prs answers a verdict with the open PR' ($pr -and $pr.verdict -eq 'OK' -and $one.Count -eq 1 -and $one[0].number -eq 77) "body=$pRaw"
-                if ($one.Count -eq 1) {
-                    Assert 'H2 the plain summary comes from the "What it does" section' ($one[0].summary -eq 'The banner fades when it collapses.') "summary=$($one[0].summary)"
-                    Assert 'H3 a single test step and a single commit arrive as LISTS' ($pRaw -match '"toTest":\["collapse a banner"\]' -and $pRaw -match '"commits":\[\{') "body=$pRaw"
-                    Assert 'H4 the band and the file counts ride along' ($one[0].band -eq 'HEALTHY' -and @($one[0].files).Count -eq 1 -and $one[0].additions -eq 12)
-                }
-                $sw = [Diagnostics.Stopwatch]::StartNew()
-                $cached = (Get-Http "$fxBase/api/prs" 30).Body
-                $sw.Stop()
-                Assert 'H5 a second read is served from the cache, not a fresh spawn' ($cached -eq $pRaw -and $sw.ElapsedMilliseconds -lt 1500) ("{0}ms" -f $sw.ElapsedMilliseconds)
-                $withBadge = ((Get-Http "$fxBase/api/data" 120).Body | ConvertFrom-Json)
-                Assert 'H6 /api/data carries the open-PR count for the nav badge' ($withBadge -and $withBadge.reviews -and $withBadge.reviews.open -eq 1 -and $withBadge.reviews.needs -eq 0) "reviews=$($withBadge.reviews | ConvertTo-Json -Compress)"
-
-                # --- G9: search still reaches a summary the poll no longer carries (T1664)
-                $st = "---`nid: T9004`ntitle: `"fixture T9004`"`nstatus: `"todo`"`nseat: `"win`"`n---`n`n# T9004`n`n## Summary`n`nThe zebraquokka phrase lives only in this summary.`n"
-                [System.IO.File]::WriteAllText((Join-Path $fxDir 'T9004.md'), $st)
-                $srch = $null
-                try { $srch = (Get-Http "$fxBase/api/search?q=ZebraQuokka" 60).Body | ConvertFrom-Json } catch {}
-                $ids = @(if ($srch) { $srch.ids | ForEach-Object { $_ } })
-                $polled = ((Get-Http "$fxBase/api/data" 120).Body | ConvertFrom-Json)
-                $t4 = @(if ($polled) { $polled.tasks | Where-Object { $_.id -eq 'T9004' } })
-                Assert 'G9 /api/search matches a summary-only phrase, case-insensitively, that /api/data does not ship' `
-                    ($ids.Count -eq 1 -and $ids[0] -eq 'T9004' -and $t4.Count -eq 1 -and $null -eq $t4[0].summary) `
-                    "ids=$($ids -join ',') polled=$($t4.Count)"
+            # --- section H: /api/prs, the Reviews view's read (T1182) ---
+            # The server spawns the real pr-health.ps1 -Detail against the
+            # capture, so the parse, the spawn and the shaping are all live.
+            $pr = $null
+            $pRaw = (Get-Http "$fxBase/api/prs" 90).Body
+            try { $pr = $pRaw | ConvertFrom-Json } catch {}
+            # @() OUTSIDE the if: an if-expression unrolls its result, and a
+            # one-element answer would come back as a bare object.
+            $one = @(if ($pr) { $pr.prs | ForEach-Object { $_ } })
+            Assert 'H1 /api/prs answers a verdict with the open PR' ($pr -and $pr.verdict -eq 'OK' -and $one.Count -eq 1 -and $one[0].number -eq 77) "body=$pRaw"
+            if ($one.Count -eq 1) {
+                Assert 'H2 the plain summary comes from the "What it does" section' ($one[0].summary -eq 'The banner fades when it collapses.') "summary=$($one[0].summary)"
+                Assert 'H3 a single test step and a single commit arrive as LISTS' ($pRaw -match '"toTest":\["collapse a banner"\]' -and $pRaw -match '"commits":\[\{') "body=$pRaw"
+                Assert 'H4 the band and the file counts ride along' ($one[0].band -eq 'HEALTHY' -and @($one[0].files).Count -eq 1 -and $one[0].additions -eq 12)
             }
+            $sw = [Diagnostics.Stopwatch]::StartNew()
+            $cached = (Get-Http "$fxBase/api/prs" 30).Body
+            $sw.Stop()
+            Assert 'H5 a second read is served from the cache, not a fresh spawn' ($cached -eq $pRaw -and $sw.ElapsedMilliseconds -lt 1500) ("{0}ms" -f $sw.ElapsedMilliseconds)
+            $withBadge = ((Get-Http "$fxBase/api/data" 120).Body | ConvertFrom-Json)
+            Assert 'H6 /api/data carries the open-PR count for the nav badge' ($withBadge -and $withBadge.reviews -and $withBadge.reviews.open -eq 1 -and $withBadge.reviews.needs -eq 0) "reviews=$($withBadge.reviews | ConvertTo-Json -Compress)"
+
+            # --- G9: search still reaches a summary the poll no longer carries (T1664)
+            $st = "---`nid: T9004`ntitle: `"fixture T9004`"`nstatus: `"todo`"`nseat: `"win`"`n---`n`n# T9004`n`n## Summary`n`nThe zebraquokka phrase lives only in this summary.`n"
+            [System.IO.File]::WriteAllText((Join-Path $fxDir 'T9004.md'), $st)
+            $srch = $null
+            try { $srch = (Get-Http "$fxBase/api/search?q=ZebraQuokka" 60).Body | ConvertFrom-Json } catch {}
+            $ids = @(if ($srch) { $srch.ids | ForEach-Object { $_ } })
+            $polled = ((Get-Http "$fxBase/api/data" 120).Body | ConvertFrom-Json)
+            $t4 = @(if ($polled) { $polled.tasks | Where-Object { $_.id -eq 'T9004' } })
+            Assert 'G9 /api/search matches a summary-only phrase, case-insensitively, that /api/data does not ship' `
+                ($ids.Count -eq 1 -and $ids[0] -eq 'T9004' -and $t4.Count -eq 1 -and $null -eq $t4[0].summary) `
+                "ids=$($ids -join ',') polled=$($t4.Count)"
         }
     } finally {
         Remove-Item Env:GHOZTTY_TASK_DIR, Env:GHOZTTY_PRS_JSON -ErrorAction SilentlyContinue
@@ -632,13 +617,17 @@ $liveLauncher = Join-Path $Repo 'scripts\task-dashboard.ps1'
 $liveText = [IO.File]::ReadAllText($liveLauncher)
 $fixI = Join-Path $env:TEMP "t1701-launcher-$PID"
 $fixOld = Join-Path $env:TEMP "t1701-launcher-old-$PID"
-$portI = 0; $portOld = 0
-foreach ($p in 7861..7880) {
-    if (Test-PortFree $p) { if ($portI -eq 0) { $portI = $p } elseif ($portOld -eq 0) { $portOld = $p; break } }
+# Two DRAWN ports (T1991), and two different ones: the OS may hand the first
+# back on the second draw, since nothing holds it in between.
+$portI = Resolve-TestPort -Name 'launcher'
+$portOld = $portI
+foreach ($i in 1..8) {
+    if ($portOld -ne $portI) { break }
+    $portOld = Resolve-TestPort -Name 'launcher-old'
 }
-if ($portI -eq 0 -or $portOld -eq 0) {
+if ($portOld -eq $portI) {
     $script:skipped++
-    Write-Host '  SKIP I no two free ports in 7861-7880 for the launcher fixtures'
+    Write-Host "  SKIP I the OS handed back the same port ($portI) eight times for the launcher fixtures"
 } else {
     try {
         $fl = New-LauncherFixture $fixI $liveText
