@@ -713,8 +713,21 @@ lane).
   `reloadFromDisk`; `image.js` takes a 4th `keep` argument for the scroll).
   A different size re-fits. win32 does not keep them yet (T3532).
 - The chords zoom the PICTURE, never the page; find declines (no text).
-  Not yet: Ctrl+C copying the picture (T3534). A viewer pane cannot be split
-  narrower than its nav bar, about 260 px (T3533).
+  A viewer pane cannot be split narrower than its nav bar, about 260 px
+  (T3533).
+- **Ctrl+C (or Ctrl+Insert) copies the picture and its file** (T3534; Mac's
+  `ViewerImageSurface.copy`, win32's T1872/T1909), claimed ahead of the page,
+  whose bare `<img>` has no selection. `ViewerImage.copy` decodes the FILE
+  (`gdk_texture_new_from_filename`, an `.icns` its largest PNG) and sets one
+  union provider on the clipboard: the `GdkTexture` (GDK offers it as
+  image/png, tiff, jpeg, bmp, ico), then `text/uri-list` and
+  `x-special/gnome-copied-files` (`copy`, never `cut`), so a paste into
+  Nautilus copies the file. Ctrl+Shift+C is not it (as on win32), and the
+  address/find fields keep their own Ctrl+C. Log line: `viewer image copy
+  ok= size=WxH file= route= offered=<formats> path=`. Headless, the clipboard
+  is local (the provider answers in-process) - the steps seam's `clipboard`
+  step reads the formats and the texture back through GDK. Open: a JPEG's
+  EXIF orientation may not be applied to the copy (T3603).
 - **Reading it back**: every decision is a `viewer image ...` log line, and
   the steps seam's `image` step prints `rev= loads= route= zoom= fitting= fit=
   natural=WxH viewport=WxH`. A picture's `wait` is its decode-and-fit (the
@@ -726,7 +739,7 @@ Acceptance:
 powershell -NoProfile -File scripts\linux\wsl-run.ps1 -CommandFile test\linux\viewer-image.sh
 ```
 
-Ends `VIEWER IMAGE: ALL PASS` (28 checks).
+Ends `VIEWER IMAGE: ALL PASS` (34 checks).
 
 Acceptance:
 
