@@ -1,10 +1,10 @@
 {
     "guard":  "unroll-count",
     "script":  "test/win32/unroll-count-audit.ps1",
-    "generated":  "2026-11-23T03:49:23-08:00",
-    "commit":  "ac654ca09",
+    "generated":  "2026-11-23T08:53:36-08:00",
+    "commit":  "ee08bbc60",
     "uncommitted":  [
-                        "scripts/parity-sweep.ps1"
+
                     ],
     "files":  {
                   "scripts/acceptance-parallel.ps1":  "4b958ede38c0911c4945146f0a52810ebbf8c01d44ac8a60532f2eb77f8fd0af",
@@ -45,6 +45,7 @@
                   "scripts/ghoztty-agent-watcher.ps1":  "51f93a125f8c81543a365acc9a990175f3b1b599184c19e2a87748b417559db4",
                   "scripts/ghoztty-cleanup.ps1":  "d2307b4c4df220c56944c340fbf60863f23f869fcd52e18acb195627c0aefde9",
                   "scripts/git-commit-guard.ps1":  "c2001be65b8fc95809a41474a041f896b90fe83adcc428fce7341766aa69b0d5",
+                  "scripts/glass-viewer-onscreen.ps1":  "402d6bedef7961f660a9806dd9cb9bea09da4050b8bee78a0755ba8ceb528685",
                   "scripts/go-loop-boot.ps1":  "62b910dada177775a1dbecdfde944ca014ce9b93ab427d97640edfa4d536a5ef",
                   "scripts/go-loop-exec.ps1":  "f14b52f885f4db1e3a9aa1a1707bf51710558711f624dd1c98f7ac7319f43ebe",
                   "scripts/go-loop-health.ps1":  "a6183dc09cf4d308bda7253e5022d6d1774c0cfc89ae36ce909977f92eaed160",
