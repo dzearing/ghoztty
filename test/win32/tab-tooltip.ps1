@@ -50,9 +50,22 @@
 # Only touches ghoztty processes launched from this repo's zig-out.
 #
 #   powershell -NoProfile -File test\win32\tab-tooltip.ps1
+#
+# A SILENT PROBE IS A FAILURE ON A DEBUG BUILD (T1920). The first probe used
+# to treat "no oracle line" as "release build" and SKIP - so a hover that
+# missed the tab (T1900's sidebar-shifted strip was exactly that) read as a
+# build that cannot speak, and the run passed with every text arm unrun. The
+# build mode is now read from the exe itself (+version, lib\BuildMode.ps1):
+# only a build with log.debug compiled out may skip; a Debug build whose probe
+# logs nothing FAILs and prints where it aimed.
+#
+#   -NegativeControl aims the hover below the strip, into the terminal, on
+#   purpose: on a Debug build the setup probe MUST go red. That run never
+#   stamps.
 param(
     [string]$ExePath,
     [string]$AgentExe = 'D:\git\ghoztty\zig-out\bin\ghoztty-agent.exe',
+    [switch]$NegativeControl,
     [switch]$Interactive
 )
 
@@ -68,7 +81,12 @@ if ($ExePath) { $exe = $ExePath }
 
 . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
 . (Join-Path $PSScriptRoot 'lib\BuildMode.ps1')
-Assert-GhozttyIsolatedBuild -Exe $exe | Out-Null
+$buildMode = Assert-GhozttyIsolatedBuild -Exe $exe
+# T1920: log.debug survives only in a Debug build (zig's default log level is
+# .info in every Release mode), so this - not an empty log - is what may excuse
+# the oracle arms.
+$oracleBuild = ($buildMode -eq 'Debug')
+Write-Host "INFO  build mode=$buildMode oracle=$(if ($oracleBuild) { 'expected' } else { 'compiled out' })"
 
 # T1511: arms the run, so an unwound body neither prints a pass nor stamps.
 . (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
@@ -149,6 +167,9 @@ function Probe-TipText($top, $m, $errlog, $tries = 6) {
         # strip starts at its edge, and client x 40 is the sidebar's card.
         $x = $m.ClientLeft + $m.RunLeft + 40
         $y = $m.ClientTop + $m.StripTopClient + $m.StripBtnTop + [int]($m.BtnPaint / 2)
+        # T1920 negative control: well below the strip, inside the terminal.
+        if ($NegativeControl) { $y += 200 }
+        $script:lastProbeAt = "x=$x y=$y (ClientLeft=$($m.ClientLeft) RunLeft=$($m.RunLeft) ClientTop=$($m.ClientTop) StripTopClient=$($m.StripTopClient) StripBtnTop=$($m.StripBtnTop) BtnPaint=$($m.BtnPaint))"
         [void](Send-TestMouse -Window $top -Target $top -X $x -Y $y -Action move)
         Start-Sleep -Milliseconds 400
         $hit = @(Select-String -Path $errlog -Pattern 'tab tooltip tab=0 text=(.+)$' -ErrorAction SilentlyContinue)
@@ -190,12 +211,15 @@ try {
 
     Assert (Wait-PaneCwd (Split-Path $dirA -Leaf) 'a0') 'setup: +list reports the starting directory'
 
-    # A release build logs nothing - detect once, and skip the oracle arms
-    # honestly rather than failing them against a build that cannot speak.
+    # A release build logs nothing, so it skips the oracle arms honestly. A
+    # Debug build that logs nothing is a probe that MISSED (T1920) - fail it,
+    # and say where it aimed, rather than mistake it for a mute build.
     $probe = Probe-TipText $top $m $errlog
-    if ($null -eq $probe) {
-        Write-Host 'SKIP: no debug oracle in the log (release build?) - the tooltip text arms need a Debug build'
+    if ($null -eq $probe -and -not $oracleBuild) {
+        Write-Host "SKIP: the tooltip text arms need a Debug build (this exe is $buildMode; log.debug is compiled out)"
         $script:skipped++
+    } elseif ($null -eq $probe) {
+        Assert $false "setup: a hover on tab 0 logs the tooltip oracle on this Debug build (nothing logged; aimed at $script:lastProbeAt)"
     } else {
         # -------------------------------------------------------------------
         # A: the starting directory, ~-abbreviated (dirA is under %TEMP%,
@@ -442,7 +466,7 @@ if (-not $Interactive -and $env:GHOZTTY_TEST_INTERACTIVE -ne '1') {
 # (T783). Red runs leave the stamp alone - red must stay due - and so does a
 # run with skipped sections, which did not observe everything the stamp claims.
 Complete-TestBody  # T1039/T1511: before the stamp, which is a child process reading this run's state
-if ($script:fail -eq 0 -and -not $script:skipped) {
+if ($script:fail -eq 0 -and -not $script:skipped -and -not $NegativeControl) {
     & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'scripts\guard-due.ps1') `
         update -Guard tab-tooltip -Repo $repo 2>&1 | ForEach-Object { "  $_" }
 }

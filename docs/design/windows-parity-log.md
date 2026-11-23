@@ -40056,3 +40056,8 @@ Reproduce-first: agent-recovery.ps1 is ALL PASS (104 assertions) on HEAD 15640bd
 - T1915 had been waiting for the user to step away; the comp-desk-onscreen ghost technique (a `GHOZTTY_DEBUG_GHOST=bottom` window filmed by WGC, never focused, bottom of the z-order) makes the on-screen composite loop-runnable, so no park was needed.
 - New `scripts\glass-viewer-onscreen.ps1`: glass and solid arms of a terminal + markdown viewer + `.html` window. Evidence: ALL PASS 20 - seam row gap 1 (tolerance 8), 0 black pixels under the page, glass page vs glass-off card gap 21.4, `.html` page 255,255,255; `-NegativeControl` red (gap 22). T1885's NOT RUN criterion ticked with this run.
 - No product code changed, so no floor lanes were owed; the script carries no guard row, like its comp-desk sibling.
+
+## 2026-11-23 09:20 lane b - T1920: tab-tooltip.ps1 fails a Debug build whose hover probe logs nothing
+- The harness used to read "no oracle line" as "release build?" and SKIP, so a hover that missed the tab (the T1900 shape) passed with every tooltip text arm unrun. It now keys the skip on the exe's own build mode (`+version`, via `Assert-GhozttyIsolatedBuild`): only a non-Debug build may skip; a Debug build with a silent probe FAILs and prints the point it aimed at.
+- Evidence: `acceptance-parallel run -Scripts tab-tooltip.ps1` ALL PASS (31); `-NegativeControl` (hover aimed 200px below the strip) red, 1 FAILURE, exit 1. Harness-only change, so no zig lanes owed; scoped harness floor run.
+- Filed T3593: the same skip in tab-strip, pane-banner and resize-flicker.
