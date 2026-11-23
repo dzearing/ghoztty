@@ -31,7 +31,7 @@
 //!
 //! ## Failure
 //!
-//! A link that resolves to nothing says so in an `AdwAlertDialog` (the shared
+//! A link that resolves to nothing says so in a `GtkAlertDialog` (the shared
 //! `Failure` wording), coalesced: in process by a flag, across activation
 //! processes by an `flock` in the runtime dir - each click through `Exec` is
 //! its own process, the case win32's named mutex covers. Nothing is ever
@@ -44,7 +44,9 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const adw = @import("adw");
+const gio = @import("gio");
 const glib = @import("glib");
+const gobject = @import("gobject");
 const gtk = @import("gtk");
 
 const apprt = @import("../../apprt.zig");
@@ -100,28 +102,11 @@ var presenting = false;
 /// none). One at a time: a burst of links is one dialog.
 fn present(failure: grammar.Failure, app: *Application) void {
     if (quiet() or presenting) return logFailure(failure);
-    const parent: ?*gtk.Widget = if (app.as(gtk.Application).getActiveWindow()) |w|
-        w.as(gtk.Widget)
-    else
-        null;
-    const dialog = makeDialog(failure) orelse return logFailure(failure);
     presenting = true;
-    show(dialog, parent, &presenting);
-    afterShown(failure, dialog);
-}
-
-/// Present `dialog` and clear `flag` once it is gone. Keyed on `closed`, not
-/// on `choose`'s callback: a dialog closed any way other than a response (the
-/// window manager, `adw_dialog_close`) never completes `choose`, which left
-/// the activation process running and the in-app flag stuck.
-fn show(dialog: *adw.AlertDialog, parent: ?*gtk.Widget, flag: *bool) void {
-    _ = adw.Dialog.signals.closed.connect(dialog.as(adw.Dialog), *bool, dialogClosed, flag, .{});
-    dialog.as(adw.Dialog).present(parent);
-}
-
-fn dialogClosed(_: *adw.Dialog, flag: *bool) callconv(.c) void {
-    log.info("scheme dialog closed", .{});
-    flag.* = false;
+    if (!show(failure, app.as(gtk.Application).getActiveWindow(), &presenting)) {
+        presenting = false;
+        logFailure(failure);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -168,18 +153,16 @@ fn handleActivation(alloc: std.mem.Allocator, url: []const u8) u8 {
 }
 
 /// The activation process's dialog: GTK is not up yet, so bring up just
-/// enough of it for one `AdwAlertDialog` and run until it is dismissed.
+/// enough of it for one alert and run until it is dismissed.
 fn presentStandalone(failure: grammar.Failure) void {
     if (quiet()) return logFailure(failure);
     const lock = burstLock() orelse return logFailure(failure);
     defer std.posix.close(lock);
     if (gtk.initCheck() == 0) return logFailure(failure);
     adw.init();
-    const dialog = makeDialog(failure) orelse return logFailure(failure);
-    // `up` drops to false once the dialog has closed.
+    // `up` drops to false once the dialog has ended.
     var up = true;
-    show(dialog, null, &up);
-    afterShown(failure, dialog);
+    if (!show(failure, null, &up)) return logFailure(failure);
     const ctx = glib.MainContext.default();
     while (up) _ = glib.MainContext.iteration(ctx, 1);
 }
@@ -204,23 +187,48 @@ fn burstLock() ?std.posix.fd_t {
 // Shared
 // ---------------------------------------------------------------------------
 
-fn makeDialog(failure: grammar.Failure) ?*adw.AlertDialog {
+/// One `GtkAlertDialog`, cleared out of `flag` when it ends. `choose`'s
+/// callback runs however it ends - its button, the window's own close, or
+/// the cancellable - which an `AdwDialog`'s `closed` signal does not: under
+/// libadwaita 1.5 a parentless one never emitted it after `adw_dialog_close`
+/// (measured in the headless harness), so the activation process never
+/// exited and the in-app flag stuck. Null parent = a window of its own.
+fn show(failure: grammar.Failure, parent: ?*gtk.Window, flag: *bool) bool {
     var title_buf: [logic.max_target + 64]u8 = undefined;
     var body_buf: [logic.max_target + 256]u8 = undefined;
     var title_z: [logic.max_target + 65]u8 = undefined;
     var body_z: [logic.max_target + 257]u8 = undefined;
-    const title = std.fmt.bufPrintZ(&title_z, "{s}", .{failure.title(&title_buf)}) catch return null;
-    const body = std.fmt.bufPrintZ(&body_z, "{s}", .{failure.body(&body_buf)}) catch return null;
-    const dialog = adw.AlertDialog.new(title.ptr, body.ptr);
-    dialog.addResponse("ok", "OK");
-    dialog.setDefaultResponse("ok");
-    dialog.setCloseResponse("ok");
-    return dialog;
+    const title = std.fmt.bufPrintZ(&title_z, "{s}", .{failure.title(&title_buf)}) catch return false;
+    const body = std.fmt.bufPrintZ(&body_z, "{s}", .{failure.body(&body_buf)}) catch return false;
+
+    const dialog = gobject.ext.newInstance(gtk.AlertDialog, .{});
+    defer dialog.unref(); // `choose`'s task keeps its own reference
+    dialog.setMessage(title.ptr);
+    dialog.setDetail(body.ptr);
+    dialog.setModal(1);
+    const buttons = [_:null]?[*:0]const u8{"OK"};
+    dialog.setButtons(&buttons);
+
+    const cancellable = gio.Cancellable.new();
+    defer cancellable.unref();
+    dialog.choose(parent, cancellable, dialogDone, flag);
+    afterShown(failure, cancellable);
+    return true;
 }
 
-/// The debug-only test seam: record that the dialog is up and close it a
-/// moment later, so a headless run proves the path without a keyboard.
-fn afterShown(failure: grammar.Failure, dialog: *adw.AlertDialog) void {
+fn dialogDone(source: ?*gobject.Object, result: *gio.AsyncResult, ud: ?*anyopaque) callconv(.c) void {
+    const dialog: *gtk.AlertDialog = @ptrCast(@alignCast(source orelse return));
+    var err: ?*glib.Error = null;
+    _ = dialog.chooseFinish(result, &err);
+    if (err) |e| e.free();
+    const flag: *bool = @ptrCast(@alignCast(ud));
+    flag.* = false;
+}
+
+/// The debug-only test seam: record that the dialog is up and end it a
+/// moment later through its cancellable, so a headless run proves the path
+/// (and that it ends) without a keyboard.
+fn afterShown(failure: grammar.Failure, cancellable: *gio.Cancellable) void {
     if (comptime builtin.mode != .Debug) return;
     const path = std.posix.getenv("GHOZTTY_TEST_URL_SCHEME_DIALOG") orelse return;
     var title_buf: [logic.max_target + 64]u8 = undefined;
@@ -235,13 +243,15 @@ fn afterShown(failure: grammar.Failure, dialog: *adw.AlertDialog) void {
         }) catch return;
         file.writeAll(line) catch {};
     } else |_| {}
-    _ = glib.timeoutAdd(500, closeDialog, dialog);
+    _ = cancellable.ref();
+    _ = glib.timeoutAdd(500, endDialog, cancellable);
 }
 
-fn closeDialog(ud: ?*anyopaque) callconv(.c) c_int {
-    const dialog: *adw.AlertDialog = @ptrCast(@alignCast(ud));
-    const closed = dialog.as(adw.Dialog).close();
-    log.info("test seam: closing the scheme dialog: close() -> {}", .{closed});
+fn endDialog(ud: ?*anyopaque) callconv(.c) c_int {
+    const cancellable: *gio.Cancellable = @ptrCast(@alignCast(ud));
+    log.info("test seam: ending the scheme dialog", .{});
+    cancellable.cancel();
+    cancellable.unref();
     return 0;
 }
 
