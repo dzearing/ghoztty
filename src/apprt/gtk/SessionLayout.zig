@@ -52,6 +52,7 @@ const agent_lineage = @import("../../remote/agent_lineage.zig");
 const connection = @import("../../remote/connection.zig");
 
 const Application = @import("class/application.zig").Application;
+const WindowSize = @import("class/application.zig").WindowSize;
 const Window = @import("class/window.zig").Window;
 const Tab = @import("class/tab.zig").Tab;
 const Surface = @import("class/surface.zig").Surface;
@@ -157,16 +158,37 @@ fn captureWindow(
         };
         const is_active = selected != null and selected.? == page;
         if (is_active) active_tab = @intCast(tabs.items.len);
-        try tabs.append(arena, .{ .nodes = nodes, .active = is_active });
+        try tabs.append(arena, .{
+            .nodes = nodes,
+            .active = is_active,
+            // The tab's pinned title (T3549); a shell's own title is not.
+            .title = if (tab.titleOverride()) |t| try arena.dupe(u8, t) else null,
+        });
     }
     if (tabs.items.len == 0) return null;
+
+    // The window's size (T3549). GTK4 keeps a window's default size in step
+    // with the user's resizes and leaves it at the normal size while the
+    // window is maximized, so it is exactly the schema's "restored rect" for
+    // a maximized window. A window nobody sized yet reports 0: take what it
+    // is showing at. Wayland gives a client no position, so x/y record 0.
+    const gw = window.as(gtk.Window);
+    const maximized = gw.isMaximized() != 0;
+    var dw: c_int = 0;
+    var dh: c_int = 0;
+    gw.getDefaultSize(&dw, &dh);
+    if ((dw <= 0 or dh <= 0) and !maximized) {
+        dw = window.as(gtk.Widget).getWidth();
+        dh = window.as(gtk.Widget).getHeight();
+    }
 
     const name = window.ipcName();
     return .{
         .id = if (name) |n| try arena.dupe(u8, n) else try std.fmt.allocPrint(arena, "win-{d}", .{index}),
         .ipc_name = if (name) |n| try arena.dupe(u8, n) else null,
         .title_override = if (window.titleOverride()) |t| try arena.dupe(u8, t) else null,
-        .maximized = window.as(gtk.Window).isMaximized() != 0,
+        .frame = frameFromSize(dw, dh),
+        .maximized = maximized,
         .active_tab = active_tab,
         .tabs = tabs.items,
     };
@@ -389,11 +411,15 @@ fn restoreWindow(app: *Application, ctx: *Ctx, win: schema.Window) bool {
         const view = ctx.viewLocation(first);
         ctx.setPending(first);
         const t: *Tab = if (window) |w| (w.newTabForRestore(view) orelse continue) else t: {
-            const w = app.newWindowForIpc(null, null, &.{}, view, true);
+            const w = app.newWindowForRestore(view, restoreSize(win.frame));
             window = w;
             break :t w.getSelectedTab() orelse continue;
         };
         Surface.pending_restore = null;
+        // The tab's pinned title (T3549), before its panes add theirs.
+        if (tab.title) |title| if (title.len > 0) {
+            if (ctx.arena.dupeZ(u8, title)) |tz| t.setTitleOverride(tz) else |_| {}
+        };
         const tree = t.getSplitTree();
         const anchor = tree.getActiveSurface() orelse continue;
         buildSubtree(ctx, tree, tab.nodes, 0, anchor, 0) catch |err|
@@ -461,6 +487,50 @@ fn firstLeaf(nodes: []const schema.Node, idx: usize, depth: usize) ?schema.Leaf 
     if (nodes[idx].leaf) |lf| return lf;
     const sp = nodes[idx].split orelse return null;
     return firstLeaf(nodes, sp.left, depth + 1);
+}
+
+/// Window sizes outside this range are not a size anybody had: a corrupt or
+/// hand-edited manifest. Under the minimum GTK's own size request wins
+/// anyway; over the maximum is no monitor.
+const min_window_px: i32 = 100;
+const max_window_px: i32 = 16384;
+
+/// The frame a window of `w` x `h` logical pixels records (T3549), or null
+/// when it has no size to record. Wayland gives no position: x/y are 0. Pure.
+fn frameFromSize(w: c_int, h: c_int) ?schema.Frame {
+    if (w <= 0 or h <= 0) return null;
+    return .{ .x = 0, .y = 0, .w = @intCast(w), .h = @intCast(h) };
+}
+
+/// The size a restored window opens at (T3549): the recorded frame's, or
+/// null (the ordinary default) for none or an impossible one. Pure.
+fn restoreSize(frame: ?schema.Frame) ?WindowSize {
+    const f = frame orelse return null;
+    if (f.w < min_window_px or f.h < min_window_px) return null;
+    if (f.w > max_window_px or f.h > max_window_px) return null;
+    return .{ .w = f.w, .h = f.h };
+}
+
+test "frameFromSize records a size and refuses none" {
+    const f = frameFromSize(1024, 640).?;
+    try std.testing.expectEqual(@as(i32, 1024), f.w);
+    try std.testing.expectEqual(@as(i32, 640), f.h);
+    try std.testing.expectEqual(@as(i32, 0), f.x);
+    try std.testing.expect(frameFromSize(0, 640) == null);
+    try std.testing.expect(frameFromSize(800, -1) == null);
+}
+
+test "restoreSize replays a recorded frame and drops an impossible one" {
+    const s = restoreSize(.{ .x = 5, .y = 9, .w = 900, .h = 500 }).?;
+    try std.testing.expectEqual(@as(i32, 900), s.w);
+    try std.testing.expectEqual(@as(i32, 500), s.h);
+    try std.testing.expect(restoreSize(null) == null);
+    try std.testing.expect(restoreSize(.{ .x = 0, .y = 0, .w = 20, .h = 500 }) == null);
+    try std.testing.expect(restoreSize(.{ .x = 0, .y = 0, .w = 900, .h = 99999 }) == null);
+    // The round trip: what a capture records is what a restore replays.
+    const back = restoreSize(frameFromSize(1280, 720)).?;
+    try std.testing.expectEqual(@as(i32, 1280), back.w);
+    try std.testing.expectEqual(@as(i32, 720), back.h);
 }
 
 fn ctxViewLocation(ctx: *Ctx, leaf: schema.Leaf) ?[:0]const u8 {

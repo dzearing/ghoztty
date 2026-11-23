@@ -255,6 +255,13 @@ pub const Tab = extern struct {
     //---------------------------------------------------------------
     // Properties
 
+    /// The tab's pinned title (the user's "Change Tab Title", a
+    /// `set_tab_title` binding), or null; a session restore records and
+    /// re-pins it (T3549).
+    pub fn titleOverride(self: *Self) ?[:0]const u8 {
+        return self.private().title_override;
+    }
+
     /// Overridden title. This will be generally be shown over the title
     /// unless this is unset (null).
     pub fn setTitleOverride(self: *Self, title: ?[:0]const u8) void {

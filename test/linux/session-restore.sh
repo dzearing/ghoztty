@@ -159,6 +159,28 @@ hl_check "R12 the quit left the manifest with all four panes" $? "$(manifest_q '
 [ "$(manifest_q 'sum(1 for l in leaves if l.get("screen_snapshot") and l.get("screen_snapshot_offset"))')" = 4 ]
 hl_check "R13 the quit's write carries every pane's screen snapshot" $? "$(manifest_q '[bool(l.get("screen_snapshot")) for l in leaves]')"
 
+# ---- 3b. a window's size and a tab's pinned title (T3549) -----------------
+# The manifest records each window's size; restoring replays a recorded size
+# and re-pins a recorded tab title. Neither has a CLI verb on GTK, so the test
+# writes them into the manifest while the app is down (as a resize and a
+# "Change Tab Title" before the quit would have) and then watches the relaunch.
+[ "$(manifest_q 'all((w.get("frame") or {}).get("w", 0) > 0 and (w.get("frame") or {}).get("h", 0) > 0 for w in m["windows"])')" = True ]
+hl_check "R13b the manifest records every window's size" $? "$(manifest_q '[w.get("frame") for w in m["windows"]]')"
+w0=$(manifest_q '[w["frame"]["w"] for w in m["windows"] if w.get("ipc_name") == "wa"][0]')
+case "$w0" in ''|*[!0-9]*) w0=0 ;; esac
+if [ "$w0" -ge 950 ]; then want_w=700; else want_w=$((w0 + 250)); fi
+want_h=460
+python3 -c '
+import json, sys
+p, w, h = sys.argv[1], int(sys.argv[2]), int(sys.argv[3])
+m = json.load(open(p))
+for win in m["windows"]:
+    if win.get("ipc_name") == "wa":
+        win["frame"] = {"x": 0, "y": 0, "w": w, "h": h}
+        win["tabs"][0]["title"] = "pinned-tab"
+json.dump(m, open(p, "w"))
+' "$manifest" "$want_w" "$want_h"
+
 # ---- 4. a session that died while the app was down comes back fresh --------
 oldB=$(cat "$pB"); idB=$(manifest_q '[l["pane_id"] for l in leaves if l.get("ipc_name") == "pb"][0]')
 kill -KILL "$oldB" 2>/dev/null
@@ -171,6 +193,26 @@ listB=$(leaf_field pb pid)
 hl_check "R14 pb, whose session died, is back as a FRESH shell under its own pane id" $? "old=$listB0 new=$listB id=$(leaf_field pb id) want=$idB"
 [ "$(leaf_field pc pid)" = "$listC" ] && [ "$(leaf_field pa pid)" = "$listA" ]
 hl_check "R15 the panes whose sessions lived are re-attached beside it" $? "pc=$(leaf_field pc pid)/$listC pa=$(leaf_field pa pid)/$listA"
+shot="$HL_RUNTIME/wa-window.png"
+wa_size() { hl_screenshot wa "$shot" --window > /dev/null 2>&1 && hl_png_stats "$shot" | awk '{ sub("w=","",$1); sub("h=","",$2); print $1, $2 }'; }
+size_ok() {
+    set -- $(wa_size)
+    [ -n "${1:-}" ] && [ $(( $1 > want_w ? $1 - want_w : want_w - $1 )) -le 40 ] && [ $(( $2 > want_h ? $2 - want_h : want_h - $2 )) -le 40 ]
+}
+hl_wait_for 10 size_ok
+hl_check "R15b window wa comes back at its recorded size (${want_w}x${want_h}, was ${w0} wide)" $? "rendered: $(wa_size)"
+tab_title() {
+    cli +list --json 2>/dev/null | python3 -c '
+import json, sys
+for w in json.load(sys.stdin)["data"]["windows"]:
+    if w.get("target") == "wa": print(w["tabs"][0]["title"])
+' 2>/dev/null
+}
+[ "$(tab_title)" = pinned-tab ]
+hl_check "R15c wa's tab keeps its pinned title through the relaunch" $? "title=$(tab_title)"
+recaptured() { [ "$(manifest_q '[(w["frame"]["w"], w["tabs"][0].get("title")) for w in m["windows"] if w.get("ipc_name") == "wa"][0]')" = "($want_w, 'pinned-tab')" ]; }
+hl_wait_for 5 recaptured
+hl_check "R15d the running app records the restored size and title again" $? "$(manifest_q '[(w.get("frame"), w["tabs"][0].get("title")) for w in m["windows"] if w.get("ipc_name") == "wa"]')"
 
 # ---- 5. a second instance neither restores nor writes -----------------------
 m_before=$(md5sum "$manifest" 2>/dev/null)

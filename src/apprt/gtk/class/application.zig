@@ -1566,6 +1566,18 @@ pub const Application = extern struct {
         });
     }
 
+    /// A window rebuilt by a session restore (T3397), at its recorded size
+    /// (T3549) when there is one, set before it is presented so it maps at
+    /// that size. Wayland gives a client no position, so where it lands
+    /// stays the compositor's call.
+    pub fn newWindowForRestore(self: *Self, view: ?[:0]const u8, size: ?WindowSize) *Window {
+        return Action.newWindowForIpc(self, .{
+            .view = view,
+            .activate = true,
+            .size = size,
+        });
+    }
+
     /// A viewer window at a page-requested size (T3447: an adopted popup's
     /// `window.open(u, n, "width=W,height=H")`), in front. Null size: the
     /// ordinary default.
