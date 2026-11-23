@@ -64,6 +64,33 @@ pub const Surface = extern struct {
     /// A SplitTree implementation that stores surfaces.
     pub const Tree = datastruct.SplitTree(Self);
 
+    /// What a relaunch restores INTO one terminal pane (T3397): the agent
+    /// session to ATTACH to, the pane's recorded identity, and the quit-time
+    /// screen to paint while the agent gap-fills. Borrowed by `new`, which
+    /// copies what it keeps.
+    pub const Restore = struct {
+        /// The agent session to re-ATTACH. Null when the recorded session is
+        /// gone (or was never agent-backed): the pane OPENs a fresh shell in
+        /// `working_directory` instead.
+        session_id: ?[]const u8 = null,
+        /// The recorded `$GHOZTTY_PANE_ID`. A re-attached shell keeps the env
+        /// it was spawned with, so a fresh id would leave it unable to
+        /// address its own pane.
+        pane_id: ?[]const u8 = null,
+        /// Where a FRESH shell starts (only used without a session to attach).
+        working_directory: ?[]const u8 = null,
+        /// The decoded quit-time screen snapshot and the agent-stream offset
+        /// it reflects (WP-D3). Only meaningful with `session_id`.
+        snapshot: ?[]const u8 = null,
+        snapshot_offset: u64 = 0,
+    };
+
+    /// The restore the NEXT `Surface.new` adopts (T3397), set by the session
+    /// restore right before it builds a pane through the ordinary window /
+    /// tab / split paths, so none of them needs a restore parameter (win32's
+    /// `pending_surface_overrides`). GTK main thread only; `new` clears it.
+    pub var pending_restore: ?Restore = null;
+
     pub const properties = struct {
         /// This property is set to true when the bell is ringing. Note that
         /// this property will only emit a changed signal when there is a
@@ -733,6 +760,12 @@ pub const Surface = extern struct {
         /// belong to the window the pane is in (T2250). Owned.
         ipc_name: ?[]u8 = null,
 
+        /// The agent session this pane re-ATTACHes to and the screen it
+        /// paints meanwhile (T3397), from `pending_restore`. Owned.
+        restore_session_id: ?[]u8 = null,
+        restore_snapshot: ?[]u8 = null,
+        restore_offset: u64 = 0,
+
         /// The viewer this pane shows INSTEAD of a terminal (T3411), or null
         /// for a terminal pane. A viewer pane is an ordinary Surface in the
         /// split tree - it splits, resizes, focuses, zooms and closes through
@@ -762,6 +795,8 @@ pub const Surface = extern struct {
         });
         const alloc = Application.default().allocator();
         const priv: *Private = self.private();
+        const restore = pending_restore;
+        pending_restore = null;
         if (overrides.view) |location| {
             self.attachViewer(location, overrides.working_directory);
             return self;
@@ -771,7 +806,55 @@ pub const Surface = extern struct {
             .working_directory = if (overrides.working_directory) |wd| alloc.dupeZ(u8, wd) catch null else null,
             .env = dupeEnv(alloc, overrides.env) catch &.{},
         };
+        if (restore) |r| self.adoptRestore(alloc, r);
         return self;
+    }
+
+    /// Take on a recorded pane (T3397): its pane id, and either the session
+    /// to ATTACH (plus its snapshot) or, with none, the directory a fresh
+    /// shell starts in. A recorded id that is not a well-formed pane id
+    /// leaves the fresh one `init` minted.
+    fn adoptRestore(self: *Self, alloc: Allocator, r: Restore) void {
+        const priv = self.private();
+        if (r.pane_id) |id| {
+            if (id.len == pane_id_mod.len and pane_id_mod.isValid(id)) @memcpy(&priv.pane_id, id);
+        }
+        if (r.session_id) |sid| {
+            priv.restore_session_id = alloc.dupe(u8, sid) catch null;
+            if (r.snapshot) |snap| if (r.snapshot_offset > 0) {
+                priv.restore_snapshot = alloc.dupe(u8, snap) catch null;
+                if (priv.restore_snapshot != null) priv.restore_offset = r.snapshot_offset;
+            };
+        } else if (r.working_directory) |wd| {
+            if (priv.overrides.working_directory == null and wd.len > 0)
+                priv.overrides.working_directory = alloc.dupeZ(u8, wd) catch null;
+        }
+    }
+
+    /// The title pinned on this pane (`--title`, the title prompt), or null
+    /// while it shows what its program reports (T3397 records it).
+    pub fn titleOverride(self: *Self) ?[]const u8 {
+        return self.private().title_override;
+    }
+
+    /// The agent session this pane holds (T3397): the live one, else the one
+    /// a restore handed it that has not attached yet - a restored pane in a
+    /// tab nobody has shown has no core surface, and recording it as
+    /// session-less would throw its session away at the next save. Null for
+    /// an exec pane or a viewer. Borrowed: use it now.
+    pub fn agentSessionId(self: *Self) ?[]const u8 {
+        if (self.core()) |c| if (c.remoteSessionId()) |id| return id;
+        return self.private().restore_session_id;
+    }
+
+    /// The screen snapshot a restore handed this pane that it has not
+    /// attached with yet, and its offset (T3397): carried forward by a save
+    /// that finds the pane still waiting, like its session id.
+    pub fn pendingRestoreSnapshot(self: *Self) ?struct { data: []const u8, offset: u64 } {
+        if (self.core() != null) return null;
+        const priv = self.private();
+        const data = priv.restore_snapshot orelse return null;
+        return .{ .data = data, .offset = priv.restore_offset };
     }
 
     /// Make this surface a viewer pane on `location` (T3411): the web view
@@ -1747,7 +1830,15 @@ pub const Surface = extern struct {
         if (!config.@"session-persistence") return null;
         const app = Application.default();
         const conn = app.rt().local_agent.sharedConnection() orelse return null;
-        return .{ .connection = conn, .local_shell_integration = true };
+        // T3397: a restored pane re-ATTACHes its recorded session, painting
+        // the quit-time screen while the agent gap-fills from its offset.
+        return .{
+            .connection = conn,
+            .local_shell_integration = true,
+            .session_id = priv.restore_session_id,
+            .restore_snapshot = priv.restore_snapshot,
+            .restore_offset = priv.restore_offset,
+        };
     }
 
     pub fn defaultTermioEnv(self: *Self) !std.process.EnvMap {
@@ -2157,6 +2248,14 @@ pub const Surface = extern struct {
         if (priv.ipc_name) |v| {
             alloc.free(v);
             priv.ipc_name = null;
+        }
+        if (priv.restore_session_id) |v| {
+            alloc.free(v);
+            priv.restore_session_id = null;
+        }
+        if (priv.restore_snapshot) |v| {
+            alloc.free(v);
+            priv.restore_snapshot = null;
         }
 
         // Clean up key sequence and key table state

@@ -400,6 +400,14 @@ pub const Window = extern struct {
         _ = self.newTabPage(parent_, .tab, .none);
     }
 
+    /// A tab rebuilt by a session restore (T3397): its first pane is a
+    /// viewer on `view`, or with null a terminal that adopts
+    /// `Surface.pending_restore`. Returns the new tab.
+    pub fn newTabForRestore(self: *Self, view: ?[:0]const u8) ?*Tab {
+        const page = self.newTabPage(null, .tab, .{ .view = view });
+        return gobject.ext.cast(Tab, page.getChild());
+    }
+
     pub fn newTabForWindow(
         self: *Self,
         parent_: ?*CoreSurface,

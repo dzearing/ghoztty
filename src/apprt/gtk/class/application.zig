@@ -30,6 +30,7 @@ const key = @import("../key.zig");
 const adw_version = @import("../adw_version.zig");
 const gtk_version = @import("../gtk_version.zig");
 const winprotopkg = @import("../winproto.zig");
+const SessionLayout = @import("../SessionLayout.zig");
 const ApprtApp = @import("../App.zig");
 const Common = @import("../class.zig").Common;
 const WeakRef = @import("../weak_ref.zig").WeakRef;
@@ -537,12 +538,28 @@ pub const Application = extern struct {
         if (self.as(gio.Application).getIsRemote() == 0) self.rt().startIpc();
         defer self.rt().stopIpc();
 
+        // Ghoztty (T3397): bring back the windows the last run left, their
+        // panes re-attached to the sessions the agent kept. A no-op unless
+        // this instance serves the IPC socket with session persistence on.
+        const restored: usize = if (self.as(gio.Application).getIsRemote() == 0)
+            SessionLayout.restore(self)
+        else
+            0;
+
         {
             // We need to scope any config access because once we run our
             // event loop, this can change out from underneath us.
             const config = priv.config.get();
-            if (config.@"initial-window") self.as(gio.Application).activate();
+            // A restored launch shows the restored windows, not a fresh one
+            // beside them - unless the launch named a command (`-e`), which
+            // still opens its own window.
+            if (config.@"initial-window" and
+                (restored == 0 or config.@"initial-command" != null))
+                self.as(gio.Application).activate();
         }
+
+        // From here on the app keeps the manifest current (T3397).
+        if (self.as(gio.Application).getIsRemote() == 0) SessionLayout.startSync(self);
 
         // Ghoztty (T3410): a debug build's headless viewer test window. A
         // no-op unless GHOZTTY_TEST_VIEWER is set, and compiled out of a
@@ -662,6 +679,10 @@ pub const Application = extern struct {
     }
 
     fn quitNow(self: *Self) void {
+        // T3397: record the layout (screens included) while every window
+        // still stands; nothing writes it after this, so the teardown below
+        // can never save an empty app over it.
+        SessionLayout.finishForQuit(self);
         self.private().quitting = true;
         // Get all our windows and destroy them, forcing them to free.
         const list = gtk.Window.listToplevels();
@@ -1463,6 +1484,21 @@ pub const Application = extern struct {
             handleSigusr2,
             self,
         );
+        // Ghoztty (T3397): SIGTERM - what a logout or `systemctl stop` sends -
+        // is a QUIT, not a crash: the layout is saved and every agent-backed
+        // pane detaches, exactly as the Mac's applicationWillTerminate does at
+        // logout. Lives as long as the app.
+        _ = glib.unixSignalAdd(std.posix.SIG.TERM, handleSigterm, self);
+    }
+
+    /// SIGTERM handler via g_unix_signal_add (T3397): quit at once, no
+    /// confirmation - nobody is there to answer one.
+    fn handleSigterm(ud: ?*anyopaque) callconv(.c) c_int {
+        const self: *Self = @ptrCast(@alignCast(ud orelse
+            return @intFromBool(glib.SOURCE_REMOVE)));
+        log.info("received SIGTERM, quitting", .{});
+        if (self.private().running) self.quitNow();
+        return @intFromBool(glib.SOURCE_REMOVE);
     }
 
     /// Setup our action map.
