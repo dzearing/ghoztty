@@ -55,17 +55,10 @@ pub extern fn webkit_web_view_new() *GtkWidget;
 // properties by `ready-to-show`.
 pub const WindowProperties = opaque {};
 pub extern fn webkit_web_view_get_type() usize;
-pub extern fn webkit_web_view_get_related_view(view: *WebView) ?*WebView;
 pub extern fn g_object_new(object_type: usize, first_property_name: ?[*:0]const u8, ...) ?*anyopaque;
 pub extern fn g_object_ref_sink(obj: *anyopaque) *anyopaque;
 pub extern fn webkit_web_view_get_window_properties(view: *WebView) *WindowProperties;
 pub extern fn webkit_window_properties_get_geometry(props: *WindowProperties, geometry: *GdkRectangle) void;
-pub extern fn webkit_window_properties_get_toolbar_visible(props: *WindowProperties) c_int;
-pub extern fn webkit_window_properties_get_menubar_visible(props: *WindowProperties) c_int;
-pub extern fn webkit_window_properties_get_statusbar_visible(props: *WindowProperties) c_int;
-pub extern fn webkit_window_properties_get_scrollbars_visible(props: *WindowProperties) c_int;
-pub extern fn webkit_window_properties_get_locationbar_visible(props: *WindowProperties) c_int;
-pub extern fn webkit_window_properties_get_resizable(props: *WindowProperties) c_int;
 pub extern fn webkit_web_view_get_context(view: *WebView) *WebContext;
 pub extern fn webkit_web_view_load_uri(view: *WebView, uri: [*:0]const u8) void;
 pub extern fn webkit_web_view_get_uri(view: *WebView) ?[*:0]const u8;

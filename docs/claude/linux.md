@@ -644,12 +644,16 @@ window (a `file://` link: reveal / side pane / its app).
   `Surface.pending_popup` and opens a one-pane viewer window
   (`Application.newViewerWindowSized`) at the window-properties geometry,
   clamped by win32's `viewer_popup.requestedSize` at scale 1
-  (`viewer_links.popupSize`); `about:blank` is its location when it named
+  (`viewer_links.popupSize`). WebKitGTK has no "a size was given" flag and
+  its bar flags stay visible whatever the page passed: with no size it
+  reports its own fallback rect (800x600 for a scripted open, 100x100 for a
+  `_blank` link, measured), so those exact rects at 0,0 mean "no size".
+  `about:blank` is its location when it named
   none. WebKit's `close` (the page's `window.close()`) closes the pane from
-  an idle. A popup closed before it was shown is destroyed unhosted. NOT
-  exercised headless: a real Ctrl-click's user gesture on an http(s) popup
-  (a script click carries none, so only the non-web and bare cases adopt in
-  the test).
+  an idle. A popup closed before it was shown is destroyed unhosted. Custom-
+  scheme pages are cross-origin to one another, so a test talks to an
+  adopted `ghoztty-page:` popup by `postMessage` (which only arrives through
+  a real `window.opener`), not by reaching into its document.
 - **The link menu**: the shared `links.js` is a user script in EVERY frame
   (an iframe's link gets the menu too); it declines a `#fragment`, a click in
   a selection and schemes with no action, and posts `linkMenu` on
@@ -682,7 +686,7 @@ Acceptance:
 powershell -NoProfile -File scripts\linux\wsl-run.ps1 -CommandFile test\linux\viewer-links.sh
 ```
 
-Ends `VIEWER LINKS: ALL PASS` (41 checks).
+Ends `VIEWER LINKS: ALL PASS` (42 checks).
 
 ### Image panes (T3416)
 

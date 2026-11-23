@@ -233,30 +233,46 @@ pub const PopupSize = popup.Size;
 
 /// The size an adopted popup's page asked for (`window.open(u, n,
 /// "width=W,height=H")`), from WebKit's window-properties geometry, or null
-/// when it asked for none. WebKit fills the geometry in either way (a bare
-/// `window.open()` and a `target="_blank"` link both report one, measured
-/// 2026-11-23), so `featured` - the page passed window features, which WebKit
-/// reports as hidden tool/menu bars, the signal Epiphany sizes popups by -
-/// is what says the size was ASKED for (Mac: `windowFeatures.width != nil`).
+/// when it asked for none (Mac: `windowFeatures.width == nil`).
+///
+/// WebKitGTK has no "was a size given" flag. It fills the geometry in
+/// either way, and with no size given it is WebKit's own fallback rect -
+/// measured in WSL on WebKitGTK 2.52, 2026-11-23: 800x600 for a script's
+/// `window.open(...)` without a size, 100x100 (an empty rect raised to
+/// WebCore's minimum) for a `target="_blank"` link - while the tool/menu
+/// bar flags stay visible whatever the page passed, so they say nothing.
+/// So a geometry at the origin with one of those exact sizes reads as "no
+/// size asked". The one request that cannot be told from it is a page
+/// asking for exactly 800x600 (or 100x100) at 0,0; that page gets the
+/// ordinary default window instead, a difference of nothing for 800x600.
+///
 /// win32's `requestedSize` and its clamp, at scale 1: the geometry is CSS
 /// pixels and a GTK window is sized in logical pixels, which are the same
 /// unit - the compositor does the scaling Windows makes the app do by hand.
-pub fn popupSize(featured: bool, width: c_int, height: c_int) ?PopupSize {
-    if (!featured or width <= 0 or height <= 0) return null;
+pub fn popupSize(x: c_int, y: c_int, width: c_int, height: c_int) ?PopupSize {
+    if (width <= 0 or height <= 0) return null;
+    if (x == 0 and y == 0) {
+        for (webkit_unsized) |r| if (width == r[0] and height == r[1]) return null;
+    }
     return popup.requestedSize(true, @intCast(width), @intCast(height), 1.0);
 }
 
+/// WebKitGTK's geometry for a popup that named no size (see `popupSize`).
+const webkit_unsized = [_][2]c_int{ .{ 800, 600 }, .{ 100, 100 } };
+
 test "popupSize: what the page asked for, clamped like win32's, or nothing" {
-    try testing.expectEqual(PopupSize{ .w = 500, .h = 400 }, popupSize(true, 500, 400).?);
-    // No features: WebKit's own geometry is not a request.
-    try testing.expect(popupSize(false, 800, 600) == null);
-    try testing.expect(popupSize(false, 100, 100) == null);
-    try testing.expect(popupSize(true, 0, 400) == null);
-    try testing.expect(popupSize(true, 500, 0) == null);
-    try testing.expect(popupSize(true, -1, -1) == null);
+    try testing.expectEqual(PopupSize{ .w = 500, .h = 400 }, popupSize(0, 0, 500, 400).?);
+    // WebKit's own fallback rects are not a request.
+    try testing.expect(popupSize(0, 0, 800, 600) == null);
+    try testing.expect(popupSize(0, 0, 100, 100) == null);
+    // ...unless the page also placed the window: then it asked.
+    try testing.expectEqual(PopupSize{ .w = 800, .h = 600 }, popupSize(40, 30, 800, 600).?);
+    try testing.expect(popupSize(0, 0, 0, 400) == null);
+    try testing.expect(popupSize(0, 0, 500, 0) == null);
+    try testing.expect(popupSize(0, 0, -1, -1) == null);
     // Too small to use is raised to the floor; absurd is held to the cap.
-    try testing.expectEqual(PopupSize{ .w = popup.min_dim, .h = popup.min_dim }, popupSize(true, 20, 20).?);
-    try testing.expectEqual(popup.max_dim, popupSize(true, std.math.maxInt(c_int), 300).?.w);
+    try testing.expectEqual(PopupSize{ .w = popup.min_dim, .h = popup.min_dim }, popupSize(0, 0, 20, 20).?);
+    try testing.expectEqual(popup.max_dim, popupSize(0, 0, std.math.maxInt(c_int), 300).?.w);
 }
 
 // -------------------------------------------------------------------------

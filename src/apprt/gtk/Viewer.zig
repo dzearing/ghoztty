@@ -1191,21 +1191,12 @@ fn onPopupReadyToShow(view: *wk.WebView, ud: ?*anyopaque) callconv(.c) void {
     const props = wk.webkit_web_view_get_window_properties(view);
     var geo: wk.GdkRectangle = .{ .x = 0, .y = 0, .width = 0, .height = 0 };
     wk.webkit_window_properties_get_geometry(props, &geo);
-    // WebKit fills in a geometry whether or not the page gave one; a page
-    // that passed window features (a size among them) hides the bars.
-    const featured = wk.webkit_window_properties_get_toolbar_visible(props) == 0 or
-        wk.webkit_window_properties_get_menubar_visible(props) == 0;
-    log.info("viewer: popup props geo={d},{d} {d}x{d} tool={d} menu={d} status={d} scroll={d} loc={d} resize={d}", .{
-        geo.x,                                                    geo.y,                                                   geo.width,                                                   geo.height,
-        wk.webkit_window_properties_get_toolbar_visible(props),   wk.webkit_window_properties_get_menubar_visible(props),  wk.webkit_window_properties_get_statusbar_visible(props),    wk.webkit_window_properties_get_scrollbars_visible(props),
-        wk.webkit_window_properties_get_locationbar_visible(props), wk.webkit_window_properties_get_resizable(props),
-    });
-    const size = links.popupSize(featured, geo.width, geo.height);
+    const size = links.popupSize(geo.x, geo.y, geo.width, geo.height);
     self.popup_state = .hosted;
     if (size) |s|
         log.info("viewer: popup ready to show at {d}x{d} (asked {d}x{d})", .{ s.w, s.h, geo.width, geo.height })
     else
-        log.info("viewer: popup ready to show at the default size (geometry {d}x{d}, features={})", .{ geo.width, geo.height, featured });
+        log.info("viewer: popup ready to show at the default size (WebKit geometry {d}x{d})", .{ geo.width, geo.height });
     host(self, size);
 }
 

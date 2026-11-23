@@ -104,6 +104,7 @@ cat > "$fx/site/index.html" <<EOF
 <a id="port" href="http://127.0.0.1:$port2/">port</a>
 <a id="host" href="http://localhost:$port/">host</a>
 <a id="cmd" href="ghoztty-debug://focus/termwin">cmd</a>
+<a id="popsame" target="_blank" href="/two.html">popsame</a>
 </body></html>
 EOF
 printf '<!DOCTYPE html><html><body><h1>Site Two</h1></body></html>\n' > "$fx/site/two.html"
@@ -234,6 +235,10 @@ sink="$HL_RUNTIME/links.out"
     echo "mods none"
     click '#host'
     click '#cmd'
+    echo "mods ctrl"
+    click '#popsame'
+    echo "sleep 1500"
+    echo "mods none"
     echo "sleep 1500"
     echo "state"
     click '#same'
@@ -336,6 +341,8 @@ before=$(echo "$pop_leaves" | grep -cF "|viewer|$fx/sub/two.html|")
 after=$(echo "$closed_leaves" | grep -cF "|viewer|$fx/sub/two.html|")
 grep -qx 'probe OK closed true' "$out" && [ "$after" = $((before - 1)) ] && grep -q 'viewer popup: the page closed its pane' "$APP_LOG"
 hl_check "K24e window.close() in the popup closes its window (two.html windows $before -> $after)" $? "$(grep -E 'closed|asked to close' "$out" "$APP_LOG" | tr '\n' ' ')"
+grep -q "viewer: popup adopted location=http://127.0.0.1:$port/two.html" "$APP_LOG" && echo "$all_leaves" | grep -qF "|viewer|http://127.0.0.1:$port/two.html|"
+hl_check "K24f a Ctrl-clicked same-site target=_blank link on a website is adopted as a viewer window too" $? "$(grep "popup.*$port/two" "$APP_LOG" | tr '\n' ' ')"
 grep -qxF "menu web https://example.test/out rows=open_browser|side_pane,new_window|copy" "$sink"
 hl_check "K25 a rendered page's link gets Ghoztty's menu" $? "$(grep '^menu' "$sink" | tr '\n' ' ')"
 grep -qxF "menu web https://example.test/framed rows=open_browser|side_pane,new_window|copy" "$sink"
