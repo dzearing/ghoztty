@@ -1141,6 +1141,42 @@ powershell -NoProfile -File scripts\linux\wsl-run.ps1 -CommandFile test\linux\se
 
 Ends `SESSION RESTORE VIEWERS: ALL PASS` (18 checks).
 
+### The agent starts at login (T3398)
+
+The LaunchAgent / HKCU Run counterpart. Once persistence engages (an agent
+dialed), the app writes, once per run (`LocalAgent.ensureAutostart`; formats
+and gates in the pure `src/apprt/gtk/agent_autostart.zig`, none lane):
+
+- **A `systemd --user` unit** when the user's systemd answers, i.e.
+  `$XDG_RUNTIME_DIR/systemd/private` exists (else `/run/user/<uid>/...`):
+  `<config>/systemd/user/ghoztty-agent[-debug][-<lineage>].service`, enabled
+  by a `default.target.wants/` symlink - the file `systemctl --user enable`
+  makes. `Restart=on-failure`, `RestartPreventExitStatus=183` (a lost
+  single-instance lock is not a crash), output appended to `agent.log`.
+- **Else an XDG autostart entry**, `<config>/autostart/<same name>.desktop`,
+  `Exec=/usr/bin/env "VAR=..." "<agent>" ...` (a desktop Exec cannot set the
+  environment). WSL without `[boot] systemd=true` in `/etc/wsl.conf` lands
+  here; that file is the user's and is never edited.
+- Writing one removes the other, so only one ever starts at login. Both run
+  the argv and environment `spawnDetached` uses (one helper, `spawnArgs`).
+- The app **never runs `systemctl`** - nothing here starts, stops or reloads
+  the user's systemd.
+- **Gates** (win32's): `GHOZTTY_AGENT_AUTOSTART=off` writes nothing; a debug
+  build writes only under `force` or `gate`; an agent binary inside a source
+  checkout writes only under `force`. So a harness run of a `zig-out` build
+  writes nothing unless the test asks.
+
+```powershell
+powershell -NoProfile -File scripts\linux\wsl-run.ps1 -CommandFile test\linux\agent-autostart.sh
+```
+
+Ends `AGENT AUTOSTART: ALL PASS` (32 checks): the gates, each backend's file
+(validated by `desktop-file-validate` / `systemd-analyze verify`), each
+entry's command run the way a login would and the next app reusing that
+agent, the switch back when systemd goes away, and nothing under the real
+`~/.config`. The "user systemd is reachable" state is the marker file made
+under the harness's private runtime dir.
+
 ## The relay account store: keyring, else a private file (T3341)
 
 The Linux row of Keychain -> DPAPI: `src/remote/relay_account.zig` keeps the
