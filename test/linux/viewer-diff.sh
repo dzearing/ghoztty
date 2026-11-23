@@ -90,7 +90,7 @@ printf 'caf\xe9 au lait\n' > "$repo/latin1.txt"
 lsdir=$(dirname "$(find "$PWD/zig-out" "$PWD/.zig-cache" -name 'libgtk4-layer-shell.so*' -print -quit 2>/dev/null)")
 cli_in() { local d=$1; shift; (cd "$d" && env -u GIT_DIR -u GIT_WORK_TREE -u GHOZTTY_IPC_SOCKET -u GHOZTTY_PANE_ID LD_LIBRARY_PATH="$lsdir${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" "$app" "$@"); }
 
-PAGE="(function(){var h=document.querySelector('.d-file-header');var b=document.querySelector('.d-body');var n=document.querySelector('.d-notice');return 'file='+(h?h.innerText.replace(/\\s+/g,' '):'-')+' body='+(b?b.className.replace('d-body ',''):'-')+' add='+document.querySelectorAll('.d-line.d-add').length+' del='+document.querySelectorAll('.d-line.d-del').length+' fffd='+(document.body.innerText.indexOf('\\ufffd')>=0)+' notice='+(n?n.innerText.replace(/\\s+/g,' '):'-')})()"
+PAGE="(function(){var h=document.querySelector('.d-file-header');var b=document.querySelector('.d-body');var n=document.querySelector('.d-notice');return 'file='+(h?h.innerText.replace(/\\s+/g,' '):'-')+' body='+(b?b.className.replace('d-body ',''):'-')+' add='+document.querySelectorAll('.d-line.d-add').length+' del='+document.querySelectorAll('.d-line.d-del').length+' fffd='+(document.body.innerText.indexOf('\\ufffd')>=0)+' stub='+(document.querySelector('.d-stub')?document.querySelector('.d-stub').innerText.replace(/\\s+/g,' '):'-')+' notice='+(n?n.innerText.replace(/\\s+/g,' '):'-')})()"
 
 # ---- the steps the first pane runs once it has rendered ----------------------
 steps="$HL_RUNTIME/steps"
@@ -229,7 +229,7 @@ hl_check "D9 every step ran to the end" $? "$(tail -3 "$out" 2>/dev/null | tr '\
 
 nth() { grep "^$1" "$out" | sed -n "${2}p"; }
 df() { nth "diff " "$1"; }
-rw() { nth "rows " "$1"; }
+rw() { nth "rows " "$1" | sed 's/^rows //'; }
 pr() { nth "probe " "$1"; }
 field() { echo "$1" | tr ' ' '\n' | sed -n "s/^$2=//p" | head -1; }
 
@@ -269,7 +269,7 @@ r4=$(rw 4)
 has "$r4" "folder:src/app/core*" && ! has "$r4" "file:engine.zig"
 hl_check "D21 clicking a folder folds it" $? "$r4"
 d11=$(df 11); p5=$(pr 5)
-[ "$(field "$d11" file)" = "assets/logo.bin" ] && has "$p5" "Binary"
+[ "$(field "$d11" file)" = "assets/logo.bin" ] && has "$p5" "stub=Binary file"
 hl_check "D22 a binary file gets a stub, not a patch" $? "$d11 / $p5"
 d12=$(df 12); p6=$(pr 6)
 [ "$(field "$d12" file)" != "assets/logo.bin" ] && grep -q 'viewer diff overflow forward=true' "$APP_LOG" && grep -q 'scroll=first' "$APP_LOG"

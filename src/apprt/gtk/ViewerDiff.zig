@@ -509,7 +509,7 @@ fn pushFile(self: *ViewerDiff, v: *Viewer, entry: Probe.Entry, patch: ?[]const u
 fn syncLayoutButton(self: *ViewerDiff) void {
     const ui = self.ui orelse return;
     // The button names what a press switches TO.
-    const split = (self.style orelse .unified) == .split;
+    const split = (self.style orelse diff.Style.unified) == .split;
     wk.gtk_button_set_icon_name(ui.layout, if (split) "view-continuous-symbolic" else "view-dual-symbolic");
     wk.gtk_widget_set_tooltip_text(ui.layout, if (split) "Unified" else "Side by Side");
 }
@@ -877,7 +877,7 @@ pub fn describe(self: *const ViewerDiff, buf: []u8) []const u8 {
     return std.fmt.bufPrint(buf, "files={d} file={s} style={s} rows={d} selected={s} panel={} listings={d} patches={d} unchanged={d} git={d} width={d} busy={} header={s} filter={s}", .{
         files,
         self.file orelse "-",
-        (self.style orelse .unified).wire(),
+        (self.style orelse diff.Style.unified).wire(),
         rows,
         selected,
         panel,

@@ -280,8 +280,14 @@ in place, and what every later slice builds on:
   `setCode` once the page has loaded, built by win32's pure
   `viewer_document.readUtf8`. A `.html` file loads from
   `ghoztty-page://page/<rel>`, whose grant is the file's own directory (win32's
-  T601 split). A website is navigated to directly. Images and diffs show the
-  error card naming T3416/T3417 until those slices land.
+  T601 split). A website is navigated to directly. Images (T3416) draw in the
+  template through `ViewerImage.zig`. Diffs (T3417) are the template's
+  `diff.js` driven by `ViewerDiff.zig`, which reuses win32's diff stack
+  whole - `viewer_diff.zig`, `viewer_file_tree.zig`, and the git worker
+  `ViewerDiffProbe.zig` over `git_run.zig`, both POSIX-capable (a process
+  group stands in for the job object; a `Notify` callback + `g_idle_add`
+  for the window message). The changed-files panel is native GTK.
+  Acceptance: `test/linux/viewer-diff.sh`.
 - **The schemes are pure** in `src/apprt/gtk/viewer_scheme.zig` (none lane):
   template tiers are bundled assets, then the file's directory, then absolute
   (the Mac's order, `..` refused by the first two); the page origin is its

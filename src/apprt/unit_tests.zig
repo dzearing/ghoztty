@@ -606,6 +606,11 @@ test {
     // and status tint, and the UTF-8 repair a Latin-1 patch needs before
     // WebKit will take it (T3417). No GTK imports.
     _ = @import("gtk/viewer_diff_text.zig");
+    // ... and the POSIX half of win32's git runner it spawns git through:
+    // the deadline and the cancel end the whole process group (T3417).
+    // Off Windows only, whose win32 lane covers the job object - importing it
+    // there would pull git_run's Windows tests into this lane as well.
+    if (comptime @import("builtin").os.tag != .windows) _ = @import("gtk/git_run_posix_test.zig");
 
     // Pure win32 image-viewer zoom rules — what 100% means, best-fit's refusal
     // to upscale, the double-click toggle and the step/clamp (T1183), same
