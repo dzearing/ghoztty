@@ -110,8 +110,10 @@ hl_check "H19 --window captures the whole window, and the pane's x/y place it in
 
 sshot="$HL_RUNTIME/sized.png"
 hl_screenshot "$pane" "$sshot" --width=200 --height=100 > /dev/null
-hl_png_stats "$sshot" 2>/dev/null | grep -q '^w=200 h=100 '
-hl_check "H20 --width/--height render the pane at the size asked" $? "$(hl_png_stats "$sshot" 2>&1)"
+sstats=$(hl_png_stats "$sshot" 255 0 0 2>&1)
+printf '%s' "$sstats" | grep -q '^w=200 h=100 ' \
+    && awk -v m="$(printf '%s' "$sstats" | sed -n 's/.*match=\([0-9.]*\).*/\1/p')" 'BEGIN{exit !(m > 0.5)}'
+hl_check "H20 --width/--height render the whole pane, scaled, at the size asked" $? "$sstats"
 
 nf=$(hl_ipc capture-pane --target=no-such-pane "--path=$HL_RUNTIME/x.png")
 np=$(hl_ipc capture-pane "--target=$pane")

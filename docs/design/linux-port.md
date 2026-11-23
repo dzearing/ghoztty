@@ -44,7 +44,7 @@ emulation of the Mac mechanism.
 | `+list` process column | `--tty` | `--pid` | `--tty` (Linux has real ttys) |
 | Shell launch | `$SHELL -lic` | per-flavor (`pwsh -NoExit -Command`, `cmd /K`, `wsl --`) | `$SHELL -lic`, like the Mac |
 | `ghoztty://` scheme | LaunchServices | registry `HKCU\Software\Classes` | `.desktop` with `MimeType=x-scheme-handler/ghoztty` + `xdg-mime default` |
-| Pane/window screenshots | CGWindow | PrintWindow | in-app GTK snapshot (`gtk_widget_snapshot_child` / `GdkTexture`); Wayland has no global capture, so it must come from our own render |
+| Pane/window screenshots | CGWindow | PrintWindow | in-app GTK snapshot (`pane_snapshot.zig`: widget paintable -> GSK render -> PNG); Wayland has no global capture, so it must come from our own render. Tests reach it through the debug-only `capture-pane` seam (`hl_screenshot`, T3359) |
 | Focus on CLI open | `--focus` opts in | `--focus` opts in, `SWP_NOACTIVATE` | Wayland refuses focus stealing outright, so `--no-activate` is free and `--focus` needs `xdg-activation` |
 | Chrome | native AppKit | custom, `docs/design/win32-design-system.md` | libadwaita widgets; parity is behavior and information, not pixels |
 | Delivery | `.app` / dmg | MSI + auto-update | tarball → `.deb`/AppImage later (L14) |

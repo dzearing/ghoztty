@@ -185,13 +185,47 @@ and that a SIGTERMed harness leaves no Weston, app or dir behind):
 powershell -NoProfile -File scripts\linux\wsl-run.ps1 -CommandFile test\linux\headless-harness.sh
 ```
 
-Ends `HEADLESS HARNESS: ALL PASS` (15 checks, about a minute warm).
+Ends `HEADLESS HARNESS: ALL PASS` (21 checks, about a minute warm; H16-H21 are the screenshots below).
 
-**What the harness cannot give you yet.** There is no screenshot or input path:
-Weston headless has no capture a client can ask for, and Wayland has no global
-input injection. Pixels come from the app's own render (the translation table's
-GTK snapshot row) and input from the CLI (`+send-keys`) once L6/L7 land; until
-then a GUI test asserts on the app's log, its pty and its process tree.
+**Screenshots: `hl_screenshot` (T3359).** Weston headless has no capture a
+client can ask for and Wayland has no global one, so the picture comes from
+the app's OWN render: the debug-only `capture-pane` IPC seam - win32's wire
+shape (T275), no CLI verb on either platform, a release build answers
+`unknown action`. The GTK half renders the widget through
+`src/apprt/gtk/pane_snapshot.zig` (`render`); the pure half is
+`src/apprt/gtk/capture_seam.zig` (none lane).
+
+```bash
+pane=$(hl_first_pane "$app")                       # first pane id from +list
+hl_screenshot "$pane" "$HL_RUNTIME/p.png"          # one pane (terminal or viewer)
+hl_screenshot "$pane" "$HL_RUNTIME/w.png" --window # its whole window
+hl_screenshot "$pane" "$HL_RUNTIME/s.png" --width=200 --height=100
+hl_png_stats "$HL_RUNTIME/p.png" 255 0 0           # w=800 h=512 colors=2 match=0.972
+hl_ipc capture-pane --target=x --path=/tmp/y.png   # any raw request; prints the reply
+```
+
+| Helper | What it does |
+|---|---|
+| `hl_socket` | The harness app's socket, `$XDG_RUNTIME_DIR/ghostty-debug-<uid>.sock`. |
+| `hl_ipc <action> [arg...]` | One raw request (4-byte big-endian length + JSON each way); prints the reply, exit 1 when nothing answered. For seams with no CLI verb. |
+| `hl_screenshot <target> <png> [--window] [--width=N] [--height=N]` | Prints the reply; 0 only when it says success AND the file is a PNG. |
+| `hl_png_stats <png> [r g b]` | Pure-python decode: `w= h= colors=<distinct> match=<fraction within 8 of r,g,b>`. |
+| `hl_first_pane <app>` | The first pane id `+list --json` names. |
+
+Reply: `path width height bytes x y client_width client_height scope`.
+Differences from win32, both because a GTK window is one widget tree: `--window`
+captures the whole window in one render (win32 composes one from pane
+captures and a `PrintWindow`, T778), and `x`/`y` are the pane's origin INSIDE
+its window in device pixels, since Wayland gives a client no screen
+coordinates. A viewer pane is captured too (WebKit content included). The first
+capture logs one harmless GTK warning, `Trying to snapshot GtkRevealer ...
+without a current allocation` (a collapsed revealer in the pane). Acceptance:
+H16-H21 of `test/linux/headless-harness.sh` (a pane paints itself 24-bit red
+and the shot must be over half red, at its own size, inside its window's shot,
+and scaled).
+
+Input still comes from the CLI (`+send-keys`): Wayland has no global input
+injection.
 
 **Running the app by hand** is a harness run too: there is no "just open it"
 path on this box, because the only display is the user's. To look at it, the
