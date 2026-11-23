@@ -48,6 +48,20 @@ $Port = Resolve-TestPort -Name 'agent' -Port $Port
 # real one - so on a signed-in box section 5's tokenless dial is not tokenless
 # and never says "not signed in". A nonexistent path reads as signed out.
 $env:GHOSTTY_ACCOUNT_STORE = Join-Path $tmp 'account.dat'
+# T1957: the Remote Desktop seam, so section 3c can flip low-power mode. It
+# says "console" until then, which is what every other section runs under.
+$seam = Join-Path $tmp 'remote-session.seam'
+[System.IO.File]::WriteAllText($seam, '0')
+$env:GHOZTTY_TEST_REMOTE_SESSION_FILE = $seam
+if (-not ('RemoteFlipPost' -as [type])) {
+    Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+public static class RemoteFlipPost {
+    [DllImport("user32.dll")] public static extern bool PostMessageW(IntPtr h, uint msg, IntPtr wp, IntPtr lp);
+}
+'@
+}
 Remove-Item env:GHOSTTY_RELAY_TOKEN -ErrorAction SilentlyContinue
 
 # T248: one shared reset instead of a private copy — see lib\CleanSlate.ps1.
@@ -149,6 +163,52 @@ if (-not (Test-WslDefaultDistroRunning)) {
     Assert "no command-not-found in the wsl pane" ($dump -notmatch 'command not found')
     if ($dump -match 'command not found') { "    pane tail: $dump" }
 }
+
+"== 3c: --command keeps its window open across a low-power flip (T1957)"
+# `--command` sets `wait-after-command` on ITS pane only. A low-power switch
+# (Remote Desktop connect, or a no-GPU box at launch) re-loads the config and
+# pushes it to every pane, which used to re-derive that flag from the app
+# config: the window then closed under the user the moment its command ended.
+# The flip is forced through the session seam (set before the app started):
+# seam to '1' + WM_WTSSESSION_CHANGE to the top window, which Window.zig
+# forwards. That the flip HAPPENED is checked, not assumed: the panes go flat
+# (no margin to the client's right edge) when the effects switch off.
+$r = Ghoz @('+new-remote-window', '--host=127.0.0.1', "--port=$Port", '--name=remflip', '--command=ping -n 9 127.0.0.1')
+Assert "flip window exit 0" ($r.ExitCode -eq 0)
+Start-Sleep -Seconds 2
+$flipTop = [IntPtr]::Zero
+try {
+    $fj = (Ghoz @('+list', '--json')).Output | ConvertFrom-Json
+    $fw = @($fj.data.windows) | Where-Object { $_.target -eq 'remflip' } | Select-Object -First 1
+    if ($null -ne $fw) { $flipTop = [IntPtr][int64]$fw.id }
+} catch {}
+Assert "flip window found by +list --json" ($flipTop -ne [IntPtr]::Zero)
+function Get-FlipGap {
+    $p = @(Get-TestChildWindows -Window $flipTop -Class 'GhozttyTerminal' | Where-Object Visible) | Select-Object -First 1
+    if ($null -eq $p) { return $null }
+    $cs = Get-TestWindowRect -Window $flipTop -Client
+    return [int]($cs.Right - $p.Right)
+}
+$gapBefore = Get-FlipGap
+[System.IO.File]::WriteAllText($seam, '1')
+[void][RemoteFlipPost]::PostMessageW($flipTop, [uint32]0x02B1, [IntPtr]3, [IntPtr]::Zero)
+$gapAfter = $null
+for ($t = 0; $t -lt 25; $t++) {
+    $gapAfter = Get-FlipGap
+    if ($gapAfter -eq 0) { break }
+    Start-Sleep -Milliseconds 200
+}
+"    pane right gap: console=$gapBefore remote=$gapAfter"
+Assert "the flip happened: the panes went flat (gap $gapBefore -> $gapAfter)" (($gapBefore -gt 0) -and ($gapAfter -eq 0))
+# The ping runs ~8 s; wait past its end.
+Start-Sleep -Seconds 12
+$list = Get-List
+Assert "the --command window is still open after its command ended" ($list -match '\[target: remflip\]')
+$dump = Read-Pane 'remflip'
+Assert "and its pane shows the finished command" ($dump -match 'Ping statistics|Packets:')
+[System.IO.File]::WriteAllText($seam, '0')
+[void][RemoteFlipPost]::PostMessageW($flipTop, [uint32]0x02B1, [IntPtr]1, [IntPtr]::Zero)
+Ghoz @('+close', '--target=remflip') | Out-Null
 
 "== 4: dial failure surfaces the Mac-parity error"
 # A port DRAWN and then deliberately not bound (T694). `$Port + 1` was a guess
@@ -332,6 +392,7 @@ Assert "app still alive (base window listed)" ($list -match '\[target: rembase\]
 "== cleanup"
 [void](Ghoz @('+close', '--target=rembase'))
 Stop-DebugGhoztty
+Remove-Item Env:\GHOZTTY_TEST_REMOTE_SESSION_FILE -ErrorAction SilentlyContinue
 Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
 Remove-TestDesktop | Out-Null
 

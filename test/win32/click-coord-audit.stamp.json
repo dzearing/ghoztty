@@ -1,8 +1,8 @@
 {
     "guard":  "click-coord",
     "script":  "test/win32/click-coord-audit.ps1",
-    "generated":  "2026-11-23T12:18:38-08:00",
-    "commit":  "cd0791e8c",
+    "generated":  "2026-11-23T12:35:05-08:00",
+    "commit":  "596d5dd6f",
     "uncommitted":  [
 
                     ],

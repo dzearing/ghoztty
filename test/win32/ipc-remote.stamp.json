@@ -1,8 +1,8 @@
 {
     "guard":  "ipc-remote",
     "script":  "test/win32/ipc-remote.ps1",
-    "generated":  "2026-11-22T03:52:02-08:00",
-    "commit":  "d6b2cf1a3",
+    "generated":  "2026-11-23T11:33:05-08:00",
+    "commit":  "596d5dd6f",
     "uncommitted":  [
                         "test/win32/ipc-remote.ps1"
                     ],
@@ -10,9 +10,9 @@
                   "src/apprt/win32/dial_failure.zig":  "8bde97f09df0cdf09934e15213d1120fc7ca2c3670a59df001c42caeac81bcb0",
                   "src/apprt/win32/ipc_remote_dial.zig":  "87f7119dccf90660a3d9a18c7c8a303005fb5a7af3bec2d67596e92d35f94ebb",
                   "src/cli/new_remote_window.zig":  "ed156b40118927e86aa7a77ce6d1dad81b9a7795822eb588393222525009d3e6",
-                  "test/win32/ipc-remote.ps1":  "5fafa5f0cf6580fd3beda5ae9c4fb1813c9d97077e2ccf2fa7a150943b8c816e"
+                  "test/win32/ipc-remote.ps1":  "0b04d29b3811303ab1d8eda3436ce4323070ca343600d3738e75641274fca880"
               },
     "code":  {
-                 "test/win32/ipc-remote.ps1":  "code1:1bc15ba87718f1f98a06ca3f0be620b9b0ef3a219447af3e755f2ba493fcf692"
+                 "test/win32/ipc-remote.ps1":  "code1:55aded1181060d6e5824b844d0e75826ccb720e01cddd52104a81b6d620ad3dd"
              }
 }

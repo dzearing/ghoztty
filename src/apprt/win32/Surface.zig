@@ -8,6 +8,7 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const apprt = @import("../../apprt.zig");
 const configpkg = @import("../../config.zig");
+const surface_sticky = @import("surface_sticky.zig");
 const input = @import("../../input.zig");
 const terminal = @import("../../terminal/main.zig");
 const termio = @import("../../termio.zig");
@@ -605,6 +606,12 @@ remote_shell: ?[]const u8 = null,
 /// arena owns it and `termio.Remote.init` dupes what it keeps.
 remote_command_argv: ?[]const []const u8 = null,
 
+/// Config values this pane was opened with that the app config does not carry
+/// (T1957). Every app-wide config push lays them back over the app config for
+/// this pane (`App.pushConfigToSurfaces`), so a low-power switch or a reload
+/// cannot clear a `--command` pane's `wait-after-command`.
+sticky: surface_sticky.Sticky = .{},
+
 /// Non-null ⇒ ATTACH to this existing agent session instead of OPENing a new
 /// one (session re-attach restore, T89f2). Set from `Overrides.Remote.session_id`
 /// at init; borrowed for the duration of `core_surface.init` ONLY (the same
@@ -1191,6 +1198,7 @@ fn initOnce(
             if (r.command) |cmd| {
                 config.command = .{ .shell = try carena.dupeZ(u8, cmd) };
                 config.@"wait-after-command" = true;
+                self.sticky.wait_after_command = true;
                 // T468: …with ONE exception to "not wrapped by the local shell
                 // table". For the LOCAL agent the flavor table IS the right
                 // one (the agent is this machine), and on Windows the

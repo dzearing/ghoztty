@@ -1580,7 +1580,7 @@ pub fn refreshLowPower(self: *App) void {
     };
     defer new_config.deinit();
     applyRemoteEffects(alloc, &new_config, reduce);
-    self.core_app.updateConfig(self, &new_config) catch |err| {
+    self.pushConfigToSurfaces(&new_config) catch |err| {
         log.err("low-power: config update error err={}", .{err});
     };
     // config_change re-laid every window out; the sidebar's shimmer reads the
@@ -1593,6 +1593,41 @@ pub fn refreshLowPower(self: *App) void {
         const notice = remote_session.noticeText(reduce, remote);
         self.showDesktopNotificationText(notice.title, notice.body);
     }
+}
+
+/// Push an app-wide config to every pane, keeping what each pane was opened
+/// with (T1957). `core.App.updateConfig` re-derives every pane from the APP
+/// config, which clears a value only one pane carries - a `--command` pane's
+/// `wait-after-command` - so its window closed under the user when the command
+/// ended, after any low-power switch or reload. Each such pane is then
+/// re-derived once more from the same config with its own values laid on top
+/// (`surface_sticky`); a pane that carries none is derived exactly once.
+fn pushConfigToSurfaces(self: *App, config: *const Config) !void {
+    try self.core_app.updateConfig(self, config);
+    for (self.core_app.surfaces.items) |s| {
+        if (!s.sticky.any()) continue;
+        self.pushConfigToSurface(s.core(), config);
+    }
+}
+
+/// The one-pane form of `pushConfigToSurfaces`: re-derive `core_surface` from
+/// `config` with the pane's own values (`Surface.sticky`) laid on top.
+fn pushConfigToSurface(self: *App, core_surface: *CoreSurface, config: *const Config) void {
+    const sticky = core_surface.rt_surface.sticky;
+    if (!sticky.any()) {
+        core_surface.updateConfig(config) catch |err| {
+            log.err("surface config update error err={}", .{err});
+        };
+        return;
+    }
+    // A shallow copy: the scalar is ours, everything else still points into
+    // `config`'s arena, which outlives this call.
+    var own = config.shallowClone(self.core_app.alloc);
+    defer own.deinit();
+    sticky.apply(&own);
+    core_surface.updateConfig(&own) catch |err| {
+        log.err("surface config update error (sticky) err={}", .{err});
+    };
 }
 
 /// Does the user want in-window motion at all? `SPI_GETCLIENTAREAANIMATION`
@@ -10470,12 +10505,12 @@ pub fn performAction(
                 // Soft reload: re-apply existing config (for conditional
                 // state changes).
                 switch (target) {
-                    .app => self.core_app.updateConfig(self, &self.config) catch |err| {
+                    .app => self.pushConfigToSurfaces(&self.config) catch |err| {
                         log.err("soft config reload error: {}", .{err});
                     },
-                    .surface => |core_surface| core_surface.updateConfig(&self.config) catch |err| {
-                        log.err("soft surface config reload error: {}", .{err});
-                    },
+                    // T1957: the one-pane push keeps that pane's own
+                    // values, which the app config does not carry.
+                    .surface => |core_surface| self.pushConfigToSurface(core_surface, &self.config),
                 }
             } else {
                 // Hard reload: read config from disk
@@ -10485,7 +10520,7 @@ pub fn performAction(
                 };
                 defer new_config.deinit();
                 applyRemoteEffects(alloc, &new_config, effectsReducedWanted());
-                self.core_app.updateConfig(self, &new_config) catch |err| {
+                self.pushConfigToSurfaces(&new_config) catch |err| {
                     log.err("config update error: {}", .{err});
                 };
 
