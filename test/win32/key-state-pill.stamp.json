@@ -1,15 +1,18 @@
 {
     "guard":  "key-state-pill",
     "script":  "test/win32/key-state-pill.ps1",
-    "generated":  "2026-11-09T21:39:47-08:00",
-    "commit":  "b99af7bb3",
+    "generated":  "2026-11-22T23:30:10-08:00",
+    "commit":  "56b3f8068",
     "uncommitted":  [
                         "src/apprt/win32/KeyStateIndicator.zig"
                     ],
     "files":  {
                   "src/apprt/win32/key_state.zig":  "3424ddd3b0ead545111fed3f0360e70f030d27d7910a323253313a4193cd2921",
                   "src/apprt/win32/key_state_pill.zig":  "4f0a8df09557b1d0a08f23570654a66ad22a48d406288bc2f66be9959cf4bd50",
-                  "src/apprt/win32/KeyStateIndicator.zig":  "1e187a5f8292a963973929310682e0736dd01464e8ee0ab78cdcd4637fd000a8",
+                  "src/apprt/win32/KeyStateIndicator.zig":  "943346592f2c7b09b911ff39f8ed4cbf268489fef2340e4dfcd9efc068c05931",
                   "test/win32/key-state-pill.ps1":  "c5d814a9ca33fba96fa311ecdbe4e867d76a46e3c9dfe528711c2b0551319757"
-              }
+              },
+    "code":  {
+                 "test/win32/key-state-pill.ps1":  "code1:3a23497053592b8ec21902f7e6974b8aa6daafe06e3c5aaccf568073cc267065"
+             }
 }

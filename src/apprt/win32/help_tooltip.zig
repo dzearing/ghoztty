@@ -22,6 +22,7 @@
 const std = @import("std");
 const w32 = @import("win32.zig");
 const system_colors = @import("system_colors.zig");
+const tooltip_window = @import("tooltip_window.zig");
 
 /// commctrl.h's values, from the one place that states them (T1744 corrected
 /// `win32.zig`'s `TTF_SUBCLASS`, which this file used to work around).
@@ -63,26 +64,10 @@ pub fn HelpTip(comptime Control: type, comptime max_text: usize) type {
         pub fn ensure(self: *Self, owner: w32.HWND, hinstance: w32.HINSTANCE, dark: bool) ?w32.HWND {
             if (self.hwnd) |h| return h;
 
-            var icc = w32.INITCOMMONCONTROLSEX{
-                .dwSize = @sizeOf(w32.INITCOMMONCONTROLSEX),
-                .dwICC = w32.ICC_TAB_CLASSES,
-            };
-            _ = w32.InitCommonControlsEx(&icc);
-
-            const tip = w32.CreateWindowExW(
-                w32.WS_EX_TOPMOST | w32.WS_EX_TOOLWINDOW | w32.WS_EX_NOACTIVATE,
-                w32.TOOLTIPS_CLASS,
-                std.unicode.utf8ToUtf16LeStringLiteral(""),
-                w32.WS_POPUP | w32.TTS_ALWAYSTIP | w32.TTS_NOPREFIX,
-                w32.CW_USEDEFAULT,
-                w32.CW_USEDEFAULT,
-                w32.CW_USEDEFAULT,
-                w32.CW_USEDEFAULT,
-                owner,
-                null,
-                hinstance,
-                null,
-            ) orelse return null;
+            // Unowned (`tooltip_window.zig`, T1866): both owners destroy it
+            // themselves (`destroy` below), so ownership bought nothing but
+            // the z-order hazard.
+            const tip = tooltip_window.create(hinstance) orelse return null;
 
             system_colors.applyControlThemeDark(tip, dark);
 

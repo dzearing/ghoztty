@@ -28,6 +28,7 @@ const gdiplus_decode = @import("gdiplus_decode.zig");
 const RegionSelector = @import("RegionSelector.zig");
 const system_colors = @import("system_colors.zig");
 const viewer_accel = @import("viewer_accel.zig");
+const tooltip_window = @import("tooltip_window.zig");
 const Accessible = @import("viewer_feedback_acc.zig");
 const a11y = @import("viewer_feedback_a11y.zig");
 const ViewerPane = @import("ViewerPane.zig");
@@ -59,26 +60,9 @@ pub fn tipId(b: layout_mod.Button) usize {
 pub fn tipEnsure(self: *ViewerFeedbackBar) ?w32.HWND {
     if (self.tip) |h| return h;
 
-    var icc = w32.INITCOMMONCONTROLSEX{
-        .dwSize = @sizeOf(w32.INITCOMMONCONTROLSEX),
-        .dwICC = w32.ICC_TAB_CLASSES,
-    };
-    _ = w32.InitCommonControlsEx(&icc);
-
-    const tip = w32.CreateWindowExW(
-        w32.WS_EX_TOPMOST | w32.WS_EX_TOOLWINDOW | w32.WS_EX_NOACTIVATE,
-        w32.TOOLTIPS_CLASS,
-        std.unicode.utf8ToUtf16LeStringLiteral(""),
-        w32.WS_POPUP | w32.TTS_ALWAYSTIP | w32.TTS_NOPREFIX,
-        w32.CW_USEDEFAULT,
-        w32.CW_USEDEFAULT,
-        w32.CW_USEDEFAULT,
-        w32.CW_USEDEFAULT,
-        self.hwnd,
-        null,
-        null,
-        null,
-    ) orelse return null;
+    // Unowned (`tooltip_window.zig`, T1866): it is created on the band's
+    // layout, which can be in a window the user is not in.
+    const tip = tooltip_window.create(null) orelse return null;
 
     // The composer's own theme decides the tip's: this band is already dark or
     // light for the page it sits over, and a light tip over a dark composer is

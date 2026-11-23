@@ -1,16 +1,15 @@
 {
     "guard":  "viewer-feedback-a11y",
     "script":  "test/win32/viewer-feedback-a11y.ps1",
-    "generated":  "2026-11-22T18:48:37-08:00",
-    "commit":  "d68c974a4",
+    "generated":  "2026-11-22T23:35:07-08:00",
+    "commit":  "56b3f8068",
     "uncommitted":  [
-                        "src/apprt/win32/viewer_feedback_focus.zig",
-                        "src/apprt/win32/ViewerFeedbackBar.zig"
+                        "src/apprt/win32/viewer_feedback_focus.zig"
                     ],
     "files":  {
                   "src/apprt/win32/viewer_feedback_a11y.zig":  "360db1218337b04b0bcf80438dfb19c6017603617e5c880ea3e0486661e4ca0f",
                   "src/apprt/win32/viewer_feedback_acc.zig":  "3fd6d388b4084a066d62c774113ca2de51aaddee99ab8263c4fd9bbbdcbed328",
-                  "src/apprt/win32/viewer_feedback_focus.zig":  "22c3f6b036a99ba87193b36eebe29faa20f491f0e2c54948db0469f78f2bb9ec",
+                  "src/apprt/win32/viewer_feedback_focus.zig":  "8de0d713400708738baf270a6d0cab47d8063f09c399f40fe60573916eab2414",
                   "src/apprt/win32/ViewerFeedbackBar.zig":  "4591b0f25871ccbfb6e0419b54459873c602b7b090c54cac2001bef1a81e2b61",
                   "test/win32/lib/AccProbe.ps1":  "d9eb8fa032c9254a0e7581a48cab4ccf1f42f459bf92152978e4c8bc1de54c32",
                   "test/win32/viewer-feedback-a11y.ps1":  "5fac54144f172e562b4139426c421f0a083bb19294815e3095af62b8201e4411"

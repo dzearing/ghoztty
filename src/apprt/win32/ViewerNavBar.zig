@@ -42,6 +42,7 @@ const field_mod = @import("viewer_nav_field.zig");
 const viewer_nav = @import("viewer_nav.zig");
 const viewer_worktree = @import("viewer_worktree.zig");
 const viewer_accel = @import("viewer_accel.zig");
+const tooltip_window = @import("tooltip_window.zig");
 const ViewerPane = @import("ViewerPane.zig");
 const input = @import("../../input.zig");
 const utf16_text = @import("utf16_text.zig");
@@ -847,26 +848,9 @@ pub fn setWorktree(self: *ViewerNavBar, root: ?[]const u8) bool {
 fn tipEnsure(self: *ViewerNavBar) ?w32.HWND {
     if (self.tip) |h| return h;
 
-    var icc = w32.INITCOMMONCONTROLSEX{
-        .dwSize = @sizeOf(w32.INITCOMMONCONTROLSEX),
-        .dwICC = w32.ICC_TAB_CLASSES,
-    };
-    _ = w32.InitCommonControlsEx(&icc);
-
-    const tip = w32.CreateWindowExW(
-        w32.WS_EX_TOPMOST | w32.WS_EX_TOOLWINDOW | w32.WS_EX_NOACTIVATE,
-        w32.TOOLTIPS_CLASS,
-        std.unicode.utf8ToUtf16LeStringLiteral(""),
-        w32.WS_POPUP | w32.TTS_ALWAYSTIP | w32.TTS_NOPREFIX,
-        w32.CW_USEDEFAULT,
-        w32.CW_USEDEFAULT,
-        w32.CW_USEDEFAULT,
-        w32.CW_USEDEFAULT,
-        self.hwnd,
-        null,
-        null,
-        null,
-    ) orelse return null;
+    // Unowned (`tooltip_window.zig`, T1866): it is created on the bar's first
+    // layout, which can be in a window the user is not in.
+    const tip = tooltip_window.create(null) orelse return null;
 
     // The bar's own theme decides the tip's, the way the dialogs decide theirs
     // — the bar is already dark or light for this pane's background.

@@ -41,6 +41,7 @@ const CloseUndo = @import("CloseUndo.zig");
 const ViewerPane = @import("ViewerPane.zig");
 const ViewerNavBar = @import("ViewerNavBar.zig");
 const viewer_accel = @import("viewer_accel.zig");
+const tooltip_window = @import("tooltip_window.zig");
 const viewer_content = @import("viewer_content.zig");
 const SplitTree = @import("../../datastruct/split_tree.zig").SplitTree;
 const pane_pool_rules = @import("pane_pool.zig");
@@ -2771,6 +2772,12 @@ fn releaseWindowBound(self: *Window) void {
     if (self.fullscreen_exit_btn) |b| {
         b.destroy();
         self.fullscreen_exit_btn = null;
+    }
+    // The tab tooltip is unowned (T1866), so the window's own teardown does
+    // not take it: an un-destroyed one would outlive the window.
+    if (self.tab_tip_hwnd) |t| {
+        self.tab_tip_hwnd = null;
+        _ = w32.DestroyWindow(t);
     }
     inline for (.{ "tab_font", "pill_font", "rename_font" }) |field| {
         if (@field(self, field)) |font| {
@@ -22338,28 +22345,13 @@ fn tabTipToolInfo(self: *Window) w32.TOOLINFOW {
 /// this with the fresh answer (T557).
 fn tabTipEnsure(self: *Window) ?w32.HWND {
     if (self.tab_tip_hwnd) |h| return h;
-    const hwnd = self.hwnd orelse return null;
+    // No window, no tools to attach a tip to (the tools name `self.hwnd`).
+    if (self.hwnd == null) return null;
 
-    var icc = w32.INITCOMMONCONTROLSEX{
-        .dwSize = @sizeOf(w32.INITCOMMONCONTROLSEX),
-        .dwICC = w32.ICC_TAB_CLASSES,
-    };
-    _ = w32.InitCommonControlsEx(&icc);
-
-    const tip = w32.CreateWindowExW(
-        w32.WS_EX_TOPMOST | w32.WS_EX_TOOLWINDOW | w32.WS_EX_NOACTIVATE,
-        w32.TOOLTIPS_CLASS,
-        std.unicode.utf8ToUtf16LeStringLiteral(""),
-        w32.WS_POPUP | w32.TTS_ALWAYSTIP | w32.TTS_NOPREFIX,
-        w32.CW_USEDEFAULT,
-        w32.CW_USEDEFAULT,
-        w32.CW_USEDEFAULT,
-        w32.CW_USEDEFAULT,
-        hwnd,
-        null,
-        self.app.hinstance,
-        null,
-    ) orelse return null;
+    // Unowned (`tooltip_window.zig`, T1866): a hover over a tab of a window
+    // the user is not in must not lift that window. Not owned means not torn
+    // down with the window either, so `releaseWindowBound` destroys it.
+    const tip = tooltip_window.create(self.app.hinstance) orelse return null;
 
     const tip_bg = self.app.config.background;
     const dark = chrome_theme.isDark(

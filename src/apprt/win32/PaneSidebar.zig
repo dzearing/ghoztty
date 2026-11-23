@@ -74,6 +74,7 @@ const color_math = @import("color_math.zig");
 const pane_hue = @import("pane_hue.zig");
 const chrome_theme = @import("chrome_theme.zig");
 const system_colors = @import("system_colors.zig");
+const tooltip_window = @import("tooltip_window.zig");
 const banner_card = @import("banner_card.zig");
 const type_ramp = @import("type_ramp.zig");
 const list_selection = @import("list_selection.zig");
@@ -5671,32 +5672,11 @@ pub fn gutterDragging(self: *const PaneSidebar) bool {
 
 fn tipEnsure(self: *PaneSidebar) ?w32.HWND {
     if (self.tip) |h| return h;
-    var icc = w32.INITCOMMONCONTROLSEX{
-        .dwSize = @sizeOf(w32.INITCOMMONCONTROLSEX),
-        .dwICC = w32.ICC_TAB_CLASSES,
-    };
-    _ = w32.InitCommonControlsEx(&icc);
-    const tip = w32.CreateWindowExW(
-        w32.WS_EX_TOPMOST | w32.WS_EX_TOOLWINDOW | w32.WS_EX_NOACTIVATE,
-        w32.TOOLTIPS_CLASS,
-        std.unicode.utf8ToUtf16LeStringLiteral(""),
-        w32.WS_POPUP | w32.TTS_ALWAYSTIP | w32.TTS_NOPREFIX,
-        w32.CW_USEDEFAULT,
-        w32.CW_USEDEFAULT,
-        w32.CW_USEDEFAULT,
-        w32.CW_USEDEFAULT,
-        // UNOWNED, on purpose. Owned by this window, the topmost tooltip
-        // dragged its owner up the z-order the moment it was created - and it
-        // is created on the first layout of every window, including one
-        // opened in the background, which then landed ABOVE the window the
-        // user was in (cli-focus-policy.ps1 arm R, measured: new window at
-        // z=6 over Ghoztty's frontmost at z=9; unowned, 5 under 4). The tool
-        // texts are set directly, so no notification needs a parent.
-        null,
-        null,
-        null,
-        null,
-    ) orelse return null;
+    // Unowned (`tooltip_window.zig`, T1842/T1866): owned by this window, the
+    // topmost tip dragged it up the z-order on the first layout of a window
+    // opened in the background (cli-focus-policy.ps1 arm R: new window at
+    // z=6 over Ghoztty's frontmost at z=9; unowned, 5 under 4).
+    const tip = tooltip_window.create(null) orelse return null;
     // A tile's tip is two lines (the title, then the hint): a max width is
     // what makes the control honor the line break at all.
     _ = w32.SendMessageW(tip, w32.TTM_SETMAXTIPWIDTH, 0, pane_sidebar.px(320, self.scale));

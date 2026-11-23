@@ -34,6 +34,11 @@
 #   I  +split --focus                   POSITIVE: the new pane takes the keyboard
 #   J  +new-window --focus              POSITIVE: the new window activates
 #   K  +new-window --target=<existing> --focus   POSITIVE: the existing one activates
+#   T  no tooltip the run created is OWNED by a window (T1866: an owned topmost
+#      tip lifted a background window over the user's frontmost, T1842)
+#
+# E and F read the z-order of the EXISTING background window they split into
+# (T1866): a pane's chrome lays out there, in a window the user is not in.
 #
 # NOT covered here: the `ghoztty://focus` scheme and user keybinds, whose own
 # harnesses (url-scheme.ps1, kb-actions.ps1) assert that they still focus.
@@ -222,7 +227,10 @@ try {
     Write-Host "      +split --target=bg1: $(Invoke-Cli @('+split', '--target=bg1'))"
     Start-Sleep -Milliseconds 900
     Assert ((Count-Panes $w2) -eq $n + 1) "E: the split landed ($n -> $(Count-Panes $w2) panes)"
-    Assert-Background 0 'E:'
+    # $w2, not 0: the split lays out a window that is ALREADY in the background,
+    # which is where a pane's eagerly-created chrome (a tooltip owned by the
+    # window, T1866) could lift it over the user's app.
+    Assert-Background $w2 'E:'
 
     # ---- F: a viewer split -------------------------------------------------
     Enter-ForeignApp
@@ -230,7 +238,9 @@ try {
     Write-Host "      +split --view --target=bg1: $(Invoke-Cli @('+split', '--target=bg1', "--view=$viewFile"))"
     Start-Sleep -Seconds 2
     Assert ((Count-Panes $w2) -eq $n + 1) "F: the viewer split landed ($n -> $(Count-Panes $w2) panes)"
-    Assert-Background 0 'F:'
+    # The viewer's nav bar registers its tooltips on its first layout (T1866):
+    # read the background window's z-order after it.
+    Assert-Background $w2 'F:'
 
     # ---- R: +new-remote-window over a loopback agent -------------------------
     $env:GHOSTTY_AGENT_LOCK = Join-Path $env:TEMP "ghoztty-focus-policy-agent-$PID.lock"
@@ -329,6 +339,21 @@ try {
     [void](Invoke-Cli @('+new-window', '--target=bg1', '--focus=true'))
     Start-Sleep -Milliseconds 900
     Assert ((Active) -eq $w2) "K: an existing target with --focus=true is activated (active=$(Active), want $w2)"
+
+    # ---- T: no tooltip is OWNED by a window (T1842/T1866) ----------------------
+    # A topmost tooltip owned by a background window dragged that window above
+    # the user's frontmost one (T1842, the pane sidebar, arm R). The lift is
+    # timing-dependent - creating the same owned tip at a different moment of
+    # a window's life measured no lift - so z-order alone is a weak guard. The
+    # structural rule is the strong one: every product tooltip is created
+    # unowned (`tooltip_window.zig`). By here the run has laid out a viewer
+    # nav bar (B, F, H) and a remote window's sidebar (R), so the tips exist.
+    $tips = @(Get-TestWindows -ProcessId $script:appPid -Class 'tooltips_class32' -AllowHidden)
+    $owned = @($tips | Where-Object { (Get-TestWindowOwner -Window ([IntPtr]$_.Hwnd)) -ne 0 } |
+        ForEach-Object { '{0}->owner {1}' -f $_.Hwnd, (Get-TestWindowOwner -Window ([IntPtr]$_.Hwnd)) })
+    Write-Host "      tooltips: $($tips.Count) total, $($owned.Count) owned $($owned -join ' ')"
+    Assert ($tips.Count -ge 1) "T: the run created tooltips to inspect ($($tips.Count))"
+    Assert ($owned.Count -eq 0) "T: no tooltip is owned by a window ($($owned -join ', '))"
 
     Assert (-not ($app.Process -and $app.Process.HasExited)) 'no crash'
     $launched += $script:GhozttyTestDesktopPids

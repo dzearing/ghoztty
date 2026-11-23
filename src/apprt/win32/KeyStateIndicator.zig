@@ -46,6 +46,7 @@
 const std = @import("std");
 const w32 = @import("win32.zig");
 const system_colors = @import("system_colors.zig");
+const tooltip_window = @import("tooltip_window.zig");
 const pane_clip = @import("pane_clip.zig");
 const chrome_fanout = @import("chrome_fanout.zig");
 const pill = @import("key_state_pill.zig");
@@ -406,26 +407,8 @@ pub const KeyStateIndicator = struct {
             _ = w32.DestroyWindow(t);
         }
 
-        var icc = w32.INITCOMMONCONTROLSEX{
-            .dwSize = @sizeOf(w32.INITCOMMONCONTROLSEX),
-            .dwICC = w32.ICC_TAB_CLASSES,
-        };
-        _ = w32.InitCommonControlsEx(&icc);
-
-        const tip = w32.CreateWindowExW(
-            w32.WS_EX_TOPMOST | w32.WS_EX_TOOLWINDOW | w32.WS_EX_NOACTIVATE,
-            w32.TOOLTIPS_CLASS,
-            std.unicode.utf8ToUtf16LeStringLiteral(""),
-            w32.WS_POPUP | w32.TTS_ALWAYSTIP | w32.TTS_NOPREFIX,
-            w32.CW_USEDEFAULT,
-            w32.CW_USEDEFAULT,
-            w32.CW_USEDEFAULT,
-            w32.CW_USEDEFAULT,
-            self.hwnd,
-            null,
-            null,
-            null,
-        ) orelse return null;
+        // Unowned (`tooltip_window.zig`, T1866); `destroy` takes it down.
+        const tip = tooltip_window.create(null) orelse return null;
 
         system_colors.applyControlThemeDark(tip, dark);
 

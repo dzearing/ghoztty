@@ -40,6 +40,10 @@ test {
     // `TTF_SUBCLASS` tool is actually relayed. The wrong value shipped for a
     // month because every oracle read the registration, never the relay.
     _ = @import("win32/tooltip_flags.zig");
+    // T1866: every product tooltip is created through one constructor, and
+    // it makes the control UNOWNED (an owned topmost tip lifted a background
+    // window over the user's frontmost one, T1842).
+    _ = @import("win32/tooltip_window.zig");
     // The split tree's leaf type and the viewer leaf it makes room for
     // (T90c). ViewerPane has no constructor caller until T90d, and the same
     // rule as system_colors applies: a module no lane compiles is a module

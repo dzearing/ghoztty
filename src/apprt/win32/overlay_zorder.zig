@@ -70,8 +70,11 @@
 //!     sidebar's hover-open card was seated the same way until T2289 retired
 //!     it with Mac's hover-open.)
 //!   - NOT OURS: the tooltips (`ViewerNavBar`, `ViewerFeedbackBar`,
-//!     `KeyStateIndicator`, `Window`) are system `TOOLTIPS_CLASS` windows the
-//!     OS places and tears down itself, and the modal dialogs
+//!     `KeyStateIndicator`, `Window`, `PaneSidebar`, `help_tooltip`) are
+//!     system `TOOLTIPS_CLASS` windows the OS places itself. They are created
+//!     UNOWNED through `tooltip_window.create` (T1866) - owned, a topmost tip
+//!     dragged a background window over the user's frontmost one (T1842) -
+//!     so each owner destroys its own. And the modal dialogs
 //!     (`ConfirmDialog`, `RenameDialog`, `MachineChooser`, `HostSettingsDialog`,
 //!     `NewProcessDialog`, `BannerDialog`, `AgentIntegrationsDialog`,
 //!     `UpdateProgress`) are activated top-levels with a caption. Nor are the

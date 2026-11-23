@@ -1,17 +1,17 @@
 {
     "guard":  "viewer-diff",
     "script":  "test/win32/viewer-diff.ps1",
-    "generated":  "2026-11-22T19:12:14-08:00",
-    "commit":  "75469df1d",
+    "generated":  "2026-11-22T23:35:53-08:00",
+    "commit":  "56b3f8068",
     "uncommitted":  [
-
+                        "src/apprt/win32/ViewerNavBar.zig"
                     ],
     "files":  {
                   "src/apprt/win32/git_run.zig":  "8033fbd8388eec7a044a131ec23548eff5ef7be6f67b1ca81f4cf5f4f2d9b79a",
                   "src/apprt/win32/viewer_diff.zig":  "ab7315d1415a453e4aa2cc356df48f3beb74773451787aee44f5a3ca25a6bb2f",
                   "src/apprt/win32/viewer_prefs.zig":  "0c0ce979e339a05856311b33ee613f34079c97e5d28473ea360e2b9c6c909b6a",
                   "src/apprt/win32/ViewerDiffProbe.zig":  "451ddcd0dc1dfd9f2d5e0e54732156485c2c16975b9b7aa6c23dd75564224dda",
-                  "src/apprt/win32/ViewerNavBar.zig":  "2a75d85c84c63b4be229ca1f230a111f0be5c56110069f8566560cbe11bd2c06",
+                  "src/apprt/win32/ViewerNavBar.zig":  "a407509dd2226edbff97599f5bc8583e5c01a83d74d4126125c4ea0027a5f306",
                   "src/viewer/diff.js":  "3db62617fb7bc74a5141ebb523dcd71e2fce9e45b9bfb31f5f385bdfdb1980fc",
                   "test/win32/viewer-diff.ps1":  "45c5815b572fc6eb9bd8550d9271ac9b1f2c66aec66f7ed82e2e29bc04d2a644"
               },
