@@ -79,15 +79,30 @@ for w in d["windows"]:
             if l.get("name") == want: print(l.get(field)); sys.exit(0)
 ' "$1" "$2" 2>/dev/null
 }
-# manifest_q <python expr over m>: evaluate against the manifest file.
+# manifest_q <python expr>: evaluate against the manifest, with `m` the file
+# (None when absent) and `leaves` every leaf in it. The expression travels in
+# argv, so it can use double quotes inside the shell's single quotes.
 manifest_q() {
-    python3 -c "
+    python3 -c '
 import json, sys
-try: m = json.load(open('$manifest'))
+try: m = json.load(open(sys.argv[1]))
 except Exception: m = None
-leaves = [n['leaf'] for w in (m or {}).get('windows', []) for t in w['tabs'] for n in t['nodes'] if 'leaf' in n]
-print($1)
-" 2>/dev/null
+leaves = [n["leaf"] for w in (m or {}).get("windows", []) for t in w["tabs"] for n in t["nodes"] if "leaf" in n]
+print(eval(sys.argv[2]))
+' "$manifest" "$1" 2>/dev/null
+}
+# live_leaves: how many +list panes report a session pid.
+live_leaves() {
+    cli +list --json 2>/dev/null | python3 -c '
+import json, sys
+d = json.load(sys.stdin)["data"]
+def walk(n):
+    if n["type"] == "split":
+        yield from walk(n["left"]); yield from walk(n["right"])
+    else:
+        yield n["terminal"]
+print(sum(1 for w in d["windows"] for t in w["tabs"] for l in walk(t["splits"]) if (l.get("pid") or 0) > 0))
+' 2>/dev/null
 }
 
 # ---- 1. a running app keeps the manifest ----------------------------------
@@ -95,20 +110,20 @@ hl_launch APP "$app" --gtk-single-instance=false
 hl_wait_for 30 serving
 hl_check "R2 the app serves its socket (launched with no command)" $?
 pA="$HL_RUNTIME/pA"; pB="$HL_RUNTIME/pB"; pC="$HL_RUNTIME/pC"
-cli +new-window --target=wa --name=pa --command="echo \$\$ > $pA; exec sleep 100000" > /dev/null 2>&1
+cli +new-window --target=wa --name=pa --command="echo ready-pa; echo \$\$ > $pA; exec sleep 100000" > /dev/null 2>&1
 hl_wait_for 20 test -s "$pA"
-cli +split --pane=pa --name=pb --direction=right --percent=30 --command="echo \$\$ > $pB; exec sleep 100000" > /dev/null 2>&1
-cli +split --pane=pb --name=pc --direction=down --command="echo \$\$ > $pC; exec sleep 100000" > /dev/null 2>&1
+cli +split --pane=pa --name=pb --direction=right --percent=30 --command="echo ready-pb; echo \$\$ > $pB; exec sleep 100000" > /dev/null 2>&1
+cli +split --pane=pb --name=pc --direction=down --command="echo ready-pc; echo \$\$ > $pC; exec sleep 100000" > /dev/null 2>&1
 hl_wait_for 20 sh -c "test -s $pB && test -s $pC"
 hl_check "R3 three named agent-hosted panes run in window wa" $? "pA=$(cat "$pA" 2>/dev/null) pB=$(cat "$pB" 2>/dev/null) pC=$(cat "$pC" 2>/dev/null)"
-hl_wait_for 10 sh -c "[ \"\$(python3 -c \"
-import json
-m = json.load(open('$manifest'))
-print(sum(1 for w in m['windows'] for t in w['tabs'] for n in t['nodes'] if n.get('leaf', {}).get('session_id')))
-\" 2>/dev/null)\" = 4 ]"
-hl_check "R4 the manifest records every pane with its session id within seconds" $? "$(manifest_q 'len(leaves), [l.get(\"session_id\") is not None for l in leaves]')"
+sids_ok() { [ "$(manifest_q 'sum(1 for l in leaves if l.get("session_id"))')" = 4 ]; }
+hl_wait_for 10 sids_ok
+hl_check "R4 the manifest records every pane with its session id within seconds" $? "$(manifest_q '[l.get("session_id") for l in leaves]')"
+four_live() { [ "$(live_leaves)" = 4 ]; }
+hl_wait_for 10 four_live
 before=$(shape)
 wins_before=$(printf '%s\n' "$before" | grep -c .)
+listA=$(leaf_field pa pid); listB0=$(leaf_field pb pid); listC=$(leaf_field pc pid)
 
 # ---- 2. a crash: relaunch re-attaches the same processes ------------------
 kill -KILL "$APP" 2>/dev/null; wait "$APP" 2>/dev/null
@@ -116,7 +131,7 @@ alive "$(cat "$pA")" && alive "$(cat "$pB")" && alive "$(cat "$pC")"
 hl_check "R5 every pane's process outlives the SIGKILLed app" $?
 hl_launch APP2 "$app" --gtk-single-instance=false
 hl_wait_for 30 serving
-hl_wait_for 15 sh -c "[ \"\$(env -u GHOZTTY_IPC_SOCKET -u GHOZTTY_PANE_ID '$app' +list --json 2>/dev/null | grep -o '\"pid\":[1-9]' | wc -l)\" -ge 4 ]"
+hl_wait_for 15 four_live
 after=$(shape)
 [ -n "$before" ] && [ "$after" = "$before" ]
 hl_check "R6 the relaunch rebuilds every window, split, ratio, name and pane id, on the SAME pids" $? "
@@ -125,8 +140,11 @@ after:  $after"
 wins_after=$(printf '%s\n' "$after" | grep -c .)
 [ "$wins_after" = "$wins_before" ] && [ "$wins_after" = 2 ]
 hl_check "R7 no extra window beside the restored ones" $? "before=$wins_before after=$wins_after"
-[ "$(leaf_field pa pid)" = "$(cat "$pA")" ]
-hl_check "R8 pane pa is the very process it was (re-attached, not re-run)" $? "list=$(leaf_field pa pid) shell=$(cat "$pA")"
+[ -n "$listA" ] && [ "$listA" != 0 ] && [ "$(leaf_field pa pid)" = "$listA" ] && alive "$(cat "$pA")"
+hl_check "R8 pane pa is the very process it was (re-attached, not re-run)" $? "list=$(leaf_field pa pid) before=$listA"
+read_pa() { cli +read --name=pa --lines=50 2>/dev/null | grep -q 'ready-pa'; }
+hl_wait_for 10 read_pa
+hl_check "R8b pa's restored screen still shows what it printed before the crash" $? "$(cli +read --name=pa --lines=8 2>&1 | tr '\n' '|' | head -c 300)"
 grep -q 'session layout: restored 2 of 2 window(s), 4 pane(s) re-attached' "$APP2_LOG"
 hl_check "R9 the app logs that it re-attached all four panes" $? "$(grep -m1 'session layout: restored' "$APP2_LOG")"
 
@@ -138,28 +156,21 @@ alive "$(cat "$pA")" && alive "$(cat "$pB")" && cli +sessions 2>/dev/null | grep
 hl_check "R11 the quit detached: every session is still alive" $? "$(cli +sessions 2>&1 | head -5 | tr '\n' '|')"
 [ "$(manifest_q 'len(leaves)')" = 4 ]
 hl_check "R12 the quit left the manifest with all four panes" $? "$(manifest_q 'len(leaves)')"
-[ "$(manifest_q 'sum(1 for l in leaves if l.get(\"screen_snapshot\") and l.get(\"screen_snapshot_offset\"))')" -ge 1 ] 2>/dev/null
-hl_check "R13 the quit's write carries the panes' screen snapshots" $? "$(manifest_q '[bool(l.get(\"screen_snapshot\")) for l in leaves]')"
+[ "$(manifest_q 'sum(1 for l in leaves if l.get("screen_snapshot") and l.get("screen_snapshot_offset"))')" = 4 ]
+hl_check "R13 the quit's write carries every pane's screen snapshot" $? "$(manifest_q '[bool(l.get("screen_snapshot")) for l in leaves]')"
 
 # ---- 4. a session that died while the app was down comes back fresh --------
-oldB=$(cat "$pB"); oldC=$(cat "$pC"); idB=$(manifest_q '[l[\"pane_id\"] for l in leaves if l.get(\"ipc_name\") == \"pb\"][0]')
+oldB=$(cat "$pB"); idB=$(manifest_q '[l["pane_id"] for l in leaves if l.get("ipc_name") == "pb"][0]')
 kill -KILL "$oldB" 2>/dev/null
 hl_wait_for 10 sh -c "! kill -0 $oldB 2>/dev/null"
 hl_launch APP3 "$app" --gtk-single-instance=false
 hl_wait_for 30 serving
-hl_wait_for 15 sh -c "p=\$(env -u GHOZTTY_IPC_SOCKET -u GHOZTTY_PANE_ID '$app' +list --json 2>/dev/null | python3 -c \"
-import json,sys
-d=json.load(sys.stdin)['data']
-def w(n):
-    if n['type']=='split':
-        yield from w(n['left']); yield from w(n['right'])
-    else: yield n['terminal']
-print([l.get('pid') for x in d['windows'] for t in x['tabs'] for l in w(t['splits']) if l.get('name')=='pb'][0])\" 2>/dev/null); [ -n \"\$p\" ] && [ \"\$p\" != 0 ] && [ \"\$p\" != None ]"
-newB=$(leaf_field pb pid)
-[ -n "$newB" ] && [ "$newB" != "$oldB" ] && alive "$newB" && [ "$(leaf_field pb id)" = "$idB" ]
-hl_check "R14 pb, whose session died, is back as a FRESH shell under its own pane id" $? "old=$oldB new=$newB id=$(leaf_field pb id) want=$idB"
-[ "$(leaf_field pc pid)" = "$oldC" ] && [ "$(leaf_field pa pid)" = "$(cat "$pA")" ]
-hl_check "R15 the panes whose sessions lived are re-attached beside it" $? "pc=$(leaf_field pc pid)/$oldC pa=$(leaf_field pa pid)/$(cat "$pA")"
+hl_wait_for 15 four_live
+listB=$(leaf_field pb pid)
+[ -n "$listB" ] && [ "$listB" != 0 ] && [ "$listB" != "$listB0" ] && alive "$listB" && [ -n "$idB" ] && [ "$(leaf_field pb id)" = "$idB" ]
+hl_check "R14 pb, whose session died, is back as a FRESH shell under its own pane id" $? "old=$listB0 new=$listB id=$(leaf_field pb id) want=$idB"
+[ "$(leaf_field pc pid)" = "$listC" ] && [ "$(leaf_field pa pid)" = "$listA" ]
+hl_check "R15 the panes whose sessions lived are re-attached beside it" $? "pc=$(leaf_field pc pid)/$listC pa=$(leaf_field pa pid)/$listA"
 
 # ---- 5. a second instance neither restores nor writes -----------------------
 m_before=$(md5sum "$manifest" 2>/dev/null)
