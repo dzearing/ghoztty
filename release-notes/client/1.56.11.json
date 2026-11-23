@@ -1,0 +1,22 @@
+{
+  "version": "1.56.11",
+  "sections": [
+    { "title": "New",
+      "items": [
+        { "text": "On Linux, an image opened in a viewer pane shows the picture, zooms like the Mac's, and keeps the zoom across a save." },
+        { "text": "test/linux/viewer-diff.sh is executable." },
+        { "text": "On Linux, git-status: and git-diff: panes show the diff with a changed-files panel, filter, change stepping and live refresh." },
+        { "text": "The Linux markdown viewer gets its table of contents card." },
+        { "text": "A Linux viewer pane shows a feedback button when its content lives in a git checkout." },
+        { "text": "viewer-feedback.sh waits quietly for its steps file; linux.md documents the feedback button." },
+        { "text": "WIP T3397: session-restore.sh covers an agent restart; ipc-server.sh I16 probes +set-banner now that +reload is served." },
+        { "text": "test/linux/session-restore.sh is executable like its siblings." },
+        { "text": "Relaunching the Linux app brings back its windows with every pane re-attached to its shell." }
+      ] },
+    { "title": "Improvements",
+      "items": [
+        { "text": "Fullscreen Claude Code blanks the pane on every resize, and the sync hold is what hides it." },
+        { "text": "The divider-drag perf test measures a real drag at 4 and 8 panes instead of reusing the 2-pane number." }
+      ] }
+  ]
+}
