@@ -186,18 +186,18 @@ hl_check "C18 the send button files too" $? "$s"
 lum() { echo "$1" | sed -n 's/.*rgb(\([0-9]*\), *\([0-9]*\), *\([0-9]*\)).*/\1 \2 \3/p' | awk '{print $1+$2+$3}'; }
 paint() { nth probe "$1" | sed 's/^probe OK //'; }
 p1=$(paint 3); bg1=$(lum "${p1%%|*}"); fg1=$(lum "${p1#*|}")
-s=$(co 13)
+s=$(co 12)
 has "$s" "open=true view=true ready=true" && has "$s" "style=light" && [ "${bg1:-0}" -gt 600 ] && [ "${fg1:-999}" -lt 300 ]
 hl_check "C24 under a light style the composer opens as a light pill with dark text" $? "$s / $p1"
 
 p2=$(paint 4); bg2=$(lum "${p2%%|*}"); fg2=$(lum "${p2#*|}")
-s=$(co 14)
-v13=$(co 13 | sed -n 's/.* vars=\([0-9]*\).*/\1/p'); v14=$(echo "$s" | sed -n 's/.* vars=\([0-9]*\).*/\1/p')
-has "$s" "style=dark" && [ "${v14:-0}" -gt "${v13:-0}" ] && [ "${bg2:-999}" -lt 300 ] && [ "${fg2:-0}" -gt 600 ]
+s=$(co 13)
+vbefore=$(co 12 | sed -n 's/.* vars=\([0-9]*\).*/\1/p'); vafter=$(echo "$s" | sed -n 's/.* vars=\([0-9]*\).*/\1/p')
+has "$s" "style=dark" && [ "${vafter:-0}" -gt "${vbefore:-0}" ] && [ "${bg2:-999}" -lt 300 ] && [ "${fg2:-0}" -gt 600 ]
 hl_check "C25 a flip to dark while it is open re-dresses the page: dark fill, light text - never the white slab" $? "$s / $p2"
 
 p3=$(paint 5); bg3=$(lum "${p3%%|*}")
-s=$(co 15)
+s=$(co 14)
 has "$s" "style=dark" && [ "${bg3:-999}" -lt 300 ] && [ "$p3" = "$p2" ]
 hl_check "C26 a composer opened under the dark style starts dark, with the same colours" $? "$s / $p3"
 
