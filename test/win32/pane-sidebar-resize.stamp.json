@@ -1,15 +1,15 @@
 {
     "guard":  "pane-sidebar-resize",
     "script":  "test/win32/pane-sidebar-resize.ps1",
-    "generated":  "2026-11-22T23:31:21-08:00",
-    "commit":  "56b3f8068",
+    "generated":  "2026-11-23T03:12:24-08:00",
+    "commit":  "011782120",
     "uncommitted":  [
-                        "src/apprt/win32/PaneSidebar.zig"
+
                     ],
     "files":  {
                   "src/apprt/win32/gutter_bar_dc.zig":  "01173ddfd1b088710c95a3ac53ef549e3d944b0fb35df79c7760174c8b87ec4d",
-                  "src/apprt/win32/pane_sidebar.zig":  "c242e812dbf0e42956f4898a597f935f77a2a44d69a98dc8bf7978842ad3265b",
-                  "src/apprt/win32/PaneSidebar.zig":  "f0b3ddd621a9ff5f1ad426f8ebe868f8a3c432c7aff39a0456f3a086aed986ec",
+                  "src/apprt/win32/pane_sidebar.zig":  "af69c459a022bc08e803372e3dc6b330831950fc8b0818dfb5494a7f34069939",
+                  "src/apprt/win32/PaneSidebar.zig":  "4dc20125bbc967d397e9158a6a1ea31e54fbbd9350d2ef730e8cc756aafcd98c",
                   "test/win32/pane-sidebar-resize.ps1":  "49d9d94a8b58fecb90697d43fee251b046bd91cd4c29a4d88e798bfdaba9d274"
               },
     "code":  {
