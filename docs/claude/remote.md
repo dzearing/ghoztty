@@ -106,6 +106,15 @@ session and resume it later from the Cmd-Shift-N chooser.
   `RelayWindowRestore` dials each entry off the GUI thread, probes the session,
   and reopens the live ones with their `--name`, pin and title. Acceptance:
   `test\win32\relay-window-relaunch.ps1`.
+- **A relay sign-in replays the record too** (T3389, Mac `relayAccountDidSignIn`),
+  in two ordered passes so they never attach one session twice: first the T713
+  layout rebuild of what the sign-out closed (`RestoreAllRelay`, `.signin`), where
+  every rebuilt window drops the record entries for its sessions
+  (`Manifest.supersedeSessions`); then, once the last rebuild has landed
+  (`App.signInRebuildLanded`), `RelayWindowRestore` replays what is left - a
+  `+new-remote-window` window the far layouts never describe, or one left open
+  at a quit while signed out. The replay skips entries owned by a window that is
+  open right now. The end-to-end sign-in check is T3584.
 
 The user's answer is recorded as a **pin** (`SessionDetachPin`), not as a
 one-shot intent write, because a single close marks CLOSE-on-free twice from two

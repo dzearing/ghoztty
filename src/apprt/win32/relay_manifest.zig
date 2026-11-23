@@ -251,12 +251,22 @@ pub const Manifest = struct {
     /// Deep copies of every entry not already being restored, each marked in
     /// flight. Free with `freeSnapshot`. Per returned entry the caller must
     /// eventually `register(.., replacing)`, `remove` or `releaseRestore`.
-    pub fn snapshotForRestore(self: *Manifest, alloc: Allocator) ![]Entry {
+    ///
+    /// `skip_ids` names entries that belong to a window open right now (T3389):
+    /// a sign-in replays the record while windows the same sign-in rebuilt are
+    /// already up, and their fresh entries may not have a session id yet. Handed
+    /// to the restore, such an entry would read "never reported a session" and
+    /// be dropped out from under its own live window. Launch passes none.
+    pub fn snapshotForRestore(
+        self: *Manifest,
+        alloc: Allocator,
+        skip_ids: []const []const u8,
+    ) ![]Entry {
         var out: std.ArrayList(Entry) = .empty;
         errdefer freeSnapshot(alloc, out.items);
         defer out.deinit(alloc);
         for (self.slots.items) |s| {
-            if (s.in_flight) continue;
+            if (!wanted(s, skip_ids)) continue;
             const dup = try dupeEntryWith(alloc, s.entry);
             out.append(alloc, dup) catch |err| {
                 freeEntry(alloc, dup);
@@ -264,9 +274,56 @@ pub const Manifest = struct {
             };
         }
         // Mark only once the whole copy succeeded, so a failed snapshot leaves
-        // nothing stuck in flight.
-        for (self.slots.items) |*s| s.in_flight = true;
+        // nothing stuck in flight - and mark only what was handed out, so a
+        // skipped entry is never left in flight with nobody to release it.
+        for (self.slots.items) |*s| {
+            if (wanted(s.*, skip_ids)) s.in_flight = true;
+        }
         return out.toOwnedSlice(alloc);
+    }
+
+    fn wanted(s: Slot, skip_ids: []const []const u8) bool {
+        if (s.in_flight) return false;
+        for (skip_ids) |id| {
+            if (std.mem.eql(u8, s.entry.id, id)) return false;
+        }
+        return true;
+    }
+
+    /// A sign-in rebuilt `sessions` on (`relay_base`, `device`) from the far
+    /// machine's own layouts (T3389), and every rebuilt window registered a
+    /// fresh entry of its own. The older entries naming those sessions - kept
+    /// through the sign-out - are now duplicates: drop them, so the record
+    /// replay that follows does not try to attach the same session twice and a
+    /// later launch does not restore it twice. In-flight entries and entries
+    /// with no session id are left alone. Returns how many were dropped.
+    pub fn supersedeSessions(
+        self: *Manifest,
+        relay_base: []const u8,
+        device: []const u8,
+        sessions: []const []const u8,
+    ) usize {
+        var dropped: usize = 0;
+        var i: usize = 0;
+        while (i < self.slots.items.len) {
+            const s = self.slots.items[i];
+            const hit = !s.in_flight and
+                std.mem.eql(u8, s.entry.relay_base, relay_base) and
+                std.mem.eql(u8, s.entry.device, device) and
+                if (s.entry.session_id) |sid| containsId(sessions, sid) else false;
+            if (hit) {
+                const gone = self.slots.orderedRemove(i);
+                freeEntry(self.alloc, gone.entry);
+                dropped += 1;
+            } else i += 1;
+        }
+        if (dropped > 0) self.save();
+        return dropped;
+    }
+
+    fn containsId(ids: []const []const u8, id: []const u8) bool {
+        for (ids) |x| if (std.mem.eql(u8, x, id)) return true;
+        return false;
     }
 
     /// The restore could not be attempted (relay unreachable, no credential):
@@ -437,7 +494,7 @@ test "relay manifest: mark-don't-drain restore" {
     const gone = try m.register(.{ .relay_base = "b", .device = "d", .session_id = "s2" }, null);
     const away = try m.register(.{ .relay_base = "b", .device = "e", .session_id = "s3" }, null);
 
-    const snap = try m.snapshotForRestore(testing.allocator);
+    const snap = try m.snapshotForRestore(testing.allocator, &.{});
     defer {
         freeSnapshot(testing.allocator, snap);
         testing.allocator.free(snap);
@@ -445,7 +502,7 @@ test "relay manifest: mark-don't-drain restore" {
     try testing.expectEqual(@as(usize, 3), snap.len);
     // Nothing left the record, and a second snapshot gets nothing.
     try testing.expectEqual(@as(usize, 3), m.count());
-    const again = try m.snapshotForRestore(testing.allocator);
+    const again = try m.snapshotForRestore(testing.allocator, &.{});
     defer testing.allocator.free(again);
     try testing.expectEqual(@as(usize, 0), again.len);
 
@@ -457,6 +514,54 @@ test "relay manifest: mark-don't-drain restore" {
     try testing.expect(m.find(&a) == null);
     try testing.expect(!m.isInFlight(&fresh));
     try testing.expect(!m.isInFlight(&away));
+}
+
+test "relay manifest: a sign-in replay skips entries owned by open windows (T3389)" {
+    var m = Manifest.load(testing.allocator, null);
+    defer m.deinit();
+    const kept = try m.register(.{ .relay_base = "b", .device = "d", .session_id = "s1" }, null);
+    // A window the same sign-in just rebuilt: open, session id not captured yet.
+    const live = try m.register(.{ .relay_base = "b", .device = "d" }, null);
+
+    const snap = try m.snapshotForRestore(testing.allocator, &.{&live});
+    defer {
+        freeSnapshot(testing.allocator, snap);
+        testing.allocator.free(snap);
+    }
+    try testing.expectEqual(@as(usize, 1), snap.len);
+    try testing.expectEqualStrings(&kept, snap[0].id);
+    try testing.expect(m.isInFlight(&kept));
+    // The skipped entry is not left in flight with nobody to release it.
+    try testing.expect(!m.isInFlight(&live));
+}
+
+test "relay manifest: a sign-in rebuild supersedes the older entries for its sessions (T3389)" {
+    var m = Manifest.load(testing.allocator, null);
+    defer m.deinit();
+    const old = try m.register(.{ .relay_base = "b", .device = "d", .session_id = "s1" }, null);
+    const cli = try m.register(.{ .relay_base = "b", .device = "d", .session_id = "s9" }, null);
+    const elsewhere = try m.register(.{ .relay_base = "b", .device = "e", .session_id = "s1" }, null);
+    const pending = try m.register(.{ .relay_base = "b", .device = "d" }, null);
+    const busy = try m.register(.{ .relay_base = "b", .device = "d", .session_id = "s2" }, null);
+    // `busy` is being restored by another pass; it is that pass's to settle.
+    const snap = try m.snapshotForRestore(testing.allocator, &.{ &old, &cli, &elsewhere, &pending });
+    defer {
+        freeSnapshot(testing.allocator, snap);
+        testing.allocator.free(snap);
+    }
+    try testing.expect(m.isInFlight(&busy));
+
+    const ids = [_][]const u8{ "s1", "s2" };
+    try testing.expectEqual(@as(usize, 1), m.supersedeSessions("b", "d", &ids));
+    try testing.expect(m.find(&old) == null);
+    // A session the rebuild did not cover (a CLI-opened window) stays for the
+    // record replay; so do another machine's same-named id, an entry with no
+    // session yet, and an in-flight one.
+    try testing.expect(m.find(&cli) != null);
+    try testing.expect(m.find(&elsewhere) != null);
+    try testing.expect(m.find(&pending) != null);
+    try testing.expect(m.find(&busy) != null);
+    try testing.expectEqual(@as(usize, 0), m.supersedeSessions("b", "d", &ids));
 }
 
 test "relay manifest: round trip through the file, empty deletes it" {

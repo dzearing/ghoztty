@@ -782,6 +782,11 @@ ipc_remote_dial: ?*IpcHandlers.RemoteDialJob = null,
 /// long as somebody is signed out and is consumed by the next sign-in.
 relay_suspended: relay_signout.Store = .{},
 
+/// How many sign-in layout rebuilds (`RestoreAllRelay` with `.signin`) have not
+/// landed yet (T3389). When the last one lands the relay-window record is
+/// replayed for whatever they did not cover. GUI thread only.
+relay_signin_pending: usize = 0,
+
 /// The record of open relay windows that brings them back at the next launch
 /// (T3352, Mac `RemoteSessionManifest`). Loaded in `init`; GUI thread only.
 relay_manifest: relay_manifest_mod.Manifest,
@@ -9124,6 +9129,10 @@ pub fn adoptRestoreAll(self: *App, job: *RestoreAllRelay.Job) usize {
             continue;
         };
         restored += 1;
+        // T3389: the window just rebuilt registered a fresh record entry; the
+        // ones the sign-out kept for its sessions are now duplicates, and the
+        // record replay that follows this sign-in must not attach them again.
+        if (job.signin) self.supersedeRecordFor(job.base, job.device, p.win);
     }
     self.showRestoredFront(front);
 
@@ -9223,17 +9232,40 @@ pub fn suspendRelayWindowsForSignOut(self: *App) usize {
     return closed;
 }
 
-/// Replay what the last sign-out suspended (T713). Called on a successful relay
-/// SIGN-IN, from the GUI thread. Returns how many machines a restore was
-/// started for; each one rebuilds asynchronously through `RestoreAllRelay` and
-/// reports itself in the log (there is no chooser to report to — `chooser_id`
-/// 0 matches none, which is the same path a restore whose chooser closed takes).
+/// Replay what the last sign-out suspended (T713), then the relay-window record
+/// (T3389). Called on a successful relay SIGN-IN, from the GUI thread. Returns
+/// how many machines a layout rebuild was started for.
+///
+/// Two passes, in order, so they can never both attach one session:
+///
+///   1. each suspended machine rebuilds asynchronously through
+///      `RestoreAllRelay` from its own layouts, which keeps a multi-pane window
+///      whole (there is no chooser to report to — `chooser_id` 0 matches none,
+///      the same path a restore whose chooser closed takes). Every window it
+///      rebuilds supersedes the record entries for its sessions
+///      (`supersedeRecordFor`);
+///   2. once the last of those has landed (`signInRebuildLanded`), the record
+///      is replayed through `RelayWindowRestore` - Mac's sign-in path - which
+///      brings back what the far layouts never described: a window opened with
+///      `+new-remote-window`, or one left open at a quit while signed out.
 ///
 /// The suspended set is CONSUMED whatever happens. A restore that cannot start
 /// is not retried on the next sign-in: by then the user has had every chance to
 /// decide those windows are gone, and the chooser's Restore All is the button
-/// that says otherwise.
+/// that says otherwise. The record is mark-don't-drain, so what it cannot reach
+/// stays for the next launch or sign-in.
 pub fn restoreRelayWindowsForSignIn(self: *App) usize {
+    const started = self.startSignInRebuilds();
+    self.relay_signin_pending += started;
+    if (started > 0) {
+        log.info("relay sign-in: restoring windows on {d} machine(s)", .{started});
+    }
+    // Nothing to wait for: replay the record now.
+    if (self.relay_signin_pending == 0) self.replayRecordForSignIn();
+    return started;
+}
+
+fn startSignInRebuilds(self: *App) usize {
     const alloc = self.core_app.alloc;
     if (self.relay_suspended.isEmpty()) return 0;
 
@@ -9259,14 +9291,53 @@ pub fn restoreRelayWindowsForSignIn(self: *App) usize {
             .device = e.device,
             .token = token,
             .only = sessions,
+            .signin = true,
         })) {
             started += 1;
         } else {
             log.warn("relay sign-in: restore did not start device={s}", .{e.device});
         }
     }
-    log.info("relay sign-in: restoring windows on {d} machine(s)", .{started});
     return started;
+}
+
+/// GUI thread (T3389): one sign-in layout rebuild has landed, whatever its
+/// outcome. The last one starts the record replay.
+pub fn signInRebuildLanded(self: *App) void {
+    if (self.relay_signin_pending > 0) self.relay_signin_pending -= 1;
+    if (self.relay_signin_pending == 0) self.replayRecordForSignIn();
+}
+
+fn replayRecordForSignIn(self: *App) void {
+    if (self.quit_requested) return;
+    if (RelayWindowRestore.start(self)) {
+        log.info("relay sign-in: replaying the relay window record", .{});
+    } else {
+        log.info("relay sign-in: no recorded relay window to replay", .{});
+    }
+}
+
+/// T3389: drop the record entries a sign-in rebuild of `win` has superseded -
+/// every session one of its leaves names, on the machine it was rebuilt from.
+fn supersedeRecordFor(
+    self: *App,
+    relay_base: []const u8,
+    device: []const u8,
+    win: session_layout.Window,
+) void {
+    const alloc = self.core_app.alloc;
+    var ids: std.ArrayList([]const u8) = .empty;
+    defer ids.deinit(alloc);
+    for (win.tabs) |tab| {
+        for (tab.nodes) |node| {
+            const leaf = node.leaf orelse continue;
+            const sid = leaf.session_id orelse continue;
+            if (sid.len == 0) continue;
+            ids.append(alloc, sid) catch return;
+        }
+    }
+    const n = self.relay_manifest.supersedeSessions(relay_base, device, ids.items);
+    if (n > 0) log.info("relay sign-in: {d} record entr(y/ies) superseded by a layout rebuild", .{n});
 }
 
 /// Whether any leaf of `win` names a session one of our panes already has open
@@ -14992,7 +15063,11 @@ fn msgWndProc(
         // queue, leaking one relay connection per window it carries.
         if (wparam != 0) {
             const job: *RestoreAllRelay.Job = @ptrFromInt(wparam);
+            // Read before the handler frees the job.
+            const signin = job.signin;
             MachineChooser.onRestoreAll(app, job);
+            // T3389: the record replay waits for every sign-in rebuild.
+            if (signin) app.signInRebuildLanded();
         }
         return 0;
     }

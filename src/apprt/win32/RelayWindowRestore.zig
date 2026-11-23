@@ -79,12 +79,25 @@ pub const Job = struct {
 /// Returns false when there is nothing to restore or the worker could not
 /// start (in which case every entry is released, still recorded, for the next
 /// launch).
+///
+/// Runs at launch and, since T3389, after a relay sign-in - Mac's
+/// `relayAccountDidSignIn` replays the same record. A record entry that belongs
+/// to a window open right now is not this restore's to settle, so it is left
+/// out of the snapshot.
 pub fn start(app: *App) bool {
     const alloc = app.core_app.alloc;
     const hwnd = app.msg_hwnd orelse return false;
     if (app.relay_manifest.count() == 0) return false;
 
-    const entries = app.relay_manifest.snapshotForRestore(alloc) catch |err| {
+    var open_ids: std.ArrayList([]const u8) = .empty;
+    defer open_ids.deinit(alloc);
+    for (app.windows.items) |win| {
+        // Point into the window itself, not at a copy: the list outlives the
+        // loop iteration.
+        if (win.relay_manifest_id) |*id| open_ids.append(alloc, id) catch return false;
+    }
+
+    const entries = app.relay_manifest.snapshotForRestore(alloc, open_ids.items) catch |err| {
         log.warn("relay window restore: snapshot failed err={}", .{err});
         return false;
     };

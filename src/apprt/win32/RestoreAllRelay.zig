@@ -73,6 +73,9 @@ pub const Target = struct {
     /// whole machine, which is that button's entire promise. BORROWED like the
     /// rest of the target; `start` deep-copies.
     only: []const []const u8 = &.{},
+    /// This restore is one leg of a sign-in replay (T3389): when it lands, the
+    /// relay-window record replays whatever these layouts did not cover.
+    signin: bool = false,
 };
 
 /// One window the worker prepared: its decoded layout plus the transport it
@@ -117,6 +120,8 @@ pub const Job = struct {
     /// T713: the sessions a sign-out suspended on this machine. Empty ⇒ no
     /// filter at all (the chooser's whole-machine Restore All).
     only: [][]u8 = &.{},
+    /// `Target.signin` (T3389).
+    signin: bool = false,
     /// The machine's POOLED connection, borrowed on the GUI thread by `start`
     /// when the pool already holds one warm (T810) — the worker then runs the
     /// pull over it instead of dialing a second socket to the same agent. Null
@@ -278,6 +283,7 @@ pub fn start(app: *App, chooser_id: u64, target: Target) bool {
         .base = base,
         .device = device,
         .token = token,
+        .signin = target.signin,
     };
     // Read the live panes HERE, where they may be read at all. A failed
     // snapshot is an empty one: the guard is re-applied on the GUI thread
