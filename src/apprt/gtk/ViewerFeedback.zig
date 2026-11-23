@@ -637,7 +637,7 @@ fn onComposerMessage(_: *wk.UserContentManager, value: *wk.JSCValue, ud: ?*anyop
             if (self.open) self.focusComposer();
         },
         .state => |st| self.adoptState(st),
-        .image => log.info("viewer feedback: a pasted picture is not filed on Linux yet", .{}),
+        .image => log.info("viewer feedback: a pasted picture is not filed on Linux yet (T3546)", .{}),
         .focus, .journal => {},
     }
 }

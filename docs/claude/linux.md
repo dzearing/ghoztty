@@ -663,7 +663,7 @@ pure `src/apprt/gtk/viewer_worktree.zig` (none lane):
   in flight and prints `feedback button= worktree= tip= pending= resolves=
   clicks=`; `click feedback` clicks it. Log lines: `viewer feedback:
   worktree=<root> name=<name>` / `worktree=none`, `port <n> is served from
-  <cwd>`, `clicked ...`.
+  <cwd>`, `composer open ...`.
 
 Acceptance:
 
@@ -672,6 +672,48 @@ powershell -NoProfile -File scripts\linux\wsl-run.ps1 -CommandFile test\linux\vi
 ```
 
 Ends `VIEWER FEEDBACK: ALL PASS` (16 checks).
+
+### The feedback composer and the report it files (T3544)
+
+The button toggles a band under the nav bar (`ViewerFeedback.zig`, second
+half): a pill holding the SHARED `src/viewer/composer.js` page in a second
+`WebKitWebView` (win32's D43 shape), a round send button, and a footer line.
+
+- **No fork of the page.** `composer.js` talks to `window.chrome.webview`
+  (WebView2). `src/apprt/gtk/viewer_feedback_host.zig` (none lane) injects a
+  document-start shim that defines that object over WebKit's
+  `ghozttyComposer` script-message handler (up) and a
+  `__ghozttyComposerDeliver(json)` hook that `evaluate_javascript` calls
+  (down). Change the protocol in `composer.js` + `viewer_feedback_page.zig`
+  and both platforms follow.
+- **Chords live in the shim**: Ctrl+Enter posts `{t:"send"}`, Escape
+  `{t:"close"}` (keydown, capture phase); plain Enter is the engine's newline.
+  `hostVerb` takes those two before the shared parser, which drops unknown
+  `t`s by design.
+- **The view exists only while open**; the text lives on the pane
+  (`feedback.text`) and every `ready` re-seeds the page from it, so
+  close/reopen keeps it. A snapshot whose `gen` is older than the last seed is
+  dropped.
+- **Send** reads the page's selection (async `evaluate_javascript` on the
+  page view), then a worker asks git for branch + commit at SEND time and calls
+  win32's pure `viewer_feedback_report.write` (staging + one rename into
+  `<worktree>/temp/feedback/new/<stem>/report.json`). Success clears the text,
+  shows `Filed temp/feedback/new/<stem>`, and closes after 1.5 s. A file pane's
+  `pageTitle` is the file name (the template's own title is ours).
+- Not yet: quoting (T3545), pictures (T3546; a pasted one is logged and
+  dropped), dark style (T3552, the vars are fixed Adwaita light), the draft
+  folder + footer link (T3553).
+- **Steps seam**: `composer` prints `open= view= ready= lines= sending=
+  sends= filed= status=... text=...` once the page is up and no send is out;
+  `composer-type <text>` types through `insertText` (`\n` = newline);
+  `composer-key ctrl+Enter|Escape|Enter`; `composer-probe <js>` evaluates in
+  the composer page; `click feedback-send`.
+
+```powershell
+powershell -NoProfile -File scripts\linux\wsl-run.ps1 -CommandFile test\linux\viewer-composer.sh
+```
+
+Ends `VIEWER COMPOSER: ALL PASS` (23 checks, about 2 minutes).
 
 ### The viewer foundation's own test (T3410)
 
