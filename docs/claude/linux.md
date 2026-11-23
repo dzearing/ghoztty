@@ -337,7 +337,8 @@ same, and this shape kept the GTK tree, tab and window code untouched.)
 - A `--name` held by a viewer is reused for the same view and refused for
   another (the shared `split_name_collision` rule, fed the viewer's location).
 - Keys are the web view's (the Surface's key handler steps aside), after the
-  viewer's own pane chords (T3412, below); restore with the session is T3420.
+  viewer's own pane chords (T3412, below); restore with the session is
+  T3420 (under Session persistence, below).
 
 ### The nav bar and pane keys (T3412)
 
@@ -833,7 +834,8 @@ from it at launch, the Mac's `SessionLayoutManifest` in win32's on-disk schema
 - **It records** per window its target name, pinned title, maximized state and
   selected tab; per tab the split tree with exact directions and ratios; per
   terminal pane its session id, pane id, name, pinned title and pwd; per
-  viewer pane its location (the rest of viewer restore is T3420). The quit's
+  viewer pane its pane id, name, location, Home and origin directory (T3420,
+  below). The quit's
   write adds each pane's screen snapshot (base64, the WP-D3 pair).
 - **When:** a change-checked capture every second, writing only when the bytes
   changed (GTK has no single change hook for tree, title, name and pwd; the Mac
@@ -866,6 +868,32 @@ SIGTERM detaches and snapshots; a session that died while the app was down
 comes back as a fresh shell; after an agent restart the panes come back as
 relaunched shells under the new agent; a second instance neither restores nor
 writes; a closed window stays closed.
+
+### Viewer panes restore too (T3420)
+
+A viewer has no session to re-attach: re-opening it IS its restore (win32's
+`restoreViewerOpen`, the Mac's viewer leaf). The leaf records
+`viewer_location` (where the pane IS - `Viewer.currentLocation`),
+`viewer_home_location` (where it was opened - `homeLocation`, Home's target)
+and `viewer_origin_directory` (the `--working-directory` it was opened with -
+`originDirectory`). On restore `SessionLayout.viewerRestore` hands the next
+`Surface.new` the pane id, the Home (`Viewer.setHomeLocation`, which does not
+navigate) and the origin directory as the pane's working directory, and the
+pane is built on its recorded location. Everything else falls out of
+re-opening: a picture comes back at best fit, a diff spec re-runs in the origin
+directory, and a file deleted while the app was down shows the in-page
+`Cannot read file` card.
+
+Test seam: `GHOZTTY_TEST_VIEWER_DUMP_ALL=<file>` (debug builds, alongside
+`GHOZTTY_TEST_VIEWER_DUMP`) appends every viewer's first render as
+`<current location>\t<OK value | FAIL why>`, for a test that opens several
+viewers at once.
+
+```powershell
+powershell -NoProfile -File scripts\linux\wsl-run.ps1 -CommandFile test\linux\session-restore-viewers.sh
+```
+
+Ends `SESSION RESTORE VIEWERS: ALL PASS` (18 checks).
 
 ## Distro state (2026-11-21)
 
