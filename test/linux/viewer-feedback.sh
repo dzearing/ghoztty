@@ -112,12 +112,12 @@ hl_wait_for 40 test -s "$dump"
 [ "$(cat "$dump" 2>/dev/null)" = "OK In Repo" ]
 hl_check "F5 the pane renders its file" $? "dump: $(cat "$dump" 2>/dev/null)"
 
-hl_wait_for 90 grep -q '^mark split' "$out"
+hl_wait_for 90 grep -qs '^mark split' "$out"
 # The origin leg, in a second pane: a website that is not a dev server name,
 # opened from origrepo.
 o=$(cli +split --view="http://127.0.0.2:$port2/" --working-directory="$fx/origrepo" --name=site 2>&1)
 hl_check "F6 +split --view=<website> --working-directory=<repo> opens a second pane" $? "$o"
-hl_wait_for 60 grep -q '^done' "$out"
+hl_wait_for 60 grep -qs '^done' "$out"
 hl_check "F7 every step ran to the end" $? "$(tail -3 "$out" 2>/dev/null | tr '\n' ' ')"
 hl_wait_for 20 grep -q "viewer feedback: worktree=$fx/origrepo " "$APP_LOG"
 

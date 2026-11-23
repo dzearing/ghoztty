@@ -634,6 +634,44 @@ powershell -NoProfile -File scripts\linux\wsl-run.ps1 -CommandFile test\linux\vi
 
 Ends `VIEWER TOC: ALL PASS` (25 checks).
 
+### The feedback button and worktree provenance (T3419)
+
+The first slice of `docs/reference/viewer-feedback.md` (the composer is
+T3544, quoting T3545, screenshots T3546). `src/apprt/gtk/ViewerFeedback.zig`
+puts an icon-only button (`chat-message-new-symbolic`) at the trailing end of
+the nav bar, shown only while the pane's content belongs to a git working
+tree, tooltip `Send feedback to <root>`. Which tree is the shared strategy D
+(win32's `viewer_worktree.zig` `Plan`/`Cache`), with the POSIX parts in the
+pure `src/apprt/gtk/viewer_worktree.zig` (none lane):
+
+- **Leg 1**: a file pane's own folder (POSIX paths; a missing folder falls to
+  the origin). **Leg 2**: an `http(s)://localhost|127.0.0.1|::1|0.0.0.0:<port>`
+  page is the LISTENING process's cwd - Linux's lsof is `/proc/net/tcp{,6}`
+  (the LISTEN row's socket inode) -> the `/proc/<pid>/fd` link that is
+  `socket:[<inode>]` -> `/proc/<pid>/cwd`. Another user's process has an
+  unreadable fd table and reads as no listener. **Leg 3**: the pane's
+  `--working-directory`. Then `git rev-parse --show-toplevel`.
+- It runs on a detached worker (win32's `git_run.capture`), lands through
+  `g_idle_add` and a ref-counted `Link`, and is tagged with a generation, so
+  an answer for a location the pane already left is cached but not shown.
+  Answers (negative ones too) are cached per (location, origin) for 15 s; a
+  refresh for the question already in flight launches nothing.
+- Asked when the pane is told its origin (before the first load commits) and
+  on every committed navigation (`syncCommitted`).
+- **Driving it headless**: the steps seam's `feedback` waits for a resolution
+  in flight and prints `feedback button= worktree= tip= pending= resolves=
+  clicks=`; `click feedback` clicks it. Log lines: `viewer feedback:
+  worktree=<root> name=<name>` / `worktree=none`, `port <n> is served from
+  <cwd>`, `clicked ...`.
+
+Acceptance:
+
+```powershell
+powershell -NoProfile -File scripts\linux\wsl-run.ps1 -CommandFile test\linux\viewer-feedback.sh
+```
+
+Ends `VIEWER FEEDBACK: ALL PASS` (16 checks).
+
 ### The viewer foundation's own test (T3410)
 
 Acceptance:
