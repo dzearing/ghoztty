@@ -1,15 +1,15 @@
 {
     "guard":  "remote-cwd-follow",
     "script":  "test/win32/remote-cwd-follow.ps1",
-    "generated":  "2026-11-22T06:34:32-08:00",
-    "commit":  "004893d0e",
+    "generated":  "2026-11-23T14:13:44-08:00",
+    "commit":  "7c256c987",
     "uncommitted":  [
                         "src/termio/Remote.zig"
                     ],
     "files":  {
                   "src/os/process_cwd.zig":  "af02cad98d3e4028e6d97128c3cf20d9d7cdd83d0b6013ee647c4fdac8f6bc98",
                   "src/remote/inbound_ring.zig":  "a9c5f6f2de857b51aee8f335ca2a5c6afcd3f7d2268462a71f1c18f7cc64bc3a",
-                  "src/termio/Remote.zig":  "4b8b0cbf3af7db4d298c73d4c561bd26a87e44f9f3d0cc2389ad99fb9febe3e7",
+                  "src/termio/Remote.zig":  "161d0bdcc1bd8719c5e08ee43cf5840fe97d3f133800cb5bc66b75da7e866a68",
                   "test/win32/remote-cwd-follow.ps1":  "321a7f5001288ccde0fdb0f3045e43e50a0818d4cdb2cdd56c1a2285502bc100"
               },
     "code":  {

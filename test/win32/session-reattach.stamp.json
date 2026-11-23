@@ -1,14 +1,14 @@
 {
     "guard":  "session-reattach",
     "script":  "test/win32/session-reattach.ps1",
-    "generated":  "2026-11-22T06:32:12-08:00",
-    "commit":  "004893d0e",
+    "generated":  "2026-11-23T14:08:43-08:00",
+    "commit":  "7c256c987",
     "uncommitted":  [
                         "src/termio/Remote.zig"
                     ],
     "files":  {
                   "src/apprt/win32/session_layout.zig":  "23de7c84c9bda3017a52911fb9743e5f963978426160938e66f3aa079aa70e2b",
-                  "src/termio/Remote.zig":  "4b8b0cbf3af7db4d298c73d4c561bd26a87e44f9f3d0cc2389ad99fb9febe3e7",
+                  "src/termio/Remote.zig":  "161d0bdcc1bd8719c5e08ee43cf5840fe97d3f133800cb5bc66b75da7e866a68",
                   "test/win32/session-reattach.ps1":  "309ce4ebb81422fea8fdfcedae50ce2a7c4ac0548ea8c9b0a75cc499b69f85f7"
               },
     "code":  {

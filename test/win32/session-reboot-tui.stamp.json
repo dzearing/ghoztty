@@ -1,14 +1,14 @@
 {
     "guard":  "session-reboot-tui",
     "script":  "test/win32/session-reboot-tui.ps1",
-    "generated":  "2026-11-23T01:03:28-08:00",
-    "commit":  "af16d3bd9",
+    "generated":  "2026-11-23T14:16:01-08:00",
+    "commit":  "7c256c987",
     "uncommitted":  [
-                        "test/win32/session-reboot-tui.ps1"
+                        "src/termio/Remote.zig"
                     ],
     "files":  {
                   "src/remote/inbound_ring.zig":  "a9c5f6f2de857b51aee8f335ca2a5c6afcd3f7d2268462a71f1c18f7cc64bc3a",
-                  "src/termio/Remote.zig":  "4b8b0cbf3af7db4d298c73d4c561bd26a87e44f9f3d0cc2389ad99fb9febe3e7",
+                  "src/termio/Remote.zig":  "161d0bdcc1bd8719c5e08ee43cf5840fe97d3f133800cb5bc66b75da7e866a68",
                   "src/termio/restore_history.zig":  "544cdf75e6182afec8cccf7e6fa1fa6205680841a98b92754dbdca7d3bcdc083",
                   "src/termio/session_notice.zig":  "1aa4830a68bd520fa8f3114d44499bec8442be4fa8309afa3fe17fe5bc211728",
                   "src/termio/session_snapshot.zig":  "72d2abd34fd2df726b6ae44aa88ed1b22c84cdb1b17253f9136597e278052ada",

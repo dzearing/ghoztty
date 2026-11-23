@@ -651,9 +651,68 @@ pub const Pane = struct {
     /// for exactly that reason.
     stream_pos: std.atomic.Value(u64) = .init(0),
 
+    /// Frames whose bytes may already be in the ring while `stream_pos` does not
+    /// cover them yet (T1999). The data reader pushes a frame and only THEN
+    /// learns how many bytes the ring accepted and publishes the position, so for
+    /// a few microseconds the consumer can pop and parse a frame, pop again
+    /// empty, and read a position that is one frame short. Adopting that put the
+    /// pane's applied offset 16 bytes behind what it had parsed, and the next
+    /// adoption 9 ms later snapped it forward again: the +16/-16 pairs, 313 of
+    /// them in one log. A snapshot taken while this is non-zero is not adopted.
+    route_inflight: std.atomic.Value(u32) = .init(0),
+    /// The consumer met an in-flight frame on an empty pop and wants a wake once
+    /// its position is published, so a pane that then goes idle still adopts —
+    /// otherwise a repaint's counted bytes would sit in the applied offset (the
+    /// T739 overshoot) until the next output.
+    adopt_wanted: std.atomic.Value(bool) = .init(false),
+
     /// The absolute stream position handed to the ring so far. See `stream_pos`.
     pub fn streamPos(self: *const Pane) u64 {
         return self.stream_pos.load(.acquire);
+    }
+
+    /// What the consumer reads BEFORE its pop (T739/T1999): the position, and
+    /// whether it is settled — no routed frame is between "bytes in the ring" and
+    /// "position published". Only a settled snapshot followed by an empty pop
+    /// proves every byte behind `pos` has been parsed.
+    pub const StreamSnapshot = struct { pos: u64, settled: bool };
+
+    pub fn streamSnapshot(self: *const Pane) StreamSnapshot {
+        // In-flight first: a zero here synchronizes with `finishRoute`'s
+        // decrement, which is ordered after its position store, so the position
+        // read next is at least that frame's.
+        const settled = self.route_inflight.load(.seq_cst) == 0;
+        return .{ .pos = self.stream_pos.load(.acquire), .settled = settled };
+    }
+
+    /// Consumer: an empty pop met an unsettled snapshot. Ask the producer for a
+    /// wake when the frame is published. Returns true when it ALREADY has been
+    /// (the decrement raced past the request), so the caller retries now instead
+    /// of waiting for a wake nobody will send.
+    pub fn requestAdoptWake(self: *Pane) bool {
+        self.adopt_wanted.store(true, .seq_cst);
+        return self.route_inflight.load(.seq_cst) == 0;
+    }
+
+    /// Producer: a frame for this pane is about to be pushed (T1999). Must run
+    /// before the push, so a consumer that sees the bytes also sees the count.
+    pub fn beginRoute(self: *Pane) void {
+        _ = self.route_inflight.fetchAdd(1, .seq_cst);
+    }
+
+    /// Producer: publish the position a routed frame reached. `counted` says
+    /// this pane is the one `beginRoute` ran on (the lookup is repeated after the
+    /// push, and a pane re-registered in between must not lose its own count).
+    /// Wakes the consumer if it is waiting to adopt.
+    pub fn finishRoute(self: *Pane, pos: u64, counted: bool) void {
+        self.stream_pos.store(pos, .release);
+        if (counted) {
+            var cur = self.route_inflight.load(.monotonic);
+            while (cur > 0) {
+                cur = self.route_inflight.cmpxchgWeak(cur, cur - 1, .seq_cst, .monotonic) orelse break;
+            }
+        }
+        if (self.adopt_wanted.swap(false, .seq_cst)) self.ring.waker.wake();
     }
 };
 
@@ -4361,6 +4420,8 @@ pub const Connection = struct {
         // the resync trim below so the stream position we record names the bytes
         // that landed, not the ones we dropped.
         var push_at = byte_offset;
+        // The pane `beginRoute` counted this frame against (T1999), if any.
+        var begun: ?*Pane = null;
 
         // Consult the per-channel resync watermark (separate lock from the table).
         self.panes_mutex.lock();
@@ -4392,6 +4453,10 @@ pub const Connection = struct {
                     pane.resync_active = false;
                 }
             }
+            // Past every early return: from here the frame WILL be pushed, and
+            // its position published by `advanceStreamPos`.
+            pane.beginRoute();
+            begun = pane;
         }
         self.panes_mutex.unlock();
 
@@ -4409,7 +4474,7 @@ pub const Connection = struct {
         // `.buffered` says the bytes are real and the pane simply does not exist
         // yet, so their position is remembered for it (T804); `.unknown` went
         // nowhere and is remembered for nobody.
-        self.advanceStreamPos(channel, push_at, accepted, kind, res == .buffered);
+        self.advanceStreamPos(channel, push_at, accepted, kind, res == .buffered, begun);
         switch (res) {
             // `.unknown` (dropped) can no longer occur for a live-but-unregistered
             // channel: `pushTo` buffers those in the pre-registration buffer
@@ -4438,6 +4503,7 @@ pub const Connection = struct {
         accepted: usize,
         kind: InboundKind,
         buffered: bool,
+        begun: ?*Pane,
     ) void {
         // One line per injected repaint — which is at most one per ATTACH, and
         // the only place the size of the agent's injection is visible at all.
@@ -4448,12 +4514,12 @@ pub const Connection = struct {
         self.panes_mutex.lock();
         defer self.panes_mutex.unlock();
         if (self.panes.get(channel)) |pane| {
-            pane.stream_pos.store(streamPosAfter(
+            pane.finishRoute(streamPosAfter(
                 pane.stream_pos.load(.monotonic),
                 push_at,
                 accepted,
                 kind == .repaint,
-            ), .release);
+            ), begun == pane);
             return;
         }
         // No pane yet, but the bytes are held for one (T804). Keep the position
@@ -5196,6 +5262,125 @@ test "T739: an injected repaint is rendered like DATA but advances no offset" {
     // heap ring this test does not have. The pane itself is untracked and
     // freed by the paired defer above, on success and failure alike.
     conn.deregisterChannel(ch_id);
+}
+
+const T1999Wakes = struct {
+    n: std.atomic.Value(u32) = .init(0),
+    fn wake(ctx: *anyopaque) void {
+        const self: *T1999Wakes = @ptrCast(@alignCast(ctx));
+        _ = self.n.fetchAdd(1, .seq_cst);
+    }
+    fn waker(self: *T1999Wakes) ring.Waker {
+        return .{ .ctx = self, .wakeFn = wake };
+    }
+};
+
+test "T1999: a frame between push and publish is not adoptable, and its publish wakes a waiting consumer" {
+    const alloc = testing.allocator;
+    var wakes: T1999Wakes = .{};
+    var ch = try ring.Channel.init(alloc, 0x1999, .{ .capacity = 256, .waker = wakes.waker() });
+    defer ch.deinit(alloc);
+    var pane: Pane = .{ .id = 0x1999, .session_id = &.{}, .pid = 0, .ring = &ch, .stream_pos = .init(100) };
+
+    try testing.expect(pane.streamSnapshot().settled);
+
+    // The data reader's order: count the frame, push it, publish its position.
+    pane.beginRoute();
+    _ = ch.push("0123456789abcdef");
+    const pushed_wakes = wakes.n.load(.seq_cst);
+
+    // The consumer parses the frame and pops empty BEFORE the publish: that
+    // snapshot says 100 while 16 more bytes are parsed — it must not be taken.
+    var buf: [64]u8 = undefined;
+    const snap = pane.streamSnapshot();
+    try testing.expectEqual(@as(usize, 16), ch.pop(&buf).read);
+    try testing.expectEqual(@as(usize, 0), ch.pop(&buf).read);
+    try testing.expect(!snap.settled);
+    try testing.expectEqual(@as(u64, 100), snap.pos);
+    // Still in flight, so no retry: wait for the wake.
+    try testing.expect(!pane.requestAdoptWake());
+
+    pane.finishRoute(116, true);
+    try testing.expectEqual(pushed_wakes + 1, wakes.n.load(.seq_cst));
+    const after = pane.streamSnapshot();
+    try testing.expect(after.settled);
+    try testing.expectEqual(@as(u64, 116), after.pos);
+
+    // Nobody waiting: a publish wakes nobody.
+    pane.beginRoute();
+    pane.finishRoute(116, true);
+    try testing.expectEqual(pushed_wakes + 1, wakes.n.load(.seq_cst));
+
+    // A publish for a frame counted against ANOTHER pane (the channel was
+    // re-registered between the push and the publish) leaves this one's own
+    // in-flight frame counted.
+    pane.beginRoute();
+    pane.finishRoute(116, false);
+    try testing.expect(!pane.streamSnapshot().settled);
+    pane.finishRoute(116, true);
+    try testing.expect(pane.streamSnapshot().settled);
+    // ...and a stray uncounted publish never wraps the count below zero.
+    pane.finishRoute(116, true);
+    try testing.expect(pane.streamSnapshot().settled);
+}
+
+test "T1999: under a live producer, every adopted position equals the bytes parsed" {
+    // The race itself, on two threads: a producer routing 16-byte frames exactly
+    // the way `routeInboundData` does, and a consumer draining the way
+    // `drainRing` does. Before T1999 the consumer took the position on any empty
+    // pop and, on a busy pane, adopted one a frame short of what it had parsed.
+    const alloc = testing.allocator;
+    var ch = try ring.Channel.init(alloc, 0x1999, .{ .capacity = 4096 });
+    defer ch.deinit(alloc);
+    var pane: Pane = .{ .id = 0x1999, .session_id = &.{}, .pid = 0, .ring = &ch };
+
+    const frames: u64 = 20_000;
+    const frame = "0123456789abcdef";
+    const Producer = struct {
+        fn run(p: *Pane, c: *ring.Channel) void {
+            var pos: u64 = 0;
+            var i: u64 = 0;
+            while (i < frames) : (i += 1) {
+                p.beginRoute();
+                const w = c.push(frame).written;
+                // Widen the push->publish gap the way a descheduled reader would.
+                if (i % 64 == 0) std.Thread.yield() catch {};
+                pos = streamPosAfter(pos, pos, w, false);
+                p.finishRoute(pos, true);
+            }
+        }
+    };
+    const th = try std.Thread.spawn(.{}, Producer.run, .{ &pane, &ch });
+    // A failed expectation below returns while the producer still writes to
+    // `pane` and `ch` on this frame; join it first. The producer never blocks
+    // (a full ring just accepts fewer bytes), so the join always returns.
+    var th_joined = false;
+    errdefer if (!th_joined) th.join();
+
+    var parsed: u64 = 0;
+    var adopted: u64 = 0;
+    var buf: [1024]u8 = undefined;
+    const total = frames * frame.len;
+    var deadline = test_util.Deadline.start("the consumer to drain every frame");
+    while (true) {
+        const snap = pane.streamSnapshot();
+        const read = ch.pop(&buf).read;
+        if (read > 0) {
+            parsed += read;
+            continue;
+        }
+        if (snap.settled) {
+            // The whole fix: an adoptable position is exactly what was parsed.
+            try testing.expectEqual(parsed, snap.pos);
+            adopted += 1;
+            if (parsed == total) break;
+        } else _ = pane.requestAdoptWake();
+        deadline.yield() catch break;
+    }
+    th.join();
+    th_joined = true;
+    try testing.expectEqual(total, parsed);
+    try testing.expect(adopted > 0);
 }
 
 test "T804: data that lands before the pane is tracked still carries its position" {

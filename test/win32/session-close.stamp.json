@@ -1,14 +1,14 @@
 {
     "guard":  "session-close",
     "script":  "test/win32/session-close.ps1",
-    "generated":  "2026-11-22T06:30:04-08:00",
-    "commit":  "004893d0e",
+    "generated":  "2026-11-23T14:08:39-08:00",
+    "commit":  "7c256c987",
     "uncommitted":  [
                         "src/termio/Remote.zig"
                     ],
     "files":  {
                   "src/apprt/win32/PaneView.zig":  "66178bd1ff0806c699d541876914c4294a95852e411a03e38771eddd8faeaad7",
-                  "src/termio/Remote.zig":  "4b8b0cbf3af7db4d298c73d4c561bd26a87e44f9f3d0cc2389ad99fb9febe3e7",
+                  "src/termio/Remote.zig":  "161d0bdcc1bd8719c5e08ee43cf5840fe97d3f133800cb5bc66b75da7e866a68",
                   "test/win32/session-close.ps1":  "cfb0e628f888ef54446b92b79658c32f7da72055f8686bc93ea61de32b3b26e8"
               },
     "code":  {

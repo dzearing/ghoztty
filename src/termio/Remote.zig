@@ -2646,10 +2646,12 @@ fn adoptStreamPos(rd: *ThreadData, pos: u64) void {
     if (pos < remote.attach_offset) return;
     // The only thing that makes these differ is bytes we were fed that are not
     // the session's stream, so a line here names the repaint the agent injected
-    // and the size of the error it would have been. Not rare, though: a busy
-    // pane corrects in +/- pairs, and on the Cloud PC that was the second
-    // chattiest line in the log (T1956). So the 1st, 2nd, 4th, 8th... per pane
-    // stay at info, with the running count; the rest go to debug.
+    // and the size of the error it would have been. A busy pane used to correct
+    // in +/- pairs too — the second chattiest line on the Cloud PC (T1956) —
+    // from adopting a position one frame behind what it had parsed; the caller
+    // now refuses an unsettled position (T1999), so a correction is the repaint
+    // again. Still, the 1st, 2nd, 4th, 8th... per pane stay at info, with the
+    // running count; the rest go to debug.
     const before = remote.appliedOffset();
     if (before != pos) {
         remote.offset_corrections +|= 1;
@@ -2754,10 +2756,21 @@ fn drainRing(td: *termio.Termio.ThreadData) void {
         // adopting the position is exact, with no window in which we could claim
         // bytes we have not parsed. Read after the pop instead and a push landing
         // in between would be claimed unapplied.
-        const stream_pos = rd.pane.streamPos();
+        //
+        // T1999: and only if no routed frame is between "bytes in the ring" and
+        // "position published" — the data reader learns how much the ring took
+        // only after the push, so we can parse a frame and pop empty before its
+        // position lands. Adopting then pulled the offset a frame behind what was
+        // parsed (the +16/-16 correction pairs). Unsettled, ask for a wake on the
+        // publish instead, or retry at once if it has already happened.
+        const snap = rd.pane.streamSnapshot();
         const res = ch.pop(&buf);
         if (res.read == 0) {
-            adoptStreamPos(rd, stream_pos);
+            if (snap.settled) {
+                adoptStreamPos(rd, snap.pos);
+                break;
+            }
+            if (rd.pane.requestAdoptWake()) continue;
             break;
         }
 
