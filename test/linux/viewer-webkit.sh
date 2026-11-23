@@ -103,10 +103,13 @@ hl_check "W9 no app log carries a panic" $? "$(grep -h -m2 -E 'panic|unreachable
 
 # The web process must not inherit WSLg's d3d12 override (its sandbox has no
 # /dev/dxg, so it aborts), and taking it away must not take the GPU from the
-# terminal beside it: the app brings GDK's GL up on d3d12 first.
-if [ "${GALLIUM_DRIVER:-}" = d3d12 ]; then
-    grep -q 'kept from WebKit' "$MD_LOG"
-    hl_check "W10 the viewer kept GALLIUM_DRIVER=d3d12 from WebKit's web process" $?
+# terminal beside it: the app brings GDK's GL up on d3d12 first. Since T3350
+# the app sets the override itself and removes it once GDK's GL is up, so it
+# is gone before any web process spawns (an exported one is still stripped by
+# the viewer - 'kept from WebKit').
+if [ -e /dev/dxg ]; then
+    grep -qE 'GALLIUM_DRIVER removed so child processes|kept from WebKit' "$MD_LOG"
+    hl_check "W10 GALLIUM_DRIVER=d3d12 was kept from WebKit's web process" $?
     r=$(grep -m1 'loaded OpenGL' "$MD_LOG" | sed 's/.*renderer=//')
     case "$r" in *D3D12*) true ;; *) false ;; esac
     hl_check "W11 the terminal beside the viewer still renders on the GPU (D3D12)" $? "renderer=$r"

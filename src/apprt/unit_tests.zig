@@ -583,6 +583,11 @@ test {
     // runs it, like the win32 modules above.
     _ = @import("gtk/viewer_scheme.zig");
 
+    // WSLg's GPU default for the GTK app's renderer - when to set
+    // GALLIUM_DRIVER=d3d12 and when the user's choice stands (T3350). Pure,
+    // no GTK imports.
+    _ = @import("gtk/wslg_gpu.zig");
+
     // The GTK viewer nav chrome's pure half - the template URL that carries
     // its file through history, and a GDK key event onto the shared chord
     // tables (T3412). No GTK imports, like viewer_scheme.zig.

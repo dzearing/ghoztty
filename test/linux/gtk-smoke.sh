@@ -34,10 +34,14 @@ grep -aq 'com\.dzearing\.ghoztty-debug' zig-out/bin/ghoztty
 check "S3 the debug build's application id is com.dzearing.ghoztty-debug" $?
 
 # WSLg's GPU path: Mesa ships the d3d12 Gallium driver, but picks llvmpipe
-# unless asked (measured 2026-11-21). Use the GPU when /dev/dxg exists.
-gpu=""
-if [ -e /dev/dxg ]; then export GALLIUM_DRIVER=d3d12; gpu=" (GALLIUM_DRIVER=d3d12)"; fi
-echo "INFO glxinfo$gpu: $(DISPLAY=:0 glxinfo -B 2>/dev/null | grep 'OpenGL renderer string' | sed 's/.*: //')"
+# unless asked (measured 2026-11-21). Since T3350 the APP asks on its own, so
+# nothing here exports GALLIUM_DRIVER: S9-S12 prove the app's default, and
+# glxinfo just reports both renderers for the record.
+unset GALLIUM_DRIVER MESA_LOADER_DRIVER_OVERRIDE LIBGL_ALWAYS_SOFTWARE
+dxg=0; [ -e /dev/dxg ] && dxg=1
+echo "INFO /dev/dxg present: $dxg"
+echo "INFO glxinfo default: $(DISPLAY=:0 glxinfo -B 2>/dev/null | grep 'OpenGL renderer string' | sed 's/.*: //')"
+[ $dxg = 1 ] && echo "INFO glxinfo GALLIUM_DRIVER=d3d12: $(DISPLAY=:0 GALLIUM_DRIVER=d3d12 glxinfo -B 2>/dev/null | grep 'OpenGL renderer string' | sed 's/.*: //')"
 
 # The private headless compositor is the shared harness (T3333): it refuses to
 # launch anything while the environment could still reach WSLg.
@@ -47,7 +51,7 @@ check "S4 a private headless Weston is up" $? "$(tail -2 "${HL_WESTON_LOG:-/dev/
 
 app=$(hl_ghoztty) || app=./zig-out/bin/ghoztty
 mark="$HL_RUNTIME/shell-ran"
-hl_launch APP timeout 30 "$app" --gtk-single-instance=false -e /bin/sh -c "tty > $mark; sleep 60"
+hl_launch APP timeout 30 "$app" --gtk-single-instance=false -e /bin/sh -c "env > $mark.env; tty > $mark; sleep 60"
 apid=$APP
 applog=$APP_LOG
 hl_wait_for 20 test -s "$mark"
@@ -61,6 +65,34 @@ check "S7 the renderer loaded OpenGL" $?
 echo "INFO app renderer: $(grep -m1 'loaded OpenGL' "$applog" | sed 's/.*loaded //')"
 ! grep -qE '^(panic|thread [0-9]+ panic)|reached unreachable' "$applog"
 check "S8 no panic in the app log" $?
+
+# T3350: on WSL the app picks the GPU itself, and keeps that choice to itself.
+if [ $dxg = 1 ]; then
+    grep -q 'wslg: setting GALLIUM_DRIVER=d3d12' "$applog"
+    check "S9 the app set GALLIUM_DRIVER=d3d12 on its own (/dev/dxg present, nothing exported)" $?
+    r=$(grep -m1 'loaded OpenGL' "$applog" | sed 's/.*renderer=//')
+    case "$r" in *D3D12*) true ;; *) false ;; esac
+    check "S10 with no override exported, the app renders on the GPU (D3D12)" $? "renderer=$r"
+    [ -s "$mark.env" ] && ! grep -q '^GALLIUM_DRIVER=' "$mark.env"
+    check "S11 the window's shell did not inherit the app's GALLIUM_DRIVER" $? "$(grep '^GALLIUM_DRIVER=' "$mark.env" 2>/dev/null)"
+else
+    ! grep -q 'wslg: setting' "$applog"
+    check "S9 without /dev/dxg the app leaves Mesa's driver choice alone" $?
+fi
+
+# T3350: a driver the user chose wins - here llvmpipe, which the app must keep
+# (and leave in the shell's environment, since it was the user's).
+if [ $dxg = 1 ]; then
+    umark="$HL_RUNTIME/user-shell-ran"
+    hl_launch UAPP env GALLIUM_DRIVER=llvmpipe timeout 30 "$app" --gtk-single-instance=false -e /bin/sh -c "env > $umark.env; tty > $umark; sleep 60"
+    hl_wait_for 20 test -s "$umark"
+    hl_wait_for 10 grep -q 'loaded OpenGL' "$UAPP_LOG"
+    r=$(grep -m1 'loaded OpenGL' "$UAPP_LOG" | sed 's/.*renderer=//')
+    case "$r" in *llvmpipe*) true ;; *) false ;; esac && grep -q 'wslg: GPU driver left to the environment' "$UAPP_LOG"
+    check "S12 a user's GALLIUM_DRIVER=llvmpipe wins over the app's default" $? "renderer=$r"
+    grep -q '^GALLIUM_DRIVER=llvmpipe$' "$umark.env"
+    check "S13 the user's GALLIUM_DRIVER still reaches the shell" $?
+fi
 
 hl_stop
 

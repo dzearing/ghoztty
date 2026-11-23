@@ -25,8 +25,11 @@
 #     harnesses running at once never share a socket (wayland-hl-<pid>).
 #   - DISPLAY and WAYLAND_SOCKET are unset; WAYLAND_DISPLAY names the private
 #     socket; GDK_BACKEND=wayland (GTK may not fall back to X11).
-#   - GALLIUM_DRIVER=d3d12 when /dev/dxg exists (WSLg's GPU; Mesa picks
-#     llvmpipe otherwise - measured 2026-11-21, docs/claude/linux.md).
+#   - Weston itself renders with GALLIUM_DRIVER=d3d12 when /dev/dxg exists
+#     (WSLg's GPU; Mesa picks llvmpipe otherwise - measured 2026-11-21,
+#     docs/claude/linux.md). The variable is NOT exported to the app: since
+#     T3350 the app picks the GPU on its own, and a test that exported it
+#     would only ever exercise the user-choice path.
 #   - hl_ghoztty names zig-out/bin/ghoztty by absolute path and refuses a
 #     binary that is not a Linux ELF, so interop can never hand a test the
 #     user's Windows ghoztty.exe (the PATH trap in docs/claude/linux.md).
@@ -76,8 +79,9 @@ hl_start() {
     export XDG_CONFIG_HOME="$HL_RUNTIME/config"
     mkdir -p "$XDG_CONFIG_HOME"
     unset DISPLAY WAYLAND_SOCKET
-    if [ -e /dev/dxg ]; then export GALLIUM_DRIVER=d3d12; fi
-    weston --backend=headless --renderer=gl --socket="$HL_SOCKET" \
+    local wgpu=""
+    if [ -e /dev/dxg ]; then wgpu="GALLIUM_DRIVER=d3d12"; fi
+    env $wgpu weston --backend=headless --renderer=gl --socket="$HL_SOCKET" \
         --width="$w" --height="$h" --idle-time=0 > "$HL_WESTON_LOG" 2>&1 &
     HL_WESTON_PID=$!
     local _

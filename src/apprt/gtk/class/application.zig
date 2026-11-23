@@ -44,6 +44,8 @@ const ConfigErrorsDialog = @import("config_errors_dialog.zig").ConfigErrorsDialo
 const GlobalShortcuts = @import("global_shortcuts.zig").GlobalShortcuts;
 const OpenURI = @import("../portal.zig").OpenURI;
 const url_scheme = @import("../url_scheme.zig");
+const wslg_gpu = @import("../wslg_gpu.zig");
+const builtin = @import("builtin");
 
 const log = std.log.scoped(.gtk_ghostty_application);
 
@@ -301,6 +303,10 @@ pub const Application = extern struct {
             log.warn("i18n initialization failed error={}", .{err});
         };
 
+        // Ghoztty (T3350): under WSLg pick the GPU for our own GL, which Mesa
+        // does not do by default. Removed again once GDK's GL is up, below.
+        const wslg_gpu_set = setWslgGpuEnv();
+
         // Setup our GTK init env vars
         setGtkEnv(&config) catch |err| switch (err) {
             error.NoSpaceLeft => {
@@ -354,6 +360,7 @@ pub const Application = extern struct {
             log.warn("gdk display is null, exiting", .{});
             std.posix.exit(1);
         };
+        if (wslg_gpu_set) settleWslgGpuEnv(display);
 
         // Setup our windowing protocol logic
         var wp: winprotopkg.App = winprotopkg.App.init(
@@ -3036,6 +3043,49 @@ const Action = struct {
 /// given the runtime environment or configuration.
 ///
 /// This must be called BEFORE GTK initialization.
+/// Set `GALLIUM_DRIVER=d3d12` before GTK initializes, when this is WSL and
+/// nothing chose a driver (T3350; `wslg_gpu.zig` has the rules). Returns
+/// whether it was set, so `settleWslgGpuEnv` can take it back out.
+fn setWslgGpuEnv() bool {
+    if (comptime builtin.os.tag != .linux) return false;
+    assert(gtk.isInitialized() == 0);
+    const decision = wslg_gpu.decide(.{
+        .dxg = dxg: {
+            std.fs.accessAbsolute(wslg_gpu.device_path, .{}) catch break :dxg false;
+            break :dxg true;
+        },
+        .gallium_driver = std.posix.getenv(wslg_gpu.env_name),
+        .loader_override = std.posix.getenv("MESA_LOADER_DRIVER_OVERRIDE"),
+        .always_software = std.posix.getenv("LIBGL_ALWAYS_SOFTWARE"),
+    });
+    switch (decision) {
+        .set => {
+            _ = internal_os.setenv(wslg_gpu.env_name, wslg_gpu.driver);
+            log.info("wslg: setting " ++ wslg_gpu.env_name ++ "=" ++ wslg_gpu.driver ++ " for the app's GL (" ++ wslg_gpu.device_path ++ " present)", .{});
+            return true;
+        },
+        .user_choice => log.info("wslg: GPU driver left to the environment (" ++ wslg_gpu.env_name ++ "/MESA_LOADER_DRIVER_OVERRIDE/LIBGL_ALWAYS_SOFTWARE set)", .{}),
+        .not_wsl => {},
+    }
+    return false;
+}
+
+/// Bring GDK's GL up while our `GALLIUM_DRIVER` is in place - Mesa reads it
+/// when the display's EGL initializes and every later context reuses that
+/// display - then remove it, so neither a shell nor WebKit's sandboxed web
+/// process (which aborts on it, T3410) inherits a choice that was the app's.
+fn settleWslgGpuEnv(display: *gdk.Display) void {
+    var err_: ?*glib.Error = null;
+    if (display.prepareGl(&err_) == 0) {
+        if (err_) |err| {
+            defer err.free();
+            log.warn("wslg: GDK GL did not come up with the d3d12 driver: {s}", .{err.f_message orelse "(unknown)"});
+        }
+    }
+    _ = internal_os.unsetenv(wslg_gpu.env_name);
+    log.info("wslg: GDK GL prepared; " ++ wslg_gpu.env_name ++ " removed so child processes do not inherit it", .{});
+}
+
 fn setGtkEnv(config: *const CoreConfig) error{NoSpaceLeft}!void {
     assert(gtk.isInitialized() == 0);
 
