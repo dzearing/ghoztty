@@ -36,7 +36,10 @@
 //! reloads, Ctrl+L / Alt+D focus the address with it selected, Ctrl +/-/0
 //! zoom the page, Escape in the address reverts it. GTK has no "beep on an
 //! unhandled key" (AppKit's `NSBeep`), so the Mac's no-beep rule is already
-//! this platform's behavior.
+//! this platform's behavior. A chord the pane does not claim is offered to
+//! the app's keybindings (T3430, `on_app_chord`): split, tab, window and
+//! palette chords answer from a viewer as from a terminal; anything that
+//! needs a terminal (copy, paste, font size, `text:`) stays with the page.
 //!
 //! **Find in page** (T3414): Ctrl+F opens a card floating at the page's
 //! top-trailing corner (an overlay, so it never reflows the text), with a

@@ -7,7 +7,10 @@
 # boundary and re-renders the file it left; Home returns to the opened
 # location; Ctrl+L selects the address, Escape reverts a half-typed one,
 # Ctrl+R reloads a file in place, Ctrl +/-/0 zoom; chords the pane does not
-# own are declined; +list follows where the pane IS. Run it ONLY through the
+# own are declined; +list follows where the pane IS. K1-K10 (T3430): in a
+# window of nothing but viewers, a chord the pane does not claim reaches the
+# app's keybindings (split, tab, window, palette, rename) minus what needs a
+# terminal (copy), and typing in the address stays typing. Run it ONLY through the
 # wrapper, from this box:
 #
 #   powershell -NoProfile -File scripts\linux\wsl-run.ps1 -CommandFile test\linux\viewer-nav.sh
@@ -116,7 +119,6 @@ key <Control>minus
 state
 key <Control>0
 state
-key <Control><Shift>r
 key <Control>d
 key <Control>g
 key <Alt>d
@@ -213,10 +215,9 @@ echo "$k" | grep -q '^key <Control>l handled=true' &&
     echo "$k" | grep -q '^key Escape handled=true' &&
     echo "$k" | grep -q '^key <Control>equal handled=true'
 hl_check "N18 the pane claims its own chords" $? "$(echo "$k" | tr '\n' ' ')"
-echo "$k" | grep -q '^key <Control><Shift>r handled=false' &&
-    echo "$k" | grep -q '^key <Control>d handled=false' &&
+echo "$k" | grep -q '^key <Control>d handled=false' &&
     echo "$k" | grep -q '^key <Control>g handled=false'
-hl_check "N19 Ctrl+Shift+R, Ctrl+D (split) and Ctrl+G with no search yet are declined, so they fall through" $? "$(echo "$k" | tr '\n' ' ')"
+hl_check "N19 Ctrl+D (unbound on Linux) and Ctrl+G with no search yet are declined, so they fall through" $? "$(echo "$k" | tr '\n' ' ')"
 echo "$k" | grep -q '^key <Alt>d handled=true' && has "$(st 12)" "focus=address"
 hl_check "N20 Alt+D focuses the address too (the browser pair)" $? "$(st 12)"
 
@@ -265,6 +266,8 @@ sleep 1500
 key <Control><Shift>n
 sleep 2000
 state
+key <Control><Shift>r
+sleep 1000
 EOF
 : > "$out"; : > "$dump"
 export GHOZTTY_TEST_VIEWER_DUMP="$dump"
@@ -310,6 +313,11 @@ has "$shape" "windows=3"
 hl_check "K7 Ctrl+Shift+N opened a new window (an app action, through the core)" $? "$shape"
 grep -q 'viewer chord: toggle_command_palette performed on the viewer ok=true' "$APP2_LOG"
 hl_check "K8 Ctrl+Shift+P opens the command palette over a viewer-only window" $? "$(grep -m4 'viewer chord' "$APP2_LOG" | tr '\n' ' ')"
+
+# Ctrl+Shift+R is not the pane's reload (Ctrl+R, exactly); on Linux it is
+# the app's "rename window", which a viewer answers like a terminal does.
+kh '<Control><Shift>r' true && grep -q 'viewer chord: prompt_window_title performed on the viewer ok=true' "$APP2_LOG"
+hl_check "K10 Ctrl+Shift+R is not a reload: it reaches the app's rename-window binding" $? "$(grep 'viewer chord' "$APP2_LOG" | tail -2 | tr '\n' ' ')"
 
 grep -E 'panic|reached unreachable' "$APP2_LOG" > /dev/null 2>&1
 [ $? != 0 ] && kill -0 "$APP2" 2>/dev/null
