@@ -1,16 +1,17 @@
 {
     "guard":  "viewer-window-chords",
     "script":  "test/win32/viewer-window-chords.ps1",
-    "generated":  "2026-11-23T08:37:00-08:00",
-    "commit":  "d8eaf10bd",
+    "generated":  "2026-11-23T10:26:29-08:00",
+    "commit":  "7ae87964f",
     "uncommitted":  [
-
+                        "src/apprt/win32/ViewerPane.zig",
+                        "src/apprt/win32/Window.zig"
                     ],
     "files":  {
                   "src/App.zig":  "f37fc79030cbe520bca8c44853c6c4fc4e95ecf9a7bc2f5b626b6dd44e24afe4",
                   "src/apprt/win32/viewer_accel.zig":  "07d6f44e59f931c2c1caa5db167ffb7c099bb0684ae386a15260f6b46c5c1d2e",
-                  "src/apprt/win32/ViewerPane.zig":  "0fed4d31898f2efff28474661836b1b1e27e17ee56cc4fa30ab2009ab499c6e6",
-                  "src/apprt/win32/Window.zig":  "70570428557d4c2efc4aa9b00fba528a7b2c8dcd89ee5bd095110895545c2962",
+                  "src/apprt/win32/ViewerPane.zig":  "4fc11359c707cf3c6647eb89c61fec33d1702a454d6669dddd061cd5cb19c546",
+                  "src/apprt/win32/Window.zig":  "d195064c96b51840d9ef95456a063c1cf1bbf7998b543f20c46cb203c810f231",
                   "test/win32/viewer-window-chords.ps1":  "05c069b7eaa44b646ed720b157ea9a5c5d0e4368ff34c80112ff51020343b0ab"
               },
     "code":  {

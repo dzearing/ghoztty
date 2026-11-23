@@ -1144,6 +1144,15 @@ pub fn backdrop(self: *PaneDesk, area_w: i32, area_h: i32, is_light: bool, varia
     return .{ .pixels = d.pixels(), .w = d.w, .h = d.h, .gen = self.desk_gen };
 }
 
+/// The desk the last paint rendered, if there is one, rendering nothing
+/// (T1923). A glass viewer reads its sheet's desk out of this at paint time;
+/// asking `backdrop` from there could lay the desk out again for a size or a
+/// light the window is not painting.
+pub fn cached(self: *const PaneDesk) ?Backdrop {
+    const d = self.desk orelse return null;
+    return .{ .pixels = d.pixels(), .w = d.w, .h = d.h, .gen = self.desk_gen };
+}
+
 /// `backdrop` with its quarter-size copy (T2947), for the glass panes'
 /// slices: a 4K glide re-crops every moved pane's slice each tick, and read
 /// out of the full desk that was ~0.35 ms - every slice row walking a whole
@@ -3521,4 +3530,78 @@ test "T2574: the glow layer faded to L over the unlit desk is the desk composed 
         }
         try testing.expect(lit_somewhere);
     };
+}
+
+test "T1923: a glass viewer's sheet read out of the window's desk is that desk's sheet, near the evaluated one, and cheaper" {
+    const alloc = std.testing.allocator;
+    var pd: PaneDesk = .{};
+    defer pd.deinit();
+    const fw: i32 = 1600;
+    const fh: i32 = 1000;
+    // Nothing rendered yet: nothing to read.
+    try std.testing.expect(pd.cached() == null);
+    const desk = pd.backdrop(fw, fh, false, null).?;
+    const c = pd.cached().?;
+    try std.testing.expectEqual(desk.pixels.ptr, c.pixels.ptr);
+    try std.testing.expectEqual(desk.gen, c.gen);
+
+    // A viewer pane's client on the right half of the window, sized like the
+    // one T1907 timed.
+    const rx: i32 = 700;
+    const ry: i32 = 40;
+    const w: usize = 880;
+    const h: usize = 940;
+    const tint: color_math.Rgb = .{ .r = 0x1E, .g = 0x22, .b = 0x2A };
+    const sheet: pane_elevation.Sheet = .{};
+    const pal = desk_palette.Palette.forWindow(null, false);
+    const want = try alloc.alloc(u32, w * h);
+    defer alloc.free(want);
+    const got = try alloc.alloc(u32, w * h);
+    defer alloc.free(got);
+    const par = try alloc.alloc(u32, w * h);
+    defer alloc.free(par);
+
+    var eval_ns: u64 = std.math.maxInt(u64);
+    var desk_ns: u64 = std.math.maxInt(u64);
+    for (0..3) |_| {
+        var t = try std.time.Timer.start();
+        pane_elevation.glassSheetRegion(want, w, h, rx, ry, fw, fh, pal, tint, sheet);
+        eval_ns = @min(eval_ns, t.read());
+        t.reset();
+        try std.testing.expect(pane_elevation.glassSheetFromDesk(got, w, h, rx, ry, c.pixels, @intCast(c.w), @intCast(c.h), tint, sheet));
+        desk_ns = @min(desk_ns, t.read());
+    }
+    log.warn("T1923 viewer sheet {d}x{d}: evaluated {d}us, from the desk {d}us", .{ w, h, eval_ns / 1000, desk_ns / 1000 });
+
+    // Every pixel is the sheet over the desk pixel the window paints there -
+    // the bitmap its card rims are laid on, so the two meet without a seam.
+    const uw: usize = @intCast(c.w);
+    for (0..h) |row| for (0..w) |col| {
+        const dp = c.pixels[(@as(usize, @intCast(ry)) + row) * uw + @as(usize, @intCast(rx)) + col];
+        try std.testing.expectEqual(pane_elevation.sheetMix(dp, tint, sheet), got[row * w + col]);
+    };
+    // And within the desk's own stretch error of the evaluated gradient.
+    var worst: u32 = 0;
+    for (want, got) |a, b| {
+        inline for (.{ 0, 8, 16 }) |sh| {
+            const x: i32 = @intCast((a >> sh) & 0xFF);
+            const y: i32 = @intCast((b >> sh) & 0xFF);
+            worst = @max(worst, @abs(x - y));
+        }
+    }
+    try std.testing.expect(worst <= 3);
+    // A read where the gradient was math: the point of the task.
+    try std.testing.expect(desk_ns < eval_ns);
+
+    // The workers lay the same pixels.
+    try std.testing.expect(sheet_workers.glassSheetFromDesk(par, w, h, rx, ry, c.pixels, @intCast(c.w), @intCast(c.h), tint, sheet));
+    try std.testing.expectEqualSlices(u32, got, par);
+
+    // Off the desk's edge (a pane the desk was not rendered under): false,
+    // nothing written, and the caller evaluates.
+    @memset(par, 0xDEAD_BEEF);
+    try std.testing.expect(!sheet_workers.glassSheetFromDesk(par, w, h, fw - 100, ry, c.pixels, @intCast(c.w), @intCast(c.h), tint, sheet));
+    try std.testing.expect(!pane_elevation.glassSheetFromDesk(par, w, h, -1, ry, c.pixels, @intCast(c.w), @intCast(c.h), tint, sheet));
+    try std.testing.expect(!pane_elevation.glassSheetFromDesk(par, w, h, rx, fh - 10, c.pixels, @intCast(c.w), @intCast(c.h), tint, sheet));
+    try std.testing.expectEqual(@as(u32, 0xDEAD_BEEF), par[0]);
 }

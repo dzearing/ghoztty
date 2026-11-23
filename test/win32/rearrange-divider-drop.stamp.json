@@ -1,17 +1,17 @@
 {
     "guard":  "rearrange-divider-drop",
     "script":  "test/win32/rearrange-divider-drop.ps1",
-    "generated":  "2026-11-23T04:40:18-08:00",
-    "commit":  "c2931276a",
+    "generated":  "2026-11-23T10:27:30-08:00",
+    "commit":  "7ae87964f",
     "uncommitted":  [
-
+                        "src/apprt/win32/Window.zig"
                     ],
     "files":  {
                   "src/apprt/win32/drop_highlight.zig":  "7056bd6cbc735dace5e1ce6dab0b903a4375cc09ccfc98f998bf8709146648e3",
                   "src/apprt/win32/DropHighlight.zig":  "b8fc223144b4c3aae404684db9f27d12839ff11451dcca6a19aaf8b88687f9d8",
                   "src/apprt/win32/pane_drop.zig":  "39d64882481a626ec63fe66146687be97ef6071de608ee669eb3551e4228e53a",
                   "src/apprt/win32/pane_gap.zig":  "c0aa81a73ab491b73a64567f06a6aac468ec5a134c258eb2df078c408d48f555",
-                  "src/apprt/win32/Window.zig":  "70570428557d4c2efc4aa9b00fba528a7b2c8dcd89ee5bd095110895545c2962",
+                  "src/apprt/win32/Window.zig":  "d195064c96b51840d9ef95456a063c1cf1bbf7998b543f20c46cb203c810f231",
                   "src/datastruct/split_tree.zig":  "56259e5796675b7a557d561659b42c3e47e79dc5d56024c15ef0c9ffa5e79cf3",
                   "test/win32/rearrange-divider-drop.ps1":  "f7f24573ad7a883bdc415151fe5b15813df048425eb73081e647d0576d33f547"
               },

@@ -15954,6 +15954,7 @@ fn syncGlassBackdrops(self: *Window, slots: []const PaneSlot, area: w32.RECT, gl
                         if (sf.setPaneBackdrop(null, null)) entry.view.glass_backdrop_key = 0;
                     } else {
                         vw.?.setGlassBackdrop(null);
+                        vw.?.glass_desk = null;
                         entry.view.glass_backdrop_key = 0;
                     }
                 }
@@ -15998,7 +15999,11 @@ fn syncGlassBackdrops(self: *Window, slots: []const PaneSlot, area: w32.RECT, gl
                 // A terminal still starting up has no renderer to tell; its
                 // key stays stale so the next paint tries again.
                 if (!sf.setPaneBackdrop(spec, desk)) continue;
-            } else vw.?.setGlassBackdrop(spec);
+            } else {
+                // The desk it reads its sheet out of at paint (T1923).
+                vw.?.glass_desk = &self.pane_desk;
+                vw.?.setGlassBackdrop(spec);
+            }
             entry.view.glass_backdrop_key = key;
             if (stackTraceOn()) {
                 // T2947: what each slice cost to send, terminals and viewers apart.

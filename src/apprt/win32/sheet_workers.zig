@@ -146,6 +146,55 @@ pub fn glassSheetRegion(
     pool.waitAndWork(&wg);
 }
 
+/// `pane_elevation.glassSheetFromDesk`, with the rows shared among the
+/// workers (T1923). Same arguments, same pixels, same answer: false, and
+/// nothing written, when the region is not wholly on the desk.
+pub fn glassSheetFromDesk(
+    out: []u32,
+    w: usize,
+    h: usize,
+    rx: i32,
+    ry: i32,
+    desk: []const u32,
+    desk_w: usize,
+    desk_h: usize,
+    tint: color_math.Rgb,
+    sheet: pane_elevation.Sheet,
+) bool {
+    std.debug.assert(out.len >= w * h);
+    if (!pane_elevation.deskHoldsRegion(w, h, rx, ry, desk_w, desk_h)) return false;
+    if (w * h >= min_parallel_px) pool_once.call();
+    const bands = bandCount(w, h, pool_workers);
+    if (bands <= 1) return pane_elevation.glassSheetFromDesk(out, w, h, rx, ry, desk, desk_w, desk_h, tint, sheet);
+    var wg: std.Thread.WaitGroup = .{};
+    for (1..bands) |i| {
+        const b = bandRows(h, bands, i);
+        pool.spawnWg(&wg, fromDeskBand, .{ out, w, b.start, b.end, rx, ry, desk, desk_w, desk_h, tint, sheet });
+    }
+    const first = bandRows(h, bands, 0);
+    fromDeskBand(out, w, first.start, first.end, rx, ry, desk, desk_w, desk_h, tint, sheet);
+    pool.waitAndWork(&wg);
+    return true;
+}
+
+fn fromDeskBand(
+    out: []u32,
+    w: usize,
+    start: usize,
+    end: usize,
+    rx: i32,
+    ry: i32,
+    desk: []const u32,
+    desk_w: usize,
+    desk_h: usize,
+    tint: color_math.Rgb,
+    sheet: pane_elevation.Sheet,
+) void {
+    if (end <= start) return;
+    // Bounds were checked for the whole region, so a band's hold too.
+    _ = pane_elevation.glassSheetFromDesk(out[start * w .. end * w], w, end - start, rx, ry + @as(i32, @intCast(start)), desk, desk_w, desk_h, tint, sheet);
+}
+
 test "T2702: bands cover every row exactly once" {
     for ([_]usize{ 2, 3, 7, 100, 333, 1080 }) |h| {
         for (1..6) |bands| {

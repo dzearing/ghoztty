@@ -114,6 +114,7 @@ const hero_snap_schedule = @import("hero_snap_schedule.zig");
 const viewer_glass = @import("viewer_glass.zig");
 const pane_elevation = @import("pane_elevation.zig");
 const sheet_workers = @import("sheet_workers.zig");
+const PaneDesk = @import("PaneDesk.zig");
 const Dib32 = @import("dib32.zig");
 const gl_comp_present = @import("../../renderer/gl_comp_present.zig");
 
@@ -738,6 +739,14 @@ color_scheme: iface.PreferredColorScheme = .auto,
 /// The host paints the sheet over it, and our own pages go see-through so
 /// the sheet is their background, as it is a terminal's.
 glass: ?pane_elevation.GlassBackdrop = null,
+
+/// The window's desk, which the sheet reads `glass` out of at paint time
+/// (T1923) - the bitmap the window paints this pane's card rim on, so the
+/// two meet exactly, and a read per pixel where evaluating the gradient was
+/// the whole of a divider drag's viewer paint. Set by the window with
+/// `glass`; null in a test, or before the window has painted a desk, and then
+/// the gradient is evaluated as before.
+glass_desk: ?*const PaneDesk = null,
 
 /// The glass sheet's pixels, kept between paints and grown only when a paint
 /// needs more (T3041) - before it, every `WM_PAINT` on glass made and freed a
@@ -7571,7 +7580,15 @@ fn paintGlass(self: *ViewerPane, hdc: w32.HDC, width: i32, height: i32, sheet: w
     // in the desk, so a part of the client gets the same pixels a whole
     // paint would put there.
     const tr = std.time.Instant.now() catch null;
-    sheet_workers.glassSheetRegion(px, @intCast(rw), @intCast(rh), g.rect[0] + r.left, g.rect[1] + r.top, g.full_w, g.full_h, g.palette, self.bg, g.sheet);
+    // Out of the desk the window painted (T1923) when it holds the region -
+    // a drag's larger canvas included - else the gradient, evaluated.
+    const from_desk = if (self.glass_desk) |pd| if (pd.cached()) |d|
+        sheet_workers.glassSheetFromDesk(px, @intCast(rw), @intCast(rh), g.rect[0] + r.left, g.rect[1] + r.top, d.pixels, @intCast(d.w), @intCast(d.h), self.bg, g.sheet)
+    else
+        false else false;
+    if (from_desk) {
+        glass_cost.desk_paints +|= 1;
+    } else sheet_workers.glassSheetRegion(px, @intCast(rw), @intCast(rh), g.rect[0] + r.left, g.rect[1] + r.top, g.full_w, g.full_h, g.palette, self.bg, g.sheet);
     glass_cost.render_ns +|= sinceNs(tr);
     var bmi = std.mem.zeroes(w32.BITMAPINFO);
     bmi.bmiHeader.biSize = @sizeOf(w32.BITMAPINFOHEADER);
@@ -7645,6 +7662,9 @@ pub const GlassCost = struct {
     /// Paints that had to grow the kept buffer (T3041); a resize sweep that
     /// reads one per paint has lost the reuse.
     allocs: u32 = 0,
+    /// Paints whose sheet was read out of the window's desk (T1923) rather
+    /// than evaluated; `paints` less this is how often the gradient ran.
+    desk_paints: u32 = 0,
 };
 pub var glass_cost: GlassCost = .{};
 

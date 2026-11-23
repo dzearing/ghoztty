@@ -521,6 +521,48 @@ pub fn glassSheetRegion(
     }
 }
 
+/// `glassSheetRegion`, with the desk read out of one already rendered
+/// (T1923): `desk` is `desk_w` x `desk_h`, top-down, its (0, 0) the desk's.
+/// The window paints its cards' rims over that same bitmap, so the sheet
+/// meets them exactly, and a pixel costs a read and three table lookups
+/// rather than the gradient's math - a glass viewer lays this under its
+/// whole client on every paint a divider drag gives it. False, and nothing
+/// written, when the region is not wholly on the desk: the caller then
+/// evaluates the gradient (`glassSheetRegion`).
+pub fn glassSheetFromDesk(
+    out: []u32,
+    w: usize,
+    h: usize,
+    rx: i32,
+    ry: i32,
+    desk: []const u32,
+    desk_w: usize,
+    desk_h: usize,
+    tint: color_math.Rgb,
+    sheet: Sheet,
+) bool {
+    std.debug.assert(out.len >= w * h);
+    if (!deskHoldsRegion(w, h, rx, ry, desk_w, desk_h)) return false;
+    if (desk.len < desk_w * desk_h) return false;
+    const lut = GlassLut.initSheet(tint, sheet);
+    const x0: usize = @intCast(rx);
+    const y0: usize = @intCast(ry);
+    for (0..h) |row| {
+        const src = desk[(y0 + row) * desk_w + x0 ..][0..w];
+        lut.mixInto(out[row * w ..][0..w], src);
+    }
+    return true;
+}
+
+/// Whether a `w` x `h` region at (`rx`, `ry`) lies wholly on a `desk_w` x
+/// `desk_h` desk.
+pub fn deskHoldsRegion(w: usize, h: usize, rx: i32, ry: i32, desk_w: usize, desk_h: usize) bool {
+    if (rx < 0 or ry < 0) return false;
+    const x: usize = @intCast(rx);
+    const y: usize = @intCast(ry);
+    return x + w <= desk_w and y + h <= desk_h;
+}
+
 /// `glassSheetRegion` with a head band's material laid over it: each pixel is
 /// `glassHeadMix` of the desk there (T1916). A viewer's nav bar is a window of
 /// its own on the pane's sheet, so it paints its band this way itself - the
@@ -629,6 +671,22 @@ const GlassLut = struct {
     /// `glassMix(p, tint, t)`.
     fn mix(l: *const GlassLut, p: u32) u32 {
         return l.r[(p >> 16) & 0xFF] | l.g[(p >> 8) & 0xFF] | l.b[p & 0xFF];
+    }
+
+    /// `mix` of every pixel of `src` into `out` (T1923). The desk is a
+    /// gradient stretched eightfold, so a pixel is usually the one before it
+    /// again, and its answer is too: a repeat costs a compare.
+    fn mixInto(l: *const GlassLut, out: []u32, src: []const u32) void {
+        if (src.len == 0) return;
+        var in = src[0];
+        var res = l.mix(in);
+        for (out[0..src.len], src) |*o, v| {
+            if (v != in) {
+                in = v;
+                res = l.mix(v);
+            }
+            o.* = res;
+        }
     }
 
     /// The sheet over `p`, coverage included.
