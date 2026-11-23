@@ -17,6 +17,7 @@ const Application = @import("application.zig").Application;
 const CloseConfirmationDialog = @import("close_confirmation_dialog.zig").CloseConfirmationDialog;
 const Surface = @import("surface.zig").Surface;
 const SurfaceScrolledWindow = @import("surface_scrolled_window.zig").SurfaceScrolledWindow;
+const color_math = @import("../../win32/color_math.zig");
 
 const log = std.log.scoped(.gtk_ghostty_split_tree);
 
@@ -262,6 +263,11 @@ pub const SplitTree = extern struct {
             if (p.core()) |core| {
                 surface.setParent(core, .split);
             }
+            // A split takes its parent's tint (T67, T3382; the Mac
+            // BaseTerminalController.newSplit, win32 newSplitAt). An IPC
+            // `--color` / `--split-color` overwrites it afterwards.
+            if (color_math.splitTint(p.backgroundTint())) |tint|
+                surface.applyBackgroundTint(tint);
         }
 
         // Bind is-split property for new surface

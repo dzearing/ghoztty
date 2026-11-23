@@ -50,6 +50,7 @@ const pane_snapshot = @import("pane_snapshot.zig");
 const wk = @import("webkit.zig");
 const url_scheme = @import("../ipc/url_scheme.zig");
 const terminal_osc = @import("../../terminal/osc.zig").Command;
+const color_math = @import("../win32/color_math.zig");
 
 const Application = @import("class/application.zig").Application;
 const Window = @import("class/window.zig").Window;
@@ -762,6 +763,11 @@ pub fn openWindow(
     // T92: an empty `--title=` means "no pin".
     if (args.title) |title| if (title.len > 0) window.setTitleOverride(title);
 
+    // `--color` (T67, T3382): tint the window's first pane - background,
+    // contrast foreground and adjusted palette (Mac applyColorScheme). The
+    // window's own gradient desk is T3566.
+    if (resolveColor(args.color)) |tint| if (window.getActiveSurface()) |s| s.applyBackgroundTint(tint);
+
     // DEBUG-ONLY test seam (T3367): the window named by
     // GHOZTTY_TEST_ASK_TO_CLOSE opens with its close confirmation up, so
     // `+close` over a dialog can be tested with no input to raise one.
@@ -787,6 +793,9 @@ pub fn openWindow(
             log.warn("IPC inline split failed err={}", .{err});
             break :split;
         };
+        // `--split-color` (T67): the inline split's own tint, over the one
+        // it inherited from the first pane.
+        if (resolveColor(args.split_color)) |tint| s.applyBackgroundTint(tint);
         if (args.name) |n| s.setIpcName(n);
     }
 
@@ -920,8 +929,19 @@ pub fn createSplit(
         log.warn("IPC split failed err={}", .{err});
         return null;
     };
+    // `--color` (T67): the new pane's own tint, over the one it inherited.
+    if (resolveColor(args.color)) |tint| surface.applyBackgroundTint(tint);
     if (name) |n| surface.setIpcName(n);
     return .{ .window = window, .surface = surface };
+}
+
+/// A `--color` / `--split-color` value: `#rgb`, `#rrggbb`, or `random` (a
+/// fresh dark muted color, the Mac randomDarkColor). Null for none or for
+/// anything else (win32 `resolveColor`).
+fn resolveColor(value: ?[]const u8) ?color_math.Rgb {
+    const v = value orelse return null;
+    if (std.mem.eql(u8, v, "random")) return color_math.randomDark(std.crypto.random);
+    return color_math.parseHex(v);
 }
 
 /// Pin `title` on the target's window (null clears it, T92). The GTK app has
@@ -1328,6 +1348,11 @@ const ListLeaves = struct {
             // state's token - for every terminal pane, never a viewer (Mac).
             .banner = if (surface.getPaneBanner()) |b| try arena.dupe(u8, b) else null,
             .state = if (surface.isViewer()) null else surface.getActivityState().token(),
+            // T3382: the pane's tint, absent without one (additive, T67).
+            .background_tint = if (surface.backgroundTint()) |tint| tint: {
+                const buf = try arena.alloc(u8, 7);
+                break :tint color_math.hexString(tint, buf[0..7]);
+            } else null,
         };
     }
 };

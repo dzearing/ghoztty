@@ -45,6 +45,8 @@ const PaneBanner = @import("../PaneBanner.zig");
 const wk = @import("../webkit.zig");
 const banner_link = @import("../../win32/banner_link.zig");
 const banner_markup = @import("../banner_markup.zig");
+// The pure tint math win32 uses (T67): hex parsing, the contrast scheme.
+const color_math = @import("../../win32/color_math.zig");
 const Tab = @import("tab.zig").Tab;
 
 const log = std.log.scoped(.gtk_ghostty_surface);
@@ -792,6 +794,12 @@ pub const Surface = extern struct {
         /// (T3339): `+list` reports it as `state`.
         activity_state: terminal.osc.Command.ActivityState = .idle,
 
+        /// The pane's background tint (T67 on GTK, T3382): `+new-window
+        /// --color`, `--split-color`, `+split --color`, or the tint a split
+        /// inherited from its parent. Applied to the terminal as soon as
+        /// the core surface exists; `+list` reports it as `background_tint`.
+        background_tint: ?color_math.Rgb = null,
+
         pub var offset: c_int = 0;
     };
 
@@ -1027,6 +1035,60 @@ pub const Surface = extern struct {
 
     pub fn setActivityState(self: *Self, state: terminal.osc.Command.ActivityState) void {
         self.private().activity_state = state;
+    }
+
+    /// The pane's tint, or null when it shows the configured background.
+    pub fn backgroundTint(self: *Self) ?color_math.Rgb {
+        return self.private().background_tint;
+    }
+
+    /// Tint this pane's background (T67, T3382): the background, a
+    /// black/white contrast foreground and the ANSI palette adjusted to
+    /// WCAG 4.5:1 against it - the Mac `applyColorScheme` and win32
+    /// `Surface.applyBackgroundTint`. A pane whose terminal is not up yet
+    /// (a new window's or split's GL area realizes later) keeps the tint and
+    /// takes it the moment its core surface is created. A viewer pane has
+    /// no terminal and ignores it.
+    pub fn applyBackgroundTint(self: *Self, rgb: color_math.Rgb) void {
+        const priv = self.private();
+        if (priv.viewer != null) return;
+        priv.background_tint = rgb;
+        if (priv.core_surface) |cs| applyTintToCore(cs, rgb);
+    }
+
+    fn applyTintToCore(cs: *CoreSurface, rgb: color_math.Rgb) void {
+        {
+            // ONE hold for the whole scheme: a frame with the new background
+            // and the old foreground is the unreadable flash T150 removed.
+            cs.renderer_state.mutex.lock();
+            defer cs.renderer_state.mutex.unlock();
+            const t = &cs.io.terminal;
+            const s = color_math.scheme(rgb);
+            const fg: terminal.color.RGB = .{ .r = s.foreground.r, .g = s.foreground.g, .b = s.foreground.b };
+            t.colors.background.set(.{ .r = rgb.r, .g = rgb.g, .b = rgb.b });
+            t.colors.foreground.set(fg);
+            for (s.palette, 0..) |c, i| {
+                t.colors.palette.set(@intCast(i), .{ .r = c.r, .g = c.g, .b = c.b });
+            }
+            // 256-color content (prompt greys, cube colors) still carries
+            // the OLD background's lightness: regenerate 16-255 from the
+            // adjusted base 16 and the new bg/fg, keeping the base 16.
+            const generated = terminal.color.generate256Color(
+                t.colors.palette.current,
+                .initEmpty(),
+                .{ .r = rgb.r, .g = rgb.g, .b = rgb.b },
+                fg,
+                true,
+            );
+            @memcpy(t.colors.palette.current[16..], generated[16..]);
+            t.flags.dirty.palette = true;
+        }
+        // Truecolor content is beyond every palette: have the renderer
+        // enforce a contrast floor per cell (it only ever clamps upward).
+        _ = cs.renderer_thread.mailbox.push(.{
+            .min_contrast = @floatCast(color_math.runtime_min_contrast),
+        }, .{ .forever = {} });
+        cs.renderer_thread.wakeup.notify() catch {};
     }
 
     /// Put a banner card above the GL area. The pane's content box is
@@ -3969,6 +4031,10 @@ pub const Surface = extern struct {
 
         // Store it!
         priv.core_surface = surface;
+
+        // A tint asked for before the terminal existed (T3382): an IPC
+        // `--color` on a new window or split, or a split's inherited tint.
+        if (priv.background_tint) |rgb| applyTintToCore(surface, rgb);
 
         // Emit the signal that we initialized the surface.
         Surface.signals.init.impl.emit(
