@@ -1027,7 +1027,7 @@ pub const Window = extern struct {
         priv.pane_sidebar = sidebar;
         priv.sidebar_row.prepend(@ptrCast(@alignCast(sidebar.card)));
         // Its header names the window, and a narrow window takes the rail.
-        inline for (.{ "title", "default-width", "maximized", "fullscreened" }) |detail| {
+        inline for (.{ "title", "default-width", "maximized", "fullscreened", "quick-terminal" }) |detail| {
             _ = gobject.Object.signals.notify.connect(self, *Self, sidebarWindowNotify, self, .{ .detail = detail });
         }
         sidebar.queueRefresh();

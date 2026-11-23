@@ -16,7 +16,7 @@
 # debug build's `pane-sidebar` IPC seam (IpcHandlers.zig), which also clicks
 # its button or a row - the harness has no pointer.
 #
-# NEGATIVE=1 makes the toggle chord the wrong one, which must FAIL S12-S13
+# NEGATIVE=1 makes the toggle chord the wrong one, which must FAIL S12
 # (the harness can see a sidebar that does not hide).
 #
 # Output: one PASS/FAIL line per check, then 'CLI SIDEBAR: ALL PASS' or

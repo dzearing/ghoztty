@@ -102,7 +102,7 @@ first commit on `main`), so `next` takes them in that order within the P2 band:
 | cli-commands, cli-targeting | L7 T3336 (+ T3367-T3370) |
 | session-persistence | L8 T3337 (+ T3397-T3400) |
 | viewer-panes, viewer-image-and-diff, viewer-feedback | L9 T3338 (+ its L9a-L9k cards) |
-| banners, pane-sidebar | L10 T3339 (+ T3557-T3561) |
+| banners, pane-sidebar | L10 T3339 (+ T3557-T3561, T3606) |
 | url-scheme | in-app `ghoztty://` links: T3415; OS registration and handing the URL to the app: L14 T3343 |
 | remote-machines | L11a T3563 (chooser, Close vs Disconnect, pill); verbs T3597 (+stash/+restore T3596, handoff-quit T3595 done), relay account store L12 T3341 (done: keyring, else a 0600 file), the account row's sign-in L12b T3575 |
 | pane-rearrange | L11b T3564 |

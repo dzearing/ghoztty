@@ -290,7 +290,34 @@ private runtime dir, so a test app can never meet the user's.
   widget, `END`). Acceptance: `wsl-run.ps1 -CommandFile
   test\linux\cli-banner.sh`, ends `CLI BANNER: ALL PASS` (32 checks). Not
   yet: collapse and the Ctrl+R editor (T3559), restore (T3560), the link
-  menu (T3561), the pane sidebar (T3557, T3558).
+  menu (T3561). A banner's title names its pane's sidebar row (below).
+- **The pane sidebar (T3557)**: `PaneSidebar.zig`, a card in a horizontal
+  row (`sidebar_row` in `window.blp`) before the tab view, listing the
+  active tab's panes in reading order (a split's left/top side first, as
+  `+list` walks; the node array is in no spatial order). A row's text is
+  win32's pure rules (`gtk/pane_sidebar_rows.zig` over
+  `win32/pane_sidebar.zig`): the user's pane title, else the banner's
+  title, else the title, else the directory's name; under it the banner's
+  first line when it has no title, else the directory with home as `~` -
+  dropped when the title IS that directory (the core titles a pane by its
+  directory until a program sets one). Click focuses
+  (`SplitTree.focusSurface`). ONE button switches the rail (icons, the name
+  in a tooltip) and the panel; under 720 px the rail is held and the button
+  is off; a quick terminal has none. `toggle_pane_sidebar` is **Ctrl+Shift+S** on Linux (Windows'
+  chord). The flags are shared by every window (a change redraws all of
+  them at once - no deferral to next-key, which only paid on the Mac's
+  per-frame SwiftUI cost) and persist in `<config root>/ghoztty/pane-sidebar[-debug]`
+  in win32's format; `macos-pane-sidebar` forces the start without writing
+  over the user's own flags (`pane_sidebar_prefs.StartState`). Redraws are
+  queued (one idle) from the window's tree, tab, active-surface, title,
+  pwd, title-override, size and banner changes. Debug seam: `hl_ipc
+  pane-sidebar --target=<pane|window> [--click=toggle|<pane-id>]` replies
+  with the drawn state (`mode`, `expanded`, `hidden`, `can_expand`,
+  `visible`, `width`, `window_width`, `rows[]`). Acceptance: `wsl-run.ps1
+  -CommandFile test\linux\cli-sidebar.sh`, ends `CLI SIDEBAR: ALL PASS` (27
+  checks); `NEGATIVE=1` presses the wrong chord and must fail S12. Not yet:
+  all windows, search, drag and the stash tray (T3558); row tools, hover
+  tint, busy sheen and the width drag (T3606).
   `--view` on `+new-window`/`+split` opens a viewer pane (T3411, below).
 - **Names (T3370)** follow win32's rules exactly (`apprt/ipc/target_lookup.zig`,
   T2250): a window name is global (`+new-window --target`, else a minted

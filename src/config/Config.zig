@@ -3419,12 +3419,13 @@ keybind: Keybinds = .{},
 /// Changing this option at runtime only applies to new windows.
 @"macos-window-gradient": MacWindowGradient = .random,
 
-/// How the pane sidebar starts. On macOS and on Windows, which reads this
-/// same key.
+/// How the pane sidebar starts. On macOS, and on Windows and Linux, which
+/// read this same key.
 ///
 /// The sidebar is one view shared by every window: expanding, collapsing,
 /// hiding or showing it in one window (the button at its top, or
-/// `toggle_pane_sidebar`, Ctrl+Cmd+S by default) does the same in all of them.
+/// `toggle_pane_sidebar`, Ctrl+Cmd+S by default, Ctrl+Shift+S on Windows and
+/// Linux) does the same in all of them.
 ///
 /// Valid values:
 ///

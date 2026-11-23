@@ -235,7 +235,9 @@ fn clearRows(self: *PaneSidebar) void {
 pub fn refresh(self: *PaneSidebar) void {
     const ww = self.currentWindowWidth();
     self.window_width = ww;
-    const m = rows.mode(shared, ww);
+    // A quick terminal (the drop-down) has no sidebar, as on the Mac: hidden
+    // for that window only, the shared flags untouched.
+    const m: rows.Mode = if (self.window.isQuickTerminal()) .hidden else rows.mode(shared, ww);
     if (m != self.mode) log.info("pane sidebar mode {s} -> {s} window_width={d}", .{ @tagName(self.mode), @tagName(m), ww });
     self.mode = m;
 
