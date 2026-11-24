@@ -15,7 +15,8 @@
 #
 #   powershell -NoProfile -File scripts\linux\wsl-run.ps1 -CommandFile test\linux\cli-pane-drag.sh
 #
-# NEGATIVE=1 presses the wrong chord (Ctrl+Shift+,) and must FAIL D2-D4.
+# NEGATIVE=1 presses the wrong chord (Ctrl+Shift+,) and must FAIL D2-D5b, D14
+# and D15 (7 failures): the drops do not depend on the mode.
 # Output: one PASS/FAIL line per check, then 'CLI PANE DRAG: ALL PASS' or
 # 'CLI PANE DRAG: <n> FAILURE(S)'. Exit 0 only on ALL PASS.
 set -u
@@ -115,7 +116,9 @@ hl_check "D3 every pane shows a header at least 20px tall" $? "$(pd --target="$a
 r=$(pd --target="$a")
 h_on=$(hdr "$r" "$a" content_height)
 hh=$(hdr "$r" "$a" height)
-[ -n "$h_on" ] && [ -n "$h_before" ] && [ "$h_on" -le $((h_before - hh + 2)) ] && [ "$h_on" -ge 1 ]
+# A real header (20px+) and the terminal at least that much shorter - so a
+# run with no header at all (NEGATIVE=1) cannot pass on "0 shorter by 0".
+[ -n "$h_on" ] && [ -n "$h_before" ] && [ "${hh:-0}" -ge 20 ] && [ "$h_on" -le $((h_before - hh)) ] && [ "$h_on" -ge 1 ]
 hl_check "D4 the header takes layout space: a's terminal is laid out shorter by it" $? "before=$h_before on=$h_on header=$hh"
 [ "$(pf "$r" "d['tabs_visible']")" = True ] && [ "$(pf "$r" "d['tabs_autohide']")" = False ]
 hl_check "D5 the tab bar is forced visible (no autohide) with one tab" $? "$r"
