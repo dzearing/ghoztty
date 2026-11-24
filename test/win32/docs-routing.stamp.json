@@ -1,8 +1,8 @@
 {
     "guard":  "docs-routing",
     "script":  "test/win32/docs-routing.ps1",
-    "generated":  "2026-11-23T22:57:49-08:00",
-    "commit":  "70a0645f1",
+    "generated":  "2026-11-23T23:26:42-08:00",
+    "commit":  "bb415c56e",
     "uncommitted":  [
 
                     ],

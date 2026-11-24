@@ -7,8 +7,15 @@
 #   powershell -NoProfile -File test\win32\harness-scope.ps1
 #
 # Non-interactive, launches no Ghoztty and touches no user state: the subject is
-# the harness. It plants small violator scripts in test\win32\ (named zz-t1969-*,
-# deleted in a finally block) and runs the audits against them with -Only.
+# the harness. It plants small violator scripts (named zz-t1969-*) and runs the
+# audits against them with -Only - in a PRIVATE COPY of test\win32\ and
+# scripts\ under its own %TEMP% folder, never in the real suite (T2044). The
+# real test\win32\ is shared: acceptance-parallel's workers junction it, so a
+# violator planted there was swept by whatever audit ran beside this script
+# (unroll-count-audit went red on zz-t1969-unroll-count-audit-*.ps1 twice on
+# 2026-10-17), and a run killed before its finally block left the violators
+# behind for every later sweep. The audits derive their repo from their own
+# location, so running the mirror's copy makes them read the mirror.
 #
 # isolation: none - this runs static audits over planted source files; nothing
 # here launches ghoztty or runs a CLI verb (T680 meta-check reads this marker).
@@ -58,10 +65,23 @@ $work = Join-Path $env:TEMP "ghoztty-t1969-$PID"
 New-Item -ItemType Directory -Force -Path $work | Out-Null
 $planted = New-Object System.Collections.ArrayList
 
+# T2044: the private suite the violators are planted in. Real copies (no
+# junctions, so the finally's recursive delete can never reach the repo) of
+# test\win32\ - its top-level scripts and data plus lib\ - and of scripts\,
+# which argv-hazard-audit's anchors and the audits' libraries live under.
+$mirror = Join-Path $work 'mirror'
+$mirrorSuite = Join-Path $mirror 'test\win32'
+New-Item -ItemType Directory -Force -Path $mirrorSuite | Out-Null
+Get-ChildItem -LiteralPath $suite -File | Where-Object { $_.Name -notlike 'zz-t1969-*' } |
+    Copy-Item -Destination $mirrorSuite
+Copy-Item -LiteralPath (Join-Path $suite 'lib') -Destination $mirrorSuite -Recurse
+Copy-Item -LiteralPath (Join-Path $Repo 'scripts') -Destination $mirror -Recurse
+
 # Run one audit as the floor would, capturing everything it printed. Output and
-# exit code both, because a red verdict is the claim.
-function Invoke-Audit([string]$Name, [string[]]$Extra) {
-    $argv = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', (Join-Path $suite "$Name.ps1")) + @($Extra)
+# exit code both, because a red verdict is the claim. -Suite picks which copy of
+# the audit runs, and therefore which tree it reads.
+function Invoke-Audit([string]$Name, [string[]]$Extra, [string]$Suite = $suite) {
+    $argv = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', (Join-Path $Suite "$Name.ps1")) + @($Extra)
     # Each record stringified as it arrives, so an error record keeps its own
     # text instead of the host's formatting of it (stderr-capture-audit, T883).
     $text = (@(& powershell @argv 2>&1 | ForEach-Object { "$_" }) -join "`n")
@@ -70,10 +90,10 @@ function Invoke-Audit([string]$Name, [string[]]$Extra) {
 }
 
 function New-Planted([string]$Name, [string[]]$Body) {
-    $p = Join-Path $suite $Name
+    $p = Join-Path $mirrorSuite $Name
     Set-Content -LiteralPath $p -Encoding ascii -Value (@(
-            '# planted by test\win32\harness-scope.ps1 (T1969); deleted at the end of its run.'
-            '# If this file is still here, that run did not clean up: delete it.'
+            '# planted by test\win32\harness-scope.ps1 (T1969) in its private mirror (T2044).'
+            '# If this file is in the real test\win32, a run planted it in the wrong tree.'
         ) + @($Body))
     [void]$planted.Add($p)
     return "test\win32\$Name"
@@ -148,8 +168,14 @@ try {
         $unchanged = New-Planted "zz-t1969-$($c.Audit)-unchanged.ps1" $c.Body
         $cLeaf = Split-Path -Leaf $changed
         $uLeaf = Split-Path -Leaf $unchanged
+        # T2044: checked WHILE the violators exist, since that is the window a
+        # sweep running beside this script would have read them in.
+        $inReal = @(Get-ChildItem -LiteralPath $suite -Filter 'zz-t1969-*.ps1' -File -ErrorAction SilentlyContinue)
+        Assert "B $($c.Audit): the violators are planted in the private mirror, not the real suite" (
+            $inReal.Count -eq 0 -and (Test-Path -LiteralPath (Join-Path $mirrorSuite $cLeaf))) (
+            @($inReal | ForEach-Object { $_.Name }) -join ', ')
 
-        $r = Invoke-Audit $c.Audit @('-Only', $changed)
+        $r = Invoke-Audit $c.Audit @('-Only', $changed) $mirrorSuite
         Assert "B $($c.Audit): scoped to the changed violator, the run is red" ($r.Code -ne 0) "exit $($r.Code): $($r.Last)"
         Assert "B $($c.Audit): and it names the changed violator" ($r.Text -match [regex]::Escape($cLeaf)) $r.Last
         Assert "B $($c.Audit): and never reads the unchanged one" ($r.Text -notmatch [regex]::Escape($uLeaf)) $r.Last
@@ -157,7 +183,7 @@ try {
 
         # The same tree, the unchanged violator still in it: a list naming only
         # a clean script is green, because that violator is the daily sweep's.
-        $r = Invoke-Audit $c.Audit @('-Only', 'test\win32\ipc-p1.ps1')
+        $r = Invoke-Audit $c.Audit @('-Only', 'test\win32\ipc-p1.ps1') $mirrorSuite
         Assert "B $($c.Audit): a clean list over the same tree is green (the unchanged violator waits for the daily sweep)" (
             $r.Code -eq 0) "exit $($r.Code): $($r.Last)"
 
@@ -240,7 +266,7 @@ try {
 }
 
 $left = @(Get-ChildItem -LiteralPath $suite -Filter 'zz-t1969-*.ps1' -File -ErrorAction SilentlyContinue)
-Assert 'Z1 no planted violator is left in the suite' ($left.Count -eq 0) (@($left | ForEach-Object { $_.Name }) -join ', ')
+Assert 'Z1 no planted violator is in the real suite' ($left.Count -eq 0) (@($left | ForEach-Object { $_.Name }) -join ', ')
 
 Complete-TestBody  # T1039: the run reached the end of its body
 

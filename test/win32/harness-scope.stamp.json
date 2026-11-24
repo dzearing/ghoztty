@@ -1,17 +1,17 @@
 {
     "guard":  "harness-scope",
     "script":  "test/win32/harness-scope.ps1",
-    "generated":  "2026-11-23T18:03:19-08:00",
-    "commit":  "d7c3c6cea",
+    "generated":  "2026-11-23T22:54:46-08:00",
+    "commit":  "bb415c56e",
     "uncommitted":  [
-                        "scripts/lib/HarnessFloor.ps1"
+                        "test/win32/harness-scope.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "e3d359fb624aa2c8abf555bea66b63a798c01ec9dce023416631191e2c943050",
                   "scripts/lib/HarnessFloor.ps1":  "59f84f6fce589bd82ac182c09d3adef0f47f9cfa6f060bd3bbba33a04e99e21b",
                   "test/win32/argv-hazard-audit.ps1":  "5e6d8382b90b67ac3acb5ef30dba27c926ea6d90087212da2202b482b5155fdb",
                   "test/win32/foreground-audit.ps1":  "02902ecd3e0a698d1d0e00a5856111d5ae90c38183bcde8e5a8b6ec82a30285b",
-                  "test/win32/harness-scope.ps1":  "23c72eacc44b5ac667b1bf0755a9ca55452cb2ec4b20efc9a5b4a107e9565b7e",
+                  "test/win32/harness-scope.ps1":  "47e7a59a24119049c22c6b222d7d609242a710e8142ba8053123694b378ebf24",
                   "test/win32/lib/ArgvHazardAudit.ps1":  "b5158017c82268ea108deb78d6233f98b9864b3ff31439a93a2c0c10fd4de518",
                   "test/win32/lib/ForegroundAudit.ps1":  "b47d5a5915dcac0a495c1ac13f441cd017f11c5b7d98efcd51c2e1bba72f5876",
                   "test/win32/lib/HarnessScope.ps1":  "d3fde09c67a200a4d66feef4d1f2a58a691fb46b740781b320574625c6e230bf",
@@ -27,7 +27,7 @@
                  "scripts/lib/HarnessFloor.ps1":  "code1:801a1f954a1e43fbd552517a83b594827adc1c92a696bad0f8416f1425d20675",
                  "test/win32/argv-hazard-audit.ps1":  "code1:af2b49801d7cc064d107a902ee50d5232d6f6831449933f63871f7828636ed50",
                  "test/win32/foreground-audit.ps1":  "code1:6156756dc261b0758f623a0fc280bdf802afc4463ec86d667f1f5b4298b24efa",
-                 "test/win32/harness-scope.ps1":  "code1:d14f27cd60da204425358fad74fcbe45d6c8ca818686c11a02dcac4cbbf9c526",
+                 "test/win32/harness-scope.ps1":  "code1:eadc56e0ba4df645c1250794877dfcb01b6a58b8383749c2c8900d817490077e",
                  "test/win32/lib/ArgvHazardAudit.ps1":  "code1:dfb720d7b3a20161a319be369d79d057825b4cbf9120cb2a31336f39a2d78570",
                  "test/win32/lib/ForegroundAudit.ps1":  "code1:315568cedb3e96d5f620e500671b1705b6c0b21f6710b32bb4e66f59c13a179b",
                  "test/win32/lib/HarnessScope.ps1":  "code1:01632df0c006fb3987ae845a2acbafb09a23869437cb2dc452be7f75da784ae5",

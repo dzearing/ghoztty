@@ -1,8 +1,8 @@
 {
     "guard":  "config-errors",
     "script":  "test/win32/config-errors.ps1",
-    "generated":  "2026-11-23T22:58:12-08:00",
-    "commit":  "70a0645f1",
+    "generated":  "2026-11-23T23:27:05-08:00",
+    "commit":  "bb415c56e",
     "uncommitted":  [
 
                     ],
