@@ -201,6 +201,10 @@ pub fn handle(app: *App, alloc: Allocator, arguments: ?[]const []const u8) Alloc
     }
     const w = SettingsWindow.current() orelse
         return errorResponse(alloc, "the Settings window is not open", .{});
+    // The window shows before its theme catalog has been read (T3664); every
+    // op here reads or acts on the real catalog, so wait for it. `opened`
+    // below still reports what the open itself did.
+    w.waitThemes();
 
     if (req.page) |pg| w.setPage(pg);
     if (req.filter) |f| w.setFilter(f);
@@ -608,6 +612,18 @@ fn writeState(jws: *std.json.Stringify, alloc: Allocator, w_opt: ?*SettingsWindo
         try jws.write(@tagName(u));
     }
     if (w_opt) |w| {
+        // How the open went (T3664): ms until the window was on screen and
+        // painted, whether it got there before the theme read finished, and
+        // how long that read took.
+        try jws.objectField("opened");
+        try jws.beginObject();
+        try jws.objectField("open_ms");
+        try jws.write(w.open_ms);
+        try jws.objectField("before_themes");
+        try jws.write(w.shown_before_themes);
+        try jws.objectField("themes_ms");
+        try jws.write(w.themes_ms);
+        try jws.endObject();
         try jws.objectField("page");
         try jws.write(@tagName(w.page));
         try jws.objectField("filter");

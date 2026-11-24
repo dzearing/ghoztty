@@ -624,6 +624,11 @@
             "unset": "unreachable",
             "note": "unset, the Settings window's Open in Editor / Show in Explorer / Open buttons really launch an editor or Explorer, which a test on the background desktop cannot observe and must not leave behind (T2676); set, the window records the launch it would have made. Debug builds only."
         },
+        "GHOZTTY_SETTINGS_THEME_DELAY_MS": {
+            "class": "fault",
+            "unset": "shipped-elsewhere",
+            "note": "set, the Settings window's background theme-catalog read sleeps this long first - the cold, scanned install folder (1.3 s measured) that a dev drive never reproduces (T3664, settings-open-latency.ps1); unset = the read runs at full speed, as in settings-window.ps1 and every other run. Debug builds only."
+        },
         "GHOZTTY_STORAGE_TRIM": {
             "class": "non-default",
             "unset": "shipped-elsewhere",

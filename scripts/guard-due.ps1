@@ -5802,6 +5802,22 @@ $GuardTable = @(
             'test\win32\settings-window.ps1'
         )
     },
+    # The Settings window shows at once (T3664): the theme catalog is read on
+    # a worker while the window is already up. `settings-open-latency.ps1` is
+    # the only harness that injects a slow catalog read and times the window
+    # appearing from outside the app.
+    [pscustomobject]@{
+        Name   = 'settings-open-latency'
+        Script = 'test\win32\settings-open-latency.ps1'
+        Stamp  = 'test\win32\settings-open-latency.stamp.json'
+        Covers = @(
+            'src\apprt\win32\SettingsWindow.zig',
+            'src\apprt\win32\ipc_settings.zig',
+            'src\apprt\win32\settings_theme.zig',
+            'src\apprt\win32\theme_catalog.zig',
+            'test\win32\settings-open-latency.ps1'
+        )
+    },
     # Single-window mode (T3136, children T3180-T3187).
     # `single-window-mode.ps1` is the only harness that launches the app in
     # each mode and reads the launch latch back; one section per child.

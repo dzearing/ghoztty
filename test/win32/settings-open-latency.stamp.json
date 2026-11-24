@@ -1,0 +1,21 @@
+{
+    "guard":  "settings-open-latency",
+    "script":  "test/win32/settings-open-latency.ps1",
+    "generated":  "2026-11-24T08:04:32-08:00",
+    "commit":  "ad0fcdeb1",
+    "uncommitted":  [
+                        "src/apprt/win32/ipc_settings.zig",
+                        "src/apprt/win32/SettingsWindow.zig",
+                        "test/win32/settings-open-latency.ps1"
+                    ],
+    "files":  {
+                  "src/apprt/win32/ipc_settings.zig":  "a2440b5eb7bb59830f899ac0773251c78bdc3a0ecb256cba08ad37c498c879fa",
+                  "src/apprt/win32/settings_theme.zig":  "fc5cd3da976f71e02fe9ce9a798aa6b9397314b1c1eb96cfb733d5d9ae3c2d8b",
+                  "src/apprt/win32/SettingsWindow.zig":  "8bc3dd928785d90b0b3f2d7ac43a102874ea59a09cc8d3da30bbef0f26b40f2d",
+                  "src/apprt/win32/theme_catalog.zig":  "6283fe51eafad698d058879ab2a4013f9dbfd7549e0681aa3f3dd2da6b6e93eb",
+                  "test/win32/settings-open-latency.ps1":  "2d89e51886b2d7042ec60cb6e3835ef66b809e9c6aa9c3a5bd951d38fd0c4f72"
+              },
+    "code":  {
+                 "test/win32/settings-open-latency.ps1":  "code1:cd0c22e2315dcdb99d4e2eabed5c5ee0f57793e55a3589c1b3a7faddfcde8c55"
+             }
+}

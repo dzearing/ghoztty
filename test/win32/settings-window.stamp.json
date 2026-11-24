@@ -1,16 +1,14 @@
 {
     "guard":  "settings-window",
     "script":  "test/win32/settings-window.ps1",
-    "generated":  "2026-11-19T10:44:08-08:00",
-    "commit":  "683e0ae8c",
+    "generated":  "2026-11-24T08:04:37-08:00",
+    "commit":  "ad0fcdeb1",
     "uncommitted":  [
                         "src/apprt/win32/ipc_settings.zig",
-                        "src/apprt/win32/settings_pages.zig",
-                        "src/apprt/win32/SettingsWindow.zig",
-                        "test/win32/settings-window.ps1"
+                        "src/apprt/win32/SettingsWindow.zig"
                     ],
     "files":  {
-                  "src/apprt/win32/ipc_settings.zig":  "6cf8192dcc5540bc7e6eaaa07423dc045b75111e922df63552d28a723da0ac29",
+                  "src/apprt/win32/ipc_settings.zig":  "a2440b5eb7bb59830f899ac0773251c78bdc3a0ecb256cba08ad37c498c879fa",
                   "src/apprt/win32/settings_line_edit.zig":  "283ca0c97e744cb9b297b546dd955756bc969ce76536d8c16655224bb20a87e5",
                   "src/apprt/win32/settings_pages.zig":  "84a45155668f49f68496561155303d918e8c716ed4a72802e872f5283882bbb1",
                   "src/apprt/win32/settings_theme.zig":  "fc5cd3da976f71e02fe9ce9a798aa6b9397314b1c1eb96cfb733d5d9ae3c2d8b",
@@ -18,8 +16,11 @@
                   "src/apprt/win32/SettingsCatalog.zig":  "865c67a977380590d4fecfc3c801e4bda6453ad73ea8e3e4718a1ba04e4f101c",
                   "src/apprt/win32/SettingsModel.zig":  "8939047fd548ea95897bea7ef170685479d294fa534589a6dd70b240677a382c",
                   "src/apprt/win32/SettingsSources.zig":  "c96d72c0bbed26ca4de3120a37c6b306b61e72d529f8c0a8ed4fffb4d140237e",
-                  "src/apprt/win32/SettingsWindow.zig":  "0485c819bcb77e9ac2e507130a7e7bc94938437a6217405fa9199cb23f6f46d7",
+                  "src/apprt/win32/SettingsWindow.zig":  "8bc3dd928785d90b0b3f2d7ac43a102874ea59a09cc8d3da30bbef0f26b40f2d",
                   "src/apprt/win32/theme_catalog.zig":  "6283fe51eafad698d058879ab2a4013f9dbfd7549e0681aa3f3dd2da6b6e93eb",
                   "test/win32/settings-window.ps1":  "db37b2e8c067edebd80318441ac6486e7a66e302b5c45c8f6e71d3e8c7f4947e"
-              }
+              },
+    "code":  {
+                 "test/win32/settings-window.ps1":  "code1:610e2f34fd5e06890deeb9a9bce271049f79ee67f86bb2aff23168ccc795cd3b"
+             }
 }

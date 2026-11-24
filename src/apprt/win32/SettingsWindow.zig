@@ -101,6 +101,10 @@ var class_registered: bool = false;
 /// The open window, if any. GUI thread only.
 var active: ?*SettingsWindow = null;
 
+/// What the Appearance page reads while the theme catalog loads (T3664). Its
+/// arena is never used: nothing allocates into or frees this catalog.
+const empty_themes: theme_catalog.Catalog = .{ .arena = undefined };
+
 pub const PageId = settings_pages.PageId;
 
 /// The sidebar, in order.
@@ -212,6 +216,20 @@ file: ConfigFileText,
 /// The themes the `theme` key can name, read on first use (Mac
 /// `ThemeCatalog.shared`); kept for the window's life.
 themes: ?theme_catalog.Catalog = null,
+/// How long reading `themes` took, in ms (the `themes loaded` log line).
+themes_ms: u64 = 0,
+/// The worker reading `themes` off the UI thread (T3664): the first read of
+/// an installed build's ~500 theme files is a cold, virus-scanned read that
+/// took 1.3 s on the user's box, and the window used to wait for it before it
+/// showed. Set while the read runs; `theme_result` is what it read, handed
+/// over by `finishThemes` (the join is the hand-off).
+theme_thread: ?std.Thread = null,
+theme_result: ?theme_catalog.Catalog = null,
+/// The open's own timing, for the `settings` state (T3664's latency
+/// harness): ms from the request to the window being shown and painted, and
+/// whether it was shown before the theme read finished.
+open_ms: u64 = 0,
+shown_before_themes: bool = false,
 /// Appearance > Theme's tile grid (T2682, Mac `ThemeSection`'s @State,
 /// which a page change resets): the tab shown (null: the one the system's
 /// appearance picks), the filter field, and the "All N themes..." disclosure.
@@ -327,6 +345,7 @@ pub fn open(app: *App, window: ?*Window) void {
         _ = w32.SetForegroundWindow(existing.hwnd);
         return;
     }
+    var timer = std.time.Timer.start() catch null;
     const owner: ?w32.HWND = if (window) |w| w.hwnd else null;
     const scale: f32 = if (window) |w| w.scale else 1.0;
     const self = create(app, scale) catch |err| {
@@ -366,16 +385,89 @@ pub fn open(app: *App, window: ?*Window) void {
     _ = w32.SetWindowLongPtrW(hwnd, w32.GWLP_USERDATA, @bitCast(@intFromPtr(self)));
     system_colors.applyPanelChrome(hwnd, self.pal());
     active = self;
+    // The theme read goes off the UI thread before the first layout, so the
+    // window shows without waiting for it (T3664); it lands as
+    // WM_APP_THEMES_LOADED.
+    self.startThemeLoad();
+    const t_create = lapMs(&timer);
     self.refresh();
+    const t_refresh = lapMs(&timer);
     _ = w32.ShowWindow(hwnd, w32.SW_SHOW);
     _ = w32.SetForegroundWindow(hwnd);
-    log.info("settings: opened keys={d} file={s}", .{ self.catalog.entries.len, self.main_path });
+    _ = w32.UpdateWindow(hwnd);
+    const t_paint = lapMs(&timer);
+    self.open_ms = t_create + t_refresh + t_paint;
+    self.shown_before_themes = self.themes == null;
+    log.info("settings: opened keys={d} file={s} open_ms={d} create_ms={d} refresh_ms={d} paint_ms={d} themes_pending={}", .{ self.catalog.entries.len, self.main_path, self.open_ms, t_create, t_refresh, t_paint, self.shown_before_themes });
+}
+
+/// Message the theme worker posts when its read is done.
+const WM_APP_THEMES_LOADED: u32 = w32.WM_APP + 2;
+
+fn startThemeLoad(self: *SettingsWindow) void {
+    if (self.themes != null or self.theme_thread != null) return;
+    self.theme_thread = std.Thread.spawn(.{}, themeWorker, .{self}) catch |err| blk: {
+        // No thread: `themeCatalog` reads on the UI thread, as it used to.
+        log.warn("settings: theme read thread failed to start err={}; reading inline", .{err});
+        break :blk null;
+    };
+}
+
+/// Runs on the worker. Touches only `theme_result` and `themes_ms`, which the
+/// UI thread reads after joining it.
+fn themeWorker(self: *SettingsWindow) void {
+    var timer = std.time.Timer.start() catch null;
+    // Debug seam: `GHOZTTY_SETTINGS_THEME_DELAY_MS` stretches the read the
+    // way a cold, scanned install folder does (1.3 s measured), which a dev
+    // drive never reproduces - the latency harness's slow catalog.
+    if (comptime build_config.is_debug) {
+        if (std.process.getEnvVarOwned(self.gpa, "GHOZTTY_SETTINGS_THEME_DELAY_MS")) |v| {
+            defer self.gpa.free(v);
+            const ms = std.fmt.parseInt(u32, v, 10) catch 0;
+            std.Thread.sleep(@as(u64, ms) * std.time.ns_per_ms);
+        } else |_| {}
+    }
+    self.theme_result = settings_theme.loadCatalog(self.gpa) catch null;
+    self.themes_ms = lapMs(&timer);
+    _ = w32.PostMessageW(self.hwnd, WM_APP_THEMES_LOADED, 0, 0);
+}
+
+/// Take the worker's catalog, waiting for it if it is still reading. A
+/// no-op when no read is in flight.
+fn finishThemes(self: *SettingsWindow) void {
+    if (self.theme_thread) |t| t.join() else return;
+    self.theme_thread = null;
+    const cat = self.theme_result orelse theme_catalog.Catalog{ .arena = std.heap.ArenaAllocator.init(self.gpa) };
+    self.theme_result = null;
+    if (self.themes) |*old| old.deinit();
+    self.themes = cat;
+    log.info("settings: themes loaded count={d} themes_ms={d}", .{ cat.themes.len, self.themes_ms });
+}
+
+/// Whether the theme catalog is still being read (Appearance shows "Loading
+/// themes..." meanwhile).
+pub fn themesLoading(self: *const SettingsWindow) bool {
+    return self.themes == null and self.theme_thread != null;
+}
+
+/// Wait for the theme read: a caller about to act on the catalog (a pick,
+/// the `settings` IPC action) needs the real one, not the empty stand-in
+/// drawn while it loads.
+pub fn waitThemes(self: *SettingsWindow) void {
+    self.finishThemes();
+}
+
+fn lapMs(timer: *?std.time.Timer) u64 {
+    const t = &(timer.* orelse return 0);
+    return t.lap() / std.time.ns_per_ms;
 }
 
 fn create(app: *App, scale: f32) !*SettingsWindow {
     const gpa = app.core_app.alloc;
+    var timer = std.time.Timer.start() catch null;
     var catalog = try SettingsCatalog.defaults(gpa);
     errdefer catalog.deinit();
+    const t_catalog = lapMs(&timer);
     const preferred = try configpkg.preferredDefaultFilePath(gpa);
     defer gpa.free(preferred);
     const main_path = try gpa.dupe(u8, preferred);
@@ -408,7 +500,9 @@ fn create(app: *App, scale: f32) !*SettingsWindow {
         .view_arena = .init(gpa),
     };
     self.model = SettingsModel.init(gpa, &self.store, .{ .ctx = self, .func = reloadHook });
+    const t_setup = lapMs(&timer);
     self.reloadData();
+    log.info("settings: create catalog_ms={d} setup_ms={d} reload_ms={d}", .{ t_catalog, t_setup, lapMs(&timer) });
     return self;
 }
 
@@ -456,6 +550,7 @@ fn destroyState(self: *SettingsWindow) void {
     if (self.sources) |*s| s.deinit();
     if (self.effective) |*e| e.deinit();
     self.catalog.deinit();
+    self.finishThemes();
     if (self.themes) |*t| t.deinit();
     self.file.deinit();
     gpa.free(self.main_path);
@@ -2519,7 +2614,7 @@ fn paintTheme(self: *SettingsWindow, hdc: w32.HDC, p: panel_theme.Panel, y: i32,
     var pb: [400]u8 = undefined;
     const notices = [_]?struct { text: []const u8, color: panel_theme.Rgb }{
         if (!live) .{ .text = "Set in a file that loads after your config - edit it there.", .color = p.warn } else null,
-        if (cat.themes.len == 0) .{ .text = "No themes were found in the bundled or your own themes folder.", .color = p.warn } else null,
+        if (self.themesLoading()) .{ .text = "Loading themes\u{2026}", .color = p.secondary } else if (cat.themes.len == 0) .{ .text = "No themes were found in the bundled or your own themes folder.", .color = p.warn } else null,
         blk: {
             const s = sel orelse break :blk null;
             if (!s.follows_system) break :blk null;
@@ -2740,7 +2835,12 @@ fn pickThemeTile(self: *SettingsWindow, index: usize) void {
 /// The theme catalog, read on first use.
 pub fn themeCatalog(self: *SettingsWindow) *const theme_catalog.Catalog {
     if (self.themes == null) {
+        // Still reading on the worker: draw from an empty catalog until it
+        // lands rather than blocking the UI thread on it.
+        if (self.theme_thread != null) return &empty_themes;
+        var timer = std.time.Timer.start() catch null;
         self.themes = settings_theme.loadCatalog(self.gpa) catch .{ .arena = std.heap.ArenaAllocator.init(self.gpa) };
+        self.themes_ms = lapMs(&timer);
     }
     return &self.themes.?;
 }
@@ -2756,6 +2856,7 @@ pub fn themeSelection(self: *const SettingsWindow) ?theme_catalog.Selection {
 /// current theme's family; one theme keeps the slot the system shows.
 pub fn setThemeFollows(self: *SettingsWindow, follow: bool) bool {
     if (self.overridingSource("theme") != null) return false;
+    self.waitThemes();
     const cat = self.themeCatalog();
     const res = theme_catalog.switchMode(self.gpa, cat, self.themeSelection(), follow, !system_colors.usesLightTheme()) catch return false;
     return switch (res) {
@@ -2771,6 +2872,7 @@ pub fn setThemeFollows(self: *SettingsWindow, follow: bool) bool {
 /// A theme picked for `slot` (Mac `pick`). Only a catalog theme is taken.
 pub fn pickTheme(self: *SettingsWindow, name: []const u8, slot: theme_catalog.Slot) bool {
     if (self.overridingSource("theme") != null) return false;
+    self.waitThemes();
     const theme = self.themeCatalog().named(name) orelse return false;
     const v = theme_catalog.pick(self.gpa, self.themeSelection(), theme.name, slot) catch return false;
     defer self.gpa.free(v);
@@ -3340,6 +3442,13 @@ fn wndProc(hwnd: w32.HWND, msg: u32, wparam: usize, lparam: isize) callconv(.win
         remote_view.WM_APP_HOST_SETTINGS => {
             remote_view.runHostSettings(self);
             if (active == self) self.refresh();
+            return 0;
+        },
+        WM_APP_THEMES_LOADED => {
+            if (self.theme_thread != null) {
+                self.finishThemes();
+                self.refresh();
+            }
             return 0;
         },
         w32.WM_PAINT => {
