@@ -169,6 +169,9 @@ pub const Open = struct {
     shell: ?[]const u8 = null,
     /// Command to run instead of an interactive shell, or null.
     command: ?[]const u8 = null,
+    /// The far agent's session to ATTACH instead of OPENing a new one: a
+    /// relay window brought back at launch (T3671, `RelayWindows.zig`).
+    session_id: ?[]const u8 = null,
 };
 pub var pending_open: ?Open = null;
 

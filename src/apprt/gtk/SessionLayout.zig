@@ -120,7 +120,7 @@ pub fn capture(arena: Allocator, app: *Application, snapshots: bool) Allocator.E
         // T3597: a remote machine's window is not this machine's layout -
         // its sessions live on THAT machine's agent, and re-attaching them
         // on the local one would open wrong panes. Bringing remote windows
-        // back at launch is its own record (win32 T3352; Linux T3668).
+        // back at launch is its own record (win32 T3352; `RelayWindows.zig`, T3671).
         if (IpcHandlers.remoteLinkOf(window) != null) continue;
         const w = try captureWindow(arena, window, windows.items.len, snapshots, &budget) orelse continue;
         try windows.append(arena, w);

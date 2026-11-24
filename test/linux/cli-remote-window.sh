@@ -13,8 +13,10 @@
 # of test/win32/ipc-relay.ps1), a device enrolled on it, and a ghoztty-agent in
 # --relay mode - so the window's panes ride the relayed agent, +list names the
 # machine by --name or by device id, a split and a new tab stay on it, and
-# +close ends its sessions. It needs `go` (scripts/linux/setup-distro.sh
-# installs it). Run it ONLY through the wrapper:
+# +close ends its sessions. Section Z (T3671) quits the app and relaunches it:
+# a relay window comes back, re-attached to the same far shell, under the same
+# name; one closed on purpose does not. It needs `go`
+# (scripts/linux/setup-distro.sh installs it). Run it ONLY through the wrapper:
 #
 #   powershell -NoProfile -File scripts\linux\wsl-run.ps1 -CommandFile test\linux\cli-remote-window.sh
 #
@@ -24,7 +26,8 @@
 #
 # NEGATIVE=1 dials a port nothing listens on for the main window, which must
 # FAIL R1. NEGATIVE=relay dials a device the relay never enrolled for the relay
-# window, which must FAIL Y5.
+# window, which must FAIL Y5. NEGATIVE=restore relaunches with no relay
+# credential, which must FAIL Z6.
 #
 # Output: one PASS/FAIL line per check, then 'CLI REMOTE WINDOW: ALL PASS' or
 # 'CLI REMOTE WINDOW: <n> FAILURE(S)'. Exit 0 only on ALL PASS.
@@ -344,5 +347,70 @@ alive "$RLAGENT" && alive "$RELAY"
 hl_check "Y14 the relayed agent and the relay keep running" $? "agent=$(alive "$RLAGENT" && echo y) relay=$(alive "$RELAY" && echo y)"
 cli +list --json > /dev/null 2>&1
 hl_check "Y15 the app still answers" $?
+
+# --- Z: a relay window comes back at relaunch (T3671) --------------------------------
+# The record (remote-windows-debug.json beside the session layout) gets one entry
+# per open relay window - base, device, name, the first pane's session, never a
+# token. A real quit keeps it; the relaunch resolves the credential (here
+# GHOSTTY_RELAY_TOKEN, as the account store would) and re-ATTACHes the same far
+# session in a window under the same name and title. relwin, closed by +close in
+# Y13, must not come back.
+record="$XDG_CONFIG_HOME/ghoztty/remote-windows-debug.json"
+rec_q() { python3 -c '
+import json, sys
+try: ws = json.load(open(sys.argv[1])).get("windows", [])
+except Exception: ws = []
+q = sys.argv[2]
+mine = [w for w in ws if w.get("ipc_name") == sys.argv[3]] if len(sys.argv) > 3 else []
+if q == "sid": print(mine[0].get("session_id", "") if len(mine) == 1 else "")
+elif q == "n": print(len(mine))
+elif q == "title": print(mine[0].get("window_title", "") if mine else "")
+' "$record" "$@" 2>/dev/null; }
+out=$(cli +new-remote-window --relay="$base" --device="$dev_id" --token="$DEV_TOKEN" --name=zr --title=ZT 2>&1); rc=$?
+hl_wait_for 15 pane_pid zr > /dev/null
+zpid=$(pane_pid zr)
+[ $rc = 0 ] && [ -n "$zpid" ] && is_ancestor "$RLAGENT" "$zpid"
+hl_check "Z1 a second relay window zr opens on the relayed agent" $? "rc=$rc out=$out pane=$zpid"
+cli +send-keys --target=zr 'echo before-quit-$((7*7))' Enter > /dev/null 2>&1
+hl_wait_for 10 reads zr 'before-quit-49'
+hl_check "Z2 zr's shell answers before the quit" $? "$(cli +read --name=zr 2>&1 | tail -3 | tr '\n' ' ')"
+has_sid() { [ -n "$(rec_q sid zr)" ]; }
+hl_wait_for 15 has_sid
+zsid=$(rec_q sid zr)
+[ -n "$zsid" ] && [ "$(rec_q n relwin)" = 0 ] && ! grep -q -- "$DEV_TOKEN" "$record"
+hl_check "Z3 the record names zr with its session, keeps no entry for the closed relwin and no token" $? "sid=$zsid relwin=$(rec_q n relwin) file=$(tr -d '\n ' < "$record" 2>/dev/null | head -c 600)"
+
+kill -TERM "$APP" 2>/dev/null
+hl_wait_for 15 sh -c "! kill -0 $APP 2>/dev/null"
+hl_check "Z4 SIGTERM quits the app" $?
+alive "$zpid" && [ "$(rec_q sid zr)" = "$zsid" ] && [ "$(rec_q title zr)" = ZT ]
+hl_check "Z5 the quit kept zr's far session alive and its record entry (session, title)" $? "pane=$zpid alive=$(alive "$zpid" && echo y) sid=$(rec_q sid zr) title=$(rec_q title zr)"
+
+# The relaunch: the same isolated world, now with a relay credential. NEGATIVE=restore
+# withholds it, so nothing may come back - Z6 MUST fail.
+relaunch_tok=$DEV_TOKEN
+[ "${NEGATIVE:-0}" = restore ] && { relaunch_tok=; echo "  NEGATIVE CONTROL: the relaunch has no relay credential - this run MUST fail"; }
+rm -f "$sock"
+hl_launch APP2 env GHOSTTY_RELAY_TOKEN="$relaunch_tok" "$app" --gtk-single-instance=false --session-persistence=false \
+    -e /bin/sh -c 'PS1="hl$ " exec /bin/sh -i'
+hl_wait_for 30 test -S "$sock"
+hl_check "Z6a the relaunched app serves its socket" $? "$(tail -20 "$APP2_LOG" 2>/dev/null | tr '\n' ' ')"
+hl_wait_for 30 has_window zr
+hl_check "Z6 the relaunch brings zr back" $? "$(grep -m5 'relay_windows' "$APP2_LOG" 2>/dev/null | tr '\n' ' ')"
+hl_wait_for 15 pane_pid zr > /dev/null
+[ "$(pane_pid zr)" = "$zpid" ] && [ "$(win machine zr)" = zr ] && [ "$(win state zr)" = connected ]
+hl_check "Z7 zr re-attached the SAME far shell, named by its machine, link connected" $? "pane=$(pane_pid zr) want=$zpid machine=$(win machine zr) state=$(win state zr)"
+cli +send-keys --target=zr 'echo after-relaunch-$((6*7))' Enter > /dev/null 2>&1
+hl_wait_for 10 reads zr 'after-relaunch-42'
+hl_check "Z8 keys reach the re-attached shell and +read sees its output" $? "$(cli +read --name=zr 2>&1 | tail -3 | tr '\n' ' ')"
+! has_window relwin
+hl_check "Z9 relwin, closed on purpose, did not come back" $?
+[ "$(rec_q n zr)" = 1 ] && [ "$(rec_q sid zr)" = "$zsid" ]
+hl_check "Z10 the restore superseded zr's entry: one, same session" $? "n=$(rec_q n zr) sid=$(rec_q sid zr)"
+out=$(cli +close --target=zr 2>&1)
+hl_wait_for 10 sh -c "! kill -0 $zpid 2>/dev/null"
+z_closed=$?
+[ $z_closed = 0 ] && [ "$(rec_q n zr)" = 0 ]
+hl_check "Z11 +close of the restored zr ends its session and drops its entry" $? "closed=$z_closed n=$(rec_q n zr) out=$out"
 
 hl_finish "$L"

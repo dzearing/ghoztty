@@ -218,6 +218,20 @@ pub const Manifest = struct {
         self.save();
     }
 
+    /// Record the IPC target name the window answers to now (null clears it).
+    /// Unknown ids and an unchanged value are no-ops (no write). GTK refreshes
+    /// it at quit (T3671), so a `+rename` after the open survives a relaunch.
+    pub fn setIpcName(self: *Manifest, id: []const u8, name: ?[]const u8) void {
+        const i = self.indexOf(id) orelse return;
+        const e = &self.slots.items[i].entry;
+        const want: ?[]const u8 = if (name) |n| (if (n.len == 0) null else n) else null;
+        if (optEql(e.ipc_name, want)) return;
+        const dup = if (want) |n| (self.alloc.dupe(u8, n) catch return) else null;
+        if (e.ipc_name) |old| self.alloc.free(old);
+        e.ipc_name = dup;
+        self.save();
+    }
+
     /// A directory rename (T1418): every UNPINNED entry for `device` takes the
     /// new name, whether its window is open or waiting for a later launch.
     pub fn updateName(self: *Manifest, device: []const u8, name: []const u8) void {
@@ -473,6 +487,22 @@ test "relay manifest: a pin needs a name, a user title needs a title" {
     m.setTitle(&id, null, true);
     try testing.expect(m.find(&id).?.window_title == null);
     try testing.expect(!m.find(&id).?.title_by_user);
+}
+
+test "relay manifest: setIpcName follows a rename, clears on null or empty (T3671)" {
+    var m = Manifest.load(testing.allocator, null);
+    defer m.deinit();
+    const id = try m.register(.{ .relay_base = "b", .device = "d", .ipc_name = "w" }, null);
+    m.setIpcName(&id, "w2");
+    try testing.expectEqualStrings("w2", m.find(&id).?.ipc_name.?);
+    m.setIpcName(&id, "w2"); // unchanged: no-op
+    try testing.expectEqualStrings("w2", m.find(&id).?.ipc_name.?);
+    m.setIpcName(&id, "");
+    try testing.expect(m.find(&id).?.ipc_name == null);
+    m.setIpcName(&id, "w3");
+    m.setIpcName(&id, null);
+    try testing.expect(m.find(&id).?.ipc_name == null);
+    m.setIpcName("no-such-id", "x"); // unknown id: no-op
 }
 
 test "relay manifest: a rename skips pinned entries" {

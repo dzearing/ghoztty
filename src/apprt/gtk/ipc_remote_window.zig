@@ -35,6 +35,7 @@ const relay_account = @import("../../remote/relay_account.zig");
 const tcp_dial = @import("../../remote/tcp_dial.zig");
 const relay_dial = @import("../../remote/relay_dial.zig");
 const RemoteLink = @import("RemoteLink.zig");
+const RelayWindows = @import("RelayWindows.zig");
 const IpcServer = @import("IpcServer.zig");
 const Application = @import("class/application.zig").Application;
 const Window = @import("class/window.zig").Window;
@@ -196,16 +197,17 @@ fn finishWindow(app: *Application, job: *Job) Allocator.Error![]u8 {
         } },
     };
     const link = try RemoteLink.adopt(dialed, machine);
-    const window = open(app, .{
+    _ = openWith(app, .{
         .link = link,
         .working_directory = job.options.working_directory,
         .shell = job.options.shell,
         .command = job.options.command,
-    }, job.options.activate);
-    // `--name` registers the window for later targeting (Mac rule).
-    if (nonEmpty(job.options.name)) |n| window.setIpcName(n);
-    // T92: an empty `--title=` means "no pin".
-    if (job.options.title) |title| if (title.len > 0) window.setTitleOverride(title);
+    }, job.options.activate, .{
+        // `--name` registers the window for later targeting (Mac rule).
+        .ipc_name = nonEmpty(job.options.name),
+        // T92: an empty `--title=` means "no pin".
+        .title = nonEmpty(job.options.title),
+    });
     log.info("IPC new-remote-window: opened a window on {s}", .{link.machine.displayName()});
     return try c_alloc.dupe(u8, "{\"success\":true}");
 }
@@ -214,13 +216,25 @@ fn finishWindow(app: *Application, job: *Job) Allocator.Error![]u8 {
 /// first pane rides `remote.link`. A link no pane took (a window that built
 /// no terminal) is closed again.
 pub fn open(app: *Application, remote: RemoteLink.Open, activate: bool) *Window {
+    return openWith(app, remote, activate, .{});
+}
+
+/// `open`, then the window's IPC name and pinned title, and - for a relay
+/// window - its entry in the relaunch record (T3671, `RelayWindows.record`),
+/// after the name and title so the entry carries both. A window whose first
+/// pane did not take the link records nothing.
+pub fn openWith(app: *Application, remote: RemoteLink.Open, activate: bool, r: RelayWindows.Record) *Window {
     RemoteLink.pending_open = remote;
     const window = app.newWindowForIpc(null, null, &.{}, null, activate);
     RemoteLink.pending_open = null;
     if (remote.link.refs == 0) {
         log.warn("remote window: its first pane did not take the link; closing it", .{});
         remote.link.retire();
+        return window;
     }
+    if (r.ipc_name) |n| window.setIpcName(n);
+    if (r.title) |t| window.setTitleOverride(t);
+    RelayWindows.record(window, remote.link, r);
     return window;
 }
 
@@ -268,8 +282,10 @@ pub fn fromFocused(
 
 /// Relay token resolution after an explicit `--token`: the signed-in account
 /// (its relay session token, renewed as needed - T3341's store), then this
-/// process's `GHOSTTY_RELAY_TOKEN`. Null: no credential. On `arena`.
-fn resolveToken(arena: Allocator) ?[]const u8 {
+/// process's `GHOSTTY_RELAY_TOKEN`. Null: no credential. On `arena`. Also the
+/// relaunch restore's credential (`RelayWindows.settle`, off the GTK thread:
+/// it touches only the account store and the environment).
+pub fn resolveToken(arena: Allocator) ?[]const u8 {
     return resolveAccountToken(arena) orelse resolveEnvToken(arena);
 }
 

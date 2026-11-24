@@ -1388,8 +1388,9 @@ pub fn windowName(app: Context, window: *Window) ?[]const u8 {
     return null;
 }
 
-/// Whether any window or pane already holds `name` (for minting).
-fn nameTaken(app: Context, name: []const u8) bool {
+/// Whether any window or pane already holds `name` (for minting, and for a
+/// restored relay window that must not steal a name, T3671).
+pub fn nameTaken(app: Context, name: []const u8) bool {
     var windows = windowIterator(app);
     while (windows.next()) |w| {
         if (w.ipcName()) |n| if (std.mem.eql(u8, n, name)) return true;

@@ -31,6 +31,7 @@ const adw_version = @import("../adw_version.zig");
 const gtk_version = @import("../gtk_version.zig");
 const winprotopkg = @import("../winproto.zig");
 const SessionLayout = @import("../SessionLayout.zig");
+const RelayWindows = @import("../RelayWindows.zig");
 const PaneSidebar = @import("../PaneSidebar.zig");
 const BannerEditor = @import("../BannerEditor.zig");
 const AgentRecovery = @import("../AgentRecovery.zig");
@@ -604,6 +605,13 @@ pub const Application = extern struct {
         // From here on the app keeps the manifest current (T3397).
         if (self.as(gio.Application).getIsRemote() == 0) SessionLayout.startSync(self);
 
+        // T3671: the relay windows the last run left open come back, re-dialed
+        // and re-attached off this thread once the launch's own windows are up.
+        if (self.as(gio.Application).getIsRemote() == 0) {
+            RelayWindows.init(self);
+            _ = RelayWindows.start(self);
+        }
+
         // T3400: a dead or unreachable local agent is recovered in place -
         // its panes rebuilt on a fresh agent - instead of left frozen.
         if (self.as(gio.Application).getIsRemote() == 0) AgentRecovery.start(self);
@@ -751,6 +759,9 @@ pub const Application = extern struct {
         // still stands; nothing writes it after this, so the teardown below
         // can never save an empty app over it.
         SessionLayout.finishForQuit(self);
+        // T3671: the relay windows' sessions, names and titles as they stand,
+        // kept for the next launch.
+        RelayWindows.syncForQuit();
         self.private().quitting = true;
         // T3384: a pane parked for undo was closed by the user, so it ends
         // (its session too) rather than riding out the quit as a detach.

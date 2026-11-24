@@ -27,9 +27,33 @@ pub fn layoutPathFrom(
     xdg_config_home: ?[]const u8,
     home: []const u8,
 ) ![]u8 {
+    return pathFrom(alloc, if (is_debug) "session-layout-debug" else "session-layout", instance, xdg_config_home, home);
+}
+
+/// `<root>/ghoztty/remote-windows[-debug][-<lineage>].json` (T3671): the
+/// record of open relay windows (`RelayWindows.zig`, win32's
+/// `relay_manifest.manifestPath`), beside the session layout and under the
+/// same root, so a debug build and the release never restore each other's
+/// windows and a test harness's private config dir holds it too.
+pub fn relayWindowsPathFrom(
+    alloc: Allocator,
+    is_debug: bool,
+    instance: ?[]const u8,
+    xdg_config_home: ?[]const u8,
+    home: []const u8,
+) ![]u8 {
+    return pathFrom(alloc, if (is_debug) "remote-windows-debug" else "remote-windows", instance, xdg_config_home, home);
+}
+
+fn pathFrom(
+    alloc: Allocator,
+    stem: []const u8,
+    instance: ?[]const u8,
+    xdg_config_home: ?[]const u8,
+    home: []const u8,
+) ![]u8 {
     const root = try agent_paths.configRoot(alloc, true, xdg_config_home, home);
     defer alloc.free(root);
-    const stem = if (is_debug) "session-layout-debug" else "session-layout";
     var stem_buf: [64]u8 = undefined;
     const full = try agent_lineage.appendSuffix(&stem_buf, stem, instance);
     return std.fmt.allocPrint(alloc, "{s}/ghoztty/{s}.json", .{ root, full });
@@ -235,6 +259,20 @@ test "layoutPathFrom: debug, release and a lineage, under XDG_CONFIG_HOME" {
     const l = try layoutPathFrom(a, true, "t1", "", "/home/u");
     defer a.free(l);
     try std.testing.expect(std.mem.startsWith(u8, l, "/home/u/.config/ghoztty/session-layout-debug"));
+    try std.testing.expect(std.mem.indexOf(u8, l, "t1") != null);
+}
+
+test "relayWindowsPathFrom: beside the session layout, never the same file (T3671)" {
+    const a = std.testing.allocator;
+    const d = try relayWindowsPathFrom(a, true, null, "/x/cfg", "/home/u");
+    defer a.free(d);
+    try std.testing.expectEqualStrings("/x/cfg/ghoztty/remote-windows-debug.json", d);
+    const r = try relayWindowsPathFrom(a, false, null, null, "/home/u");
+    defer a.free(r);
+    try std.testing.expectEqualStrings("/home/u/.config/ghoztty/remote-windows.json", r);
+    const l = try relayWindowsPathFrom(a, true, "t1", "", "/home/u");
+    defer a.free(l);
+    try std.testing.expect(std.mem.startsWith(u8, l, "/home/u/.config/ghoztty/remote-windows-debug"));
     try std.testing.expect(std.mem.indexOf(u8, l, "t1") != null);
 }
 

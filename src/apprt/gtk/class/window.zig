@@ -30,6 +30,7 @@ const DebugWarning = @import("debug_warning.zig").DebugWarning;
 const CommandPalette = @import("command_palette.zig").CommandPalette;
 const WeakRef = @import("../weak_ref.zig").WeakRef;
 const CloseUndo = @import("../CloseUndo.zig");
+const RelayWindows = @import("../RelayWindows.zig");
 const PaneSidebar = @import("../PaneSidebar.zig");
 const wk = @import("../webkit.zig");
 const window_activity = @import("../window_activity.zig");
@@ -1628,6 +1629,10 @@ pub const Window = extern struct {
 
         // T3384: nothing can put this window's closed panes back now.
         CloseUndo.dropWindow(self);
+
+        // T3671: a relay window closed outside a quit does not come back at
+        // the next launch; one a quit tears down does.
+        RelayWindows.windowDisposed(self, Application.default().isQuitting());
 
         priv.command_palette.set(null);
 

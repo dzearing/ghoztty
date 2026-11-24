@@ -942,6 +942,11 @@ pub const Surface = extern struct {
         priv.remote_working_directory = if (o.working_directory) |v| alloc.dupe(u8, v) catch null else null;
         priv.remote_shell = if (o.shell) |v| alloc.dupe(u8, v) catch null else null;
         priv.remote_command = if (o.command) |v| alloc.dupe(u8, v) catch null else null;
+        // T3671: a relay window brought back at launch re-ATTACHes the far
+        // session its first pane held (`remoteBackend` hands it over).
+        if (o.session_id) |sid| if (priv.restore_session_id == null) {
+            priv.restore_session_id = alloc.dupe(u8, sid) catch null;
+        };
     }
 
     /// The remote machine link this pane rides, or null for a local pane
@@ -2426,6 +2431,8 @@ pub const Surface = extern struct {
             .local_shell_integration = false,
             .working_directory = priv.remote_working_directory,
             .shell = priv.remote_shell,
+            // T3671: a restored relay window's pane re-ATTACHes.
+            .session_id = priv.restore_session_id,
         };
         const config = if (priv.config) |c| c.get() else return null;
         if (!config.@"session-persistence") return null;
