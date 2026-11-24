@@ -173,6 +173,8 @@ out=$(dialog rdp --answer=cancel)
 [ "$(field "$out" disconnect)" = true ] && [ "$(field "$out" answered)" = cancel ] &&
     has_window rdp && alive "$p0"
 hl_check "W1 Cancel on the window close keeps rdp and its shell" $? "out=$out pid=$p0"
+hl_wait_for 15 no_dialog rdp
+hl_check "W1b the cancelled dialog has left the window" $? "$(dialog rdp)"
 
 out=$(dialog rdp --op=window)
 [ "$(field "$out" open)" = true ] && [ "$(field "$out" disconnect)" = true ]
