@@ -1046,9 +1046,26 @@ pub const Window = extern struct {
     }
 
     /// Redraw this window's pane sidebar on the next idle turn: its panes,
-    /// their names or its focus changed.
+    /// their names or its focus changed. In the all-windows scope (T3558)
+    /// every window's list shows this window too, so every window redraws.
     pub fn queueSidebarRefresh(self: *Self) void {
-        if (self.private().pane_sidebar) |s| s.queueRefresh();
+        if (!PaneSidebar.scope.all_windows) {
+            if (self.private().pane_sidebar) |s| s.queueRefresh();
+            return;
+        }
+        queueAllSidebarRefresh();
+    }
+
+    /// Queue a redraw of every window's sidebar (a window opened or closed
+    /// while the all-windows list is shown).
+    pub fn queueAllSidebarRefresh() void {
+        var node: ?*glib.List = Application.default().as(gtk.Application).getWindows();
+        while (node) |n| {
+            node = n.f_next;
+            const obj: *gobject.Object = @ptrCast(@alignCast(n.f_data orelse continue));
+            const win = gobject.ext.cast(Self, obj) orelse continue;
+            if (win.private().pane_sidebar) |s| s.queueRefresh();
+        }
     }
 
     /// This window's pane sidebar (the debug seam reads it).
@@ -1369,6 +1386,10 @@ pub const Window = extern struct {
         if (priv.pane_sidebar) |s| {
             s.destroy();
             priv.pane_sidebar = null;
+            // The other windows' all-windows lists drop this one (T3558). A
+            // window with no sidebar is never gathered, so the redraw cannot
+            // reach into this one's disposed widgets.
+            if (PaneSidebar.scope.all_windows) queueAllSidebarRefresh();
         }
 
         gtk.Widget.disposeTemplate(

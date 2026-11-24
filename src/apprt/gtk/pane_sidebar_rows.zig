@@ -134,9 +134,22 @@ pub const Report = struct {
     visible: bool,
     width: i32,
     window_width: i32,
+    /// The scope (T3558): every window's panes, not this window's.
+    all_windows: bool = false,
+    /// The shared search, and what this window's field holds and shows.
+    search: []const u8 = "",
+    search_shown: bool = false,
+    search_field: []const u8 = "",
+    scope_button_shown: bool = false,
+    /// How many windows the all-windows list gathered.
+    window_count: usize = 0,
+    /// The header's caption.
+    title: []const u8 = "",
     rows: []const Row,
 
     pub const Row = struct {
+        /// A pane's id; a header's or rail tile's `window:<key>`,
+        /// `project:<name>`, `ungrouped`.
         pane: []const u8,
         label: []const u8,
         subtitle: ?[]const u8,
@@ -144,7 +157,16 @@ pub const Report = struct {
         label_shown: bool,
         tooltip: ?[]const u8,
         selected: bool,
+        /// `terminal` / `viewer` for a pane; `window`, `project`,
+        /// `ungrouped` for a header; `tile` for a rail window tile.
         kind: []const u8,
+        /// A header's windows or panes.
+        count: usize = 0,
+        folded: bool = false,
+        /// Outline level (`pane_sidebar_all.Item.depth`).
+        depth: u8 = 0,
+        /// A window header's pill: `none`, `unemphasized`, `accent`.
+        selection: []const u8 = "none",
     };
 };
 

@@ -114,6 +114,14 @@ hl_check "F3 the app serves its socket" $f3
 cli +new-window --target=sa > /dev/null 2>&1
 hl_wait_for 15 is sa 's["mode"]' mini
 hl_check "S1 with no saved flags the sidebar starts as the rail, shown" $? "$(sb sa)"
+# A first launch lists every window (the Mac's default scope, T3558; its own
+# suite is cli-sidebar-all.sh). This suite is the per-window list, so it
+# switches the scope to this window once; the choice is kept from here on.
+is sa 's["all_windows"]' True
+hl_check "S0 a first launch starts in the all-windows scope" $? "$(sb sa)"
+sb sa scope > /dev/null
+hl_wait_for 10 is sa 's["all_windows"]' False
+hl_check "S0b the scope button switches it to this window's panes" $? "$(sb sa)"
 a=$(panes sa)
 hl_wait_for 10 is sa 'len(r)' 1
 hl_check "S2 the rail has one tile for the window's one pane" $? "$(sb sa)"

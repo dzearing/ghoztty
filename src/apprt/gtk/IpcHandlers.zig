@@ -56,6 +56,7 @@ const color_math = @import("../win32/color_math.zig");
 
 const Application = @import("class/application.zig").Application;
 const Window = @import("class/window.zig").Window;
+const PaneSidebar = @import("PaneSidebar.zig");
 const Tab = @import("class/tab.zig").Tab;
 const Surface = @import("class/surface.zig").Surface;
 const CloseUndo = @import("CloseUndo.zig");
@@ -112,9 +113,15 @@ fn notYet(comptime verb: server.Verb, comptime task: []const u8) Allocator.Error
     );
 }
 
-pub fn handleNewRemoteWindow(_: Context, _: Request) Allocator.Error!?[]u8 { return notYet(.new_remote_window, "T3597"); }
-pub fn handleStash(_: Context, _: Request) Allocator.Error!?[]u8 { return notYet(.stash, "T3596"); }
-pub fn handleRestore(_: Context, _: Request) Allocator.Error!?[]u8 { return notYet(.restore, "T3596"); }
+pub fn handleNewRemoteWindow(_: Context, _: Request) Allocator.Error!?[]u8 {
+    return notYet(.new_remote_window, "T3597");
+}
+pub fn handleStash(_: Context, _: Request) Allocator.Error!?[]u8 {
+    return notYet(.stash, "T3596");
+}
+pub fn handleRestore(_: Context, _: Request) Allocator.Error!?[]u8 {
+    return notYet(.restore, "T3596");
+}
 
 // ---------------------------------------------------------------------------
 // DEBUG-ONLY test seams: not CLI verbs, compiled out of a release build, where
@@ -132,18 +139,27 @@ pub fn handleSeam(app: Context, request: Request) Allocator.Error!server.SeamRep
     return .{ .reply = try capturePane(app, request) };
 }
 
-/// `pane-sidebar --target=<pane|window> [--click=toggle|<pane-id>]` (T3557):
-/// what the target window's pane sidebar shows - its mode, the shared flags
-/// and every row as drawn (pane, label, subtitle, tooltip, selected) - after
-/// an optional click on its mode button or on a pane's row, the pointer the
-/// headless harness does not have. The reply is drawn state, so the sidebar
-/// is redrawn first: a click or a change still queued is in it.
+/// `pane-sidebar --target=<pane|window> [--search=<text>]
+/// [--search-key=enter|escape] [--click=toggle|scope|<row id>|fold:<row id>]`
+/// (T3557, T3558): what the target window's pane sidebar shows - its mode,
+/// the shared flags, the scope and search, and every row as drawn (id,
+/// label, subtitle, tooltip, selected; a header's count and fold) - after an
+/// optional edit of the search field, a Return or Escape in it, and a click
+/// on its mode button, its scope button, a row (a pane focuses, a window
+/// raises, a header folds) or a header's fold chevron: the pointer and
+/// keyboard the headless harness does not have. The reply is drawn state,
+/// so the sidebar is redrawn first: a click or a change still queued is in
+/// it.
 fn paneSidebar(app: Context, request: Request) Allocator.Error![]u8 {
     var target_arg: ?[]const u8 = null;
     var click_arg: ?[]const u8 = null;
+    var search_arg: ?[]const u8 = null;
+    var key_arg: ?[]const u8 = null;
     for (request.arguments orelse &.{}) |arg| {
         if (std.mem.startsWith(u8, arg, "--target=")) target_arg = arg["--target=".len..];
         if (std.mem.startsWith(u8, arg, "--click=")) click_arg = arg["--click=".len..];
+        if (std.mem.startsWith(u8, arg, "--search=")) search_arg = arg["--search=".len..];
+        if (std.mem.startsWith(u8, arg, "--search-key=")) key_arg = arg["--search-key=".len..];
     }
     const target_name = target_arg orelse return server.errorResponse(c_alloc, "--target is required for pane-sidebar", .{});
 
@@ -160,11 +176,28 @@ fn paneSidebar(app: Context, request: Request) Allocator.Error![]u8 {
     const sidebar = target.window_().paneSidebar() orelse
         return server.errorResponse(c_alloc, "the window has no pane sidebar", .{});
 
+    // Pending redraws first, so a click lands on the rows as they now are.
+    sidebar.refresh();
+    if (search_arg) |q| {
+        if (PaneSidebar.setQuery(q)) Window.refreshAllSidebars();
+    }
+    if (key_arg) |k| {
+        if (std.mem.eql(u8, k, "enter")) {
+            if (!sidebar.searchReturn()) return server.errorResponse(c_alloc, "the search lists no pane", .{});
+        } else if (std.mem.eql(u8, k, "escape")) {
+            sidebar.searchEscape();
+        } else return server.errorResponse(c_alloc, "--search-key must be enter or escape", .{});
+    }
     if (click_arg) |click| {
         if (std.mem.eql(u8, click, "toggle")) {
             sidebar.toggleExpanded("pane-sidebar seam");
-        } else if (!sidebar.focusPane(click)) {
-            return server.errorResponse(c_alloc, "no sidebar row for pane '{s}'", .{click});
+        } else if (std.mem.eql(u8, click, "scope")) {
+            PaneSidebar.toggleScope(c_alloc, "pane-sidebar seam");
+        } else if (std.mem.startsWith(u8, click, "fold:")) {
+            if (!sidebar.clickFold(click["fold:".len..]))
+                return server.errorResponse(c_alloc, "no sidebar header '{s}'", .{click["fold:".len..]});
+        } else if (!sidebar.clickRow(click)) {
+            return server.errorResponse(c_alloc, "no sidebar row for '{s}'", .{click});
         }
     }
     sidebar.refresh();
@@ -307,7 +340,6 @@ fn writeCapture(path: []const u8, bytes: []const u8) !void {
     defer file.close();
     try file.writeAll(bytes);
 }
-
 
 // ---------------------------------------------------------------------------
 // +set-state and +set-banner (T3339): the shared bodies in
