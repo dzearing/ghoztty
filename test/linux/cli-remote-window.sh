@@ -184,7 +184,7 @@ ntabs_is() { [ "$(win ntabs "$1")" = "$2" ]; }
 last_pid() { local p; p=$(win lastpid "$1"); [ -n "$p" ] && [ "$p" != 0 ] && printf '%s' "$p"; }
 tabdir=$(mktemp -d /tmp/remtab.XXXXXX)
 rid=$(win id rem)
-cli +send-keys --pane="$rid" "cd $tabdir" Enter > /dev/null 2>&1
+cli +send-keys --target="$rid" "cd $tabdir" Enter > /dev/null 2>&1
 in_tabdir() { [ "$(readlink "/proc/$rpid/cwd" 2>/dev/null)" = "$tabdir" ]; }
 hl_wait_for 10 in_tabdir
 hl_check "N1 rem's first pane is in $tabdir" $? "id=$rid cwd=$(readlink "/proc/$rpid/cwd" 2>/dev/null)"
