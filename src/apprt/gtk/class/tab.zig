@@ -320,10 +320,10 @@ pub const Tab = extern struct {
     }
 
     /// The state the window last marked this tab with, and the new one.
-    pub fn swapActivity(self: *Self, new: window_activity.State) window_activity.State {
+    pub fn swapActivity(self: *Self, now: window_activity.State) window_activity.State {
         const priv = self.private();
         const old = priv.activity;
-        priv.activity = new;
+        priv.activity = now;
         return old;
     }
 
