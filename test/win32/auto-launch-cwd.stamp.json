@@ -1,17 +1,17 @@
 {
     "guard":  "auto-launch-cwd",
     "script":  "test/win32/auto-launch-cwd.ps1",
-    "generated":  "2026-11-22T08:00:17-08:00",
-    "commit":  "18f282b0e",
+    "generated":  "2026-11-24T01:56:44-08:00",
+    "commit":  "52793071f",
     "uncommitted":  [
-
+                        "test/win32/auto-launch-cwd.ps1"
                     ],
     "files":  {
                   "src/apprt/ipc/args.zig":  "162ec96d3f4f113a9dcdb2dda1ec6116c8f87d1cafd8ccd4c3f79f1e5316fee5",
                   "src/os/cli_launch.zig":  "14314a25cff3a2d74cc216c9aa6b881c84d891c0516c2bd5d6a5bcf4732d504b",
-                  "test/win32/auto-launch-cwd.ps1":  "91a9c1d183bc0000ca79541b7d0afa38e812932b140306784b1279d6c37a8630"
+                  "test/win32/auto-launch-cwd.ps1":  "002e496da7dca52636d1c20a319e19963bf5f7f6621d9d517b71aa7ea748d11a"
               },
     "code":  {
-                 "test/win32/auto-launch-cwd.ps1":  "code1:78eed832aa4969ad0b5461f2dc407a8fd732d3394ee226c015dea2b39932cf8e"
+                 "test/win32/auto-launch-cwd.ps1":  "code1:6d8b39a1dea57b147333a4cbc359eda45ed1b5027d081de45c5f401b40e622ca"
              }
 }

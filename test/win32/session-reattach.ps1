@@ -116,9 +116,14 @@ function Stop-TestProcs {
     # sibling agent - the private copies each filtered differently. The extra
     # process below is this script's own litter, so it stays local.
     [void](Stop-RepoGhoztty -Exe $Exe -ScopeToLineage -SettleMs 0)
-    Get-CimInstance Win32_Process -Filter "Name='remote-test-client.exe'" |
-        Where-Object { $_.CommandLine -like '*zig-out*' } |
-        ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+    # T2055: path-exact. A '*zig-out*' command-line match also killed the OTHER
+    # loop lane's (and other workers') remote-test-client mid-run.
+    if ($ClientExe) {
+        $wantClient = [System.IO.Path]::GetFullPath($ClientExe)
+        Get-CimInstance Win32_Process -Filter "Name='remote-test-client.exe'" |
+            Where-Object { $_.ExecutablePath -and ($_.ExecutablePath -ieq $wantClient) } |
+            ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+    }
     Start-Sleep -Milliseconds 700
 }
 

@@ -90,8 +90,12 @@ function Stop-TestProcs {
     [void](Stop-RepoGhoztty -Exe $Exe -SettleMs 900)
 }
 function Count-TestProcs($name) {
-    return @(Get-CimInstance Win32_Process -Filter "Name='$name'" |
-        Where-Object { $_.CommandLine -like '*zig-out*' }).Count
+    # T2055: path-exact, through the shared enumerator. The old '*zig-out*'
+    # command-line filter also counted the OTHER loop lane's apps on this box
+    # and the parallel runner's worker mirrors, so A0/C1 read a stranger as this
+    # run's process and went red for a reason that was not the code.
+    $want = if ($name -ieq 'ghoztty-agent.exe') { $AgentExe } else { $Exe }
+    return (Get-RepoGhozttyProcess -Paths ([System.IO.Path]::GetFullPath($want))).Count
 }
 
 # Run a zig-out ghoztty +command FROM $fromDir with a hard timeout; output -> $out.

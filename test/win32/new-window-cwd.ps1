@@ -181,8 +181,14 @@ function Stop-TestProcs {
     [void](Stop-RepoGhoztty -Exe $Exe -SettleMs 900)
 }
 function TestProcs($name) {
-    return ,@(Get-CimInstance Win32_Process -Filter "Name='$name'" |
-        Where-Object { $_.CommandLine -like '*zig-out*' })
+    # T2055: path-exact, through the shared enumerator. The old '*zig-out*'
+    # command-line filter also matched the OTHER loop lane's agent and the
+    # parallel runner's worker mirrors, so B2 "no agent is running" read a
+    # stranger as this run's agent, and A3 could read a stranger's cwd.
+    # The `, ` is load-bearing (PS 5.1): this function's own return unrolls the
+    # array again, and a one-element result's `.Count` would then be $null.
+    $want = if ($name -ieq 'ghoztty-agent.exe') { $AgentExe } else { $Exe }
+    return , (Get-RepoGhozttyProcess -Paths ([System.IO.Path]::GetFullPath($want)))
 }
 
 function Run-Cli($argsLine, $out, $timeoutSec = 20) {
