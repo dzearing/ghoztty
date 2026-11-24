@@ -1324,6 +1324,35 @@ powershell -NoProfile -File scripts\linux\wsl-run.ps1 -CommandFile test\linux\re
 Ends `RESIZE PACING: ALL PASS` (12 checks). Not yet: the prompt-redraw hold
 seen on GTK's own frames, and a window-resize source in the test (T3630).
 
+## The Settings window (T3569)
+
+`open_config` (Ctrl+, / the menu) opens `src/apprt/gtk/SettingsWindow.zig`
+instead of the raw file; its "Open File" button is the old behavior. The
+write path is NOT GTK code: it is win32's pure model
+(`ConfigFileText`/`ConfigFileStore`/`SettingsModel`/`SettingsSources`/
+`SettingsCatalog` under `src/apprt/win32/`), imported directly, so the
+Mac rules in `docs/reference/settings.md` hold by construction. Fix a rule
+there, once, for both seats.
+
+- **Which file**: a debug build writes `$XDG_CONFIG_HOME/ghostty/config-debug.ghostty`
+  (layered over the shared `config.ghostty`, which it only reads) -
+  `file_load.uses_dev_xdg_path` is true for every non-macOS dev build since
+  T3569. A test that wants the app to see a value can still write
+  `config.ghostty`; a test of Settings reads `config-debug.ghostty`.
+- **Backups**: `$XDG_STATE_HOME/ghoztty/config-backups`; a debug build takes
+  `GHOZTTY_SETTINGS_BACKUP_DIR` instead (the test's seam).
+- **Seam**: debug-only `hl_ipc settings --op=action|state|search|set|reset|close
+  [--key=] [--value=]`, win32's op names.
+
+```powershell
+powershell -NoProfile -File scripts\linux\wsl-run.ps1 -CommandFile test\linux\settings-window.sh
+```
+
+Ends `SETTINGS WINDOW: ALL PASS` (20 checks). This slice is Advanced > All
+Settings. Still to port: curated pages T3631, lists/keyed keys T3632,
+Config file/backups/undo T3633, the file-mode and local-time fix T3634,
+Sessions & Remote pages T3635, and themes + preview T3636.
+
 ## The interop PATH trap
 
 Inside WSL the Windows `PATH` is appended by default, so a bare `ghoztty` can
