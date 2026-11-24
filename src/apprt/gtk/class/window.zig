@@ -35,6 +35,7 @@ const wk = @import("../webkit.zig");
 const window_activity = @import("../window_activity.zig");
 const window_seen = @import("../window_seen.zig");
 const pane_style = @import("../pane_style.zig");
+const RemoteLink = @import("../RemoteLink.zig");
 
 const log = std.log.scoped(.gtk_ghostty_window);
 
@@ -508,6 +509,24 @@ pub const Window = extern struct {
         const priv: *Private = self.private();
         const tab_view = priv.tab_view;
 
+        // T3668: a plain new tab in a window riding a remote machine opens a
+        // fresh session on that SAME machine, in the active pane's remote cwd
+        // and running its command (win32 `addTab`'s T68 inheritance, the
+        // Mac's). A restore or a remote open that already set the handoff
+        // keeps its own.
+        var inherit: ?RemoteTabInherit = null;
+        defer if (inherit) |*i| i.deinit();
+        if (context == .tab and overrides.view == null and
+            RemoteLink.pending_open == null and Surface.pending_restore == null)
+        {
+            inherit = self.remoteTabInherit(parent_);
+            if (inherit) |i| RemoteLink.pending_open = i.open;
+        }
+        // Surface.new consumes the handoff; never let it outlive this call.
+        defer if (inherit != null) {
+            RemoteLink.pending_open = null;
+        };
+
         // Create our new tab object
         const tab = Tab.new(
             priv.config,
@@ -546,6 +565,43 @@ pub const Window = extern struct {
         };
 
         return self.attachTabPage(tab, position);
+    }
+
+    const RemoteTabInherit = struct {
+        open: RemoteLink.Open,
+        /// The remote cwd the query returned, owned by the link's
+        /// connection allocator.
+        cwd: ?[]u8 = null,
+
+        fn deinit(self: *RemoteTabInherit) void {
+            if (self.cwd) |c| self.open.link.conn().alloc.free(c);
+        }
+    };
+
+    /// The remote open a new tab in this window inherits (T3668), or null
+    /// for a local window. The source is `parent_`, else the active pane;
+    /// a pane riding no link, or a retired one, makes the tab local.
+    fn remoteTabInherit(self: *Self, parent_: ?*CoreSurface) ?RemoteTabInherit {
+        const source: *Surface = if (parent_) |p|
+            p.rt_surface.surface
+        else
+            self.getActiveSurface() orelse return null;
+        const link = source.remoteLink() orelse return null;
+        if (link.retired) return null;
+        var result: RemoteTabInherit = .{ .open = .{ .link = link } };
+        if (source.core()) |core| {
+            // Borrowed for the one Surface.new; adoptRemote copies it.
+            result.open.command = core.remoteCommand();
+            if (core.remoteSessionId()) |sid| {
+                result.cwd = link.conn().queryCwdTimeout(sid, 1500 * std.time.ns_per_ms) catch |err| c: {
+                    log.debug("remote tab: cwd query failed err={}", .{err});
+                    break :c null;
+                };
+                result.open.working_directory = result.cwd;
+            }
+        }
+        log.info("new tab in a remote window: opening on {s}", .{link.machine.displayName()});
+        return result;
     }
 
     /// Put `tab` into this window's tab view at `position`, select it, and

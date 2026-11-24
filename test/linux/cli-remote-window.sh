@@ -4,7 +4,8 @@
 # (the Linux half of win32's test/win32/ipc-remote.ps1). A remote window's
 # panes are hosted by THAT agent, not the app and not the local agent; +list
 # names the window's machine and link state; a split of a remote pane and
-# `+new-window --from-focused` on a remote window land on the same machine;
+# `+new-window --from-focused` on a remote window land on the same machine, and
+# so does a new TAB in a remote window, in the pressed pane's cwd (T3668);
 # --command is forwarded into the agent OPEN, for the window and for a split;
 # +close ends the remote session; and the refusals are win32's / the Mac's
 # sentences, made before any dial. Run it ONLY through the wrapper:
@@ -65,7 +66,7 @@ export GHOSTTY_ACCOUNT_STORE="$HL_RUNTIME/no-account.dat"
 export GHOSTTY_ACCOUNT_KEYRING=off
 unset GHOSTTY_RELAY_TOKEN
 hl_launch APP "$app" --gtk-single-instance=false --session-persistence=false \
-    -e /bin/sh -c 'PS1="hl$ " exec /bin/sh -i'
+    --keybind=ctrl+shift+t=new_tab -e /bin/sh -c 'PS1="hl$ " exec /bin/sh -i'
 hl_wait_for 30 test -S "$sock"
 f4=$?
 hl_check "S4 the app serves its socket" $f4
@@ -99,6 +100,11 @@ if mode == "remote-pids":
     sys.exit(0)
 for w in d["windows"]:
     if (w.get("target") or "") != want: continue
+    if mode == "ntabs": print(len(w["tabs"])); sys.exit(0)
+    if mode == "id": print(next(leaves(w["tabs"][0]["splits"])).get("id") or ""); sys.exit(0)
+    if mode == "lastpid":
+        if len(w["tabs"]) > 1: print(next(leaves(w["tabs"][-1]["splits"])).get("pid") or "")
+        sys.exit(0)
     if mode == "machine": print(w.get("machine") or "-")
     if mode == "state": print((w.get("connection") or {}).get("state") or "-")
     for t in w["tabs"]:
@@ -170,6 +176,38 @@ hl_check "P2 a remote split's --command runs on the remote machine" $? "rc=$rc o
 [ "$(win machine rem)" = 127.0.0.1 ]
 hl_check "P3 rem still names its machine after the splits" $? "machine=$(win machine rem)"
 
+# --- a new tab in a remote window opens on that machine (T3668) -------------------
+# The new tab inherits the pressed pane's machine and its REMOTE cwd (win32
+# addTab's T68 inheritance, the Mac's); a new tab in a local window stays local.
+press() { hl_ipc press-key "--target=$1" "--key=$2" 2>&1; }
+ntabs_is() { [ "$(win ntabs "$1")" = "$2" ]; }
+last_pid() { local p; p=$(win lastpid "$1"); [ -n "$p" ] && [ "$p" != 0 ] && printf '%s' "$p"; }
+tabdir=$(mktemp -d /tmp/remtab.XXXXXX)
+rid=$(win id rem)
+cli +send-keys --pane="$rid" "cd $tabdir" Enter > /dev/null 2>&1
+in_tabdir() { [ "$(readlink "/proc/$rpid/cwd" 2>/dev/null)" = "$tabdir" ]; }
+hl_wait_for 10 in_tabdir
+hl_check "N1 rem's first pane is in $tabdir" $? "id=$rid cwd=$(readlink "/proc/$rpid/cwd" 2>/dev/null)"
+out=$(press "$rid" ctrl+shift+t)
+hl_wait_for 10 ntabs_is rem 2
+hl_check "N2 ctrl+shift+t in rem opens a second tab" $? "out=$out tabs=$(win ntabs rem)"
+hl_wait_for 15 last_pid rem > /dev/null
+tpid=$(last_pid rem)
+[ -n "$tpid" ] && is_ancestor "$RAGENT" "$tpid" && ! is_ancestor "$APP" "$tpid"
+hl_check "N3 the new tab's shell is the TCP agent's child, not the app's" $? "tab=$tpid agent=$RAGENT app=$APP"
+tab_in_dir() { [ "$(readlink "/proc/$tpid/cwd" 2>/dev/null)" = "$tabdir" ]; }
+hl_wait_for 5 tab_in_dir
+hl_check "N4 the new tab starts in the pressed pane's remote cwd" $? "cwd=$(readlink "/proc/$tpid/cwd" 2>/dev/null) want=$tabdir"
+[ "$(win machine rem)" = 127.0.0.1 ] && remote_count_is 2
+hl_check "N5 rem still names its machine; no new remote window appeared" $? "machine=$(win machine rem) remote=$(win count x)"
+lid=$(win id "$lw")
+press "$lid" ctrl+shift+t > /dev/null
+hl_wait_for 10 ntabs_is "$lw" 2
+hl_wait_for 15 last_pid "$lw" > /dev/null
+lpid=$(last_pid "$lw")
+[ -n "$lpid" ] && is_ancestor "$APP" "$lpid" && ! is_ancestor "$RAGENT" "$lpid"
+hl_check "N6 a new tab in the local window stays local" $? "tabs=$(win ntabs "$lw") pid=$lpid app=$APP agent=$RAGENT"
+
 # --- --from-focused on a remote window re-dials its machine ------------------------
 # Leave rem the only window, so it is the front one whatever the compositor
 # says about activation.
@@ -188,11 +226,11 @@ hl_check "F3 its pane is the TCP agent's" $? "new=$newpid agent=$RAGENT"
 
 # --- +close ends the remote session --------------------------------------------------
 out=$(cli +close --target=rem 2>&1); rc=$?
-gone() { ! alive "$rpid" && ! alive "$spid"; }
+gone() { ! alive "$rpid" && ! alive "$spid" && ! alive "$tpid"; }
 hl_wait_for 10 gone
 g=$?
 [ $rc = 0 ] && [ $g = 0 ] && ! has_window rem
-hl_check "C1 +close --target=rem closes the window and its remote shells end" $? "rc=$rc out=$out rem=$rpid alive=$(alive "$rpid" && echo y) split=$spid alive=$(alive "$spid" && echo y)"
+hl_check "C1 +close --target=rem closes the window and its remote shells end, its new tab's too" $? "rc=$rc out=$out rem=$rpid alive=$(alive "$rpid" && echo y) split=$spid alive=$(alive "$spid" && echo y) tab=$tpid alive=$(alive "$tpid" && echo y)"
 alive "$RAGENT"
 hl_check "C2 the remote agent itself keeps running" $?
 cli +list --json > /dev/null 2>&1
