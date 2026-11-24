@@ -298,4 +298,8 @@ grep -q "GLib-GObject-CRITICAL\|Gtk-CRITICAL" "$APP_LOG"
 [ $? != 0 ]
 hl_check "P2 the app logged no GTK/GObject critical" $? "$(grep -m3 'CRITICAL' "$APP_LOG")"
 
+# What the undo stack did, for reading a red run.
+echo "  --- app log: undo ---"
+grep -E 'close_undo|Adwaita-CRITICAL|Adwaita-WARNING' "$APP_LOG" | tail -40 | sed 's/^/  | /'
+
 hl_finish "$L"
