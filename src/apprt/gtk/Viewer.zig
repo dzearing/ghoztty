@@ -1392,7 +1392,7 @@ pub fn linkSink(verb: []const u8, target: []const u8) bool {
 /// debug test run with no seam - inside WSL `xdg-open` can reach the
 /// Windows browser, so a headless test that escaped would put a window on
 /// the user's desktop (win32's T594 rule, same shape).
-fn leavesApp(verb: []const u8, target: []const u8) bool {
+pub fn leavesApp(verb: []const u8, target: []const u8) bool {
     if (comptime !build_config.is_debug) return false;
     if (linkSink(verb, target)) return true;
     if (std.posix.getenv("GHOZTTY_TEST_VIEWER_DUMP") != null) {

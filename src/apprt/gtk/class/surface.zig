@@ -2276,6 +2276,32 @@ pub const Surface = extern struct {
         return self.private().cursor_pos;
     }
 
+    /// DEBUG-ONLY test seam (T3565, the `pane-mouse` IPC seam): the pointer
+    /// moves to `pos` (surface pixels, the space `ecMouseMotion` reports in)
+    /// with `mods` held, exactly as a motion event would deliver it - the
+    /// position is stored where `getCursorPos` reads it back, so a click or
+    /// Copy URL that follows sees the same pointer. The headless harness has
+    /// no pointer to move. False when the pane has no terminal.
+    pub fn testPointerMove(self: *Self, pos: apprt.CursorPos, mods: input.Mods) bool {
+        if (comptime !build_config.is_debug) return false;
+        const priv = self.private();
+        const core_surface = priv.core_surface orelse return false;
+        priv.cursor_pos = pos;
+        core_surface.cursorPosCallback(pos, mods) catch |err| {
+            log.warn("test pointer move failed err={}", .{err});
+            return false;
+        };
+        return true;
+    }
+
+    /// DEBUG-ONLY test seam (T3565): the GDK clipboard this pane copies to
+    /// for `clipboard_type` - the same object `Clipboard.set` fills, so a
+    /// test reads back exactly what a copy offered.
+    pub fn testClipboard(self: *Self, clipboard_type: apprt.Clipboard) ?*gdk.Clipboard {
+        if (comptime !build_config.is_debug) return null;
+        return Clipboard.get(self.private().gl_area.as(gtk.Widget), clipboard_type);
+    }
+
     /// T3337: ride the shared local-agent connection when session persistence
     /// is on, the way the Mac (`LocalAgentManager`) and win32
     /// (`Surface.remoteBackend`) back every local pane. `local_shell_integration`

@@ -1170,6 +1170,49 @@ from beside it, highlighted code, a local page with its own CSS/JS and its
 grant enforced both ways, a loopback website, the missing-file card, and the
 terminal still on D3D12).
 
+## Copy out of a TUI, and links across its wraps (T3565)
+
+`docs/reference/copy-reflow.md` is shared core (`src/terminal/hard_wrap.zig`,
+the formatter's `reflow`), and every GTK copy path already reaches it: Ctrl+
+Shift+C / Ctrl+Insert and the menu's Copy are the `copy_to_clipboard` binding,
+copy-on-select (a drag's release, select-all) goes through the core's
+`setSelection`, and both end in `copySelectionToClipboards` with `.reflow =
+true` before `Surface.setClipboard` hands the text to GDK. Nothing in
+`src/apprt/gtk/` builds clipboard text of its own from the grid (the one other
+`setClipboard` caller copies a tab title). Link hover, click and Copy URL are
+core too (`linkAtPin` with `.hard_wraps`).
+
+What GTK had to change: a terminal link click lands in
+`Application.openUrl`, which hands it to the portal or `xdg-open` - and inside
+WSL that can reach the Windows browser. It now takes the viewer's rule
+(`Viewer.leavesApp`): in a debug build it is recorded as `open <url>` under
+`GHOZTTY_TEST_VIEWER_LINKS`, or refused under `GHOZTTY_TEST_VIEWER_DUMP`.
+
+Two debug-only seams, compiled out of a release:
+
+| Seam | What it does |
+|---|---|
+| `pane-mouse --target=<pane> [--cell=<col>,<row>] [--mods=ctrl\|shift\|none] [--button=press\|release\|click]` | The pointer: a motion to the CENTRE of a viewport cell (converted through the pane's own cell size and padding), stored where `getCursorPos` reads it, then the left button. Reply `over_link`, `x`, `y`. A drag is a press at one cell and a release at another; a drag includes a cell only once the pointer is past its midpoint, so end one cell PAST the last character. |
+| `read-clipboard --target=<pane> --out=<abs file> [--primary]` | Reads the pane's GdkClipboard (or PRIMARY) - the object the copy filled - asynchronously; the text lands in `<out>`, or the reason in `<out>.err` (renamed into place, never half-written). |
+
+**Why not wl-paste:** the headless Weston has **no seat** (measured: a GTK 4
+client there reports `get_default_seat() == None`), and a Wayland selection is
+only ever offered through a seat, so NO second client can be offered the
+clipboard in this harness. The app's own GdkClipboard is the reader that
+remains; a cross-client paste needs a compositor with a seat (T3620).
+
+Acceptance (22 checks: the fixture `test/linux/lib/copy_reflow_fixture.py` is
+a fake TUI that word-wraps a paragraph behind a `⏺ ` gutter and a too-long URL
+to the pane's real width, the way Ink/wrap-ansi do; `+read` is the negative
+control that the same check fails on the screen as laid out):
+
+```powershell
+powershell -NoProfile -File scripts\linux\wsl-run.ps1 -CommandFile test\linux\copy-reflow.sh
+```
+
+Ends `COPY REFLOW: ALL PASS`. Not covered here: a rectangle selection (left
+exactly as selected), which needs the seam to grow the rectangle modifier (T3621).
+
 ## The interop PATH trap
 
 Inside WSL the Windows `PATH` is appended by default, so a bare `ghoztty` can

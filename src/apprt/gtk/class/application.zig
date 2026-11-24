@@ -2842,6 +2842,12 @@ const Action = struct {
         self: *Application,
         value: apprt.action.OpenUrl,
     ) void {
+        // A link a TERMINAL pane opens (a click on a matched URL, T3565)
+        // leaves the app for the desktop's handler. In a debug test run it is
+        // recorded as `open <url>` under GHOZTTY_TEST_VIEWER_LINKS, or refused,
+        // the viewer's rule: inside WSL the portal or xdg-open can reach the
+        // Windows browser, which would put a window on the user's desktop.
+        if (@import("../Viewer.zig").leavesApp("open", value.url)) return;
         if (std.mem.startsWith(u8, value.url, "/")) {
             self.openUrlFallback(value.kind, value.url);
             return;

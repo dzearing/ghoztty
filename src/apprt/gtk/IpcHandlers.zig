@@ -33,10 +33,14 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const adw = @import("adw");
 const glib = @import("glib");
+const gdk = @import("gdk");
+const gio = @import("gio");
 const gobject = @import("gobject");
 const gtk = @import("gtk");
 
 const apprt = @import("../../apprt.zig");
+const renderer = @import("../../renderer.zig");
+const CoreSurface = @import("../../Surface.zig");
 const build_config = @import("../../build_config.zig");
 const configpkg = @import("../../config.zig");
 const input = @import("../../input.zig");
@@ -142,6 +146,8 @@ pub fn handleSeam(app: Context, request: Request) Allocator.Error!server.SeamRep
     if (std.mem.eql(u8, request.action, "pane-sidebar")) return .{ .reply = try paneSidebar(app, request) };
     if (std.mem.eql(u8, request.action, "pane-banner")) return .{ .reply = try paneBanner(app, request) };
     if (std.mem.eql(u8, request.action, "pane-drag")) return .{ .reply = try paneDrag(app, request) };
+    if (std.mem.eql(u8, request.action, "pane-mouse")) return .{ .reply = try paneMouse(app, request) };
+    if (std.mem.eql(u8, request.action, "read-clipboard")) return .{ .reply = try readClipboard(app, request) };
     if (!std.mem.eql(u8, request.action, "capture-pane")) return .unhandled;
     return .{ .reply = try capturePane(app, request) };
 }
@@ -494,6 +500,174 @@ fn pressKey(app: Context, request: Request) Allocator.Error![]u8 {
     }
     log.info("press-key target={s} key={s} effect={s}", .{ target_name, key_name, @tagName(effect) });
     return std.fmt.allocPrint(c_alloc, "{{\"success\":true,\"effect\":\"{s}\"}}", .{@tagName(effect)});
+}
+
+/// The terminal pane a seam request names (`--target=`), or the error reply
+/// that says why there is none.
+const TerminalTarget = union(enum) {
+    ok: struct { surface: *Surface, core: *CoreSurface },
+    reply: []u8,
+};
+
+fn terminalTarget(app: Context, target_name: []const u8) Allocator.Error!TerminalTarget {
+    var arena_state = std.heap.ArenaAllocator.init(c_alloc);
+    defer arena_state.deinit();
+    const target = switch (try resolve(arena_state.allocator(), app, target_name)) {
+        .found => |t| t,
+        .ambiguous => |windows| return .{ .reply = try server.errorResponse(c_alloc, "{s}", .{
+            try target_lookup.ambiguityError(arena_state.allocator(), target_name, windows),
+        }) },
+        .not_found => return .{ .reply = try server.errorResponse(c_alloc, "pane '{s}' not found in registry", .{target_name}) },
+    };
+    const surface = target.surface() orelse
+        return .{ .reply = try server.errorResponse(c_alloc, "pane '{s}' is no longer alive", .{target_name}) };
+    const core = surface.core() orelse
+        return .{ .reply = try server.errorResponse(c_alloc, "pane '{s}' has no terminal", .{target_name}) };
+    return .{ .ok = .{ .surface = surface, .core = core } };
+}
+
+/// `pane-mouse --target=<pane> [--cell=<col>,<row>] [--mods=ctrl|shift|none]
+/// [--button=press|release|click]` (T3565): the pointer the headless harness
+/// does not have, over a terminal pane. `--cell` moves it to the CENTRE of
+/// that viewport cell (0-based, converted through the pane's own cell size
+/// and padding, so it lands where a real pointer over that glyph would),
+/// delivered as a motion event with `--mods` held; `--button` then presses,
+/// releases or clicks (press + release) the left button there with the same
+/// mods. One request can do both, in that order; a drag is a press at one
+/// cell and a release at another. Reply: `over_link` (the hover state a
+/// link highlight and Copy URL key on) and the pixel position used.
+fn paneMouse(app: Context, request: Request) Allocator.Error![]u8 {
+    var target_arg: ?[]const u8 = null;
+    var cell_arg: ?[]const u8 = null;
+    var mods_arg: []const u8 = "none";
+    var button_arg: ?[]const u8 = null;
+    for (request.arguments orelse &.{}) |arg| {
+        if (std.mem.startsWith(u8, arg, "--target=")) target_arg = arg["--target=".len..];
+        if (std.mem.startsWith(u8, arg, "--cell=")) cell_arg = arg["--cell=".len..];
+        if (std.mem.startsWith(u8, arg, "--mods=")) mods_arg = arg["--mods=".len..];
+        if (std.mem.startsWith(u8, arg, "--button=")) button_arg = arg["--button=".len..];
+    }
+    const target_name = target_arg orelse return server.errorResponse(c_alloc, "--target is required for pane-mouse", .{});
+    var mods: input.Mods = .{};
+    if (std.mem.eql(u8, mods_arg, "ctrl")) {
+        mods.ctrl = true;
+    } else if (std.mem.eql(u8, mods_arg, "shift")) {
+        mods.shift = true;
+    } else if (!std.mem.eql(u8, mods_arg, "none")) {
+        return server.errorResponse(c_alloc, "--mods must be ctrl, shift or none", .{});
+    }
+
+    const t = switch (try terminalTarget(app, target_name)) {
+        .ok => |ok| ok,
+        .reply => |r| return r,
+    };
+
+    if (cell_arg) |cell| {
+        const comma = std.mem.indexOfScalar(u8, cell, ',') orelse
+            return server.errorResponse(c_alloc, "--cell must be <col>,<row>", .{});
+        const col = std.fmt.parseInt(u32, cell[0..comma], 10) catch
+            return server.errorResponse(c_alloc, "--cell must be <col>,<row>", .{});
+        const row = std.fmt.parseInt(u32, cell[comma + 1 ..], 10) catch
+            return server.errorResponse(c_alloc, "--cell must be <col>,<row>", .{});
+        const size = t.core.size;
+        const corner = (renderer.Coordinate{ .grid = .{ .x = @intCast(col), .y = @intCast(row) } })
+            .convert(.surface, size).surface;
+        const pos: apprt.CursorPos = .{
+            .x = @floatCast(corner.x + @as(f64, @floatFromInt(size.cell.width)) / 2),
+            .y = @floatCast(corner.y + @as(f64, @floatFromInt(size.cell.height)) / 2),
+        };
+        if (!t.surface.testPointerMove(pos, mods))
+            return server.errorResponse(c_alloc, "pane-mouse could not move the pointer", .{});
+    }
+
+    if (button_arg) |button| {
+        const press = std.mem.eql(u8, button, "press") or std.mem.eql(u8, button, "click");
+        const release = std.mem.eql(u8, button, "release") or std.mem.eql(u8, button, "click");
+        if (!press and !release) return server.errorResponse(c_alloc, "--button must be press, release or click", .{});
+        if (press) _ = t.core.mouseButtonCallback(.press, .left, mods) catch |err|
+            return server.errorResponse(c_alloc, "pane-mouse press failed ({s})", .{@errorName(err)});
+        if (release) _ = t.core.mouseButtonCallback(.release, .left, mods) catch |err|
+            return server.errorResponse(c_alloc, "pane-mouse release failed ({s})", .{@errorName(err)});
+    }
+
+    const pos = t.surface.getCursorPos();
+    log.info("pane-mouse target={s} x={d} y={d} over_link={}", .{ target_name, pos.x, pos.y, t.core.mouse.over_link });
+    return std.fmt.allocPrint(c_alloc, "{{\"success\":true,\"over_link\":{},\"x\":{d},\"y\":{d}}}", .{
+        t.core.mouse.over_link, pos.x, pos.y,
+    });
+}
+
+/// `read-clipboard --target=<pane> --out=<file> [--primary]` (T3565): read
+/// back what a copy in that pane offered - the standard clipboard, or with
+/// `--primary` the PRIMARY selection copy-on-select fills - from the same
+/// `GdkClipboard` the copy set (`Surface.testClipboard`). The headless Weston
+/// the tests run in has no seat, so no OTHER Wayland client can be offered a
+/// selection there at all; this is the reader that remains. GDK reads are
+/// asynchronous and this runs on the main loop, so the reply only says the
+/// read started: the text lands in `<out>` (written beside it and renamed
+/// into place, so a waiter never sees half of it), or `<out>.err` with the
+/// reason.
+fn readClipboard(app: Context, request: Request) Allocator.Error![]u8 {
+    var target_arg: ?[]const u8 = null;
+    var out_arg: ?[]const u8 = null;
+    var primary = false;
+    for (request.arguments orelse &.{}) |arg| {
+        if (std.mem.startsWith(u8, arg, "--target=")) target_arg = arg["--target=".len..];
+        if (std.mem.startsWith(u8, arg, "--out=")) out_arg = arg["--out=".len..];
+        if (std.mem.eql(u8, arg, "--primary")) primary = true;
+    }
+    const target_name = target_arg orelse return server.errorResponse(c_alloc, "--target is required for read-clipboard", .{});
+    const out = out_arg orelse return server.errorResponse(c_alloc, "--out is required for read-clipboard", .{});
+    if (out.len == 0 or out[0] != '/') return server.errorResponse(c_alloc, "--out must be an absolute path", .{});
+
+    const t = switch (try terminalTarget(app, target_name)) {
+        .ok => |ok| ok,
+        .reply => |r| return r,
+    };
+    const clipboard = t.surface.testClipboard(if (primary) .selection else .standard) orelse
+        return server.errorResponse(c_alloc, "the pane has no clipboard", .{});
+
+    const path = try c_alloc.dupeZ(u8, out);
+    clipboard.readTextAsync(null, readClipboardDone, path.ptr);
+    log.info("read-clipboard target={s} primary={} local={} -> {s}", .{ target_name, primary, clipboard.isLocal() != 0, out });
+    return std.fmt.allocPrint(c_alloc, "{{\"success\":true,\"started\":true,\"local\":{}}}", .{clipboard.isLocal() != 0});
+}
+
+fn readClipboardDone(source: ?*gobject.Object, res: *gio.AsyncResult, ud: ?*anyopaque) callconv(.c) void {
+    const path_ptr: [*:0]u8 = @ptrCast(ud orelse return);
+    const path = std.mem.sliceTo(path_ptr, 0);
+    defer c_alloc.free(path_ptr[0 .. path.len + 1]);
+    const clipboard = gobject.ext.cast(gdk.Clipboard, source orelse return) orelse return;
+
+    var gerr: ?*glib.Error = null;
+    const text_ = clipboard.readTextFinish(res, &gerr);
+    if (gerr) |err| {
+        defer err.free();
+        writeSeamFile(path, ".err", std.mem.sliceTo(err.f_message orelse "(no message)", 0));
+        return;
+    }
+    const text = text_ orelse {
+        writeSeamFile(path, ".err", "the clipboard holds no text");
+        return;
+    };
+    defer glib.free(text);
+    writeSeamFile(path, "", std.mem.sliceTo(text, 0));
+}
+
+/// Write `data` to `<path><suffix>` by way of a `.part` file renamed into
+/// place, so a test polling for the file never reads a partial write.
+fn writeSeamFile(path: []const u8, suffix: []const u8, data: []const u8) void {
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const final = std.fmt.bufPrint(&buf, "{s}{s}", .{ path, suffix }) catch return;
+    var part_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const part = std.fmt.bufPrint(&part_buf, "{s}.part", .{final}) catch return;
+    const f = std.fs.createFileAbsolute(part, .{ .truncate = true }) catch return;
+    f.writeAll(data) catch {
+        f.close();
+        return;
+    };
+    f.close();
+    std.fs.renameAbsolute(part, final) catch {};
 }
 
 fn capturePane(app: Context, request: Request) Allocator.Error![]u8 {
