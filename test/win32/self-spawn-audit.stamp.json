@@ -1,8 +1,8 @@
 {
     "guard":  "self-spawn",
     "script":  "test/win32/self-spawn-audit.ps1",
-    "generated":  "2026-11-23T22:09:46-08:00",
-    "commit":  "80353fe57",
+    "generated":  "2026-11-23T22:42:21-08:00",
+    "commit":  "fdb8d85a4",
     "uncommitted":  [
 
                     ],
@@ -41,7 +41,7 @@
                   "src/apprt/gtk/class/key_state_overlay.zig":  "2ccdd2c9dfe09f0ea256f5df6a5b4ce39f9344f38a59eb73346365bcdafd7f15",
                   "src/apprt/gtk/class/resize_overlay.zig":  "28e96fba32fa79da6736d51965583f17655d59899fec3964a717b66364160a07",
                   "src/apprt/gtk/class/search_overlay.zig":  "d3e6ca662b546ccadcee62fa3d564addb1df6e7ea420eab6492bc06a89f08158",
-                  "src/apprt/gtk/class/split_tree.zig":  "dd35d0e8181bd086567c0c210be2c2861270be09a127d953e5626fe8ca21a4fd",
+                  "src/apprt/gtk/class/split_tree.zig":  "2edf1028a388aa7cbbe4fbba892e330146e0cae5cb22056bdc2582673bf83c2c",
                   "src/apprt/gtk/class/surface.zig":  "773ecd7f67ea203f45a03122e613ae54d441718d67bb067e772d73bb51c61c27",
                   "src/apprt/gtk/class/surface_child_exited.zig":  "6b4cf3d1ed4ed891ca02f841973bd1518acb76451830172e87ab9512e711ff1b",
                   "src/apprt/gtk/class/surface_scrolled_window.zig":  "88e36e9a7318aa492360697ec08c6914cd3c672f16d320c79f12ba3c85297d3c",
@@ -129,7 +129,7 @@
                   "src/apprt/runtime.zig":  "0814accb262d8fdd4ed3e675dbcd9076177a9ac848e6a637c1505e8e22c30480",
                   "src/apprt/structs.zig":  "5690ddd03492459eb0416624b5a11ccba92e1f840a6b6c338e6983f08b4f5d61",
                   "src/apprt/surface.zig":  "7a465159bfaeb123ab88dfffdd810ab0b593800ce58df9911264ff3ab0b8d494",
-                  "src/apprt/unit_tests.zig":  "f8c9f2ff572f5c5f59d9e33c3f95cdbeba938b8bf453a29dfe107bd5362a5a89",
+                  "src/apprt/unit_tests.zig":  "6c3823e7b550598bb1228f2cce1ec3a0b22319a713e9083565513aabc105e49f",
                   "src/apprt/win32.zig":  "5cb9a7345f1bd527dbc2ab3d26b17034979de81d96e0c5de9cb32848fb6ea0c4",
                   "src/apprt/win32/about_links.zig":  "9bb9ec60b7b6099fda1350ec165c06d9404a32c4f53de1bb2fd0ce697a52683a",
                   "src/apprt/win32/about_rows.zig":  "1de3a206f3363acd1957233f53ff207dad9cb8984b5579f7198c5222ccf91078",
@@ -651,7 +651,7 @@
                   "src/build/pdb_msf_fix_main.zig":  "ac6c129f6cdb6d62295dcc38089bce879fb3b8dcb41799391d518176e591dab0",
                   "src/build/PdbMsfFix.zig":  "0bf4bb7adcfa9982b0062271889ab9e962f9e60fbdf9ba4477e6f763aca12f49",
                   "src/build/SharedDeps.zig":  "625e752bbe7e24143f843d2396df61d04c62c424cc3d96a10d5fc6acdee14e5f",
-                  "src/build/TestFilterGuard.zig":  "88e9802a8c6064127f974506f46180be56c8a86ea1b64b0884e87083224f40da",
+                  "src/build/TestFilterGuard.zig":  "42231d7a30de170352db3e0d24e420b08369f70c19c67baa6a2302abc2aea7e9",
                   "src/build/UnicodeTables.zig":  "42426166176fa7f37bebc00dbb69d2c28658330dcf53d86843df1fed6cefa0c0",
                   "src/build/uucode_config.zig":  "668ee0c8ce90c607cc50b7a3b42fc103e7682b8f1e35fcffdc301d1a5585bd4c",
                   "src/build/wasm_patch_growable_table.zig":  "bc9330c9bb2955595a40a9f7f2805ba8d413d6e03afad268a6284f4988d834bf",

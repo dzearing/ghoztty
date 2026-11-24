@@ -1,13 +1,13 @@
 {
     "guard":  "stderr-launch-capture",
     "script":  "test/win32/stderr-launch-capture.ps1",
-    "generated":  "2026-11-23T14:46:11-08:00",
-    "commit":  "240c12f42",
+    "generated":  "2026-11-23T22:44:18-08:00",
+    "commit":  "fdb8d85a4",
     "uncommitted":  [
-
+                        "docs/claude/testing.md"
                     ],
     "files":  {
-                  "docs/claude/testing.md":  "e67b96f227f52e5af58db9e86834e865c8f2bf7f0115b720c60384ebfd94731f",
+                  "docs/claude/testing.md":  "18994d510a22f7fee2bc0cc52a67cdc2e8a0a4efd6375caad982afbb3676c01f",
                   "test/win32/lib/PersistenceSweep.ps1":  "913e1694b52e58aae0cfc4b449683b978a7ca1f7a2185ce64ac53d69142206f7",
                   "test/win32/lib/TestDesktop.ps1":  "7548de334603b049c94949cf4002dc20e318866f8cdec9878b49a5f745ace372",
                   "test/win32/stderr-launch-capture.ps1":  "7c95a6330bbc5d8e441a55cd8a63ef764d4a6a6fefad6b91f0726db02985746b"

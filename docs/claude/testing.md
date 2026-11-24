@@ -171,6 +171,24 @@ Section F of `test-filter-guard.ps1` holds the invariant — such a filter is
 honoured or refused, never silently green — so a zig release that starts
 matching the printed name keeps the section green rather than breaking it.
 
+**A module filter that matches nothing does not mean the lane skips that
+module** (T2041). A file's tests reach the binary when the file is analyzed,
+and there are two routes: an unnamed `test {}` aggregator imports it, or code
+that IS analyzed calls into it — in a test build, usually another module's
+named tests. A filter drops those named tests, so a file reached only the
+second way is never analyzed under ANY filter, and the guard says "matched no
+tests" — while the unfiltered lane runs every one of its tests. Measured on
+0.15.2 with `mac_layout_blob.zig` (reached only through `layout_blobs.zig`'s
+tests): `-Dtest-filter=mac_layout_blob` matched nothing, yet the unfiltered
+win32 lane carried all its test names and went red on a planted failing test.
+T1979 read the first observation as "its tests never ran" and added an
+aggregator line for a module that was already covered. To ask whether a
+module's tests run, read the unfiltered binary — that is what
+`test\win32\test-reach-audit.ps1` does — and keep the filter for running tests
+you already know are compiled in. Adding the aggregator line is still worth
+it: it makes the module filterable and stops its coverage hanging on another
+file's tests.
+
 **And a red lane says whether it is the code or the box** (T1170). A lane that
 fails is re-run immediately, narrowed to the tests it blamed, and the summary
 carries the answer: `agent#1=FAIL [alone: PASS alone - NOT reproduced ->

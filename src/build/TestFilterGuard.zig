@@ -254,6 +254,12 @@ fn make(step: *Step, options: Step.MakeOptions) anyerror!void {
         \\(`-Dtest-filter=translate_policy`) rather than by the words of the
         \\test's own title. `GHOZTTY_TEST_FILTER_DUMP=1` lists the test names
         \\the binaries really contain. Or drop the filter and run the lane.
+        \\Even a module filter matches nothing when no unnamed `test {{}}`
+        \\aggregator imports that file (T2041): its tests then reach the binary
+        \\only through OTHER modules' named tests, which the filter drops. That
+        \\does NOT mean the unfiltered lane skips them - it may run them all.
+        \\`test\win32\test-reach-audit.ps1` reads the unfiltered binary and is
+        \\the authority on whether a module's tests run.
     , .{
         self.label,
         joined.items,

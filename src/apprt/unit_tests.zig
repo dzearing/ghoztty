@@ -1056,8 +1056,10 @@ test {
     _ = @import("win32/layout_blobs.zig");
 
     // Its macOS-lineage half (T337): reading a Mac manifest entry as a win32
-    // window. `layout_blobs.zig` imports it, but an import alone does not pull
-    // a file's tests into the binary, so until T1979 none of its tests ran.
+    // window. `layout_blobs.zig`'s tests already reach it, so the unfiltered
+    // lane ran its tests before this line existed (T2041 measured it); the
+    // line makes them reachable by `-Dtest-filter=mac_layout_blob` too, and
+    // keeps them covered if `layout_blobs.zig`'s tests ever stop calling in.
     _ = @import("win32/mac_layout_blob.zig");
 
     // Pure win32 cross-machine frame re-anchoring — a window frame authored on

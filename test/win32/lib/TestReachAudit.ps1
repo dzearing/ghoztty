@@ -17,7 +17,12 @@
 # imported and used by `App.zig`, compiled by every lane, carried five unit
 # tests, and a deliberately broken assertion inside one of them ran GREEN
 # through the full lane and through `-Dtest-filter` both (T1177). Adding one
-# line to that list made the identical tree go red. Nothing else in the repo
+# line to that list made the identical tree go red. (Precisely: an import pulls
+# a file's tests in only when the importing CODE is itself analyzed in the test
+# build. `App.zig`'s code was not; `layout_blobs.zig`'s tests do call into
+# `mac_layout_blob.zig`, so that module's tests ran with no line of its own -
+# which `-Dtest-filter` cannot show, since a filter drops the calling tests.
+# T2041. That is why the oracle below is the unfiltered binary.) Nothing else in the repo
 # measures the difference, so a module added without its line is silently
 # uncovered for as long as nobody breaks one of its tests on purpose.
 #

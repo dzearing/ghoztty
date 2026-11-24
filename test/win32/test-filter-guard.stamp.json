@@ -1,14 +1,16 @@
 {
     "guard":  "test-filter",
     "script":  "test/win32/test-filter-guard.ps1",
-    "generated":  "2026-09-14T17:45:19-07:00",
-    "commit":  "443bcce68",
+    "generated":  "2026-11-23T22:19:35-08:00",
+    "commit":  "fdb8d85a4",
     "uncommitted":  [
-                        "src/build/TestFilterGuard.zig",
-                        "test/win32/test-filter-guard.ps1"
+                        "src/build/TestFilterGuard.zig"
                     ],
     "files":  {
-                  "src/build/TestFilterGuard.zig":  "88e9802a8c6064127f974506f46180be56c8a86ea1b64b0884e87083224f40da",
+                  "src/build/TestFilterGuard.zig":  "42231d7a30de170352db3e0d24e420b08369f70c19c67baa6a2302abc2aea7e9",
                   "test/win32/test-filter-guard.ps1":  "8804ee177e925a2cdfbc14a75f80ec01b217378a80025b55c80d7831c2beec00"
-              }
+              },
+    "code":  {
+                 "test/win32/test-filter-guard.ps1":  "code1:e11ec5ef7f621aa90e60d3b54c7d268373701c4f9237db58dcc79361d113ff95"
+             }
 }
