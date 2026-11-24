@@ -1,13 +1,13 @@
 {
     "guard":  "wmi-bound",
     "script":  "test/win32/wmi-bound-audit.ps1",
-    "generated":  "2026-11-23T20:31:04-08:00",
-    "commit":  "4f8d6a3de",
+    "generated":  "2026-11-24T09:13:23-08:00",
+    "commit":  "159faa7d7",
     "uncommitted":  [
-
+                        "test/win32/lib/CleanSlate.ps1"
                     ],
     "files":  {
-                  "test/win32/lib/CleanSlate.ps1":  "5f9025bdf8ca35d4b3270f9885732b034afd95a64e3b86ab6ea7ea6ed4571b79",
+                  "test/win32/lib/CleanSlate.ps1":  "f7bfe9a4e3d0fb4f8e1c66b980a38230f18357cb0672a602b5cfd10de53b0aa4",
                   "test/win32/lib/FloorFixture.ps1":  "611e147e4952afa5dd6e8ce56bea31b86f2ae932ec656e7cd489a886b59783cc",
                   "test/win32/lib/HarnessLeak.ps1":  "68a65ded02a866891bb0e9c0745a6996bca0b99c5805f4a3206ada6f4e9d1ccd",
                   "test/win32/lib/ModalSweep.ps1":  "184e9a43cb648802d31d9915603162177988b9a525ce16c2b06166e600e3955b",
@@ -18,7 +18,7 @@
                   "test/win32/wmi-bound-audit.ps1":  "054555b6b278d56f99f41989e1b8aa7bac1b95b3eb460d0d59c6c03b8ab6220d"
               },
     "code":  {
-                 "test/win32/lib/CleanSlate.ps1":  "code1:925405f31ad11ea11d098cb782effb670f1aa5f9277970e5c6a6d7bf1adf7edd",
+                 "test/win32/lib/CleanSlate.ps1":  "code1:3da9fc1734e02b8f8a245c44a13cd0d99433a9583feb3b396d12e3e3859af61f",
                  "test/win32/lib/FloorFixture.ps1":  "code1:d496d888501fbdf608b45789aeecf7ff3d4a557672584a02c406e5186b00c34b",
                  "test/win32/lib/HarnessLeak.ps1":  "code1:457db592be13414906b3d54c04b42e730347fd2a1f169196c9c09154b064a0d4",
                  "test/win32/lib/ModalSweep.ps1":  "code1:71df8ff1afe46fc40580757464ad29c474fdf4cf7a4d9428cb32a096e2b29d6d",

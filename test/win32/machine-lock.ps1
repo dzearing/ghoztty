@@ -292,6 +292,36 @@ try {
     Assert 'I8 negative control: the same contention from INSIDE the holder''s run passes through and runs green' (
         $r.Out -match 'nested inside pid' -and $r.Out -notmatch 'TEST RUN BUSY' -and $r.Code -eq 0) $r.Out
 
+    # T2151: a direct harness-floor.ps1 run (the command the claim prints for a
+    # due floor) holds the same lock, and a hand-run acceptance script warns
+    # when one is live. -Include with no match ends harness-floor right after
+    # the lock, so nothing is swept.
+    $hf = Join-Path $Repo 'scripts\harness-floor.ps1'
+    $hfProbe = Join-Path $work 'hf-probe.ps1'
+    [IO.File]::WriteAllText($hfProbe, "& powershell -NoProfile -ExecutionPolicy Bypass -File '$hf' -Include 'no-such-audit-t2151'`r`nexit `$LASTEXITCODE")
+    $r = Run-Fixture $hfProbe $outside
+    Assert 'I12 an uncontended harness-floor.ps1 takes this worktree''s test-run lock' (
+        $r.Out -match 'TEST RUN LOCK acquired: Global\\GhozttyTestRun-[a-z0-9_]+-test-' -and $r.Out -match 'nothing in the floor set matches') $r.Out
+    $held = Enter-MachineLock -Kind testrun -Repo $Repo -Label 'harness-testrun-holder' -Detail 'logs C:\fixture-logs'
+    try {
+        $rHfOut = Run-Fixture $hfProbe $outside
+        $rHfIn = Run-Fixture $hfProbe @{ GHOZTTY_TESTRUN_LOCK_WAIT_MIN = '0.05' }
+        $rCsOut = Run-Fixture $plain $outside
+        $rCsIn = Run-Fixture $plain
+    } finally { Exit-MachineLock $held }
+    Assert 'I13 held elsewhere: harness-floor.ps1 waits, then refuses - TEST RUN BUSY, exit 1, nothing selected or swept' (
+        $rHfOut.Out -match 'TEST RUN LOCK WAIT: .*held by harness-testrun-holder' -and $rHfOut.Out -match 'TEST RUN BUSY' -and
+        $rHfOut.Code -eq 1 -and $rHfOut.Out -notmatch 'nothing in the floor set matches') $rHfOut.Out
+    Assert 'I14 negative control: the same harness-floor.ps1 inside the holder''s run is nested and goes on' (
+        $rHfIn.Out -match 'nested inside pid' -and $rHfIn.Out -notmatch 'TEST RUN BUSY' -and $rHfIn.Out -match 'nothing in the floor set matches') $rHfIn.Out
+    Assert 'I15 a hand-run acceptance script beside a live run warns TEST RUN IN FLIGHT, naming the holder, and still runs' (
+        $rCsOut.Out -match 'WARNING TEST RUN IN FLIGHT: harness-testrun-holder .*logs C:\\fixture-logs' -and
+        $rCsOut.Out -match 'BODY RAN' -and $rCsOut.Code -eq 0 -and $rCsOut.Seconds -lt 25) $rCsOut.Out
+    Assert 'I16 negative control: the same script inside the holder''s run says nothing' (
+        $rCsIn.Out -notmatch 'TEST RUN IN FLIGHT' -and $rCsIn.Out -match 'BODY RAN') $rCsIn.Out
+    $r = Run-Fixture $plain $outside
+    Assert 'I17 with no run in flight the script says nothing' ($r.Out -notmatch 'TEST RUN IN FLIGHT' -and $r.Out -match 'BODY RAN') $r.Out
+
     $r1 = Run-Fixture $testRunDier $outside
     $r = Run-Fixture $probe
     Assert 'I9 a holder that died never reads as in flight (the mutex is asked, not the stale file)' (

@@ -65,6 +65,21 @@ Remove-Item Env:GHOZTTY_IPC_SOCKET -ErrorAction SilentlyContinue
 . (Join-Path (Split-Path (Split-Path (Split-Path $PSScriptRoot -Parent) -Parent) -Parent) 'scripts\lib\MachineLock.ps1')
 Invoke-TimingLockForCaller
 
+# T2151: a script run by hand, outside any runner, while a test run holds this
+# worktree's lock (a sweep a previous turn backgrounded across its reset) is
+# the overlap go.md step 3 forbids - on 2026-10-21 three such runs saw the app
+# exit 1 mid-test and were green once the sweep ended. Say so before anything
+# launches, so a red result is read as suspect rather than filed. It warns and
+# never waits: blocking every hand-run script for up to an hour is worse than
+# the overlap it reports. A run inside the holder's own run is nested and
+# silent.
+if (-not (Test-TestRunNested)) {
+    $script:csInFlight = Get-TestRunInFlight -Repo (Split-Path (Split-Path (Split-Path $PSScriptRoot -Parent) -Parent) -Parent)
+    if ($script:csInFlight) {
+        Write-Host ("WARNING TEST RUN IN FLIGHT: {0} holds this worktree's test-run lock; this script runs beside it, so a red result here may be that run's load or kills, not a defect - re-run when it ends (T2151)" -f $script:csInFlight.Text)
+    }
+}
+
 # T350: the build-mode gate. `Assert-GhozttyUnderTest` below only catches a
 # FOREIGN app that is already answering; on a cold box nothing answers and the
 # script goes on to auto-launch a release build onto the user's own endpoints.

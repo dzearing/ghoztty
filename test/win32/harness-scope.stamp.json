@@ -1,13 +1,13 @@
 {
     "guard":  "harness-scope",
     "script":  "test/win32/harness-scope.ps1",
-    "generated":  "2026-11-23T22:54:46-08:00",
-    "commit":  "bb415c56e",
+    "generated":  "2026-11-24T09:14:41-08:00",
+    "commit":  "159faa7d7",
     "uncommitted":  [
-                        "test/win32/harness-scope.ps1"
+                        "scripts/harness-floor.ps1"
                     ],
     "files":  {
-                  "scripts/harness-floor.ps1":  "e3d359fb624aa2c8abf555bea66b63a798c01ec9dce023416631191e2c943050",
+                  "scripts/harness-floor.ps1":  "cfa23792d110d499fa4086697daa516d218d0d110e594a7452167a81220ee15e",
                   "scripts/lib/HarnessFloor.ps1":  "59f84f6fce589bd82ac182c09d3adef0f47f9cfa6f060bd3bbba33a04e99e21b",
                   "test/win32/argv-hazard-audit.ps1":  "5e6d8382b90b67ac3acb5ef30dba27c926ea6d90087212da2202b482b5155fdb",
                   "test/win32/foreground-audit.ps1":  "02902ecd3e0a698d1d0e00a5856111d5ae90c38183bcde8e5a8b6ec82a30285b",
@@ -23,7 +23,7 @@
                   "test/win32/unroll-count-audit.ps1":  "8f9939d5b911220d4f35eb324fd1e3c2ce6c97b80160f88538c34ebbd07b1cca"
               },
     "code":  {
-                 "scripts/harness-floor.ps1":  "code1:ed864d27ef0d14d42b6b63b586c0ebbd70bbd8f58c3a8072d1ba67ba3b54a7ca",
+                 "scripts/harness-floor.ps1":  "code1:2173302eb617c4de314147930412b90d90f66c2bd5e803dfa61e8d3240cecd30",
                  "scripts/lib/HarnessFloor.ps1":  "code1:801a1f954a1e43fbd552517a83b594827adc1c92a696bad0f8416f1425d20675",
                  "test/win32/argv-hazard-audit.ps1":  "code1:af2b49801d7cc064d107a902ee50d5232d6f6831449933f63871f7828636ed50",
                  "test/win32/foreground-audit.ps1":  "code1:6156756dc261b0758f623a0fc280bdf802afc4463ec86d667f1f5b4298b24efa",

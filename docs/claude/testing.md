@@ -75,8 +75,9 @@ at once. That was the box, not the code. `-Serial` runs the old path,
 unchanged. Acceptance: `test\win32\floor-lane-parallel.ps1`. Lanes beside lanes
 are fine. Lanes beside acceptance scripts are still not (T401).
 
-**One test run per worktree, enforced** (T1658). `floor-lane.ps1` and
-`acceptance-parallel.ps1` each hold this worktree's test-run lock
+**One test run per worktree, enforced** (T1658). `floor-lane.ps1`,
+`acceptance-parallel.ps1` and a direct `harness-floor.ps1` (T2151) each hold
+this worktree's test-run lock
 (`Global\GhozttyTestRun-<worktree>`, `scripts\lib\MachineLock.ps1`) for their
 whole run, so a batch a previous turn backgrounded and then reset away from is
 WAITED for (up to 60 min, printed, `GHOZTTY_TESTRUN_LOCK_WAIT_MIN` overrides)
@@ -86,8 +87,11 @@ floor-lane `FLOOR NOT GREEN`, nothing launched. A run started inside another
 one is part of it: the holder exports `GHOZTTY_TESTRUN_OWNER`, and
 `test\win32\lib\TestScore.ps1` makes every harness the owner for what it
 launches, so a harness that drives floor-lane or acceptance-parallel itself
-never queues behind its own children. The gap that remains: a single harness
-run directly (not through either runner) does not wait. Acceptance: section I
+never queues behind its own children. A single harness run directly (not
+through a runner) does not wait - an hour's block on every hand-run script is
+worse than the overlap - but `CleanSlate.ps1` prints `WARNING TEST RUN IN
+FLIGHT` naming the holder before it launches anything (T2151), so a red from it
+is read as suspect rather than filed. Acceptance: section I
 of `test\win32\machine-lock.ps1`.
 
 **The floor compiles its tests at Debug, and Debug provides correctness the

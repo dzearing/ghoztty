@@ -760,7 +760,11 @@ Concretely, in order, with no stops in between:
    `/reset-context` away from keeps running; the next turn's claim prints
    `TEST RUN IN FLIGHT` naming it and its logs, and `acceptance-parallel` /
    `floor-lane` WAIT on it (one test run per worktree) instead of overlapping
-   it. Read its results; do not stop it to make room for your own.
+   it. Read its results; do not stop it to make room for your own. A direct
+   `scripts\harness-floor.ps1` run holds the same lock (T2151), and an
+   acceptance script you run by hand beside a live run prints `WARNING TEST
+   RUN IN FLIGHT` before it starts - read a red from it as suspect, not as a
+   defect to file.
 
    **The sweep's own result file is the signal, not the notification** (T2805).
    Redirect the sweep to a named file (`> $env:TEMP\<task>-due-$PID.txt`), and

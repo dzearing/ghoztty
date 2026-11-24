@@ -128,6 +128,25 @@ Set-StrictMode -Off
 if (-not $Repo) { $Repo = Split-Path $PSScriptRoot -Parent }
 . (Join-Path $PSScriptRoot 'lib\HarnessFloor.ps1')
 
+# T2151: a direct run holds this worktree's test-run lock, the one
+# acceptance-parallel and floor-lane take (T1658). Before it, a sweep started
+# here - which is the command the loop's claim prints for a due floor - and
+# then backgrounded across a reset was invisible: the next turn's claim said
+# nothing and its own acceptance runs went on beside it (2026-10-21). Now the
+# claim names it as TEST RUN IN FLIGHT and the runners wait for it. Inside
+# floor-lane the owner is inherited, so this is nested and never waits. Taken
+# before anything else so a refusal starts nothing; -List, -PlanOnly and
+# -ScoreSummary run no audit and take nothing.
+. (Join-Path $PSScriptRoot 'lib\MachineLock.ps1')
+if (-not $List -and -not ($PlanOnly -and $Scoped) -and -not $ScoreSummary) {
+    $testRunLock = Enter-MachineLock -Kind testrun -Repo $Repo -Label 'harness-floor.ps1' -Detail "logs $(Join-Path $Repo 'temp\harness-floor')"
+    if (-not $testRunLock.Acquired) {
+        Write-Host ''
+        Write-Host 'HARNESS FLOOR: 1 FAILURE(S) - TEST RUN BUSY: another test run in this worktree held the lock for the whole wait; nothing ran. Read its results when it ends (the holder line above names its logs), then re-run (T2151).'
+        exit 1
+    }
+}
+
 $audits = @(Get-HarnessFloorAudits)
 $pending = Get-HarnessFloorPending
 
@@ -241,7 +260,6 @@ else {
     # outside its watchdog and says so through GHOZTTY_FLOOR_LOCK_HELD; a
     # direct run takes it here. Released when this process exits.
     if ($env:GHOZTTY_FLOOR_LOCK_HELD -ne '1') {
-        . (Join-Path $PSScriptRoot 'lib\MachineLock.ps1')
         $floorLock = Enter-MachineLock -Kind floor -Label "harness-floor.ps1 ($Repo)"
         if (-not $floorLock.Acquired) {
             Write-Host "FLOOR LOCK: running the sweep anyway - two sweeps at once are slower, not wrong"

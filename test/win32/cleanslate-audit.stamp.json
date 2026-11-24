@@ -1,19 +1,19 @@
 {
     "guard":  "cleanslate",
     "script":  "test/win32/cleanslate-audit.ps1",
-    "generated":  "2026-11-23T17:57:31-08:00",
-    "commit":  "d7c3c6cea",
+    "generated":  "2026-11-24T09:16:52-08:00",
+    "commit":  "159faa7d7",
     "uncommitted":  [
                         "test/win32/lib/CleanSlate.ps1"
                     ],
     "files":  {
                   "test/win32/cleanslate-audit.ps1":  "01e7264ab5d70430fa22228bdbd093de7423da5dfae1be1046ccbe954f7f4934",
-                  "test/win32/lib/CleanSlate.ps1":  "5f9025bdf8ca35d4b3270f9885732b034afd95a64e3b86ab6ea7ea6ed4571b79",
+                  "test/win32/lib/CleanSlate.ps1":  "f7bfe9a4e3d0fb4f8e1c66b980a38230f18357cb0672a602b5cfd10de53b0aa4",
                   "test/win32/lib/CleanSlateAudit.ps1":  "e70b73f92c5a1102cdf0ce47a5fade709030b1cb4dda438e0a64155668f5b445"
               },
     "code":  {
                  "test/win32/cleanslate-audit.ps1":  "code1:7141c4a05ea78a19a27beb4963338b269a122e0dfabe6d7ca2dd6d8577b863b8",
-                 "test/win32/lib/CleanSlate.ps1":  "code1:925405f31ad11ea11d098cb782effb670f1aa5f9277970e5c6a6d7bf1adf7edd",
+                 "test/win32/lib/CleanSlate.ps1":  "code1:3da9fc1734e02b8f8a245c44a13cd0d99433a9583feb3b396d12e3e3859af61f",
                  "test/win32/lib/CleanSlateAudit.ps1":  "code1:ce6b95184e7d287e449324510444061ff9d8e4044e7e4294b697276d56552967"
              }
 }

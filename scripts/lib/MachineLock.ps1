@@ -13,8 +13,9 @@
 #   floor   Global\GhozttyHarnessFloor - `floor-lane.ps1 -Lane harness` is
 #           fifteen-plus minutes of source scanning; two at once halve both.
 #   testrun Global\GhozttyTestRun-<worktree> - PER WORKTREE, not box-wide
-#           (T1658). `acceptance-parallel.ps1` and `floor-lane.ps1` hold it for
-#           their whole run, so a batch a previous turn backgrounded and then
+#           (T1658). `acceptance-parallel.ps1`, `floor-lane.ps1` and a direct
+#           `harness-floor.ps1` (T2151) hold it for their whole run, and
+#           CleanSlate.ps1 warns a hand-run script that starts beside it, so a batch a previous turn backgrounded and then
 #           reset away from is still visible: the next turn's run WAITS for it
 #           instead of overlapping it (go.md step 3 forbids the overlap, and on
 #           2026-09-18 and 2026-11-04 it scored green scripts red), and the
