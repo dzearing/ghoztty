@@ -361,9 +361,10 @@ hl_check "RE4 no restored pane took the -e script's title" $? "$(cli +list --jso
 grep -q 'launch command: opened its window beside the 2 restored' "$APP7_LOG"
 hl_check "RE5 the app logs that it opened the launch command's window beside the 2 restored" $? "$(grep -m1 -E 'launch command|session layout: restored' "$APP7_LOG")"
 # Close the -e window so section 6 meets the two restored windows it expects.
-[ -n "$eid" ] && cli +close --target="$eid" > /dev/null 2>&1
+etarget=$(printf '%s' "$ew" | cut -d'|' -f2)
+[ -n "$etarget" ] && cli +close --target="$etarget" > /dev/null 2>&1
 hl_wait_for 10 sh -c "! kill -0 $(cat "$eM" 2>/dev/null || echo 0) 2>/dev/null"
-hl_check "RE6 closing the -e window ends its command" $?
+hl_check "RE6 closing the -e window ends its command" $? "target=$etarget $(shape | tr '\n' '|')"
 APP6=$APP7
 
 # ---- 6. what the user closes stays closed ----------------------------------
