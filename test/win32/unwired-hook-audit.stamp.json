@@ -1,8 +1,8 @@
 {
     "guard":  "unwired-hook",
     "script":  "test/win32/unwired-hook-audit.ps1",
-    "generated":  "2026-11-23T23:27:24-08:00",
-    "commit":  "bb415c56e",
+    "generated":  "2026-11-23T23:33:24-08:00",
+    "commit":  "90caf3994",
     "uncommitted":  [
 
                     ],
@@ -1336,7 +1336,7 @@
                   "test/win32/dark-menus.ps1":  "15c2c0c17b2e5ab161a88c79cb27c0fb18f4f59986ce769b848998b249cd625d",
                   "test/win32/dashboard-dom.ps1":  "588b973da60dc74921f6acd2e47ff5d2ce448fe06359f6551a16e1b5e4d779cf",
                   "test/win32/dashboard-keepalive.ps1":  "907915acd38d52b16755167f2df7e4383bc5d1cb53a3f8cbd84e419a559c7429",
-                  "test/win32/deliver-windows-build.ps1":  "b0fdd5a3484f57332ecb021e8d89c6cf0320af7f9d5a1a8581807159c9570a51",
+                  "test/win32/deliver-windows-build.ps1":  "f44a24052c394a2a858c6896bb5d895ffe99fc2fb61ad117bccaa81a75505ac5",
                   "test/win32/deny-escape-damage.ps1":  "2fc4374ce0468d7f7274c10218e38a1ec1c5ec2634fdb231bf2b8b290e9a7e29",
                   "test/win32/deny-git-autostash.ps1":  "625dfd8e4a308dc01902adb6c31b80b0a60a47a1b2e230a9385eaaecd40846e0",
                   "test/win32/deny-sh-from-powershell.ps1":  "345a909a59c95edc61dc97247f3d94784431cae1203ca76951f5dbe755e25a8e",
@@ -1397,7 +1397,7 @@
                   "test/win32/ghoztty-cleanup.ps1":  "a1b46736eb6a96c57f7598e2a1088afaf501c62be03ec8bfc45d91bc15107629",
                   "test/win32/glass-frame-origin.ps1":  "0a0dfeed8dff3e6ba20ec9402905ac5490ab37b43d85d9316be106de72e26b56",
                   "test/win32/gl-device-lost.ps1":  "3a87a2acf4ebca9c19323687ecd65919747f3691aa09eb9eb245f19246d30711",
-                  "test/win32/go-loop-guard.ps1":  "b62236e4983f069f0094c16068a6914c8e2b3ea5d8daf0a994e7f007635b0860",
+                  "test/win32/go-loop-guard.ps1":  "b045fcc3c77e54e7df64cc2400dd2011cf39f7c5ce3c2ae39d89288ef91f4568",
                   "test/win32/go-loop-resume.ps1":  "6295cd2d72a24a6150d414e1c831c6a9581868d66ae6e17fa821a27d08696b78",
                   "test/win32/go-loop-uptime.ps1":  "7c2ceea601e716ffba45f0054228e1925a0932a14a100dd7f0a34f4765e12a20",
                   "test/win32/goto-window.ps1":  "46d315222e373a99e41e10787bf31cbd847e3cd8c383da93e902008f549627a1",
@@ -1408,7 +1408,7 @@
                   "test/win32/harness-exitcode-audit.ps1":  "9568a9718f2cfba7d2bc2b8f9813a74ba8767a062a20dea8f236fc56fa3ee4e5",
                   "test/win32/harness-floor.ps1":  "1db054250529b447363a296512d10e0b44eef62f4ac94b957ddd29ef11c922c5",
                   "test/win32/harness-process-leak.ps1":  "ad32ee47966c8b6e7467d6ca16442c6927b3f59b9c64a3ecd95115b6ec999bb9",
-                  "test/win32/harness-scope.ps1":  "47e7a59a24119049c22c6b222d7d609242a710e8142ba8053123694b378ebf24",
+                  "test/win32/harness-scope.ps1":  "23c72eacc44b5ac667b1bf0755a9ca55452cb2ec4b20efc9a5b4a107e9565b7e",
                   "test/win32/hero-carousel-ratio.ps1":  "518320e6011f5e4afa18118d9b72ad889ad9f0338447e02221418dde0ee29c9b",
                   "test/win32/hero-mode.ps1":  "432c9aae1b7b318598f54ecb4ca444a22831eb0f6d863a1c18e896b7f3f3bb6c",
                   "test/win32/hero-nav.ps1":  "339030f72107a485bb293bbf6ab48916eea1de709d8fc9cb83f71454c5b76d63",

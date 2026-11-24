@@ -539,6 +539,30 @@ function Get-UnpushedMergeCount {
     return 0
 }
 
+# The shas in .git/MERGE_HEAD (one per merged head; several for an octopus), or
+# an empty list when no merge is in progress (T2047).
+function Get-MergeHeads {
+    $gd = Get-GitDir
+    if (-not $gd) { return @() }
+    $mh = Join-Path $gd 'MERGE_HEAD'
+    if (-not (Test-Path -LiteralPath $mh)) { return @() }
+    return @(Get-Content -LiteralPath $mh | ForEach-Object { $_.Trim() } | Where-Object { $_ -match '^[0-9a-f]{7,64}$' })
+}
+
+# Every path the merge brings in: what each merged head changed since its
+# merge-base with HEAD. A resolved conflict is in this set too, since both
+# sides touched it. This is the set a merge commit may contain without being
+# asked for by -Paths.
+function Get-MergeBroughtPaths([string[]]$heads) {
+    $set = New-Object 'System.Collections.Generic.HashSet[string]'
+    foreach ($h in $heads) {
+        foreach ($p in @(& git -C $Repo diff --name-only --no-renames "HEAD...$h" 2>$null | Where-Object { $_ })) {
+            [void]$set.Add($p)
+        }
+    }
+    return @($set)
+}
+
 function Invoke-PushWithRebase {
     $lines = @()
     $pushArgs = Get-PushArgs
@@ -753,7 +777,17 @@ switch ($Action) {
     # what else is in the shared index; the read-back is what makes a bypassed
     # hook loud instead of silent.
     'commit' {
-        if (-not $Paths -or $Paths.Count -eq 0) { Fail "ERROR commit needs -Paths" 2 }
+        # T2047: an in-progress MERGE is committed whole. git refuses a
+        # pathspec ("partial") commit while MERGE_HEAD exists, so a main merge
+        # (T1902) used to be committed bare - outside the lock, the read-back
+        # and the push. In merge mode the index is committed as it stands, but
+        # only after proving it holds nothing beyond what the merge brought in
+        # plus the -Paths named here, and the commit is read back against that
+        # same set (diffed against the FIRST parent, since `git show` of a
+        # merge lists no files).
+        $mergeHeads = @(Get-MergeHeads)
+        $merging = $mergeHeads.Count -gt 0
+        if ((-not $Paths -or $Paths.Count -eq 0) -and -not $merging) { Fail "ERROR commit needs -Paths" 2 }
         if (-not $Message -and -not $MessageFile) { Fail "ERROR commit needs -Message or -MessageFile" 2 }
 
         # T1245: the subject has to have been written for THIS commit. A
@@ -843,8 +877,20 @@ switch ($Action) {
         $lp = Get-LockPath
         if (-not $lp) { Fail "ERROR not a git repo: $Repo" 2 }
 
-        $want = @(Expand-Paths $Paths)
+        $want = @()
+        if ($Paths -and $Paths.Count -gt 0) { $want = @(Expand-Paths $Paths) }
         $ttl = if ($TtlSeconds -gt 0) { $TtlSeconds } else { $DefaultTtl }
+
+        $mergePaths = @()
+        if ($merging) {
+            $unmerged = @(& git -C $Repo diff --name-only --diff-filter=U 2>$null | Where-Object { $_ })
+            if ($unmerged.Count -gt 0) {
+                $u = @("MERGE UNRESOLVED: $($unmerged.Count) path(s) still conflicted - resolve and stage them first; nothing was committed.")
+                foreach ($f in ($unmerged | Select-Object -First 10)) { $u += "  $f" }
+                Fail ($u -join [Environment]::NewLine) 2
+            }
+            $mergePaths = @(Get-MergeBroughtPaths $mergeHeads)
+        }
 
         $L = Read-Lock $lp
         if ($L -and -not $L['stale'] -and -not $Force) {
@@ -878,20 +924,36 @@ switch ($Action) {
 
             # Stage first so a NEW file is known to the index - a pathspec
             # commit only matches paths git already knows.
-            $add = Git-Run (@('add', '--') + $want)
-            if ($add.Code -ne 0) { "ERROR git add failed:"; $add.Out; Show-IndexLockDiagnosis; exit 6 }
+            if ($want.Count -gt 0) {
+                $add = Git-Run (@('add', '--') + $want)
+                if ($add.Code -ne 0) { "ERROR git add failed:"; $add.Out; Show-IndexLockDiagnosis; exit 6 }
+            }
 
             # What else is somebody else holding in the index right now? Not an
             # error - the pathspec excludes it - but the one moment where the
             # shared index is observable, so it is said out loud.
             $stagedAll = @(& git -C $Repo diff --cached --name-only 2>$null | Where-Object { $_ })
-            $foreignStaged = @($stagedAll | Where-Object { -not (Test-PathCovered $_ $want) })
-            if ($foreignStaged.Count -gt 0 -and -not $Quiet) {
-                "note: $($foreignStaged.Count) path(s) staged by another session are EXCLUDED by the pathspec:"
-                foreach ($f in ($foreignStaged | Select-Object -First 5)) { "  $f" }
+            if ($merging) {
+                # No pathspec can exclude anything during a merge, so a foreign
+                # staged path is not a note here: it would ride along. Refused
+                # before the commit, with nothing made.
+                $foreignStaged = @($stagedAll | Where-Object { -not (Test-PathCovered $_ $want) -and ($mergePaths -notcontains $_) })
+                if ($foreignStaged.Count -gt 0) {
+                    "MERGE INDEX HOLDS FOREIGN WORK: $($foreignStaged.Count) staged path(s) are neither brought in by the merge nor named in -Paths:"
+                    foreach ($f in ($foreignStaged | Select-Object -First 10)) { "  $f" }
+                    "A merge commits the whole index, so these would land under its subject (T948/T2047). Nothing was committed."
+                    "Name them in -Paths if they belong to the merge, or unstage them: git -C $Repo restore --staged -- <path>"
+                    exit 5
+                }
+                $commit = Git-Run @('commit', '-F', $msgFile, '--cleanup=whitespace')
+            } else {
+                $foreignStaged = @($stagedAll | Where-Object { -not (Test-PathCovered $_ $want) })
+                if ($foreignStaged.Count -gt 0 -and -not $Quiet) {
+                    "note: $($foreignStaged.Count) path(s) staged by another session are EXCLUDED by the pathspec:"
+                    foreach ($f in ($foreignStaged | Select-Object -First 5)) { "  $f" }
+                }
+                $commit = Git-Run (@('commit', '-F', $msgFile, '--cleanup=whitespace', '--') + $want)
             }
-
-            $commit = Git-Run (@('commit', '-F', $msgFile, '--cleanup=whitespace', '--') + $want)
             if ($commit.Code -ne 0) {
                 "ERROR git commit failed:"; $commit.Out; Show-IndexLockDiagnosis; exit 6
             }
@@ -905,8 +967,18 @@ switch ($Action) {
         if ($sha -eq $prev) { "ERROR no commit was created"; exit 6 }
         $short = (& git -C $Repo rev-parse --short HEAD 2>$null | Select-Object -First 1)
 
-        $actual = @(& git -C $Repo show --pretty=format: --name-only --no-renames $sha 2>$null | Where-Object { $_ })
-        $extra = @($actual | Where-Object { -not (Test-PathCovered $_ $want) })
+        if ($merging) {
+            $parents = @((& git -C $Repo rev-list --parents -n 1 $sha 2>$null | Select-Object -First 1) -split ' ' | Where-Object { $_ })
+            if ($parents.Count -lt 3) {
+                "ERROR the merge was committed as $short, but it has $($parents.Count - 1) parent(s) - not a merge commit. Nothing has been pushed."
+                exit 6
+            }
+            $actual = @(& git -C $Repo diff --name-only --no-renames "$sha^1" $sha 2>$null | Where-Object { $_ })
+            $extra = @($actual | Where-Object { -not (Test-PathCovered $_ $want) -and ($mergePaths -notcontains $_) })
+        } else {
+            $actual = @(& git -C $Repo show --pretty=format: --name-only --no-renames $sha 2>$null | Where-Object { $_ })
+            $extra = @($actual | Where-Object { -not (Test-PathCovered $_ $want) })
+        }
         if ($extra.Count -gt 0) {
             ""
             "SWALLOWED WORK: commit $short contains $($extra.Count) path(s) it was never asked to commit."
@@ -916,7 +988,11 @@ switch ($Action) {
             "  git -C $Repo reset --soft HEAD~1   # then re-stage only your paths"
             exit 5
         }
-        "COMMITTED $short ($($actual.Count) path(s), all requested)"
+        if ($merging) {
+            "COMMITTED $short (merge of $($parents.Count - 1) parents; $($actual.Count) path(s) vs the first parent, all brought in by the merge or requested)"
+        } else {
+            "COMMITTED $short ($($actual.Count) path(s), all requested)"
+        }
 
         # T1245: consume the message so a later turn cannot inherit it. The
         # missing-file refusal above only has teeth if a used message stops

@@ -961,6 +961,13 @@ Concretely, in order, with no stops in between:
    older than its ttl is cleared rather than obeyed, so a crashed holder cannot
    wedge the repo. Acceptance: section W of `test\win32\go-loop-guard.ps1`.
 
+   **A merge (a main merge, T1902-shaped) goes through the guard too** (T2047).
+   With a merge in progress, `commit` commits the whole index - git allows no
+   pathspec then - after refusing unresolved conflicts and any staged path the
+   merge did not bring in and `-Paths` does not name; `-Paths` is optional. Its
+   rejected push is merge-pulled, never rebased (T2256), so no resolution is
+   replayed. Never commit a merge bare.
+
    **The message file has to have been written for THIS commit** (T1245). A
    `-MessageFile` that does not exist is REFUSED and the path is named, an
    empty one is refused too, and a message that HAS been committed is deleted —

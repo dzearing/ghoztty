@@ -2111,6 +2111,92 @@ Assert 'W28f5 the pushed head carries the ORIGINAL merge commit (both parents), 
     ($mKept -and $mSideOk -and @($mLog | Where-Object { $_ -eq 'the other lane raced the merge' }).Count -eq 1 -and
      @($mLog | Where-Object { $_ -eq 'main commit a' }).Count -eq 1)
 
+# T2047: the merge commit itself goes through the guard. git refuses a pathspec
+# commit while MERGE_HEAD exists, so T1902's main merge was committed bare -
+# no lock, no read-back, no push - and its rejected push was then rebased,
+# which re-raised every conflict it had resolved. Here: a conflicted merge,
+# resolved, committed by the guard while the other lane races the trunk.
+function PGuard([string[]]$argList) {
+    $o = & powershell -NoProfile -ExecutionPolicy Bypass -File $cgScript @argList -Repo $pRepo 2>&1 |
+        ForEach-Object { $_.ToString() } | Out-String
+    return @{ Code = $LASTEXITCODE; Out = $o.Trim() }
+}
+$eapK = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+& git -C $pRepo pull -q --no-rebase 2>&1 | Out-Null
+Set-Content -Path (Join-Path $pRepo 'conflict.txt') -Value 'base'
+& git -C $pRepo add conflict.txt 2>&1 | Out-Null
+& git -C $pRepo -c core.hooksPath= commit -q -m 'conflict base' 2>&1 | Out-Null
+& git -C $pRepo push -q origin HEAD 2>&1 | Out-Null
+& git -C $pOther pull -q --no-rebase 2>&1 | Out-Null
+& git -C $pOther checkout -q -b side-two 2>&1 | Out-Null
+Set-Content -Path (Join-Path $pOther 'conflict.txt') -Value 'side'
+Set-Content -Path (Join-Path $pOther 'side-only.txt') -Value 'side only'
+& git -C $pOther add conflict.txt side-only.txt 2>&1 | Out-Null
+& git -C $pOther -c core.hooksPath= commit -q -m 'side two' 2>&1 | Out-Null
+& git -C $pOther push -q origin side-two 2>&1 | Out-Null
+& git -C $pOther checkout -q $lTrunkBranch 2>&1 | Out-Null
+Set-Content -Path (Join-Path $pRepo 'conflict.txt') -Value 'trunk'
+& git -C $pRepo add conflict.txt 2>&1 | Out-Null
+& git -C $pRepo -c core.hooksPath= commit -q -m 'conflict trunk' 2>&1 | Out-Null
+& git -C $pRepo push -q origin HEAD 2>&1 | Out-Null
+& git -C $pRepo fetch -q origin 2>&1 | Out-Null
+& git -C $pRepo -c core.hooksPath= merge -q --no-ff --no-edit origin/side-two 2>&1 | Out-Null
+$ErrorActionPreference = $eapK
+$kHead0 = (& git -C $pRepo rev-parse HEAD 2>$null | Select-Object -First 1)
+$kMergeHead = Join-Path $pRepo '.git\MERGE_HEAD'
+
+# Negative control 1: an unresolved merge is refused, and nothing is made.
+$r = PGuard @('commit', '-Message', 'merge side two')
+Assert 'W28s1 control: the guard refuses a merge with conflicts left (exit 2, no commit, merge still in progress)' `
+    ($r.Code -eq 2 -and $r.Out -match 'MERGE UNRESOLVED' -and $r.Out -match 'conflict\.txt' -and
+     (& git -C $pRepo rev-parse HEAD 2>$null | Select-Object -First 1) -eq $kHead0 -and (Test-Path $kMergeHead))
+
+Set-Content -Path (Join-Path $pRepo 'conflict.txt') -Value 'resolved'
+& git -C $pRepo add conflict.txt 2>$null
+
+# Negative control 2: something the merge did not bring, staged by somebody
+# else, would ride along with a whole-index commit - so it is refused.
+Set-Content -Path (Join-Path $pRepo 'stray.txt') -Value 'not the merge'
+& git -C $pRepo add stray.txt 2>$null
+$r = PGuard @('commit', '-Message', 'merge side two')
+Assert 'W28s2 control: a foreign staged path is refused during a merge (exit 5, named, no commit)' `
+    ($r.Code -eq 5 -and $r.Out -match 'MERGE INDEX HOLDS FOREIGN WORK' -and $r.Out -match 'stray\.txt' -and
+     (& git -C $pRepo rev-parse HEAD 2>$null | Select-Object -First 1) -eq $kHead0 -and (Test-Path $kMergeHead))
+& git -C $pRepo rm -q --cached stray.txt 2>$null | Out-Null
+Remove-Item -LiteralPath (Join-Path $pRepo 'stray.txt') -Force
+
+# The other lane races the trunk while the merge is being committed.
+$eapK = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+& git -C $pOther pull -q --no-rebase 2>&1 | Out-Null
+Set-Content -Path (Join-Path $pOther 'race-two.txt') -Value 'raced again'
+& git -C $pOther add race-two.txt 2>&1 | Out-Null
+& git -C $pOther -c core.hooksPath= commit -q -m 'the other lane raced the second merge' 2>&1 | Out-Null
+& git -C $pOther push -q origin HEAD 2>&1 | Out-Null
+$ErrorActionPreference = $eapK
+$kRaceLanded = @(& git -C $pBare log --format=%s "refs/heads/$lTrunkBranch" -n 1 2>$null) -contains 'the other lane raced the second merge'
+Assert 'W28s0 fixture: the other lane''s race commit really reached the remote' $kRaceLanded
+
+# A requested extra path rides with the merge (the tracker note, in real life).
+Set-Content -Path (Join-Path $pRepo 'merge-note.txt') -Value 'T1902 merged side two'
+$r = PGuard @('commit', '-Paths', 'merge-note.txt', '-Message', 'merge side two')
+$kRemote = (& git -C $pBare rev-parse "refs/heads/$lTrunkBranch" 2>$null | Select-Object -First 1)
+$kLocal = (& git -C $pRepo rev-parse HEAD 2>$null | Select-Object -First 1)
+$kMerge = (& git -C $pRepo log --format=%H --merges --grep '^merge side two$' -n 1 2>$null | Select-Object -First 1)
+$kParents = @()
+if ($kMerge) { $kParents = @((& git -C $pRepo rev-list --parents -n 1 $kMerge 2>$null | Select-Object -First 1) -split ' ' | Where-Object { $_ }) }
+Assert 'W28s3 the guard commits the resolved merge whole and reads it back (two parents, the requested path in it)' `
+    ($r.Out -match 'COMMITTED \S+ \(merge of 2 parents' -and $kParents.Count -eq 3 -and
+     @(& git -C $pRepo diff --name-only "$kMerge^1" $kMerge 2>$null) -contains 'merge-note.txt' -and -not (Test-Path $kMergeHead))
+Assert 'W28s4 its rejected push is merge-pulled, not rebased, and lands (no conflict re-raised)' `
+    ($r.Code -eq 0 -and $r.Out -match 'push rejected' -and $r.Out -match 'MERGE' -and $r.Out -notmatch 'CONFLICT' -and
+     $kRemote -eq $kLocal -and -not (Test-Path (Join-Path $pRepo '.git\rebase-merge')))
+$kKept = $false
+if ($kMerge) { & git -C $pBare merge-base --is-ancestor $kMerge $kRemote 2>$null; if ($LASTEXITCODE -eq 0) { $kKept = $true } }
+$kResolved = ((& git -C $pBare show "${kRemote}:conflict.txt" 2>$null) -join '').Trim()
+$kRaced = @(& git -C $pBare log --format=%s $kRemote 2>$null | Where-Object { $_ -eq 'the other lane raced the second merge' }).Count
+Assert 'W28s5 the remote carries the ORIGINAL merge commit, its resolution, and the raced commit' `
+    ($kKept -and $kResolved -eq 'resolved' -and $kRaced -eq 1)
+
 # T2027: both lanes re-stamp the same harness. Two commits that each rewrite one
 # stamp.json conflicted on the rebase above, and a stamp left dirty by a green
 # run made `pull --rebase` refuse outright. Two clones of one remote, carrying

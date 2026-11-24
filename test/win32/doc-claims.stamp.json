@@ -1,10 +1,10 @@
 {
     "guard":  "doc-claims",
     "script":  "test/win32/doc-claims.ps1",
-    "generated":  "2026-11-23T23:26:56-08:00",
-    "commit":  "bb415c56e",
+    "generated":  "2026-11-23T23:33:22-08:00",
+    "commit":  "90caf3994",
     "uncommitted":  [
-
+                        "go.md"
                     ],
     "files":  {
                   "CLAUDE.md":  "d36c55011e0aaa79791f102a88c900fe847edb05aa35518e44aa0dcf5e5e39af",
@@ -16,7 +16,7 @@
                   "docs/claude/testing.md":  "18994d510a22f7fee2bc0cc52a67cdc2e8a0a4efd6375caad982afbb3676c01f",
                   "docs/claude/viewers.md":  "de51d9dcfe632a8b9b947120b8952648fdb3829444b162bc04e072f210308333",
                   "docs/claude/win32-ui.md":  "0d161ccd181de4fdb54cf6a4b434abc75dcc00f65094c681df21dfab7ac05e55",
-                  "go.md":  "b31508d5c822fd03ea81eb8018ee34fec53b21d66189387a759bb7942f913787",
+                  "go.md":  "a33f497bed4280ca2bac309dc9614fe34cc04808380d1135617e71d51a6d63c8",
                   "test/win32/doc-claims.ps1":  "89225631de66b3d1dc4c196c2dbea93fd7c416774c464c32fdc3e6f3198d3ece",
                   "test/win32/lib/BuildMode.ps1":  "2e420213f445ed93f56d853ebdb2cea5652bccaa852f2dc01e5a5f29a794b67e",
                   "test/win32/lib/Isolation.ps1":  "eee67ba3782e551404b498bbc97457777d93a5cf48728cd2ab056f30cdbdb8f7",
