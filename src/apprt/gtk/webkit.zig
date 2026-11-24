@@ -629,3 +629,24 @@ pub extern fn gdk_drop_finish(drop: *GdkDrop, action: c_int) void;
 pub extern fn gtk_box_reorder_child_after(box: *GtkWidget, child: *GtkWidget, sibling: ?*GtkWidget) void;
 pub extern fn gtk_box_insert_child_after(box: *GtkWidget, child: *GtkWidget, sibling: ?*GtkWidget) void;
 pub extern fn gtk_widget_get_parent(widget: *GtkWidget) ?*GtkWidget;
+
+// --- Stacked panes: the stage the shared layout places (T3567) ---------------
+
+pub const GtkLayoutManager = opaque {};
+pub const GskTransform = opaque {};
+/// `graphene_point_t`.
+pub const GraphenePoint = extern struct { x: f32 = 0, y: f32 = 0 };
+pub const CustomMeasureFn = *const fn (widget: *GtkWidget, orientation: c_int, for_size: c_int, minimum: *c_int, natural: *c_int, minimum_baseline: *c_int, natural_baseline: *c_int) callconv(.c) void;
+pub const CustomAllocateFn = *const fn (widget: *GtkWidget, width: c_int, height: c_int, baseline: c_int) callconv(.c) void;
+pub extern fn gtk_custom_layout_new(request_mode: ?*const anyopaque, measure: CustomMeasureFn, allocate: CustomAllocateFn) *GtkLayoutManager;
+pub extern fn gtk_widget_set_layout_manager(widget: *GtkWidget, layout_manager: ?*GtkLayoutManager) void;
+pub extern fn gtk_widget_allocate(widget: *GtkWidget, width: c_int, height: c_int, baseline: c_int, transform: ?*GskTransform) void;
+pub extern fn gtk_widget_measure(widget: *GtkWidget, orientation: c_int, for_size: c_int, minimum: ?*c_int, natural: ?*c_int, minimum_baseline: ?*c_int, natural_baseline: ?*c_int) void;
+pub extern fn gsk_transform_translate(next: ?*GskTransform, point: *const GraphenePoint) ?*GskTransform;
+pub extern fn gsk_transform_rotate(next: ?*GskTransform, angle: f32) ?*GskTransform;
+pub extern fn gtk_widget_set_child_visible(widget: *GtkWidget, child_visible: c_int) void;
+pub extern fn gtk_widget_get_child_visible(widget: *GtkWidget) c_int;
+pub extern fn gtk_widget_queue_allocate(widget: *GtkWidget) void;
+/// `GtkEventSequenceState`.
+pub const sequence_claimed: c_int = 1;
+pub const sequence_denied: c_int = 2;

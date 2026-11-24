@@ -672,6 +672,9 @@ test {
     // The pane style: which windows get their own gradient desk, which card
     // is lit, the desk texture's size and pixels (T3566). No GTK imports.
     _ = @import("gtk/pane_style.zig");
+    // Stacked panes on GTK: where the grid and cards sit in the stage, a
+    // strip's face and its turned label (T3567). No GTK imports.
+    _ = @import("gtk/pane_stage_rules.zig");
     // ... and the POSIX half of win32's git runner it spawns git through:
     // the deadline and the cancel end the whole process group (T3417).
     // Off Windows only, whose win32 lane covers the job object - importing it

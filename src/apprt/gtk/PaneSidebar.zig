@@ -434,7 +434,9 @@ fn walk(alloc: Allocator, tree: *const Surface.Tree, h: Surface.Tree.Node.Handle
     }
 }
 
-fn paneOf(surface: *Surface) rows.Pane {
+/// A pane's sidebar text inputs; a stacked strip is named by the same rule
+/// (T3567, docs/reference/stacked-panes.md "Strip labels").
+pub fn paneOf(surface: *Surface) rows.Pane {
     return .{
         .title = if (surface.getTitle()) |s| s else null,
         .title_override = surface.titleOverride(),

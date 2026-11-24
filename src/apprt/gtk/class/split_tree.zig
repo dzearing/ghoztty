@@ -24,6 +24,14 @@ const PaneDrag = @import("../PaneDrag.zig");
 const pane_drop = @import("../../win32/pane_drop.zig");
 const pane_drop_apply = @import("../pane_drop_apply.zig");
 const pane_style = @import("../pane_style.zig");
+const pane_stage = @import("../pane_stage_rules.zig");
+const pane_stack_grid = @import("../../win32/pane_stack_grid.zig");
+const pane_stack_layout = @import("../../win32/pane_stack_layout.zig");
+const pane_stack_state = @import("../../win32/pane_stack_state.zig");
+const stack_drag = @import("../../win32/stack_drag.zig");
+const PaneSidebar = @import("../PaneSidebar.zig");
+const pane_sidebar_rows = @import("../pane_sidebar_rows.zig");
+const homedir = @import("../../../os/homedir.zig");
 const wk = @import("../webkit.zig");
 
 const log = std.log.scoped(.gtk_ghostty_split_tree);
@@ -175,6 +183,23 @@ pub const SplitTree = extern struct {
         /// over the tree, and what it was rendered for. Owned.
         desk_texture: ?*wk.GdkTexture = null,
         desk_key: pane_style.DeskKey = .{},
+
+        /// Stacked panes (T3567): a split tab is one stage the shared
+        /// layout places (`placeStage`), not nested `GtkPaned`s. Null while
+        /// the tab shows one pane (a lone pane, or zoomed).
+        stage: ?*wk.GtkWidget = null,
+        /// Each pane's strip face on the stage, by pane id.
+        faces: std.AutoHashMapUnmanaged(pane_stack_layout.Id, *wk.GtkWidget) = .empty,
+        /// The focus history and the rows the user collapsed (Mac
+        /// `PaneStackState`). Lives as long as the tab.
+        stacks: ?pane_stack_state.PaneStackState = null,
+        /// The layout the stage was last placed by: what a press is
+        /// hit-tested against.
+        grid: ?pane_stack_grid.Grid = null,
+        /// A gutter drag under way (a divider or a grip).
+        row_drag: ?stack_drag.RowDrag = null,
+        /// The pane whose strip was pressed, until the press is let go.
+        strip_press: ?pane_stack_layout.Id = null,
 
         pub var offset: c_int = 0;
     };
@@ -401,6 +426,363 @@ pub const SplitTree = extern struct {
     pub fn areaSize(self: *Self) struct { w: c_int, h: c_int } {
         const space: *wk.GtkWidget = @ptrCast(self.private().tree_bin);
         return .{ .w = wk.gtk_widget_get_width(space), .h = wk.gtk_widget_get_height(space) };
+    }
+
+    // ---- Stacked panes (T3567; docs/reference/stacked-panes.md) --------------
+    //
+    // A split tab is ONE stage: a box whose layout manager places every card
+    // where the shared engine puts it (win32's `pane_stack_grid`, Mac's
+    // `PaneLayout.compute`), so a pane is never under the configured minimum
+    // and a row that cannot fit stacks into a run plus strips. A strip is its
+    // pane's face: the card is hidden (never resized while minimized, so its
+    // terminal keeps its last size on show) and a label named like its
+    // sidebar row is drawn down the strip. Every gutter - a divider, a grip
+    // between cards, a grip where the run meets its strips - is a row drag
+    // (`stack_drag.RowDrag`, Mac `dragRow`), and clicking a strip focuses
+    // its pane, which is what brings it forward.
+
+    const strip_class: [:0]const u8 = "pane-strip";
+
+    fn paneKey(s: *Surface) pane_stack_layout.Id {
+        return @intFromPtr(s);
+    }
+
+    fn stackState(self: *Self) *pane_stack_state.PaneStackState {
+        const priv = self.private();
+        if (priv.stacks == null) priv.stacks = pane_stack_state.PaneStackState.init(Application.default().allocator());
+        return &priv.stacks.?;
+    }
+
+    /// `macos-pane-min-width` / `-height`, read on every layout, so a reload
+    /// restacks on the next one (win32 `paneMinimum`).
+    fn paneMinimum() pane_stack_layout.Metrics.Minimum {
+        const config_obj = Application.default().getConfig();
+        defer config_obj.unref();
+        const cfg = config_obj.get();
+        return .fromConfig(cfg.@"macos-pane-min-width", cfg.@"macos-pane-min-height");
+    }
+
+    /// The card widget a surface sits in.
+    fn cardOf(s: *Surface) *gtk.Widget {
+        return if (ext.getAncestor(SurfaceScrolledWindow, s.as(gtk.Widget))) |w| w.as(gtk.Widget) else s.as(gtk.Widget);
+    }
+
+    /// A new stage holding `cards` (in tree order) and one strip face per pane.
+    fn newStage(self: *Self, tree: *const Surface.Tree, cards: []const *gtk.Widget) *gtk.Widget {
+        const priv = self.private();
+        const stage = wk.gtk_box_new(wk.orientation_horizontal, 0);
+        wk.gtk_widget_set_hexpand(stage, 1);
+        wk.gtk_widget_set_vexpand(stage, 1);
+        wk.gtk_widget_set_layout_manager(stage, wk.gtk_custom_layout_new(null, &stageMeasure, &stageAllocate));
+        for (cards) |c| wk.gtk_box_append(stage, @ptrCast(c));
+
+        const alloc = Application.default().allocator();
+        priv.faces.clearRetainingCapacity();
+        var it = tree.iterator();
+        while (it.next()) |entry| {
+            const face = wk.gtk_label_new(null);
+            wk.gtk_widget_add_css_class(face, strip_class);
+            wk.gtk_label_set_ellipsize(face, 3); // PANGO_ELLIPSIZE_END
+            wk.gtk_widget_set_cursor_from_name(face, "pointer");
+            wk.gtk_widget_set_child_visible(face, 0);
+            wk.gtk_box_append(stage, face);
+            priv.faces.put(alloc, paneKey(entry.view), face) catch {};
+        }
+
+        // Every gutter and every strip answers one drag gesture on the stage;
+        // a press anywhere else is denied and left to the pane under it.
+        const drag = wk.gtk_gesture_drag_new();
+        _ = wk.g_signal_connect_data(@ptrCast(drag), "drag-begin", @ptrCast(&stageDragBegin), self, null, 0);
+        _ = wk.g_signal_connect_data(@ptrCast(drag), "drag-update", @ptrCast(&stageDragUpdate), self, null, 0);
+        _ = wk.g_signal_connect_data(@ptrCast(drag), "drag-end", @ptrCast(&stageDragEnd), self, null, 0);
+        wk.gtk_widget_add_controller(stage, drag);
+        const motion = wk.gtk_event_controller_motion_new();
+        _ = wk.g_signal_connect_data(@ptrCast(motion), "motion", @ptrCast(&stageMotion), self, null, 0);
+        wk.gtk_widget_add_controller(stage, motion);
+
+        priv.stage = stage;
+        return @ptrCast(stage);
+    }
+
+    fn stageMeasure(_: *wk.GtkWidget, _: c_int, _: c_int, minimum: *c_int, natural: *c_int, min_base: *c_int, nat_base: *c_int) callconv(.c) void {
+        // The stage never holds the window open: a row that does not fit
+        // stacks instead.
+        minimum.* = 0;
+        natural.* = 0;
+        min_base.* = -1;
+        nat_base.* = -1;
+    }
+
+    fn stageAllocate(widget: *wk.GtkWidget, width: c_int, height: c_int, _: c_int) callconv(.c) void {
+        const tree_widget = ext.getAncestor(Self, @ptrCast(@alignCast(widget))) orelse return;
+        tree_widget.placeStage(widget, width, height);
+    }
+
+    /// Lay the tab out with the shared engine and place every card and face.
+    fn placeStage(self: *Self, stage: *wk.GtkWidget, width: c_int, height: c_int) void {
+        const priv = self.private();
+        if (priv.stage != stage) return;
+        const tree = priv.tree orelse return;
+        const alloc = Application.default().allocator();
+        const state = self.stackState();
+
+        var built = pane_stack_grid.buildWith(alloc, tree, paneKey, .all) catch return;
+        defer built.deinit(alloc);
+        // Carry each collapse over whatever changed the tree since the last
+        // layout (a close, a split, a drop), as win32's layout does.
+        {
+            var arena = std.heap.ArenaAllocator.init(alloc);
+            defer arena.deinit();
+            if (built.root) |root| {
+                if (pane_stack_layout.rows(arena.allocator(), built.nodes, root)) |rows| {
+                    state.noteRows(rows) catch |err| log.warn("stacked rows not carried over: {}", .{err});
+                } else |_| {}
+            }
+        }
+        if (priv.last_focused.get()) |f| {
+            defer f.unref();
+            const id = paneKey(f);
+            if (state.recency.first() != id) state.noteFocus(id);
+        }
+
+        const look = paneLook();
+        const elevated = pane_style.hasDesk(look.style);
+        const gap: ?f64 = if (elevated) @floatFromInt(pane_style.gutter) else null;
+        const rect = pane_stage.gridRect(width, height, elevated);
+        var grid = pane_stack_grid.computeBuilt(
+            alloc,
+            built,
+            rect,
+            1,
+            pane_stack_grid.metrics(gap, paneMinimum()),
+            state.provider(),
+        ) catch return;
+        // The runs on show stick to the next layout (`stickyRun`).
+        state.noteStacks(grid.result.stacks.items) catch {};
+
+        var home_buf: [std.fs.max_path_bytes]u8 = undefined;
+        const home = homedir.home(&home_buf) catch null;
+        var it = tree.iterator();
+        while (it.next()) |entry| {
+            const id = paneKey(entry.view);
+            const card: *wk.GtkWidget = @ptrCast(cardOf(entry.view));
+            const face = priv.faces.get(id);
+            const p = grid.placement(id) orelse {
+                wk.gtk_widget_set_child_visible(card, 0);
+                if (face) |f| wk.gtk_widget_set_child_visible(f, 0);
+                continue;
+            };
+            if (p.is_tucked or p.is_sliver) {
+                // Minimized: the card keeps its last size on show, out of
+                // sight, and its strip's face takes its place.
+                wk.gtk_widget_set_child_visible(card, 0);
+                const f = face orelse continue;
+                const tab = p.tab orelse {
+                    wk.gtk_widget_set_child_visible(f, 0);
+                    continue;
+                };
+                const axis = p.tab_axis orelse .horizontal;
+                const fr = pane_stage.stripFace(tab, p.strip_leads orelse true, p.strip_tuck, axis);
+                var lb: [pane_sidebar_rows.TEXT_BUF_LEN]u8 = undefined;
+                var sb: [pane_sidebar_rows.TEXT_BUF_LEN]u8 = undefined;
+                const t = pane_sidebar_rows.text(PaneSidebar.paneOf(entry.view), home, &lb, &sb);
+                var zbuf: [pane_sidebar_rows.TEXT_BUF_LEN + 1]u8 = undefined;
+                const n = @min(t.label.len, zbuf.len - 1);
+                @memcpy(zbuf[0..n], t.label[0..n]);
+                zbuf[n] = 0;
+                wk.gtk_label_set_text(f, @ptrCast(&zbuf));
+                wk.gtk_widget_set_child_visible(f, 1);
+                const lp = pane_stage.labelPlacement(fr, axis);
+                var min_w: c_int = 0;
+                var min_h: c_int = 0;
+                wk.gtk_widget_measure(f, wk.orientation_horizontal, -1, &min_w, null, null, null);
+                wk.gtk_widget_measure(f, wk.orientation_vertical, -1, &min_h, null, null, null);
+                var tr = wk.gsk_transform_translate(null, &.{ .x = lp.tx, .y = lp.ty });
+                if (lp.rotate) tr = wk.gsk_transform_rotate(tr, 90);
+                wk.gtk_widget_allocate(f, @max(lp.w, min_w), @max(lp.h, min_h), -1, tr);
+                continue;
+            }
+            if (face) |f| wk.gtk_widget_set_child_visible(f, 0);
+            wk.gtk_widget_set_child_visible(card, 1);
+            const a = pane_stage.cardAllocation(p.rect, elevated);
+            var min_w: c_int = 0;
+            var min_h: c_int = 0;
+            wk.gtk_widget_measure(card, wk.orientation_horizontal, -1, &min_w, null, null, null);
+            wk.gtk_widget_measure(card, wk.orientation_vertical, -1, &min_h, null, null, null);
+            const tr = wk.gsk_transform_translate(null, &.{ .x = @floatFromInt(a.left), .y = @floatFromInt(a.top) });
+            wk.gtk_widget_allocate(card, @max(a.width(), min_w), @max(a.height(), min_h), -1, tr);
+        }
+
+        if (priv.grid) |*old| old.deinit();
+        priv.grid = grid;
+    }
+
+    fn relayoutStage(self: *Self) void {
+        if (self.private().stage) |s| wk.gtk_widget_queue_allocate(s);
+    }
+
+    /// The surface with pane id `id`, if it is still in the tree.
+    fn surfaceByKey(self: *Self, id: pane_stack_layout.Id) ?*Surface {
+        const tree = self.private().tree orelse return null;
+        var it = tree.iterator();
+        while (it.next()) |entry| if (paneKey(entry.view) == id) return entry.view;
+        return null;
+    }
+
+    fn endRowDrag(self: *Self) void {
+        const priv = self.private();
+        if (priv.row_drag) |*rd| rd.deinit(self.stackState());
+        priv.row_drag = null;
+    }
+
+    /// Begin a gutter drag on `row`, before item `boundary`; `centre` is the
+    /// gutter's centre measured from the row's start.
+    fn beginRowDrag(self: *Self, row: pane_stack_layout.Row, d: pane_stack_layout.Direction, boundary: usize, centre: f64) bool {
+        self.endRowDrag();
+        const priv = self.private();
+        const alloc = Application.default().allocator();
+        var rd = stack_drag.RowDrag.begin(alloc, self.stackState(), row, boundary, centre) catch return false;
+        rd.direction = d;
+        if (self.rowRatios(d, row.items, null)) |ratios| {
+            defer alloc.free(ratios);
+            rd.noteRatios(ratios) catch {};
+        }
+        priv.row_drag = rd;
+        return true;
+    }
+
+    /// The splits of the row of `items` along `d`, with the ratios that give
+    /// each item its share of `shares` (null: the ratios they have). Caller
+    /// frees.
+    fn rowRatios(self: *Self, d: pane_stack_layout.Direction, items: []const []const pane_stack_layout.Id, shares: ?[]const f64) ?[]pane_stack_layout.RowRatio {
+        const tree = self.private().tree orelse return null;
+        const alloc = Application.default().allocator();
+        var built = pane_stack_grid.buildWith(alloc, tree, paneKey, .all) catch return null;
+        defer built.deinit(alloc);
+        const root = built.root orelse return null;
+        return pane_stack_layout.settingRow(alloc, built.nodes, root, d, items, shares) catch null;
+    }
+
+    fn stageDragBegin(gesture: *wk.GtkEventController, x: f64, y: f64, self: *Self) callconv(.c) void {
+        const priv = self.private();
+        priv.strip_press = null;
+        const grid = &(priv.grid orelse {
+            _ = wk.gtk_gesture_set_state(gesture, wk.sequence_denied);
+            return;
+        });
+        const px: i32 = @intFromFloat(@round(x));
+        const py: i32 = @intFromFloat(@round(y));
+        if (grid.dividerAt(px, py)) |i| {
+            const d = grid.result.dividers.items[i];
+            const centre = d.node_frame.start(d.direction) + d.position - d.row.start;
+            if (self.beginRowDrag(d.row, d.direction, d.index, centre)) {
+                _ = wk.gtk_gesture_set_state(gesture, wk.sequence_claimed);
+                return;
+            }
+        } else if (grid.stackHandleAt(px, py)) |i| {
+            const h = grid.result.stack_handles.items[i];
+            const centre = h.frame.start(h.direction) + h.position - h.row.start;
+            if (self.beginRowDrag(h.row, h.direction, stack_drag.gripBoundary(h), centre)) {
+                _ = wk.gtk_gesture_set_state(gesture, wk.sequence_claimed);
+                return;
+            }
+        } else if (grid.stripAt(px, py)) |id| {
+            priv.strip_press = id;
+            _ = wk.gtk_gesture_set_state(gesture, wk.sequence_claimed);
+            return;
+        }
+        _ = wk.gtk_gesture_set_state(gesture, wk.sequence_denied);
+    }
+
+    fn stageDragUpdate(_: *wk.GtkEventController, dx: f64, dy: f64, self: *Self) callconv(.c) void {
+        const priv = self.private();
+        const rd = &(priv.row_drag orelse return);
+        const position = if (rd.direction == .horizontal) dx else dy;
+        const step = rd.moved(self.stackState(), position) catch |err| {
+            log.warn("row drag step failed: {}", .{err});
+            return;
+        };
+        self.applyRowDrag(step);
+        if (step.restacked) self.focusOnShowAfterRestack();
+        self.relayoutStage();
+    }
+
+    fn stageDragEnd(_: *wk.GtkEventController, dx: f64, dy: f64, self: *Self) callconv(.c) void {
+        const priv = self.private();
+        if (priv.row_drag != null) {
+            self.endRowDrag();
+            self.relayoutStage();
+            return;
+        }
+        const id = priv.strip_press orelse return;
+        priv.strip_press = null;
+        if (!pane_stage.isClick(dx, dy)) return;
+        // Bringing a strip forward IS focusing its pane (Mac
+        // `PaneStackState.noteFocus`): the row follows the focus.
+        const s = self.surfaceByKey(id) orelse return;
+        self.stackState().noteFocus(id);
+        priv.last_focused.set(s);
+        self.relayoutStage();
+        s.grabFocus();
+    }
+
+    /// After a step of a row drag, the tree's side of it (Mac `dragRow`): all
+    /// of the row on show, its splits sized by the step's shares; part of it
+    /// folded away, its splits as the drag found them.
+    fn applyRowDrag(self: *Self, step: stack_drag.Step) void {
+        const priv = self.private();
+        const rd = &(priv.row_drag orelse return);
+        const tree = priv.tree orelse return;
+        const alloc = Application.default().allocator();
+        const fresh = if (step.all_shown) self.rowRatios(rd.direction, rd.row.items, rd.shares) else null;
+        defer if (fresh) |f| alloc.free(f);
+        for (fresh orelse rd.ratios) |r| {
+            if (r.node >= tree.nodes.len) continue;
+            switch (tree.nodes[r.node]) {
+                .split => tree.resizeInPlace(@enumFromInt(r.node), @floatCast(r.ratio)),
+                else => {},
+            }
+        }
+    }
+
+    /// A pane that folded away while it had the caret gives it to the nearest
+    /// pane still on show (Mac `splitDidRestack`).
+    fn focusOnShowAfterRestack(self: *Self) void {
+        const priv = self.private();
+        const rd = &(priv.row_drag orelse return);
+        const focused = priv.last_focused.get() orelse return;
+        defer focused.unref();
+        const id = rd.focusAfterRestack(self.stackState(), paneKey(focused)) orelse return;
+        const s = self.surfaceByKey(id) orelse return;
+        priv.last_focused.set(s);
+        s.grabFocus();
+    }
+
+    fn stageMotion(_: *wk.GtkEventController, x: f64, y: f64, self: *Self) callconv(.c) void {
+        const priv = self.private();
+        const stage = priv.stage orelse return;
+        if (priv.row_drag != null) return;
+        const grid = &(priv.grid orelse return);
+        const px: i32 = @intFromFloat(@round(x));
+        const py: i32 = @intFromFloat(@round(y));
+        const cursor: ?[*:0]const u8 = if (grid.dividerAt(px, py)) |i|
+            pane_stage.gutterCursor(grid.result.dividers.items[i].direction)
+        else if (grid.stackHandleAt(px, py)) |i|
+            pane_stage.gutterCursor(grid.result.stack_handles.items[i].direction)
+        else
+            null;
+        wk.gtk_widget_set_cursor_from_name(stage, cursor);
+    }
+
+    /// Drop the stage's state when the tab stops showing one.
+    fn dropStage(self: *Self) void {
+        const priv = self.private();
+        self.endRowDrag();
+        priv.strip_press = null;
+        priv.stage = null;
+        priv.faces.clearRetainingCapacity();
+        if (priv.grid) |*g| g.deinit();
+        priv.grid = null;
     }
 
     fn initActionMap(self: *Self) void {
@@ -945,6 +1327,12 @@ pub const SplitTree = extern struct {
         priv.last_focused.set(null);
         if (priv.desk_texture) |t| wk.g_object_unref(t);
         priv.desk_texture = null;
+        // The stacked-panes stage and its state (T3567).
+        self.dropStage();
+        priv.faces.deinit(Application.default().allocator());
+        priv.faces = .empty;
+        if (priv.stacks) |*st| st.deinit();
+        priv.stacks = null;
         if (priv.rebuild_source) |v| {
             if (glib.Source.remove(v) == 0) {
                 log.warn("unable to remove rebuild source", .{});
@@ -1179,6 +1567,8 @@ pub const SplitTree = extern struct {
         if (!surface.getFocused()) return;
         self.private().last_focused.set(surface);
         self.syncPaneStyle();
+        // Focus brings a pane forward (T3567): the row follows it.
+        self.relayoutStage();
 
         // Our active surface probably changed
         self.as(gobject.Object).notifyByPspec(properties.@"active-surface".impl.param_spec);
@@ -1210,6 +1600,7 @@ pub const SplitTree = extern struct {
         // waiting for an idle callback. Delaying teardown can keep the last
         // surface alive during shutdown if the main loop exits first.
         if (priv.tree == null) {
+            self.dropStage();
             priv.tree_bin.setChild(null);
             return;
         }
@@ -1234,13 +1625,31 @@ pub const SplitTree = extern struct {
         // Rebuild our tree
         const tree: *const Surface.Tree = self.private().tree orelse &.empty;
         if (tree.isEmpty()) {
+            self.dropStage();
             priv.tree_bin.setChild(null);
+        } else if (tree.zoomed == null and tree.nodes[0] == .split) {
+            // Several panes on show: one stage the shared layout places
+            // (T3567). Each card is detached from the old widgets first.
+            var results: [pane_drop_apply.max_leaves]BuildTreeResult = undefined;
+            var cards: [pane_drop_apply.max_leaves]*gtk.Widget = undefined;
+            var n: usize = 0;
+            var it = tree.iterator();
+            while (it.next()) |entry| {
+                if (n == results.len) break;
+                results[n] = self.buildTree(tree, entry.handle);
+                cards[n] = results[n].widget;
+                n += 1;
+            }
+            defer for (results[0..n]) |r| r.deinit();
+            self.dropStage();
+            priv.tree_bin.setChild(self.newStage(tree, cards[0..n]));
         } else {
             const built = self.buildTree(
                 tree,
                 tree.zoomed orelse .root,
             );
             defer built.deinit();
+            self.dropStage();
             priv.tree_bin.setChild(built.widget);
         }
 
@@ -1352,6 +1761,12 @@ pub const SplitTree = extern struct {
     /// that keeps container state and notifications in sync.
     fn detachWidget(widget: *gtk.Widget) void {
         const parent = widget.getParent() orelse return;
+
+        // A card on a stacked-panes stage (T3567).
+        if (gobject.ext.cast(gtk.Box, parent)) |box| {
+            box.remove(widget);
+            return;
+        }
 
         // Surface will be in a paned when it is split.
         if (gobject.ext.cast(gtk.Paned, parent)) |paned| {
