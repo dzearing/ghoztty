@@ -365,6 +365,7 @@ mine = [w for w in ws if w.get("ipc_name") == sys.argv[3]] if len(sys.argv) > 3 
 if q == "sid": print(mine[0].get("session_id", "") if len(mine) == 1 else "")
 elif q == "n": print(len(mine))
 elif q == "title": print(mine[0].get("window_title", "") if mine else "")
+elif q == "named": print(sum(1 for w in ws if w.get("ipc_name")))
 ' "$record" "$@" 2>/dev/null; }
 out=$(cli +new-remote-window --relay="$base" --device="$dev_id" --token="$DEV_TOKEN" --name=zr --title=ZT 2>&1); rc=$?
 hl_wait_for 15 pane_pid zr > /dev/null
@@ -385,6 +386,8 @@ hl_wait_for 15 sh -c "! kill -0 $APP 2>/dev/null"
 hl_check "Z4 SIGTERM quits the app" $?
 alive "$zpid" && [ "$(rec_q sid zr)" = "$zsid" ] && [ "$(rec_q title zr)" = ZT ]
 hl_check "Z5 the quit kept zr's far session alive and its record entry (session, title)" $? "pane=$zpid alive=$(alive "$zpid" && echo y) sid=$(rec_q sid zr) title=$(rec_q title zr)"
+[ "$(rec_q named)" = 1 ]
+hl_check "Z5b the quit recorded only the caller's --name, never a name minted for the unnamed window" $? "named=$(rec_q named) file=$(tr -d '\n ' < "$record" 2>/dev/null | head -c 600)"
 
 # The relaunch: the same isolated world, now with a relay credential. NEGATIVE=restore
 # withholds it, so nothing may come back - Z6 MUST fail.

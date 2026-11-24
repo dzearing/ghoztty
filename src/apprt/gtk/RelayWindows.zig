@@ -152,8 +152,10 @@ pub fn windowDisposed(window: *Window, quitting: bool) void {
     }
 }
 
-/// The quit's last look: every open relay window's session, IPC name and
-/// pinned title as they stand now, so a rename after the open survives.
+/// The quit's last look: every open relay window's session and pinned title
+/// as they stand now, so a title pinned after the open survives. The IPC name
+/// stays the one the window was opened under (win32 records it at open only):
+/// a name GTK minted later (`window-3`) is not the caller's to keep.
 pub fn syncForQuit() void {
     if (sid_timer) |t| {
         _ = glib.Source.remove(t);
@@ -167,7 +169,6 @@ fn refresh() void {
     for (open_windows.items) |*o| {
         if (firstPaneSessionId(o.window)) |sid| m.setSessionId(&o.id, sid);
         m.setTitle(&o.id, o.window.titleOverride(), false);
-        m.setIpcName(&o.id, o.window.ipcName());
     }
 }
 
