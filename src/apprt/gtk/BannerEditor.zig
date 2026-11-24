@@ -96,7 +96,6 @@ pub fn open(alloc: Allocator, surface: *Surface) void {
     wk.gtk_box_append(column, scroller);
     wk.gtk_box_append(column, hint);
     wk.adw_alert_dialog_set_extra_child(dialog, column);
-    wk.adw_dialog_set_focus_widget(dialog, view);
 
     _ = wk.g_signal_connect_data(dialog, "response", @ptrCast(&onResponse), self, null, 0);
     _ = wk.g_signal_connect_data(dialog, "closed", @ptrCast(&onClosed), self, null, 0);
@@ -106,6 +105,8 @@ pub fn open(alloc: Allocator, surface: *Surface) void {
     open_editor = self;
     log.info("banner editor: open pane={s} len={d}", .{ surface.paneId(), initial.len });
     wk.adw_dialog_present(dialog, @ptrCast(surface));
+    // The text box, not the Save button the alert dialog would focus.
+    _ = wk.gtk_widget_grab_focus(view);
 }
 
 /// The text box's current contents. Caller frees with `g_free`.

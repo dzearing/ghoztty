@@ -598,4 +598,3 @@ pub extern fn adw_alert_dialog_set_extra_child(dialog: *GtkWidget, child: ?*GtkW
 pub const adw_response_suggested: c_int = 1;
 pub extern fn adw_dialog_present(dialog: *GtkWidget, parent: ?*GtkWidget) void;
 pub extern fn adw_dialog_force_close(dialog: *GtkWidget) void;
-pub extern fn adw_dialog_set_focus_widget(dialog: *GtkWidget, focus: ?*GtkWidget) void;
