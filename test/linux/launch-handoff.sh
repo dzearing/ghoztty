@@ -18,6 +18,10 @@
 #
 #   powershell -NoProfile -File scripts\linux\wsl-run.ps1 -CommandFile test\linux\launch-handoff.sh
 #
+#   powershell -NoProfile -File scripts\linux\wsl-run.ps1 -Step 'NEGATIVE=1 bash test/linux/launch-handoff.sh'
+#
+# (NEGATIVE=1 must FAIL H6: the "other build" carries no identity.)
+#
 # Everything runs inside the private headless Weston (test/linux/lib/headless.sh).
 # Output: one PASS/FAIL line per check, then 'LAUNCH HANDOFF: ALL PASS' or
 # 'LAUNCH HANDOFF: <n> FAILURE(S)'. Exit 0 only on ALL PASS.
@@ -75,6 +79,9 @@ for w in d["windows"]:
             if l.get("name") == want: print(l.get("pid") or 0); sys.exit(0)' "$1" 2>/dev/null
 }
 OTHER=(GHOZTTY_HANDOFF_VERSION=9.9.9-other GHOZTTY_HANDOFF_COMMIT=0000000)
+# NEGATIVE=1: the "other build" launches WITHOUT its identity, so it is the
+# same build and is never asked - H6 must FAIL (and the checks built on it).
+[ "${NEGATIVE:-0}" = 1 ] && OTHER=(GHOZTTY_TEST_NEGATIVE=1) && echo "NEGATIVE: the other launch carries no identity; H6 must fail"
 
 # ---- 0. the running build, with an agent-hosted pane ------------------------
 hl_launch APP "$app" --gtk-single-instance=false
