@@ -1,8 +1,8 @@
 {
     "guard":  "unwired-hook",
     "script":  "test/win32/unwired-hook-audit.ps1",
-    "generated":  "2026-11-24T13:44:15-08:00",
-    "commit":  "4a0a4b48a",
+    "generated":  "2026-11-24T13:58:06-08:00",
+    "commit":  "376bf89ee",
     "uncommitted":  [
 
                     ],
@@ -1347,7 +1347,7 @@
                   "test/win32/dark-menus.ps1":  "15c2c0c17b2e5ab161a88c79cb27c0fb18f4f59986ce769b848998b249cd625d",
                   "test/win32/dashboard-dom.ps1":  "588b973da60dc74921f6acd2e47ff5d2ce448fe06359f6551a16e1b5e4d779cf",
                   "test/win32/dashboard-keepalive.ps1":  "907915acd38d52b16755167f2df7e4383bc5d1cb53a3f8cbd84e419a559c7429",
-                  "test/win32/deliver-windows-build.ps1":  "4fd0ee6e067dcddb4e1f0c2658ae4a6e90c6565ad891f42f001d227dc6984a22",
+                  "test/win32/deliver-windows-build.ps1":  "f44a24052c394a2a858c6896bb5d895ffe99fc2fb61ad117bccaa81a75505ac5",
                   "test/win32/deny-escape-damage.ps1":  "2fc4374ce0468d7f7274c10218e38a1ec1c5ec2634fdb231bf2b8b290e9a7e29",
                   "test/win32/deny-git-autostash.ps1":  "625dfd8e4a308dc01902adb6c31b80b0a60a47a1b2e230a9385eaaecd40846e0",
                   "test/win32/deny-sh-from-powershell.ps1":  "345a909a59c95edc61dc97247f3d94784431cae1203ca76951f5dbe755e25a8e",
@@ -1497,6 +1497,7 @@
                   "test/win32/msg-timer-ids.ps1":  "1902016b971ba544cbaead864229fdde15c761b66333fa3b85f33cb5734989f8",
                   "test/win32/msiexec-sentinel-audit.ps1":  "53eb9d7cc515b056197a00a9bac5093e10a899bb0800f38dc77ab58f56456062",
                   "test/win32/msi-upgrade.ps1":  "756713b20450fba0ca2ab0f9cfcf923b93bee1e449300266acbf7ada59d8cb84",
+                  "test/win32/native-stderr-audit.ps1":  "652d2abb648dff1eec9505a5d0454f75bd083ddc57666379491d1f18272bbdcc",
                   "test/win32/neuter-audit.ps1":  "b2057597d46fad5597ff832b399d8ee9a585f9131fbfe7244b7cea9bf44bd928",
                   "test/win32/new-window-cwd.ps1":  "788bd5914286f4694bf5a872f29c996e34854fd383bc46016131f71cc7ae4b06",
                   "test/win32/new-window-maximized.ps1":  "ae6d8e38ff402b3a80d94c6970c51618e6670dd1add82b9790bf47656c7ecae7",
@@ -1657,7 +1658,7 @@
                   "test/win32/single-window-mode.ps1":  "7b602d894485e2949b540550b78bea9a2c262ff5a645b811ea98b2bc15d57275",
                   "test/win32/size-burst-canvas.ps1":  "c64c1f92290f8d5478d7e2d6a11e928d804f58088c05ed4bcfdf0f28c6e05ba0",
                   "test/win32/skip-visibility.ps1":  "fb9d1c819cb4f9ca092fa4f8610032d61c8d7ed7216d4fc45732ac054b271d10",
-                  "test/win32/soak.ps1":  "bda50cf6847ba748f68c250c595a8fe14e85408ec51b45626002cbe4bdcddb93",
+                  "test/win32/soak.ps1":  "86bd290ce4c966d453d268f0225abac60992cd9c2dae1e8b49752d45b896b4cb",
                   "test/win32/soak-daemon.ps1":  "7c34969f977bc70c1b4348444ab5288937e1f3a711a5d457bb0238c7b16f81c3",
                   "test/win32/split-dim.ps1":  "f7fddb7e47fe4b82b735103e1f4abcea05e9ec40be893c9bb35590098f611a30",
                   "test/win32/split-dim-viewer.ps1":  "c499244428b1c2bd391ece8bee8d306226046836508ef9e23cd04f281e5377f3",

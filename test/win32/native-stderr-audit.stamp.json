@@ -1,13 +1,10 @@
 {
     "guard":  "native-stderr",
     "script":  "test/win32/native-stderr-audit.ps1",
-    "generated":  "2026-11-24T13:25:36-08:00",
-    "commit":  "3c434c7bf",
+    "generated":  "2026-11-24T13:56:02-08:00",
+    "commit":  "376bf89ee",
     "uncommitted":  [
-                        "test/win32/lib/NativeStderrAudit.ps1",
-                        "test/win32/lib/NativeTolerant.ps1",
-                        "test/win32/native-stderr-audit.baseline.json",
-                        "test/win32/native-stderr-audit.ps1"
+
                     ],
     "files":  {
                   "test/win32/lib/NativeStderrAudit.ps1":  "20ce857d03cfe9a6c009e9845b54dd139c429fb7f405d72665313f8cbb9cd78f",
@@ -18,6 +15,6 @@
     "code":  {
                  "test/win32/lib/NativeStderrAudit.ps1":  "code1:9dd459392ba3fe07eb2eae7c00961aac054af38c903bcf9b0c65af52aaef43af",
                  "test/win32/lib/NativeTolerant.ps1":  "code1:9d2c51c93b305b573dfdae94ec629709e2db8a334e9ee4b05def6e9a17d64e31",
-                 "test/win32/native-stderr-audit.ps1":  "code1:7ab5e498127f2a2c0c332de55a3d8a1d8d10fa7e45e747f14c3a2270849ac573"
+                 "test/win32/native-stderr-audit.ps1":  "code1:a15d384f17a221c41094b2d7feca6a167ce3dbe04ed1a809f040f3833420310e"
              }
 }
