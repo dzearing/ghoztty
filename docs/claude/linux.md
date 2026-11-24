@@ -227,9 +227,23 @@ and scaled).
 Input still comes from the CLI (`+send-keys`): Wayland has no global input
 injection.
 
-**Running the app by hand** is a harness run too: there is no "just open it"
-path on this box, because the only display is the user's. To look at it, the
-person at the keyboard runs it into WSLg themselves.
+**Running the app by hand**: there is no "just open it" path for a loop,
+because the only display is the user's. For the person at the keyboard there
+is one command (2026-11-24, after three days in which nobody had seen the port
+on a real screen):
+
+```powershell
+powershell -NoProfile -File scripts\linux\open.ps1          # lane l's latest build, on screen via WSLg
+powershell -NoProfile -File scripts\linux\open.ps1 -Build   # rebuild lane l's tree first
+powershell -NoProfile -File scripts\linux\open.ps1 -Stop    # close it (the agent keeps its sessions)
+```
+
+It goes through `wsl-run.ps1 -AllowAnyLane -KeepRunning`, runs
+`~/ghoztty-l/zig-out/bin/ghoztty` with `LD_LIBRARY_PATH=zig-out/lib` (the
+from-source gtk4-layer-shell; without it the binary dies with
+`libgtk4-layer-shell.so: cannot open shared object file`), and logs to
+`/tmp/ghoztty-open.log`. No lane calls it: it puts windows on the user's
+display, which is the user's to ask for.
 
 ## The CLI socket (T3335)
 
@@ -1647,8 +1661,8 @@ it used to carry (a `-Dtest-filter=firstLeaf` run matched no tests).
   size while maximized; x/y are 0, T3549), maximized state and selected tab;
   per tab its pinned title (T3549) and the split tree with exact directions
   and ratios; per
-  terminal pane its session id, pane id, name, pinned title, pwd,
-  banner (its markdown source, T3560) and tint (`#rrggbb`, T3589); per
+  terminal pane its session id, pane id, name, pinned title, pwd and
+  banner (its markdown source, T3560); per
   viewer pane its pane id, name, location, Home and origin directory (T3420,
   below). The quit's
   write adds each pane's screen snapshot (base64, the WP-D3 pair).
@@ -1684,13 +1698,6 @@ it used to carry (a `-Dtest-filter=firstLeaf` run matched no tests).
   banner too tall for a small pane used to leave it at zero height, so the
   shell never started. As on the Mac, a tall banner squeezes the terminal; it
   never stops it.
-- **Tints (T3589)** come back the same way: a `--color` / `--split-color` /
-  `+split --color` or inherited tint is recorded as the leaf's `tint`
-  (`session_layout_rules.tintToRecord` / `tintToRestore`, none-lane tested;
-  win32's T3176, Mac `Leaf.tint`), handed over on `Surface.Restore.tint` and
-  applied the way an early `--color` is - held until the core surface exists.
-  A viewer leaf never takes one, and an unreadable value leaves the theme
-  background. In-place agent recovery carries the tint across too.
 
 Acceptance:
 
@@ -1706,11 +1713,7 @@ SIGTERM detaches and snapshots; a session that died while the app was down
 comes back as a fresh shell; after an agent restart the panes come back as
 relaunched shells under the new agent; banners are recorded and come back on
 every one of those paths, and the session-interrupted notice takes only a
-bannerless pane's slot (RB1-RB5, T3560); tints are recorded, listed as
-`background_tint` and rendered after a crash relaunch, kept by a fresh shell
-and by an agent restart (RT1-RT5, T3589; the test turns off
-`unfocused-split-opacity` so an unfocused split's pixels are the raw tint); a
-second instance neither restores nor
+bannerless pane's slot (RB1-RB5, T3560); a second instance neither restores nor
 writes; a closed window stays closed.
 
 ### The agent dies under a running app: panes recover in place (T3400)
@@ -1748,11 +1751,10 @@ decision is win32's pure `apprt/win32/agent_recovery.zig`, shared.
 powershell -NoProfile -File scripts\linux\wsl-run.ps1 -CommandFile test\linux\agent-recover.sh
 ```
 
-Ends `AGENT RECOVER: ALL PASS` (19 checks): kill the agent tree under a running
+Ends `AGENT RECOVER: ALL PASS` (18 checks): kill the agent tree under a running
 app with two terminal panes and a viewer; the panes come back on a new agent
 with the same tree, ids, names and directory and are drivable, a pane's banner
-rides across while a bannerless pane shows the notice (T3560), a tinted pane
-keeps its tint (A10d, T3589), the viewer is
+rides across while a bannerless pane shows the notice (T3560), the viewer is
 untouched, a new pane rides the new agent, a second death raced against a new
 pane recovers everything onto a third agent, and a user close still ends a
 shell.
