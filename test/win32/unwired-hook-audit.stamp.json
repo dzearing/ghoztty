@@ -1,8 +1,8 @@
 {
     "guard":  "unwired-hook",
     "script":  "test/win32/unwired-hook-audit.ps1",
-    "generated":  "2026-11-24T06:09:55-08:00",
-    "commit":  "6ac7f77da",
+    "generated":  "2026-11-24T06:17:35-08:00",
+    "commit":  "6b8b60392",
     "uncommitted":  [
 
                     ],
@@ -1211,7 +1211,7 @@
                   "src/unicode/symbols_uucode.zig":  "cb6ae86fe8549c435e11a2e038960aa9cae907aa89aa14598f8b6416c51b61ce",
                   "test/win32/about-links.ps1":  "cb6ba712f258265f9a5d03dc219567a0025a1f081a2b7d2029586140247906eb",
                   "test/win32/acceptance-parallel.ps1":  "2673dccb32a1a23a91372cea2ed37ca934158fae369c8fbbe0c6976b7ed2657a",
-                  "test/win32/activity-help-tooltips.ps1":  "0023622d51e2dce579e45f7f46ffeed4195fc995570bd6cdffde961b229ed1b6",
+                  "test/win32/activity-help-tooltips.ps1":  "ead9d97c42517396c6a6a16de0885e5636f09c677582f2b830ed859f6f933b59",
                   "test/win32/activity-monitor.ps1":  "085720eade12d3fda926f05f7a1f5e9bc8475e206327066555d2036974b5d3f0",
                   "test/win32/activity-monitor-dialed.ps1":  "e8d248a8d5507c68b3a67fd0f15692a98868d2542cbc6f0cdb714c9ee98ade99",
                   "test/win32/activity-monitor-probe-fail.ps1":  "9f7eb6448779410b4d596c3dbdd62c94c9e8255dd922ae5fb97b2d5a51541296",
@@ -1397,7 +1397,7 @@
                   "test/win32/fullscreen-exit.ps1":  "2e470f39aa21efdc4f4e2ea5203bfea80e9dd2dbccdfb58cc0786df440f94854",
                   "test/win32/fullscreen-guard.ps1":  "a6c1a301a11d7493a2e7b5411fbcb25daea08302c0a822e91d98fd6db0a67450",
                   "test/win32/gate-negatives.ps1":  "08ee7c4d67c664a4d594cafc39aa0a0c5c7e8d4f28e72a9a0532427d9510a45a",
-                  "test/win32/ghoztty-cleanup.ps1":  "a1b46736eb6a96c57f7598e2a1088afaf501c62be03ec8bfc45d91bc15107629",
+                  "test/win32/ghoztty-cleanup.ps1":  "43cd3c8d3d20789fe9c12d0134418a0e2e6c1bd9c8450d48f837f49c7ee00fc9",
                   "test/win32/glass-frame-origin.ps1":  "0a0dfeed8dff3e6ba20ec9402905ac5490ab37b43d85d9316be106de72e26b56",
                   "test/win32/gl-device-lost.ps1":  "3a87a2acf4ebca9c19323687ecd65919747f3691aa09eb9eb245f19246d30711",
                   "test/win32/go-loop-guard.ps1":  "16a8fac216be3cec32707ed045dcdca919856049a74a70282d559ab383c09455",

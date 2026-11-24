@@ -292,7 +292,8 @@ $keep = Invoke-Screen -ScriptArgs @('keep', ('arp-' + $PlainCode), '-Reason', 'u
 Assert 'D4 keep is recorded' ($keep.Code -eq 0) "code=$($keep.Code)"
 $d3 = Invoke-Screen -ScriptArgs @('verdict', '-NoProcessScan') -Env $envD
 Assert 'D5 a deliberately kept item makes the verdict CLEAN' `
-    (($d3.Code -eq 0) -and ($d3.Text -match 'VERDICT: CLEAN')) "code=$($d3.Code)"
+    (($d3.Code -eq 0) -and ($d3.Text -match 'VERDICT: CLEAN')) `
+    ("code=$($d3.Code); verdict said: " + ((@($d3.Text -split "`r?`n") | Where-Object { $_ -match '\S' } | Select-Object -Last 12) -join ' | '))
 Assert 'D6 the verdict names what was kept and why' ($d3.Text -match 'uninstalled by hand after this run') ''
 
 $unkeep = Invoke-Screen -ScriptArgs @('unkeep', ('arp-' + $PlainCode)) -Env $envD
