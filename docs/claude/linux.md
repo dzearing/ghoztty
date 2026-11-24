@@ -1300,6 +1300,30 @@ Not yet: glides and elevation (T3625), the gutter bar and double-click
 (T3626), collapses in the session layout and undo (T3627), the featured side
 pane (T3628), live relabel, strip drags and a column test (T3629).
 
+## Resize pacing (T3568)
+
+Port of `docs/reference/terminal-resize.md`. Nothing GTK-specific paces a
+resize: every GTK source - a gutter drag, a window resize, a banner fold -
+reaches the core as `glareaResize` -> `Surface.sizeCallback`, which mails the
+IO thread, and the shared `termio.Thread` `Coalesce` (100ms settle, 350ms cap)
+and `Termio.resizePace` decide what the program is told. So the GTK rule is
+the negative one: **never resize the PTY from the apprt directly**, and never
+add a per-frame `flushResize` (Mac flushes only for a resize made out of
+sight; GTK has no such resize yet).
+
+Measured by `test/linux/resize-pacing.sh` with a SIGWINCH-counting program: a
+30-frame divider drag over ~850ms reaches it as 3 SIGWINCH (the stage laid
+the pane out on every frame), and a banner fold / unfold as exactly one each.
+`NEGATIVE=1` drags in steps 250ms apart and must fail R6 alone (one SIGWINCH
+per step).
+
+```powershell
+powershell -NoProfile -File scripts\linux\wsl-run.ps1 -CommandFile test\linux\resize-pacing.sh
+```
+
+Ends `RESIZE PACING: ALL PASS` (12 checks). Not yet: the prompt-redraw hold
+seen on GTK's own frames, and a window-resize source in the test (T3630).
+
 ## The interop PATH trap
 
 Inside WSL the Windows `PATH` is appended by default, so a bare `ghoztty` can
