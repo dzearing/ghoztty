@@ -83,16 +83,47 @@
 #     by a declaration name - but NOT by a segment that is itself a file under
 #     it, which would credit `apprt.zig` with `apprt\win32.zig`'s tests.
 
+# The PURE gtk modules every lane runs, read from the aggregator that pulls
+# them in rather than hand-listed (T3539): a hand list went stale thirteen
+# times in a day as lane L landed pure gtk modules, and each one turned the
+# whole harness floor red. Counts an UNCONDITIONAL `_ = @import("gtk/x.zig");`
+# line in apprt\unit_tests.zig (a guarded one, like the non-windows
+# git_run_posix_test, is not run here and stays exempt), then follows each such
+# file's same-directory imports, since a lane compiles those too.
+function Get-GtkLaneModules {
+    param([string]$UnitTests = (Join-Path $PSScriptRoot '..\..\..\src\apprt\unit_tests.zig'))
+    $out = New-Object System.Collections.Generic.List[string]
+    if (-not (Test-Path -LiteralPath $UnitTests)) { return @() }
+    $gtkDir = Join-Path (Split-Path -Parent $UnitTests) 'gtk'
+    $queue = New-Object System.Collections.Generic.Queue[string]
+    foreach ($line in [System.IO.File]::ReadAllLines($UnitTests)) {
+        if ($line -match '^\s*_\s*=\s*@import\("gtk/([A-Za-z0-9_]+)\.zig"\);') { $queue.Enqueue($Matches[1]) }
+    }
+    $seen = New-Object System.Collections.Generic.HashSet[string]
+    while ($queue.Count -gt 0) {
+        $n = $queue.Dequeue()
+        if (-not $seen.Add($n)) { continue }
+        $out.Add('apprt.gtk.' + $n)
+        $f = Join-Path $gtkDir ($n + '.zig')
+        if (-not (Test-Path -LiteralPath $f)) { continue }
+        foreach ($m in [regex]::Matches([System.IO.File]::ReadAllText($f), '@import\("([A-Za-z0-9_]+)\.zig"\)')) {
+            $queue.Enqueue($m.Groups[1].Value)
+        }
+    }
+    return $out.ToArray()
+}
+
 # Where a test-bearing module runs if not in one of this box's three lanes.
 # Each row is a dotted-path PREFIX and the reason, and a row is checked in the
 # other direction too: an exempted module that DOES turn up in a lane is
 # reported (`Stale`), so an exemption cannot outlive the reason for it.
 $script:TestReachExemptions = @(
     # Except: the PURE gtk modules apprt\unit_tests.zig pulls into every lane
-    # (no GTK imports, so they compile and run here too - T3410). Listed by
-    # name, so a new gtk module is still exempt by default and a pure one that
-    # joins a lane without being listed is still reported stale.
-    [pscustomobject]@{ Prefix = 'apprt.gtk.*'; Why = 'the Linux GTK frontend; no Windows lane compiles it (apprt\gtk.zig itself is compiled, and runs)'; Except = @('apprt.gtk.viewer_scheme', 'apprt.gtk.viewer_chrome', 'apprt.gtk.viewer_reload', 'apprt.gtk.viewer_links', 'apprt.gtk.viewer_image', 'apprt.gtk.viewer_diff_text', 'apprt.gtk.viewer_toc', 'apprt.gtk.viewer_worktree', 'apprt.gtk.viewer_feedback_host', 'apprt.gtk.viewer_quote', 'apprt.gtk.viewer_shot', 'apprt.gtk.banner_markup', 'apprt.gtk.url_activation') }
+    # (no GTK imports, so they compile and run here too - T3410), derived from
+    # that file by Get-GtkLaneModules (T3539). A gtk module nothing imports
+    # unconditionally is still exempt by default, and one that reaches a lane
+    # some OTHER way is still reported stale.
+    [pscustomobject]@{ Prefix = 'apprt.gtk.*'; Why = 'the Linux GTK frontend; no Windows lane compiles it (apprt\gtk.zig itself is compiled, and runs)'; Except = @(Get-GtkLaneModules) }
     [pscustomobject]@{ Prefix = 'font.face.coretext'; Why = 'CoreText, macOS only' }
     [pscustomobject]@{ Prefix = 'font.shaper.coretext'; Why = 'CoreText, macOS only' }
     [pscustomobject]@{ Prefix = 'input.KeymapDarwin'; Why = 'the macOS keymap' }

@@ -147,6 +147,27 @@ $f11m = Get-TreeReachFindings -WithTests @('apprt.gtk.pure') -InLanes @() -Exemp
 Assert 'A11b an Except module is scored like any other: not stale when run, missing when not' `
     (@($f11e.Stale).Count -eq 0 -and (@($f11e.Exempt) -join ',') -eq 'apprt.gtk.key' -and (@($f11m.Missing) -join ',') -eq 'apprt.gtk.pure') `
     ("stale: " + (@($f11e.Stale) -join ', ') + "; exempt: " + (@($f11e.Exempt) -join ', ') + "; missing: " + (@($f11m.Missing) -join ', '))
+# The Except list is DERIVED from apprt\unit_tests.zig (T3539): an
+# unconditional gtk import counts, a guarded one does not, and a counted file's
+# same-directory imports count too.
+$gxRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("reach-gtk-" + $PID)
+$null = New-Item -ItemType Directory -Force -Path (Join-Path $gxRoot 'gtk')
+[System.IO.File]::WriteAllText((Join-Path $gxRoot 'unit_tests.zig'), @"
+test {
+    _ = @import("gtk/pure_a.zig");
+    if (comptime @import("builtin").os.tag != .windows) _ = @import("gtk/posix_only.zig");
+}
+"@)
+[System.IO.File]::WriteAllText((Join-Path $gxRoot 'gtk\pure_a.zig'), "const b = @import(`"pure_b.zig`");`nconst std = @import(`"std`");`n")
+[System.IO.File]::WriteAllText((Join-Path $gxRoot 'gtk\pure_b.zig'), "const x = 1;`n")
+$gx = @(Get-GtkLaneModules -UnitTests (Join-Path $gxRoot 'unit_tests.zig'))
+Remove-Item -LiteralPath $gxRoot -Recurse -Force -ErrorAction SilentlyContinue
+Assert 'A11c the gtk Except list is derived: unconditional imports and their imports, never a guarded one' `
+    ((($gx | Sort-Object) -join ',') -eq 'apprt.gtk.pure_a,apprt.gtk.pure_b') ("derived: " + ($gx -join ', '))
+$gxReal = @(Get-GtkLaneModules)
+Assert 'A11d the real derivation finds the pure gtk modules and leaves the posix-only one exempt' `
+    ($gxReal -contains 'apprt.gtk.viewer_scheme' -and -not ($gxReal -contains 'apprt.gtk.git_run_posix_test')) `
+    ("derived " + $gxReal.Count + ": " + ($gxReal -join ', '))
 # Another run's plants are not this run's subject (T1643): two audits in one
 # tree used to fail each other's C2 by naming both runs' probes.
 $f12 = @(Remove-ForeignReachProbes -OwnPid 42 -Names @(
