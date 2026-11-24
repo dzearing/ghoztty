@@ -1,10 +1,10 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-11-24T05:05:31-08:00",
-    "commit":  "30503cdd2",
+    "generated":  "2026-11-24T05:24:56-08:00",
+    "commit":  "f4b7aaf8e",
     "uncommitted":  [
-                        "test/win32/go-loop-guard.ps1"
+
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "e3d359fb624aa2c8abf555bea66b63a798c01ec9dce023416631191e2c943050",
@@ -201,7 +201,7 @@
                   "test/win32/ghoztty-cleanup.ps1":  "a1b46736eb6a96c57f7598e2a1088afaf501c62be03ec8bfc45d91bc15107629",
                   "test/win32/glass-frame-origin.ps1":  "0a0dfeed8dff3e6ba20ec9402905ac5490ab37b43d85d9316be106de72e26b56",
                   "test/win32/gl-device-lost.ps1":  "3a87a2acf4ebca9c19323687ecd65919747f3691aa09eb9eb245f19246d30711",
-                  "test/win32/go-loop-guard.ps1":  "16a8fac216be3cec32707ed045dcdca919856049a74a70282d559ab383c09455",
+                  "test/win32/go-loop-guard.ps1":  "b045fcc3c77e54e7df64cc2400dd2011cf39f7c5ce3c2ae39d89288ef91f4568",
                   "test/win32/go-loop-resume.ps1":  "6295cd2d72a24a6150d414e1c831c6a9581868d66ae6e17fa821a27d08696b78",
                   "test/win32/go-loop-uptime.ps1":  "7c2ceea601e716ffba45f0054228e1925a0932a14a100dd7f0a34f4765e12a20",
                   "test/win32/goto-window.ps1":  "46d315222e373a99e41e10787bf31cbd847e3cd8c383da93e902008f549627a1",
@@ -230,7 +230,8 @@
                   "test/win32/host-settings.ps1":  "ff923d3102d797b78bdc9ce1ec3b99730696f9fac462c806b8a30f389794d6d3",
                   "test/win32/hover-capture.ps1":  "1669eb987b930c30f4e4462a1c0dbfe5a04bbdbf42af530248437c66164bb5fb",
                   "test/win32/idle-frame-release.ps1":  "94842e0a82e2b05b34e93a8011484044506ef1133db76b84898343d1055155bb",
-                  "test/win32/install-launch.ps1":  "df8a8917d448d735d327ae87bcfde00f09a665dcbe0737ae56c4c0487d8225ca",
+                  "test/win32/install-console-twin.ps1":  "9563eff29a318ac8c3e21556cc5ce0353efa2a197b331abe9fca6bcfd02cd735",
+                  "test/win32/install-launch.ps1":  "13bb4e37b028cfdb3f4cc18afcb2ea630463fe5a4909a7932cb187a3b512709c",
                   "test/win32/install-maintenance.ps1":  "bfd4f065d52cebcac54c03366eecbe1f5749b82aeab9b38d0b6d990b6fbe2839",
                   "test/win32/install-ownership.ps1":  "d6827b12d6ca61c014375f689c60247ff0e9810c84568c9fd397fb0b420bbc08",
                   "test/win32/install-prepare.ps1":  "ea23f3d11ebd6f3e08001d961084ffac716bfde439a96f3511ce7a6db0fe2972",
@@ -484,7 +485,7 @@
                   "test/win32/relay-account.ps1":  "aeda41ced1deeedcf6a9a0c1cbd0d9caafff4b1c341a6bb521eaedd6ca5bbdbf",
                   "test/win32/relay-signin-live.ps1":  "6bf109569944c01f2e026bf80c1ed5f912c2ebac3f8763299a9f9cae2eff8585",
                   "test/win32/relay-window-relaunch.ps1":  "4beadd83eb1cd6cba1975068b4182453fd6263c391533c9f21b5d42b850b1341",
-                  "test/win32/release-artifacts.ps1":  "eddd8ed8fdf58132998cc84ba03288892525e89e96693e7ed295c65a67abd1a3",
+                  "test/win32/release-artifacts.ps1":  "ec4e88695f7da29d7b81fee0f0bc8deb1ba6ff920f3871469ab241f0872cb11a",
                   "test/win32/release-parity.ps1":  "92babe2c0e154c766dd02f9578073f6a04ec281ee706aa8a8dc83c505d579f9f",
                   "test/win32/release-symbols.ps1":  "7c1a87e8cf563ea02c3f1e97d098729af03ddafd75144ce221afb945fc0fb862",
                   "test/win32/remote-cwd-follow.ps1":  "321a7f5001288ccde0fdb0f3045e43e50a0818d4cdb2cdd56c1a2285502bc100",
@@ -614,7 +615,7 @@
                   "test/win32/url-scheme.ps1":  "fc20d88140ed451b9a739a08d03c92be313a3b4076781691d46944fc4bed2355",
                   "test/win32/user-install-sentinel.ps1":  "f8f1e54f5f6141dd17bbd6522249dd3ed153fb64ba9bdafbb1c9320c6fdb3ef6",
                   "test/win32/verdict-exit-audit.ps1":  "2e64cd9e060a2454a5ad906cef67fe1ef4d2bdbc64ac36a53438f91f2dde572d",
-                  "test/win32/verify-release-assets.ps1":  "f7f34687c3a45c4c3ac1285b95e1c533c1b15936c1f73401c972d3e77115a12f",
+                  "test/win32/verify-release-assets.ps1":  "b5a798c36076a6ccb82cf39576a7fdedb5d1f34310755dc973f9f425996e5327",
                   "test/win32/verify-release-clean.ps1":  "756fee5cbd0b8a1ad8d3d01987658087b62efb6dd8327de4cb9aef10d5107dd3",
                   "test/win32/viewer-close.ps1":  "db3dc1453f6d49be9669b5cd739d9a765b2c53c21826ec41352b70cbe25d8e3b",
                   "test/win32/viewer-composer.ps1":  "884e11cadc3a85a60b400e48522b2c7c5e7ddad28d3f8e039338c62197eded23",
