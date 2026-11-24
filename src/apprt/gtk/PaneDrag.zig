@@ -110,10 +110,10 @@ pub const Header = struct {
         return wk.gtk_widget_get_visible(self.box) != 0;
     }
 
-    pub fn setTitle(self: *Header, title: []const u8) void {
+    pub fn setTitle(self: *Header, text: []const u8) void {
         var buf: [256]u8 = undefined;
-        const n = @min(title.len, buf.len - 1);
-        @memcpy(buf[0..n], title[0..n]);
+        const n = @min(text.len, buf.len - 1);
+        @memcpy(buf[0..n], text[0..n]);
         buf[n] = 0;
         wk.gtk_label_set_text(self.label, @ptrCast(&buf));
     }
