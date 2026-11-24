@@ -273,13 +273,12 @@ try {
     if ($dlg -ne [IntPtr]::Zero) {
         $caption = Get-TestControlText -Control $dlg
         Assert ($caption -like '*Betabox*') "D: ...for Betabox ('$caption')"
-        $focus = Get-TestFocusedWindow -Window $dlg
+        $focus = Wait-TestFocusedWindow -Window $dlg
         $target = if ($focus -ne 0) { [IntPtr]$focus } else { $dlg }
         [void](Send-TestControlText -Control $target -Text '~/work')
         Start-Sleep -Milliseconds 150
         [void](Send-TestControlKey -Control $target -Key Tab)
-        Start-Sleep -Milliseconds 150
-        $focus = Get-TestFocusedWindow -Window $dlg
+        $focus = Wait-TestFocusedWindow -Window $dlg -Previous ([int64]$target)
         $target = if ($focus -ne 0) { [IntPtr]$focus } else { $dlg }
         [void](Send-TestControlText -Control $target -Text 'fish')
         Start-Sleep -Milliseconds 150

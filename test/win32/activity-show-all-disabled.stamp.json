@@ -1,13 +1,9 @@
 {
     "guard":  "activity-show-all-disabled",
     "script":  "test/win32/activity-show-all-disabled.ps1",
-    "generated":  "2026-11-21T18:47:30-08:00",
-    "commit":  "ea57924a0",
+    "generated":  "2026-11-24T03:06:11-08:00",
+    "commit":  "696762529",
     "uncommitted":  [
-                        "src/apprt/win32/activity_hover.zig",
-                        "src/apprt/win32/activity_input.zig",
-                        "src/apprt/win32/activity_sample.zig",
-                        "src/apprt/win32/activity_view.zig",
                         "test/win32/activity-show-all-disabled.ps1"
                     ],
     "files":  {
@@ -15,9 +11,9 @@
                   "src/apprt/win32/activity_input.zig":  "a50f18512b9626f3f8368f3ac23125eb49ba5b03596dc0f127c5804fab7580c3",
                   "src/apprt/win32/activity_sample.zig":  "af20d356ad8d6c6a970586c6b3cd07323e6f2c2699d9671fcb0d3e85782602b1",
                   "src/apprt/win32/activity_view.zig":  "01a5d5e795559f3839cc2028f33c97384e251d6214006cedf1abb947832759ea",
-                  "test/win32/activity-show-all-disabled.ps1":  "869d8559c4dbddf0ad1343ce3701a93477c923852194bd6c62f21bdba73389d4"
+                  "test/win32/activity-show-all-disabled.ps1":  "358b03418a949cddb116a5af988f1d5461497a536f5e64d7ce85dd985c99432e"
               },
     "code":  {
-                 "test/win32/activity-show-all-disabled.ps1":  "code1:1866cd38f207cf91755837c61a46269fd5ec9d9385a76c58587018ec191dafbd"
+                 "test/win32/activity-show-all-disabled.ps1":  "code1:e28a6afc84e9e083151fba4089563821c3ec98366a4cb2f9628b69d67aa3e9c6"
              }
 }

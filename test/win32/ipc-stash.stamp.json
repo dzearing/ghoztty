@@ -1,13 +1,16 @@
 {
     "guard":  "ipc-stash",
     "script":  "test/win32/ipc-stash.ps1",
-    "generated":  "2026-10-25T04:04:47-07:00",
-    "commit":  "4ee63ed89",
+    "generated":  "2026-11-24T03:06:58-08:00",
+    "commit":  "696762529",
     "uncommitted":  [
-                        "src/apprt/win32/pane_stash.zig"
+                        "test/win32/ipc-stash.ps1"
                     ],
     "files":  {
                   "src/apprt/win32/pane_stash.zig":  "9630f313b9811db3497998a01772b4dce32497326ba99fdef7a2c883f48530cb",
-                  "test/win32/ipc-stash.ps1":  "37005cbaa7a7cb0155914f3575d25749e2f1077801db42640d79d00312b6ca59"
-              }
+                  "test/win32/ipc-stash.ps1":  "c0e4c197d33d6da21ccd8d05e87bfd22f9b60d1850d04b4ad0994a11efb7a162"
+              },
+    "code":  {
+                 "test/win32/ipc-stash.ps1":  "code1:d8bb4df1253b4cfb6c5c48e8885d3f6ca6ab11d0c80fa246add87b9370d4703d"
+             }
 }

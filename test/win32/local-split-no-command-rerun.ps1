@@ -165,8 +165,7 @@ try {
     $hwnd = Get-WindowHwnd 'cmdwin'
     Assert "found the cmdwin HWND" ($hwnd -ne [IntPtr]::Zero)
     Focus-TestWindow -Window $hwnd | Out-Null
-    Start-Sleep -Milliseconds 500
-    $active = [IntPtr](Get-TestFocusedWindow -Window $hwnd)
+    $active = [IntPtr](Wait-TestFocusedWindow -Window $hwnd -Class 'GhozttyTerminal')
     Assert "the window forwarded focus to a terminal surface" ((Get-TestWindowClass -Window $active) -eq 'GhozttyTerminal')
     $sent = Send-TestKeys -Window $hwnd -Target $active -Modifiers ctrl -Key T
     Assert "ctrl+t injected" $sent

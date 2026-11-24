@@ -98,8 +98,7 @@ Assert (-not (Test-TestDesktopLeak -ProcessId $script:appPid)) 'window is NOT en
 # to DefWindowProc and only forwards FOCUS to the active pane, so a chord
 # posted at the window is silently dropped (batch-3 lesson).
 Focus-TestWindow -Window $script:top | Out-Null
-Start-Sleep -Milliseconds 500
-$script:surface = [IntPtr](Get-TestFocusedWindow -Window $script:top)
+$script:surface = [IntPtr](Wait-TestFocusedWindow -Window $script:top -Class 'GhozttyTerminal')
 Assert ((Get-TestWindowClass -Window $script:surface) -eq 'GhozttyTerminal') 'window forwarded focus to a terminal surface'
 
 $listJson = & $Exe +list --json | ConvertFrom-Json

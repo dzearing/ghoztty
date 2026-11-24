@@ -1222,8 +1222,7 @@ try {
     Send-TestMouse -Window $panel -Target $filterEdit `
         -X ([int](($fr2.Left + $fr2.Right) / 2)) -Y ([int](($fr2.Top + $fr2.Bottom) / 2)) `
         -Button left -Action click | Out-Null
-    Start-Sleep -Milliseconds 300
-    Assert ((Get-TestFocusedWindow -Window $panel) -eq $filterEdit) 'L clicking the filter field focuses it'
+    Assert (Wait-TestFocus -Window $panel -Expected ([int64]$filterEdit)) 'L clicking the filter field focuses it'
 
     # L1. The row keys do NOT reach the table while the filter holds focus.
     # Before T289 they applied unconditionally, which is exactly what makes a
@@ -1292,7 +1291,7 @@ try {
     if ($killBtn) { $focusNames["$([IntPtr]$killBtn.Hwnd)"] = '"Kill"' }
     function Assert-BackTab([IntPtr]$From, [IntPtr]$Want, [IntPtr]$Forward, [string]$Label) {
         Send-TestKeys -Window $panel -Target $From -Modifiers shift -Key Tab | Out-Null
-        Start-Sleep -Milliseconds 250
+        [void](Wait-TestFocus -Window $panel -Expected ([int64]$Want) -TimeoutMs 1500)
         $got = Get-TestFocusedWindow -Window $panel
         $name = $focusNames["$got"]
         if (-not $name) { $name = "an unknown window ($got)" }
@@ -1312,16 +1311,13 @@ try {
 
     # L2. Tab walks the cycle, stepping OVER the hidden Kill stop.
     Send-TestControlKey -Control $filterEdit -Key Tab | Out-Null
-    Start-Sleep -Milliseconds 250
-    Assert ((Get-TestFocusedWindow -Window $panel) -eq ([IntPtr]$showAll.Hwnd)) 'L2 Tab from the filter reaches "Show all"'
+    Assert (Wait-TestFocus -Window $panel -Expected ([int64]([IntPtr]$showAll.Hwnd))) 'L2 Tab from the filter reaches "Show all"'
 
     Send-TestControlKey -Control ([IntPtr]$showAll.Hwnd) -Key Tab | Out-Null
-    Start-Sleep -Milliseconds 250
-    Assert ((Get-TestFocusedWindow -Window $panel) -eq ([IntPtr]$newProc.Hwnd)) 'L2 Tab STEPS OVER the hidden Kill to "New Process..."'
+    Assert (Wait-TestFocus -Window $panel -Expected ([int64]([IntPtr]$newProc.Hwnd))) 'L2 Tab STEPS OVER the hidden Kill to "New Process..."'
 
     Send-TestControlKey -Control ([IntPtr]$newProc.Hwnd) -Key Tab | Out-Null
-    Start-Sleep -Milliseconds 400
-    Assert ((Get-TestFocusedWindow -Window $panel) -eq $panel) 'L2 Tab reaches the TABLE (the panel window owns the owner-drawn region)'
+    Assert (Wait-TestFocus -Window $panel -Expected ([int64]$panel)) 'L2 Tab reaches the TABLE (the panel window owns the owner-drawn region)'
 
     # L3. The ring is now painted on the caret row - the same band that was bare
     # a moment ago, with nothing else about the panel changed.
@@ -1350,13 +1346,11 @@ try {
     # a one-time reading of the layout.
     Assert ($killBtn -and (Test-TestWindowVisible -Window ([IntPtr]$killBtn.Hwnd))) 'L5 Kill is visible again with a row selected'
     Send-TestControlKey -Control $panel -Key Tab | Out-Null
-    Start-Sleep -Milliseconds 250
-    Assert ((Get-TestFocusedWindow -Window $panel) -eq $filterEdit) 'L5 Tab from the table wraps to the filter (no carousel on a single-source panel)'
+    Assert (Wait-TestFocus -Window $panel -Expected ([int64]$filterEdit)) 'L5 Tab from the table wraps to the filter (no carousel on a single-source panel)'
     Send-TestControlKey -Control $filterEdit -Key Tab | Out-Null
     Start-Sleep -Milliseconds 250
     Send-TestControlKey -Control ([IntPtr]$showAll.Hwnd) -Key Tab | Out-Null
-    Start-Sleep -Milliseconds 250
-    Assert ((Get-TestFocusedWindow -Window $panel) -eq ([IntPtr]$killBtn.Hwnd)) 'L5 Kill is now a Tab stop'
+    Assert (Wait-TestFocus -Window $panel -Expected ([int64]([IntPtr]$killBtn.Hwnd))) 'L5 Kill is now a Tab stop'
 
     # L6. The ring means "the keyboard is HERE", so it goes away when the
     # keyboard goes elsewhere. Focus the terminal window - the same GUI thread,
@@ -1375,8 +1369,7 @@ try {
         Send-TestControlKey -Control $panel -Key Tab | Out-Null
         Start-Sleep -Milliseconds 200
     }
-    Start-Sleep -Milliseconds 300
-    Assert ((Get-TestFocusedWindow -Window $panel) -eq $panel) 'L6 (setup) the table holds focus again'
+    Assert (Wait-TestFocus -Window $panel -Expected ([int64]$panel)) 'L6 (setup) the table holds focus again'
 
     # Tabbing in gave the table a caret WITHOUT selecting anything - so this
     # rim is focus and nothing else.
@@ -1397,8 +1390,7 @@ try {
     # This is focus moving to another STOP inside the panel. The other half -
     # the panel not holding the keyboard AT ALL - is L7 below.
     Send-TestControlKey -Control $panel -Key Tab | Out-Null
-    Start-Sleep -Milliseconds 400
-    Assert ((Get-TestFocusedWindow -Window $panel) -eq $filterEdit) 'L6 Tab moved focus off the table'
+    Assert (Wait-TestFocus -Window $panel -Expected ([int64]$filterEdit)) 'L6 Tab moved focus off the table'
     $shotL5 = Get-TestWindowPixels -Window $panel -Sync
     try {
         $gone = Count-NonMatching $shotL5 $client.Left $ringY0 $ringX1 $ringY1 $PANEL_BG
@@ -1432,11 +1424,12 @@ try {
     # caret being dropped) would not return with the keyboard.
     $tabs = 0
     while ((Get-TestFocusedWindow -Window $panel) -ne $panel -and $tabs -lt 6) {
-        Send-TestControlKey -Control (Get-TestFocusedWindow -Window $panel) -Key Tab | Out-Null
-        Start-Sleep -Milliseconds 200
+        $prevF = Get-TestFocusedWindow -Window $panel
+        Send-TestControlKey -Control $prevF -Key Tab | Out-Null
+        [void](Wait-TestFocusedWindow -Window $panel -Previous ([int64]$prevF) -TimeoutMs 1000)
         $tabs++
     }
-    Assert ((Get-TestFocusedWindow -Window $panel) -eq $panel) 'L7 (setup) the table holds focus again'
+    Assert (Wait-TestFocus -Window $panel -Expected ([int64]$panel)) 'L7 (setup) the table holds focus again'
     $shotL6 = Get-TestWindowPixels -Window $panel -Sync
     try {
         $rimL7 = Count-NonMatching $shotL6 $client.Left $ringY0 $ringX1 $ringY1 $PANEL_BG
@@ -1447,8 +1440,7 @@ try {
 
     # a. Nobody holds the keyboard.
     Assert (Clear-TestActiveWindow -Window $panel) 'L7 the harness can take the keyboard off the panel'
-    Start-Sleep -Milliseconds 400
-    Assert ((Get-TestFocusedWindow -Window $panel) -eq 0) `
+    Assert (Wait-TestFocus -Window $panel -Expected ([int64]0)) `
         "L7 positive control: the panel's thread holds NO focus (got $(Get-TestFocusedWindow -Window $panel))"
     $shotL7 = Get-TestWindowPixels -Window $panel -Sync
     try {
@@ -1466,8 +1458,7 @@ try {
     # b. ...and it comes BACK with the keyboard, which is what makes (a) a
     # measurement of focus rather than of a one-way repaint.
     Assert (Set-TestActiveWindow -Window $panel) 'L7 the harness can give the keyboard back'
-    Start-Sleep -Milliseconds 400
-    Assert ((Get-TestFocusedWindow -Window $panel) -eq $panel) 'L7 the table holds the keyboard again'
+    Assert (Wait-TestFocus -Window $panel -Expected ([int64]$panel)) 'L7 the table holds the keyboard again'
     $shotL8 = Get-TestWindowPixels -Window $panel -Sync
     try {
         $back = Count-NonMatching $shotL8 $client.Left $ringY0 $ringX1 $ringY1 $PANEL_BG
@@ -1479,10 +1470,10 @@ try {
     # c. The sibling-window shape: the terminal window takes the keyboard, the
     # way it does when a user clicks it behind the panel.
     Assert (Set-TestActiveWindow -Window $top) 'L7 the terminal window can be activated instead'
-    Start-Sleep -Milliseconds 400
+    for ($w = 0; $w -lt 20 -and (Get-TestActiveWindow -Window $panel) -ne $top; $w++) { Start-Sleep -Milliseconds 100 }
     Assert ((Get-TestActiveWindow -Window $panel) -eq $top) `
         "L7 the ACTIVE window of the shared GUI thread is now the terminal (got $(Get-TestActiveWindow -Window $panel))"
-    Assert ((Get-TestFocusedWindow -Window $panel) -ne $panel) 'L7 ...so the panel no longer holds the keyboard'
+    Assert (Test-TestFocusHolds -Window $panel -NotExpected ([int64]$panel)) 'L7 ...so the panel no longer holds the keyboard'
     $shotL9 = Get-TestWindowPixels -Window $panel -Sync
     try {
         $sibling = Count-NonMatching $shotL9 $client.Left $ringY0 $ringX1 $ringY1 $PANEL_BG
@@ -1493,7 +1484,7 @@ try {
 
     # Leave the table holding the keyboard - section N's header probes need it.
     Assert (Set-TestActiveWindow -Window $panel) 'L7 (teardown) the panel is active again'
-    Start-Sleep -Milliseconds 400
+    [void](Wait-TestFocus -Window $panel -Expected ([int64]$panel))
 
     # --- N. The column headings have a KEYBOARD route to the sort (T567) -----
     # Before this the headings were mouse-only: `onLeftDown` was the single path
@@ -1509,11 +1500,12 @@ try {
     # argument, one band down).
     $tabs = 0
     while ((Get-TestFocusedWindow -Window $panel) -ne $panel -and $tabs -lt 6) {
-        Send-TestControlKey -Control (Get-TestFocusedWindow -Window $panel) -Key Tab | Out-Null
-        Start-Sleep -Milliseconds 250
+        $prevF = Get-TestFocusedWindow -Window $panel
+        Send-TestControlKey -Control $prevF -Key Tab | Out-Null
+        [void](Wait-TestFocusedWindow -Window $panel -Previous ([int64]$prevF) -TimeoutMs 1000)
         $tabs++
     }
-    Assert ((Get-TestFocusedWindow -Window $panel) -eq $panel) 'N the table holds focus for the header-key probes'
+    Assert (Wait-TestFocus -Window $panel -Expected ([int64]$panel)) 'N the table holds focus for the header-key probes'
 
     # N1. Left walks the cursor into the header and clamps at the first column,
     # so where it ends up is a fact about the keys and not about the sort the
@@ -1889,16 +1881,15 @@ try {
         Send-TestMouse -Window $panel -Target $filterEdit `
             -X ([int](($frO.Left + $frO.Right) / 2)) -Y ([int](($frO.Top + $frO.Bottom) / 2)) `
             -Button left -Action click | Out-Null
-        Start-Sleep -Milliseconds 300
-        Assert ((Get-TestFocusedWindow -Window $panel) -eq $filterEdit) 'O1 (setup) the keyboard starts in the filter field'
+        Assert (Wait-TestFocus -Window $panel -Expected ([int64]$filterEdit)) 'O1 (setup) the keyboard starts in the filter field'
 
         foreach ($i in 1..3) {
             $ctlO = Get-TestFocusedWindow -Window $panel
             if ($ctlO -eq [IntPtr]::Zero) { break }
             Send-TestControlKey -Control $ctlO -Key Tab | Out-Null
-            Start-Sleep -Milliseconds 250
+            [void](Wait-TestFocusedWindow -Window $panel -Previous ([int64]$ctlO) -TimeoutMs 1000)
         }
-        Assert ((Get-TestFocusedWindow -Window $panel) -eq $panel) 'O1 three Tabs from the filter reach the table'
+        Assert (Wait-TestFocus -Window $panel -Expected ([int64]$panel)) 'O1 three Tabs from the filter reach the table'
 
         $before = Count-PanelLines
         Send-TestControlKey -Control $panel -Key Down | Out-Null
@@ -1913,10 +1904,10 @@ try {
             $ctlO = Get-TestFocusedWindow -Window $panel
             if ($ctlO -eq [IntPtr]::Zero) { break }
             Send-TestControlKey -Control $ctlO -Key Tab | Out-Null
-            Start-Sleep -Milliseconds 250
+            [void](Wait-TestFocusedWindow -Window $panel -Previous ([int64]$ctlO) -TimeoutMs 1000)
         }
         $killBtnO = Get-PanelButton $panel 'Kill*'
-        Assert ($null -ne $killBtnO -and (Get-TestFocusedWindow -Window $panel) -eq ([IntPtr]$killBtnO.Hwnd)) `
+        Assert ($null -ne $killBtnO -and (Wait-TestFocus -Window $panel -Expected ([int64]$killBtnO.Hwnd))) `
             'O2 three more Tabs put the keyboard ON the Kill button'
     }
     $onKillO = ($null -ne $killBtnO -and (Get-TestFocusedWindow -Window $panel) -eq ([IntPtr]$killBtnO.Hwnd))
@@ -1936,9 +1927,9 @@ try {
             Assert ($ctitleO -like "*(PID $victimO)*") "O3 the confirmation names the victim this section spawned (got '$ctitleO')"
             $cbtnsO = @(Get-TestChildWindows -Window $confirmO -Class 'Button')
             $cancelO = $cbtnsO | Where-Object { (Get-TestControlText -Control ([IntPtr]$_.Hwnd)) -eq 'Cancel' } | Select-Object -First 1
-            Assert ($null -ne $cancelO -and (Get-TestFocusedWindow -Window $confirmO) -eq ([IntPtr]$cancelO.Hwnd)) `
+            Assert ($null -ne $cancelO -and (Wait-TestFocus -Window $confirmO -Expected ([int64]$cancelO.Hwnd))) `
                 'O3 the confirmation opens with CANCEL holding the keyboard (MB_DEFBUTTON2)'
-            $focusedO = Get-TestFocusedWindow -Window $confirmO
+            $focusedO = [IntPtr](Wait-TestFocusedWindow -Window $confirmO)
             if ($focusedO -ne [IntPtr]::Zero) { Send-TestControlKey -Control $focusedO -Key Enter | Out-Null }
             else { Send-TestWindowClose -Window $confirmO | Out-Null }
             Start-Sleep -Milliseconds 700
@@ -1961,9 +1952,9 @@ try {
             $ctlO = Get-TestFocusedWindow -Window $panel
             if ($ctlO -eq [IntPtr]::Zero) { break }
             Send-TestControlKey -Control $ctlO -Key Tab | Out-Null
-            Start-Sleep -Milliseconds 250
+            [void](Wait-TestFocusedWindow -Window $panel -Previous ([int64]$ctlO) -TimeoutMs 1000)
         }
-        Assert ((Get-TestFocusedWindow -Window $panel) -eq ([IntPtr]$killBtnO.Hwnd)) 'O4 the keyboard is back on Kill after the cancelled dialog'
+        Assert (Wait-TestFocus -Window $panel -Expected ([int64]$killBtnO.Hwnd)) 'O4 the keyboard is back on Kill after the cancelled dialog'
 
         if ((Get-TestFocusedWindow -Window $panel) -eq ([IntPtr]$killBtnO.Hwnd)) {
             Send-TestControlKey -Control ([IntPtr]$killBtnO.Hwnd) -Key Space | Out-Null
@@ -1974,12 +1965,12 @@ try {
                 $ctitleO = Get-TestWindowText -Window $confirmO
                 $cbtnsO = @(Get-TestChildWindows -Window $confirmO -Class 'Button')
                 $okO = $cbtnsO | Where-Object { (Get-TestControlText -Control ([IntPtr]$_.Hwnd)) -eq 'Kill' } | Select-Object -First 1
-                $focusedO = Get-TestFocusedWindow -Window $confirmO
+                $focusedO = [IntPtr](Wait-TestFocusedWindow -Window $confirmO)
                 if ($focusedO -ne [IntPtr]::Zero) {
                     Send-TestControlKey -Control $focusedO -Key Tab | Out-Null
-                    Start-Sleep -Milliseconds 300
+                    [void](Wait-TestFocusedWindow -Window $confirmO -Previous ([int64]$focusedO) -TimeoutMs 1500)
                 }
-                Assert ($null -ne $okO -and (Get-TestFocusedWindow -Window $confirmO) -eq ([IntPtr]$okO.Hwnd)) `
+                Assert ($null -ne $okO -and (Wait-TestFocus -Window $confirmO -Expected ([int64]$okO.Hwnd))) `
                     'O4 Tab moves the keyboard from Cancel onto the "Kill" affirmative'
                 # Same rule I.2 works to: confirm ONLY against the pid the dialog
                 # itself named, so a mis-targeted row can never make this script
@@ -2017,8 +2008,7 @@ try {
     Send-TestMouse -Window $panel -Target $filterEdit `
         -X ([int](($frM.Left + $frM.Right) / 2)) -Y ([int](($frM.Top + $frM.Bottom) / 2)) `
         -Button left -Action click | Out-Null
-    Start-Sleep -Milliseconds 300
-    Assert ((Get-TestFocusedWindow -Window $panel) -eq $filterEdit) 'M (teardown) the filter field holds the keyboard again'
+    Assert (Wait-TestFocus -Window $panel -Expected ([int64]$filterEdit)) 'M (teardown) the filter field holds the keyboard again'
 
     # --- F. Escape closes the panel ------------------------------------------
     Send-TestControlKey -Control $filterEdit -Key Escape | Out-Null

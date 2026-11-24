@@ -531,8 +531,7 @@ try {
     Write-Host ''
     Write-Host 'F. a deactivated panel unemphasizes its selection, and re-emphasizes it with the keyboard'
     Assert (Clear-TestActiveWindow -Window $panel) 'F1 the harness can take the keyboard off the panel'
-    Start-Sleep -Milliseconds 400
-    Assert ((Get-TestFocusedWindow -Window $panel) -eq 0) `
+    Assert (Wait-TestFocus -Window $panel -Expected ([int64]0)) `
         "F1 positive control: the panel's thread holds NO focus (got $(Get-TestFocusedWindow -Window $panel))"
     $shotF1 = Get-TestWindowPixels -Window $panel -Sync
     try {
@@ -540,8 +539,7 @@ try {
     } finally { Close-TestWindowPixels -Shot $shotF1 }
 
     Assert (Set-TestActiveWindow -Window $panel) 'F2 the harness can give the keyboard back'
-    Start-Sleep -Milliseconds 400
-    Assert ((Get-TestFocusedWindow -Window $panel) -eq $panel) "F2 the table holds the keyboard again (got $(Get-TestFocusedWindow -Window $panel))"
+    Assert (Wait-TestFocus -Window $panel -Expected ([int64]$panel)) "F2 the table holds the keyboard again (got $(Get-TestFocusedWindow -Window $panel))"
     $shotF2 = Get-TestWindowPixels -Window $panel -Sync
     try {
         $null = Measure-Row $shotF2 'F2 reactivated' $SELECTION_WASH_FOCUSED $true $true

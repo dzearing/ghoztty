@@ -1,15 +1,15 @@
 {
     "guard":  "focus-follows-mouse",
     "script":  "test/win32/focus-follows-mouse.ps1",
-    "generated":  "2026-11-22T14:09:58-08:00",
-    "commit":  "e40b3c3df",
+    "generated":  "2026-11-24T03:06:49-08:00",
+    "commit":  "696762529",
     "uncommitted":  [
                         "test/win32/focus-follows-mouse.ps1"
                     ],
     "files":  {
-                  "test/win32/focus-follows-mouse.ps1":  "fa590dc231766f490e877b3ce74c26670367bde8a2a5c2a02f1606b9962ee74a"
+                  "test/win32/focus-follows-mouse.ps1":  "360b1c537eac58735ae93da798b80c70f6ac4e7f448c5f224da032ef3a0d3170"
               },
     "code":  {
-                 "test/win32/focus-follows-mouse.ps1":  "code1:a5cdf4e458faeeebc835f58f09697747a601b6e798ae1181f8be1b79bb72bfca"
+                 "test/win32/focus-follows-mouse.ps1":  "code1:3690fb407c89a88175f917fe5bf7fb49a5cf9d79daccdfb7e4be4f2f8db0b9f7"
              }
 }

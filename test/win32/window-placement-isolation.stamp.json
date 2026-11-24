@@ -1,18 +1,18 @@
 {
     "guard":  "window-placement-isolation",
     "script":  "test/win32/window-placement-isolation.ps1",
-    "generated":  "2026-11-22T04:40:30-08:00",
-    "commit":  "a50885b21",
+    "generated":  "2026-11-24T03:55:40-08:00",
+    "commit":  "696762529",
     "uncommitted":  [
-                        "test/win32/window-placement-isolation.ps1"
+                        "test/win32/lib/TestDesktop.ps1"
                     ],
     "files":  {
                   "src/apprt/win32/window_memory.zig":  "5525d3e747fd7a5e272f8de1c82754c9139652ccefa7a51f71efbe30a9452d3a",
-                  "test/win32/lib/TestDesktop.ps1":  "7548de334603b049c94949cf4002dc20e318866f8cdec9878b49a5f745ace372",
+                  "test/win32/lib/TestDesktop.ps1":  "9128062457c903e169d5d099e15c5348bfe81de919be75dc767ee1dd94abbaf2",
                   "test/win32/window-placement-isolation.ps1":  "9cb338dbb4798ef759e79de7486f207f9f048b5d80d6a2d2bf857a0672948daa"
               },
     "code":  {
-                 "test/win32/lib/TestDesktop.ps1":  "code1:8dc5ba2640052ad4f648ba9b6bf45520579d956869194bf593296dba21c1d317",
+                 "test/win32/lib/TestDesktop.ps1":  "code1:e7ad1516762d657591bf69a122d4026e8ea0ffc99290b8a6a52631d4634c3278",
                  "test/win32/window-placement-isolation.ps1":  "code1:dc5848bcd3e62af6442408d99f7471160907932d78abb97b9c9e205b86df80c8"
              }
 }

@@ -219,7 +219,7 @@ try {
     $deadline = (Get-Date).AddSeconds(5)
     do { if (Test-Stashed 's2') { $ok = $true; break }; Start-Sleep -Milliseconds 250 } while ((Get-Date) -lt $deadline)
     Assert "stash_pane (ctrl+shift+m) stashed the focused pane" $ok
-    $focus = Get-TestFocusedWindow -Window $top
+    $focus = Wait-TestFocusedWindow -Window $top -Previous ([int64]$h2)
     Assert "focus moved off the stashed pane to a visible one" ($focus -and $focus -ne $h2 -and (@(Get-Panes $top | Where-Object { $_.Visible -and $_.Hwnd -eq $focus }).Count -eq 1))
     $r = Send-TestKeys -Window $top -Target ([IntPtr]$focus) -Modifiers ctrl,shift -Key period
     Assert "restore chord delivered" $r

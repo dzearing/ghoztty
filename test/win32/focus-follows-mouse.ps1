@@ -175,8 +175,7 @@ function Run-Case([string]$label, [string[]]$extraArgs, [bool]$expectFollow, [bo
         Glide-TestPointer $top $panes $ca.X $ca.Y $cb.X $cb.Y
         Assert (Wait-TestFocus -Window $top -Expected $B.Hwnd) "$label hover moved focus back to pane B"
     } else {
-        Start-Sleep -Milliseconds 700
-        Assert ((Get-TestFocusedWindow -Window $top) -eq $B.Hwnd) "$label hover did NOT move focus (config off)"
+        Assert (Wait-TestFocus -Window $top -Expected ([int64]$B.Hwnd)) "$label hover did NOT move focus (config off)"
         # Positive control: a click at the same spot must focus A, proving the
         # glide genuinely reached pane A.
         [void](Send-TestMouse -Window $top -Target ([IntPtr]$A.Hwnd) -X $ca.X -Y $ca.Y -Action click)

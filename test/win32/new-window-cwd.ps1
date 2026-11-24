@@ -474,8 +474,7 @@ Assert "D4b the +list window id really is a GhozttyWindow" `
 # DefWindowProc and only forwards FOCUS on. Focus first, then ask the app which
 # pane it considers active - that is the one whose directory ctrl+n inherits.
 Focus-TestWindow -Window $hwndProj | Out-Null
-Start-Sleep -Milliseconds 300
-$surfD = [IntPtr](Get-TestFocusedWindow -Window $hwndProj)
+$surfD = [IntPtr](Wait-TestFocusedWindow -Window $hwndProj -Class 'GhozttyTerminal')
 Assert "D4c the window forwarded focus to a terminal surface" `
     (($surfD -ne [IntPtr]::Zero) -and ((Get-TestWindowClass -Window $surfD) -eq 'GhozttyTerminal'))
 $sent = Send-TestKeys -Window $hwndProj -Target $surfD -Modifiers ctrl -Key N
@@ -562,8 +561,7 @@ $idLive = Window-IdOf $treeF2 'livewin'
 Assert "F5 the live window is addressable by name in +list" ($null -ne $idLive)
 $hwndLive = if ($null -ne $idLive) { [IntPtr][int64]$idLive } else { [IntPtr]::Zero }
 Focus-TestWindow -Window $hwndLive | Out-Null
-Start-Sleep -Milliseconds 300
-$surfF = [IntPtr](Get-TestFocusedWindow -Window $hwndLive)
+$surfF = [IntPtr](Wait-TestFocusedWindow -Window $hwndLive -Class 'GhozttyTerminal')
 Assert "F6 the window forwarded focus to a terminal surface" `
     (($surfF -ne [IntPtr]::Zero) -and ((Get-TestWindowClass -Window $surfF) -eq 'GhozttyTerminal'))
 $sentF = Send-TestKeys -Window $hwndLive -Target $surfF -Modifiers ctrl -Key N

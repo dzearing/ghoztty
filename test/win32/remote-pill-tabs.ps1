@@ -123,8 +123,7 @@ try {
     # itself focused - remote-inherit.ps1's recipe.
     for ($t = 1; $t -lt $Tabs; $t++) {
         Focus-TestWindow -Window $remote | Out-Null
-        Start-Sleep -Milliseconds 400
-        $fw = Get-TestFocusedWindow -Window $remote
+        $fw = Wait-TestFocusedWindow -Window $remote -Class 'GhozttyTerminal'
         if ($fw -eq 0) {
             $vis = @(Get-TestChildWindows -Window $remote -Class 'GhozttyTerminal' | Where-Object Visible)
             if ($vis.Count -gt 0) { $fw = $vis[0].Hwnd }

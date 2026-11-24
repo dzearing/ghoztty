@@ -1036,13 +1036,13 @@ try {
     #     Get-TestActiveWindow already trust.
     Assert (Focus-TestWindow -Window $top -Child $pane) 'activation setup: the pane holds the keyboard'
     Assert (Clear-TestActiveWindow -Window $top) 'Clear-TestActiveWindow reports the keyboard relinquished'
-    Start-Sleep -Milliseconds 300
+    [void](Wait-TestFocus -Window $top -Expected ([int64]0))
     $focusNone = Get-TestFocusedWindow -Window $top
     Assert ($focusNone -eq 0) "and the window's GUI thread really holds NO focus (got $focusNone)"
     Assert (Set-TestActiveWindow -Window $top) 'Set-TestActiveWindow reports the window activated again'
-    Start-Sleep -Milliseconds 300
+    for ($w = 0; $w -lt 20 -and (Get-TestActiveWindow -Window $top) -ne [int64]$top; $w++) { Start-Sleep -Milliseconds 100 }
     Assert ((Get-TestActiveWindow -Window $top) -eq ([int64]$top)) 'and the queue agrees that window is ACTIVE'
-    Assert ((Get-TestFocusedWindow -Window $top) -ne 0) 'and the keyboard is back on it'
+    Assert ((Wait-TestFocusedWindow -Window $top) -ne 0) 'and the keyboard is back on it'
 
     # And it MOVES between two top-level windows of the same GUI thread - the
     # shape a user makes by clicking the window behind. Note what cannot be

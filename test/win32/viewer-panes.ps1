@@ -805,8 +805,7 @@ try {
         # POSITIVE CONTROL: the same chord from the TERMINAL pane must work,
         # or nothing below means anything.
         Focus-TestWindow -Window $t394top | Out-Null
-        Start-Sleep -Milliseconds 400
-        $t394surface = [IntPtr](Get-TestFocusedWindow -Window $t394top)
+        $t394surface = [IntPtr](Wait-TestFocusedWindow -Window $t394top -Class 'GhozttyTerminal')
         Assert ((Get-TestWindowClass -Window $t394surface) -eq 'GhozttyTerminal') 'T394 CONTROL: focus starts on a terminal surface'
         Assert (Send-TestKeys -Window $t394top -Target $t394surface -Modifiers ctrl -Key T) 'T394 CONTROL: ctrl+t injected at the terminal'
         Assert (Wait-TabCount 't394' 2) 'T394 CONTROL: ctrl+t from a terminal added a tab'
@@ -864,8 +863,7 @@ try {
             # it with ctrl+w -- the exact chord the user pressed into a dead
             # pane on 2026-08-05.
             Focus-TestWindow -Window $t394top | Out-Null
-            Start-Sleep -Milliseconds 400
-            $tabSurface = [IntPtr](Get-TestFocusedWindow -Window $t394top)
+            $tabSurface = [IntPtr](Wait-TestFocusedWindow -Window $t394top -Class 'GhozttyTerminal')
             Send-TestKeys -Window $t394top -Target $tabSurface -Modifiers ctrl,shift -Key 0xDB | Out-Null
             Start-Sleep -Milliseconds 600
             Focus-TestWindow -Window $t394top -Child $t394host | Out-Null
@@ -941,8 +939,7 @@ try {
             # the foreground, so walk back to the viewer's tab and re-focus it
             # before pressing.
             Focus-TestWindow -Window $t1104top | Out-Null
-            Start-Sleep -Milliseconds 400
-            $s1104 = [IntPtr](Get-TestFocusedWindow -Window $t1104top)
+            $s1104 = [IntPtr](Wait-TestFocusedWindow -Window $t1104top -Class 'GhozttyTerminal')
             Send-TestKeys -Window $t1104top -Target $s1104 -Modifiers ctrl,shift -Key 0xDB | Out-Null
             Start-Sleep -Milliseconds 600
             Focus-TestWindow -Window $t1104top -Child $host1104 | Out-Null
@@ -981,8 +978,7 @@ try {
     # Open the palette on $top's focused terminal, type $filter, press Enter.
     function Invoke-T396Palette([IntPtr]$top, [string]$filter, [string]$label) {
         Focus-TestWindow -Window $top | Out-Null
-        Start-Sleep -Milliseconds 400
-        $pane = [IntPtr](Get-TestFocusedWindow -Window $top)
+        $pane = [IntPtr](Wait-TestFocusedWindow -Window $top -Class 'GhozttyTerminal')
         if ((Get-TestWindowClass -Window $pane) -ne 'GhozttyTerminal') {
             Write-Host "  (${label}: focus is not on a terminal surface)"; return $false
         }
@@ -1208,8 +1204,7 @@ try {
         # POSITIVE CONTROL: ctrl+d on the TERMINAL is still the global
         # split-right. Proves chord delivery works before any negative below.
         Focus-TestWindow -Window $t161top | Out-Null
-        Start-Sleep -Milliseconds 400
-        $t161surface = [IntPtr](Get-TestFocusedWindow -Window $t161top)
+        $t161surface = [IntPtr](Wait-TestFocusedWindow -Window $t161top -Class 'GhozttyTerminal')
         Assert ((Get-TestWindowClass -Window $t161surface) -eq 'GhozttyTerminal') 'T161 CONTROL: focus starts on a terminal surface'
         Assert (Send-TestKeys -Window $t161top -Target $t161surface -Modifiers ctrl -Key D) 'T161 CONTROL: ctrl+d injected at the terminal'
         $split = $false

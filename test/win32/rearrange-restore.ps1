@@ -221,8 +221,7 @@ function Move-Drag([IntPtr]$source, [int]$ScreenX, [int]$ScreenY, [string]$Actio
 
 function Enter-RearrangeMode([IntPtr]$top) {
     if (-not (Set-TestActiveWindow -Window $top)) { return $false }
-    Start-Sleep -Milliseconds 400
-    $focused = [IntPtr](Get-TestFocusedWindow -Window $top)
+    $focused = [IntPtr](Wait-TestFocusedWindow -Window $top -Class 'GhozttyTerminal')
     $r = Send-TestKeys -Window $top -Target $focused -Modifiers ctrl, shift -Key F9
     Start-Sleep -Milliseconds 1200
     return $r

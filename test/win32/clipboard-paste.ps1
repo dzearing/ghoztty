@@ -287,8 +287,7 @@ Write-Host "pane=$script:pane top=$top"
 # to DefWindowProc and only forwards FOCUS to the active pane, so a posted
 # chord aimed at the window is silently dropped (batch-3 lesson).
 Focus-TestWindow -Window $top | Out-Null
-Start-Sleep -Milliseconds 500
-$surface = [IntPtr](Get-TestFocusedWindow -Window $top)
+$surface = [IntPtr](Wait-TestFocusedWindow -Window $top -Class 'GhozttyTerminal')
 Assert ((Get-TestWindowClass -Window $surface) -eq 'GhozttyTerminal') 'window forwarded focus to a terminal surface'
 
 # --- Positive control: typed text must echo ----------------------------------

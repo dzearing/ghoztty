@@ -413,9 +413,9 @@ function Confirm-Update($dlg) {
         $t = if ($f -ne [IntPtr]::Zero) { Get-TestControlText -Control $f } else { '' }
         if ($t -like '*Update*') { break }
         Send-TestControlKey -Control $dlg -Key Tab | Out-Null
-        Start-Sleep -Milliseconds 300
+        [void](Wait-TestFocusedWindow -Window $dlg -Previous ([int64]$f) -TimeoutMs 1500)
     }
-    $f = Get-TestFocusedWindow -Window $dlg
+    $f = [IntPtr](Wait-TestFocusedWindow -Window $dlg)
     $t = if ($f -ne [IntPtr]::Zero) { Get-TestControlText -Control $f } else { '' }
     Assert "  (focus is on 'Update Now' before Enter)" ($t -like '*Update*')
     return (Send-TestControlKey -Control $dlg -Key Enter)

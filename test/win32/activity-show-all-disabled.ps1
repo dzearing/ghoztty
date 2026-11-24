@@ -203,8 +203,7 @@ function Open-Panel($log) {
 # Tab from the filter; the window that holds focus afterwards.
 function Tab-FromFilter($fx) {
     Send-TestControlKey -Control $fx.Filter -Key Tab | Out-Null
-    Start-Sleep -Milliseconds 300
-    return (Get-TestFocusedWindow -Window $fx.Panel)
+    return [IntPtr](Wait-TestFocusedWindow -Window $fx.Panel -Previous ([int64]$fx.Filter))
 }
 
 Write-Host 'T1748 Activity Monitor disables Show all when it cannot filter'

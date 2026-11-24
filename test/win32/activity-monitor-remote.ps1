@@ -533,11 +533,11 @@ try {
     # the panel's own state line, and Kill would have to terminate a real
     # process on the sampled machine to make it.
     Send-TestControlKey -Control $panel -Key Tab | Out-Null
-    Start-Sleep -Milliseconds 250
-    Send-TestControlKey -Control (Get-TestFocusedWindow -Window $panel) -Key Tab | Out-Null
-    Start-Sleep -Milliseconds 250
+    $f3First = [IntPtr](Wait-TestFocusedWindow -Window $panel -Previous ([int64]$panel) -TimeoutMs 1500)
+    Send-TestControlKey -Control $f3First -Key Tab | Out-Null
+    for ($w = 0; $w -lt 20 -and (Get-FocusStop) -ne 'show_all'; $w++) { Start-Sleep -Milliseconds 100 }
     Assert ((Get-FocusStop) -eq 'show_all') "F3 two Tabs from the carousel reach the ""Show all"" button (stop=$(Get-FocusStop))"
-    $showAllBtn = Get-TestFocusedWindow -Window $panel
+    $showAllBtn = [IntPtr](Wait-TestFocusedWindow -Window $panel -Previous ([int64]$f3First))
     $checkBefore = (Get-PanelState).ShowAll
     $ringBefore = (Get-Carousel).Focus
     Send-TestControlKey -Control $showAllBtn -Key Space | Out-Null

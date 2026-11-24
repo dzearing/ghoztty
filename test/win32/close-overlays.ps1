@@ -370,8 +370,7 @@ try {
     $okB = Wait-Until { @(Get-VisibleBanners $appPid).Count -eq 2 }
     Assert $okB "move: setup: two banner popups on screen (saw $(@(Get-VisibleBanners $appPid).Count))"
     Assert (Set-TestActiveWindow -Window $cwTop) 'move: setup: cw is the active window'
-    Start-Sleep -Milliseconds 400
-    $focused = [IntPtr](Get-TestFocusedWindow -Window $cwTop)
+    $focused = [IntPtr](Wait-TestFocusedWindow -Window $cwTop -Class 'GhozttyTerminal')
     Assert (Send-TestKeys -Window $cwTop -Target $focused -Modifiers ctrl, shift -Key F9) 'move: setup: ctrl+shift+f9 (toggle_rearrange_mode) delivered'
     Start-Sleep -Milliseconds 1200
     $kids = @(Get-TestChildWindows -Window $cwTop -Class 'GhozttyTerminal' | Where-Object Visible | Sort-Object Left)

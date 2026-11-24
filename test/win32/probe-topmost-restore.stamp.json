@@ -1,17 +1,17 @@
 {
     "guard":  "probe-topmost-restore",
     "script":  "test/win32/probe-topmost-restore.ps1",
-    "generated":  "2026-11-22T19:18:55-08:00",
-    "commit":  "5e2715a6e",
+    "generated":  "2026-11-24T03:55:09-08:00",
+    "commit":  "696762529",
     "uncommitted":  [
-                        "test/win32/probe-topmost-restore.ps1"
+                        "test/win32/lib/TestDesktop.ps1"
                     ],
     "files":  {
-                  "test/win32/lib/TestDesktop.ps1":  "7548de334603b049c94949cf4002dc20e318866f8cdec9878b49a5f745ace372",
+                  "test/win32/lib/TestDesktop.ps1":  "9128062457c903e169d5d099e15c5348bfe81de919be75dc767ee1dd94abbaf2",
                   "test/win32/probe-topmost-restore.ps1":  "0def592e8312af57add7e40935b2be576d2cfc1ff7b2b7070f8a236af7432c5a"
               },
     "code":  {
-                 "test/win32/lib/TestDesktop.ps1":  "code1:8dc5ba2640052ad4f648ba9b6bf45520579d956869194bf593296dba21c1d317",
+                 "test/win32/lib/TestDesktop.ps1":  "code1:e7ad1516762d657591bf69a122d4026e8ea0ffc99290b8a6a52631d4634c3278",
                  "test/win32/probe-topmost-restore.ps1":  "code1:c3bdb916408df420ecae27e96329e9069e38509a94c38c9de350934384d21cc8"
              }
 }

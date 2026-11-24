@@ -136,11 +136,7 @@ function Start-Pair([string]$label) {
     [void](Set-TestActiveWindow -Window $f)
     $fp = @(Get-TestChildWindows -Window $f -Class 'GhozttyTerminal')[0]
     [void](Focus-TestWindow -Window $f -Child ([IntPtr]$fp.Hwnd))
-    $focusOk = $false
-    for ($t = 0; $t -lt 20 -and -not $focusOk; $t++) {
-        Start-Sleep -Milliseconds 100
-        $focusOk = ([int64](Get-TestFocusedWindow -Window $f) -eq [int64]$fp.Hwnd)
-    }
+    $focusOk = Wait-TestFocus -Window $f -Expected ([int64]$fp.Hwnd)
     Assert $focusOk "$label setup: F's pane holds the keyboard"
     Start-Sleep -Seconds 3
     [pscustomobject]@{ App = $app; Err = $err; U = $u; F = $f }

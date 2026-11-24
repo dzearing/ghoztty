@@ -265,8 +265,7 @@ try {
     Assert ($farWin -ne [IntPtr]::Zero) 'found the far window HWND for the keybind leg'
     if ($farWin -ne [IntPtr]::Zero) {
         Focus-TestWindow -Window $farWin | Out-Null
-        Start-Sleep -Milliseconds 800
-        $active = [IntPtr](Get-TestFocusedWindow -Window $farWin)
+        $active = [IntPtr](Wait-TestFocusedWindow -Window $farWin -Class 'GhozttyTerminal')
         Assert ((Get-TestWindowClass -Window $active) -eq 'GhozttyTerminal') 'the far window forwarded focus to a terminal surface'
         $knownFar = @(@(Get-WindowLeaves $farTarget) | ForEach-Object { $_.id })
         Assert (Send-TestKeys -Window $farWin -Target $active -Modifiers ctrl -Key D) 'ctrl+d injected'

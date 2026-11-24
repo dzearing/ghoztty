@@ -1,17 +1,17 @@
 {
     "guard":  "activity-selection",
     "script":  "test/win32/activity-selection.ps1",
-    "generated":  "2026-11-21T19:05:23-08:00",
-    "commit":  "ea57924a0",
+    "generated":  "2026-11-24T03:06:19-08:00",
+    "commit":  "696762529",
     "uncommitted":  [
-                        "src/apprt/win32/ActivityMonitor.zig"
+                        "test/win32/activity-selection.ps1"
                     ],
     "files":  {
                   "src/apprt/win32/ActivityMonitor.zig":  "032d63b3b0705e5091cc101950d3c21dbcdbdcb8d3f2d699d3bcc1dfbee56210",
                   "src/apprt/win32/list_selection.zig":  "b7f5720b1a405deacf48309f6b34439b7148e73a19a876ef9c7f38faf5308913",
-                  "test/win32/activity-selection.ps1":  "80d1bdbea38ea68c6d260a45e1f02237cc27c3742f9109ff697de6e9ccdbcca1"
+                  "test/win32/activity-selection.ps1":  "3dca460d2ea1a02fbcf0dab5311b99345e6e02b7afcfe1a2b5801d7148c33759"
               },
     "code":  {
-                 "test/win32/activity-selection.ps1":  "code1:cea6cc4e7b75508f3917eec18ab4c068903d9d4a09654da38fc5c8ddd78c2c0e"
+                 "test/win32/activity-selection.ps1":  "code1:c207369e665964cf6c75a65e5efcbd8df5bcc68d99352dd51d97cfa909ded236"
              }
 }

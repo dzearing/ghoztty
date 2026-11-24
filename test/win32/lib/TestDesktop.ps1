@@ -3809,6 +3809,65 @@ function Wait-TestFocus {
     return $false
 }
 
+<#
+The NEGATIVE half of Wait-TestFocus (T2061): $true only when focus on
+$Window's thread is NOT $NotExpected for the whole of a hold window, after a
+settle. A poll would pass "focus is not X" the instant before a late SetFocus
+lands on X, so this samples across the hold instead of returning early.
+
+    Assert (Test-TestFocusHolds -Window $panel -NotExpected $panel) 'focus left the table'
+
+Use Wait-TestFocus for anything with a known expected HWND (including 0).
+#>
+function Test-TestFocusHolds {
+    param(
+        [Parameter(Mandatory = $true)][IntPtr]$Window,
+        [Parameter(Mandatory = $true)][int64]$NotExpected,
+        [int]$SettleMs = 300,
+        [int]$HoldMs = 400,
+        $Desktop
+    )
+    $td = Resolve-TestDesktop $Desktop
+    if ($SettleMs -gt 0) { Start-Sleep -Milliseconds $SettleMs }
+    $held = 0
+    while ($true) {
+        if ([int64]$td.FocusedHwnd($Window) -eq $NotExpected) { return $false }
+        if ($held -ge $HoldMs) { return $true }
+        Start-Sleep -Milliseconds 50
+        $held += 50
+    }
+}
+
+<#
+Poll until $Window's thread has a NON-ZERO focused HWND - optionally one that
+differs from $Previous, and/or whose window class is $Class - and return it
+(T2061). For capturing "the surface" where the expected HWND is not known up
+front: the one-shot read after a sleep this replaces read 0, or the previous
+control, whenever the async SetFocus was late. On timeout it returns the LAST
+value read, so the caller's own assertion still names what was focused.
+
+    $surface = [IntPtr](Wait-TestFocusedWindow -Window $top -Class 'GhozttyTerminal')
+#>
+function Wait-TestFocusedWindow {
+    param(
+        [Parameter(Mandatory = $true)][IntPtr]$Window,
+        [int64]$Previous = 0,
+        [string]$Class = '',
+        [int]$TimeoutMs = 2000,
+        $Desktop
+    )
+    $td = Resolve-TestDesktop $Desktop
+    $waited = 0
+    while ($true) {
+        $f = [int64]$td.FocusedHwnd($Window)
+        if ($f -ne 0 -and $f -ne $Previous -and
+            (-not $Class -or $td.ClassName([IntPtr]$f) -eq $Class)) { return $f }
+        if ($waited -ge $TimeoutMs) { return $f }
+        Start-Sleep -Milliseconds 100
+        $waited += 100
+    }
+}
+
 # Replaces the copy-pasted T86 GrabForeground. On a background desktop there is
 # no foreground to grab, so this shares the app's input queue and sets focus in
 # it directly; -Interactive falls back to the real foreground grab.

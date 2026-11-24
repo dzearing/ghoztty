@@ -187,8 +187,7 @@ try {
     # Focus the window, then read back which SURFACE the app focused - that is
     # the pane the chord must go to, and the pane the new tab inherits from.
     Focus-TestWindow -Window $remTop | Out-Null
-    Start-Sleep -Milliseconds 500
-    $active = [IntPtr](Get-TestFocusedWindow -Window $remTop)
+    $active = [IntPtr](Wait-TestFocusedWindow -Window $remTop -Class 'GhozttyTerminal')
     Assert "the window forwarded focus to a terminal surface" ((Get-TestWindowClass -Window $active) -eq 'GhozttyTerminal')
     $sent = Send-TestKeys -Window $remTop -Target $active -Modifiers ctrl -Key T
     Assert "ctrl+t injected" $sent

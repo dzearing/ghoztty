@@ -147,7 +147,7 @@ try {
     Start-Sleep -Seconds 1
 
     # A second tab, so the strip is on screen (one tab shows none, T234).
-    $fw = Get-TestFocusedWindow -Window $top
+    $fw = Wait-TestFocusedWindow -Window $top -Class 'GhozttyTerminal'
     if ($fw -eq 0) {
         $vis = @(Get-TestChildWindows -Window $top -Class 'GhozttyTerminal' | Where-Object Visible)
         if ($vis.Count -gt 0) { $fw = $vis[0].Hwnd }
