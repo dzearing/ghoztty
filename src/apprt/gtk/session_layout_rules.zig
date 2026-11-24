@@ -15,6 +15,7 @@ const Allocator = std.mem.Allocator;
 const schema = @import("../win32/session_layout.zig");
 const agent_paths = @import("../../remote/local_agent_paths.zig");
 const agent_lineage = @import("../../remote/agent_lineage.zig");
+const color_math = @import("../win32/color_math.zig");
 
 /// `<root>/ghoztty/session-layout[-debug][-<lineage>].json`, under the same
 /// config root as the local agent's state dir (`$XDG_CONFIG_HOME`, else
@@ -104,6 +105,58 @@ pub fn bannerToRecord(text: ?[]const u8) ?[]const u8 {
 pub fn bannerToRestore(leaf: schema.Leaf) ?[]const u8 {
     if (leaf.isViewer()) return null;
     return bannerToRecord(leaf.banner);
+}
+
+/// The tint a terminal leaf records (T3589; win32's T3176, Mac `Leaf.tint`):
+/// the pane's background tint as `#rrggbb` in `buf`, or none for a pane on
+/// the theme background.
+pub fn tintToRecord(tint: ?color_math.Rgb, buf: *[7]u8) ?[]const u8 {
+    const rgb = tint orelse return null;
+    return color_math.hexString(rgb, buf);
+}
+
+/// The tint a restored leaf puts back (T3589): a terminal leaf's recorded
+/// `#rrggbb`, whatever happened to its session (it is the pane's own state).
+/// Never a viewer's (a viewer has no terminal to tint), and an unreadable
+/// value leaves the pane on the theme background, as win32 and an older
+/// manifest do.
+pub fn tintToRestore(leaf: schema.Leaf) ?color_math.Rgb {
+    if (leaf.isViewer()) return null;
+    const hex = leaf.tint orelse return null;
+    return color_math.parseHex(hex);
+}
+
+test "tintToRecord writes #rrggbb and records none for an untinted pane" {
+    var buf: [7]u8 = undefined;
+    const hex = tintToRecord(.{ .r = 0x1a, .g = 0x2b, .b = 0x3c }, &buf).?;
+    try std.testing.expectEqualStrings("#1a2b3c", hex);
+    try std.testing.expect(tintToRecord(null, &buf) == null);
+}
+
+test "tintToRestore: a terminal leaf's tint comes back, a viewer's, a bad and an absent one never" {
+    const rgb = tintToRestore(.{ .session_id = "s", .tint = "#1a2b3c" }).?;
+    try std.testing.expectEqual(@as(u8, 0x1a), rgb.r);
+    try std.testing.expectEqual(@as(u8, 0x2b), rgb.g);
+    try std.testing.expectEqual(@as(u8, 0x3c), rgb.b);
+    // A fresh-shell leaf (no session) keeps its tint too.
+    try std.testing.expect(tintToRestore(.{ .tint = "#ffffff" }) != null);
+    try std.testing.expect(tintToRestore(.{ .session_id = "s" }) == null);
+    try std.testing.expect(tintToRestore(.{ .tint = "not-a-color" }) == null);
+    try std.testing.expect(tintToRestore(.{ .kind = schema.kind_viewer, .tint = "#1a2b3c" }) == null);
+    // The round trip through the on-disk schema keeps the color exactly.
+    const a = std.testing.allocator;
+    var buf: [7]u8 = undefined;
+    const want: color_math.Rgb = .{ .r = 0x0c, .g = 0x80, .b = 0xfe };
+    const nodes = [_]schema.Node{
+        .{ .leaf = .{ .session_id = "0123456789abcdef0123456789abcdef", .tint = tintToRecord(want, &buf) } },
+    };
+    const tabs = [_]schema.Tab{.{ .nodes = &nodes }};
+    const wins = [_]schema.Window{.{ .id = "w", .tabs = &tabs }};
+    const body = try schema.serialize(a, .{ .windows = &wins });
+    defer a.free(body);
+    var parsed = try schema.parse(a, body);
+    defer parsed.deinit();
+    try std.testing.expect(want.eql(tintToRestore(parsed.value.windows[0].tabs[0].nodes[0].leaf.?).?));
 }
 
 test "bannerToRecord keeps the source and records none for no banner" {

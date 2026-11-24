@@ -215,6 +215,9 @@ fn captureLeaf(
     }
     // The pane's banner, as its markdown source (T3560).
     if (rules.bannerToRecord(surface.getPaneBanner())) |b| leaf.banner = try arena.dupe(u8, b);
+    // The pane's tint, as #rrggbb (T3589; win32's T3176, Mac Leaf.tint).
+    var tint_buf: [7]u8 = undefined;
+    if (rules.tintToRecord(surface.backgroundTint(), &tint_buf)) |hex| leaf.tint = try arena.dupe(u8, hex);
     if (snapshots and leaf.session_id != null) captureSnapshot(arena, surface, &leaf, budget);
     return leaf;
 }
@@ -524,6 +527,8 @@ fn ctxSetPending(ctx: *Ctx, leaf: schema.Leaf) void {
         // The pane's banner comes back whatever happened to its session
         // (T3560): it is the pane's own state, and a fresh shell keeps it.
         .banner = rules.bannerToRestore(leaf),
+        // So does its tint (T3589), re-attached or fresh.
+        .tint = rules.tintToRestore(leaf),
     };
 }
 

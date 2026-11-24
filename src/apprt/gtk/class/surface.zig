@@ -102,6 +102,10 @@ pub const Surface = extern struct {
         /// whether the pane re-attaches or opens fresh: it is the pane's own
         /// state, not the session's. Ignored for a viewer.
         banner: ?[]const u8 = null,
+        /// The pane's background tint (T3589; win32's T3176), put back
+        /// whether the pane re-attaches or opens fresh. It waits for the
+        /// core surface like any early `--color`. Ignored for a viewer.
+        tint: ?color_math.Rgb = null,
     };
 
     /// The restore the NEXT `Surface.new` adopts (T3397), set by the session
@@ -883,6 +887,8 @@ pub const Surface = extern struct {
             .env = dupeEnv(alloc, overrides.env) catch &.{},
         };
         if (restore) |r| self.adoptRestore(alloc, r);
+        // T3589: the restored tint, held until the core surface exists.
+        if (restore) |r| if (r.tint) |rgb| self.applyBackgroundTint(rgb);
         // After the pane id: the card and its test dump name the pane.
         if (restore) |r| if (r.banner) |b| if (b.len > 0) {
             self.setPaneBanner(b);

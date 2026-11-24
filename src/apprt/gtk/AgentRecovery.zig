@@ -279,7 +279,14 @@ fn replace(
     // pane to the user, and its backend keeps the notice out of the slot.
     const banner: ?[]const u8 = if (old.getPaneBanner()) |b| try arena.dupe(u8, b) else null;
 
-    Surface.pending_restore = .{ .session_id = sid, .pane_id = pane_id, .working_directory = pwd, .banner = banner };
+    Surface.pending_restore = .{
+        .session_id = sid,
+        .pane_id = pane_id,
+        .working_directory = pwd,
+        .banner = banner,
+        // And its tint (T3589): a recovered pane used to come back untinted.
+        .tint = old.backgroundTint(),
+    };
     const replacement = Surface.new(.{});
     Surface.pending_restore = null;
     defer replacement.unref();

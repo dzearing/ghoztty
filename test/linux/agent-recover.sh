@@ -96,7 +96,7 @@ hl_check "A2 the app serves its socket" $?
 doc="$HL_RUNTIME/doc.md"; printf '# Recover\n\nviewer body\n' > "$doc"
 mkdir -p "$HL_RUNTIME/wd-a" "$HL_RUNTIME/wd-b"
 cli +new-window --target=wr --name=pa --working-directory="$HL_RUNTIME/wd-a" --command="echo ready-pa" > /dev/null 2>&1
-cli +split --pane=pa --name=pb --direction=right --percent=30 --working-directory="$HL_RUNTIME/wd-b" --command="echo ready-pb" > /dev/null 2>&1
+cli +split --pane=pa --name=pb --direction=right --percent=30 --color='#106030' --working-directory="$HL_RUNTIME/wd-b" --command="echo ready-pb" > /dev/null 2>&1
 cli +split --pane=pb --name=pv --direction=down --view="$doc" > /dev/null 2>&1
 hl_wait_for 20 hl_agent_pid
 agent1=$(hl_agent_pid)
@@ -147,6 +147,9 @@ hl_check "A10b the rebuilt pa keeps its own banner, not the session-interrupted 
 notice_b() { leaf_field pb banner | grep -q 'Session interrupted'; }
 hl_wait_for 5 notice_b
 hl_check "A10c bannerless pb's slot carries the session-interrupted notice" $? "banner=$(leaf_field pb banner)"
+# T3589: pb was split with --color; its rebuilt pane keeps the tint, pa stays untinted.
+[ "$(leaf_field pb background_tint)" = '#106030' ] && [ "$(leaf_field pa background_tint)" = None ]
+hl_check "A10d the rebuilt pb keeps its tint (#106030) and pa stays untinted" $? "pb=$(leaf_field pb background_tint) pa=$(leaf_field pa background_tint)"
 
 # ---- 3. the rebuilt panes work ---------------------------------------------
 cli +send-keys --target=pa 'echo A11_$((40+2))' Enter > /dev/null 2>&1

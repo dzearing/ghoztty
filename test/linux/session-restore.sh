@@ -112,8 +112,8 @@ hl_check "R2 the app serves its socket (launched with no command)" $?
 pA="$HL_RUNTIME/pA"; pB="$HL_RUNTIME/pB"; pC="$HL_RUNTIME/pC"
 cli +new-window --target=wa --name=pa --command="echo ready-pa; echo \$\$ > $pA; exec sleep 100000" > /dev/null 2>&1
 hl_wait_for 20 test -s "$pA"
-cli +split --pane=pa --name=pb --direction=right --percent=30 --command="echo ready-pb; echo \$\$ > $pB; exec sleep 100000" > /dev/null 2>&1
-cli +split --pane=pb --name=pc --direction=down --command="echo ready-pc; echo \$\$ > $pC; exec sleep 100000" > /dev/null 2>&1
+cli +split --pane=pa --name=pb --direction=right --percent=30 --color='#106030' --command="echo ready-pb; echo \$\$ > $pB; exec sleep 100000" > /dev/null 2>&1
+cli +split --pane=pb --name=pc --direction=down --color='#a05010' --command="echo ready-pc; echo \$\$ > $pC; exec sleep 100000" > /dev/null 2>&1
 hl_wait_for 20 sh -c "test -s $pB && test -s $pC"
 hl_check "R3 three named agent-hosted panes run in window wa" $? "pA=$(cat "$pA" 2>/dev/null) pB=$(cat "$pB" 2>/dev/null) pC=$(cat "$pC" 2>/dev/null)"
 sids_ok() { [ "$(manifest_q 'sum(1 for l in leaves if l.get("session_id"))')" = 4 ]; }
@@ -131,6 +131,18 @@ banA_nl=$(printf '%b' "$banA")
 banners_recorded() { [ "$(manifest_q 'sorted((l.get("ipc_name"), l.get("banner")) for l in leaves if l.get("banner"))')" = "$(python3 -c 'import sys; print(sorted([("pa", sys.argv[1]), ("pb", sys.argv[2])]))' "$banA_nl" "$banB")" ]; }
 hl_wait_for 10 banners_recorded
 hl_check "RB1 the manifest records pa's and pb's banners as their markdown source, and none for pc" $? "$(manifest_q '[(l.get("ipc_name"), l.get("banner")) for l in leaves]')"
+# T3589: pb and pc were split with --color; pa is on the theme background.
+tints_recorded() { [ "$(manifest_q 'sorted((l.get("ipc_name"), l.get("tint")) for l in leaves if l.get("ipc_name") in ("pa", "pb", "pc"))')" = "[('pa', None), ('pb', '#106030'), ('pc', '#a05010')]" ]; }
+hl_wait_for 10 tints_recorded
+hl_check "RT1 the manifest records pb's and pc's tints as #rrggbb, and none for pa" $? "$(manifest_q '[(l.get("ipc_name"), l.get("tint")) for l in leaves]')"
+tint_shot="$HL_RUNTIME/pc-tint.png"
+# tint_fill <pane> <r> <g> <b>: the fraction of the pane's own render within 8 of it.
+tint_fill() {
+    hl_screenshot "$1" "$tint_shot" > /dev/null 2>&1 || { echo 0; return; }
+    hl_png_stats "$tint_shot" "$2" "$3" "$4" | sed -n 's/.*match=\([0-9.]*\).*/\1/p'
+}
+pc_tinted() { awk -v m="$(tint_fill pc 160 80 16)" 'BEGIN{exit !(m > 0.5)}'; }
+tints_listed() { [ "$(leaf_field pa background_tint)" = None ] && [ "$(leaf_field pb background_tint)" = '#106030' ] && [ "$(leaf_field pc background_tint)" = '#a05010' ]; }
 before=$(shape)
 wins_before=$(printf '%s\n' "$before" | grep -c .)
 listA=$(leaf_field pa pid); listB0=$(leaf_field pb pid); listC=$(leaf_field pc pid)
@@ -159,6 +171,10 @@ grep -q 'session layout: restored 2 of 2 window(s), 4 pane(s) re-attached' "$APP
 hl_check "R9 the app logs that it re-attached all four panes" $? "$(grep -m1 'session layout: restored' "$APP2_LOG")"
 [ "$(leaf_field pa banner)" = "$banA_nl" ] && [ "$(leaf_field pb banner)" = "$banB" ] && [ "$(leaf_field pc banner)" = None ]
 hl_check "RB2 the relaunch puts pa's and pb's banners back, and pc stays bannerless" $? "pa=$(leaf_field pa banner) pb=$(leaf_field pb banner) pc=$(leaf_field pc banner)"
+hl_wait_for 5 tints_listed
+hl_check "RT2 the relaunch puts pb's and pc's tints back (+list background_tint), and pa stays untinted" $? "pa=$(leaf_field pa background_tint) pb=$(leaf_field pb background_tint) pc=$(leaf_field pc background_tint)"
+hl_wait_for 10 pc_tinted
+hl_check "RT3 the re-attached pc renders its tint (#a05010)" $? "fill=$(tint_fill pc 160 80 16)"
 
 # ---- 3. a real quit detaches and snapshots --------------------------------
 kill -TERM "$APP2" 2>/dev/null
@@ -208,6 +224,8 @@ hl_check "R15 the panes whose sessions lived are re-attached beside it" $? "pc=$
 sleep 1
 [ "$(leaf_field pb banner)" = "$banB" ]
 hl_check "RB3 pb's fresh shell keeps pb's own banner; the session-gone notice did not take its slot" $? "pb=$(leaf_field pb banner)"
+[ "$(leaf_field pb background_tint)" = '#106030' ]
+hl_check "RT4 pb's fresh shell keeps pb's tint" $? "pb=$(leaf_field pb background_tint)"
 shot="$HL_RUNTIME/wa-window.png"
 wa_size() { hl_screenshot wa "$shot" --window > /dev/null 2>&1 && hl_png_stats "$shot" | awk '{ sub("w=","",$1); sub("h=","",$2); print $1, $2 }'; }
 size_ok() {
@@ -271,6 +289,8 @@ hl_wait_for 5 notice_c
 hl_check "RB4 bannerless pc's slot carries the session-interrupted notice after the agent restart" $? "pc=$(leaf_field pc banner)"
 [ "$(leaf_field pa banner)" = "$banA_nl" ]
 hl_check "RB5 the relaunched pa keeps its own banner instead of the notice" $? "pa=$(leaf_field pa banner)"
+hl_wait_for 5 tints_listed
+hl_check "RT5 after the agent restart the relaunched pb and pc keep their tints" $? "pa=$(leaf_field pa background_tint) pb=$(leaf_field pb background_tint) pc=$(leaf_field pc background_tint)"
 
 # ---- 6. what the user closes stays closed ----------------------------------
 cli +close --target=wa > /dev/null 2>&1
