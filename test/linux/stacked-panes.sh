@@ -155,8 +155,8 @@ name_where() {
 
 before=$(sq "$r" '" ".join(sorted(p["pane"] for p in shown))')
 other_name=$(name_where 'not p["minimized"] and not p["focused"]')
-# The CLI's idempotent focus: a named target that exists is focused.
-[ -n "$other_name" ] && cli +split --name="$other_name" > /dev/null 2>&1
+# The CLI's idempotent focus: a named target that exists is focused (--focus).
+[ -n "$other_name" ] && cli +split --name="$other_name" --focus > /dev/null 2>&1
 sleep 0.5
 r=$(st)
 after=$(sq "$r" '" ".join(sorted(p["pane"] for p in shown))')
@@ -165,7 +165,7 @@ hl_check "S16 focusing a pane already on show moves nothing" $? "before=[$before
 
 # Focus a minimized pane by name: it comes out.
 mname=$(name_where 'p["minimized"]')
-cli +split --name="$mname" > /dev/null 2>&1
+cli +split --name="$mname" --focus > /dev/null 2>&1
 sleep 0.5
 r=$(st)
 mid=$(id_of "$mname")

@@ -1254,6 +1254,9 @@ pub const SplitTree = extern struct {
     pub fn focusSurface(self: *Self, surface: *Surface) void {
         self.private().last_focused.set(surface);
         surface.grabFocus();
+        // Focus brings a minimized pane forward (T3567), whether or not the
+        // window holds the keyboard to report the focus back.
+        self.relayoutStage();
         self.as(gobject.Object).notifyByPspec(properties.@"active-surface".impl.param_spec);
     }
 
