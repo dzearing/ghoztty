@@ -557,6 +557,14 @@ Assert "F1c the manifest records the split pane's tint (capture)" (
     $null -ne $tintLeaf -and $tintLeaf.tint -eq $tintHex)
 Assert "F1d no untinted pane writes a tint" (@(Get-LeavesWith $mTint 'tint').Count -eq 1)
 
+# T3644 capture: the banner is on disk BEFORE the kill. F9b alone cannot say
+# whether a missing restored banner was never written or written and dropped on
+# the way back; this splits the two.
+$banRx = [regex]::Escape("T422BANNER$($PID)XYZ")
+$mBan = Wait-Manifest $tmp { param($m) "$((Get-NamedLeaf $m 'f89sib').banner)" -match $banRx } 10
+Assert "F1e the manifest records the split pane's banner (capture)" (
+    "$((Get-NamedLeaf $mBan 'f89sib').banner)" -match $banRx)
+
 # The live session ids the agent is keeping (must all come back on re-attach).
 $beforeIds = @(Alive-Ids (Wait-AliveCount $tmp 'f-before' 3 15))
 Assert "F2 three agent sessions are alive before quit" ($beforeIds.Count -eq 3)
