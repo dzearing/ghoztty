@@ -213,6 +213,7 @@ pub fn handleSeam(app: Context, request: Request) Allocator.Error!server.SeamRep
     if (std.mem.eql(u8, request.action, "settings")) return .{ .reply = try settingsSeam(app, request) };
     if (std.mem.eql(u8, request.action, "shortcut-guide")) return .{ .reply = try shortcutGuideSeam(app, request) };
     if (std.mem.eql(u8, request.action, "pane-seen")) return .{ .reply = try paneSeenSeam(app, request) };
+    if (std.mem.eql(u8, request.action, "close-dialog")) return .{ .reply = try closeDialogSeam(app, request) };
     if (!std.mem.eql(u8, request.action, "capture-pane")) return .unhandled;
     return .{ .reply = try capturePane(app, request) };
 }
@@ -581,6 +582,79 @@ fn paneDrag(app: Context, request: Request) Allocator.Error![]u8 {
         .headers = headers.items,
         .drop = drop,
     };
+    var out: std.Io.Writer.Allocating = .init(c_alloc);
+    defer out.deinit();
+    std.json.Stringify.value(rep, .{}, &out.writer) catch return error.OutOfMemory;
+    return c_alloc.dupe(u8, out.written());
+}
+
+/// `close-dialog --target=<pane|window> [--op=pane|tab|window]
+/// [--answer=disconnect|close|cancel]` (T3563): start an INTERACTIVE close
+/// the way the pane keybind, a tab's x or the window's x does (`--op`), then
+/// report the close confirmation up over the target's window - whether there
+/// is one, whether it offers Disconnect, its body - and optionally answer it
+/// as a press of that button would. Wayland gives the headless harness no
+/// pointer to click a dialog with.
+fn closeDialogSeam(app: Context, request: Request) Allocator.Error![]u8 {
+    var target_arg: ?[]const u8 = null;
+    var op_arg: ?[]const u8 = null;
+    var answer_arg: ?[]const u8 = null;
+    for (request.arguments orelse &.{}) |arg| {
+        if (std.mem.startsWith(u8, arg, "--target=")) target_arg = arg["--target=".len..];
+        if (std.mem.startsWith(u8, arg, "--op=")) op_arg = arg["--op=".len..];
+        if (std.mem.startsWith(u8, arg, "--answer=")) answer_arg = arg["--answer=".len..];
+    }
+    const target_name = target_arg orelse return server.errorResponse(c_alloc, "--target is required for close-dialog", .{});
+    var arena_state = std.heap.ArenaAllocator.init(c_alloc);
+    defer arena_state.deinit();
+    const target = switch (try resolve(arena_state.allocator(), app, target_name)) {
+        .found => |t| t,
+        .ambiguous => |windows| return server.errorResponse(c_alloc, "{s}", .{
+            try target_lookup.ambiguityError(arena_state.allocator(), target_name, windows),
+        }),
+        .not_found => return server.errorResponse(c_alloc, "'{s}' not found in registry", .{target_name}),
+    };
+    const window = target.window_();
+    if (op_arg) |op| {
+        if (std.mem.eql(u8, op, "window")) {
+            window.as(gtk.Window).close();
+        } else if (std.mem.eql(u8, op, "tab")) {
+            const tab = window.getSelectedTab() orelse
+                return server.errorResponse(c_alloc, "the window has no tab", .{});
+            const tab_view = window.getTabView();
+            tab_view.closePage(tab_view.getPage(tab.as(gtk.Widget)));
+        } else if (std.mem.eql(u8, op, "pane")) {
+            const surface = target.surface() orelse
+                return server.errorResponse(c_alloc, "--op=pane needs a pane --target", .{});
+            surface.close();
+        } else return server.errorResponse(c_alloc, "--op must be pane, tab or window", .{});
+    }
+    const Rep = struct {
+        success: bool = true,
+        open: bool,
+        disconnect: bool = false,
+        body: []const u8 = "",
+        answered: ?[]const u8 = null,
+    };
+    var rep: Rep = .{ .open = false };
+    if (window.openCloseConfirmation()) |dialog| {
+        rep.open = true;
+        rep.disconnect = dialog.offersDisconnect();
+        rep.body = try arena_state.allocator().dupe(u8, std.mem.span(dialog.bodyText()));
+        if (answer_arg) |a| {
+            const id: [*:0]const u8 = if (std.mem.eql(u8, a, "disconnect"))
+                "disconnect"
+            else if (std.mem.eql(u8, a, "close"))
+                "close"
+            else if (std.mem.eql(u8, a, "cancel"))
+                "cancel"
+            else
+                return server.errorResponse(c_alloc, "--answer must be disconnect, close or cancel", .{});
+            log.info("close-dialog target={s}: answering {s}", .{ target_name, a });
+            dialog.answer(id);
+            rep.answered = a;
+        }
+    }
     var out: std.Io.Writer.Allocating = .init(c_alloc);
     defer out.deinit();
     std.json.Stringify.value(rep, .{}, &out.writer) catch return error.OutOfMemory;

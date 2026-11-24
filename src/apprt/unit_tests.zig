@@ -1024,6 +1024,11 @@ test {
     // SessionLayout.zig's own tests never could.
     _ = @import("gtk/session_layout_rules.zig");
 
+    // The Linux close's Disconnect offer (T3563): which panes a Disconnect
+    // spares, the one machine to name, the widened gate and the detach pin,
+    // over win32's pure `session_disconnect` policy. No GTK imports.
+    _ = @import("gtk/disconnect_offer.zig");
+
     // Pure win32 refresh policy: whether a tick should re-persist the panes'
     // screens, wait for their output to go quiet, or do nothing at all (T922),
     // same no-OS-imports deal — it is arithmetic over a cursor and a clock.

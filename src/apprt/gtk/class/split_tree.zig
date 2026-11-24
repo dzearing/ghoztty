@@ -15,6 +15,7 @@ const Common = @import("../class.zig").Common;
 const WeakRef = @import("../weak_ref.zig").WeakRef;
 const Application = @import("application.zig").Application;
 const CloseConfirmationDialog = @import("close_confirmation_dialog.zig").CloseConfirmationDialog;
+const disconnect_offer = @import("../disconnect_offer.zig");
 const CloseUndo = @import("../CloseUndo.zig");
 const Surface = @import("surface.zig").Surface;
 const SurfaceScrolledWindow = @import("surface_scrolled_window.zig").SurfaceScrolledWindow;
@@ -1232,6 +1233,24 @@ pub const SplitTree = extern struct {
         return false;
     }
 
+    /// Add every pane here a Disconnect would spare to `offer` (T3563).
+    pub fn addDisconnectOffer(self: *Self, offer: *disconnect_offer.Offer) void {
+        const tree = self.getTree() orelse return;
+        var it = tree.iterator();
+        while (it.next()) |entry| entry.view.addDisconnectOffer(offer);
+    }
+
+    /// The user answered Disconnect for a close of this tree (T3563): pin
+    /// every pane riding a remote machine, so its teardown DETACHes. Local
+    /// panes - a local-agent pane included - are left to close as usual.
+    pub fn pinRemoteDetach(self: *Self) void {
+        const tree = self.getTree() orelse return;
+        var it = tree.iterator();
+        while (it.next()) |entry| {
+            if (entry.view.remoteLink() != null) entry.view.pinDetach();
+        }
+    }
+
     /// Get the currently active surface. See the "active-surface" property.
     /// This does not ref the value.
     pub fn getActiveSurface(self: *Self) ?*Surface {
@@ -1724,8 +1743,14 @@ pub const SplitTree = extern struct {
             return;
         };
 
+        // T3563: a remote pane asks even when idle, and offers Disconnect.
+        var offer: disconnect_offer.Offer = .{};
+        surface.addDisconnectOffer(&offer);
+        const needs_confirm = if (core) |c| c.needsConfirmQuit() else false;
+        const step = disconnect_offer.step(needs_confirm, offer);
+
         // If we don't need to confirm then just close immediately.
-        if (core == null or !core.?.needsConfirmQuit()) {
+        if (step == .close) {
             closeConfirmationClose(
                 null,
                 self,
@@ -1742,7 +1767,32 @@ pub const SplitTree = extern struct {
             self,
             .{},
         );
+        if (step == .ask_disconnect) {
+            dialog.offerDisconnect(offer);
+            _ = CloseConfirmationDialog.signals.@"disconnect-request".connect(
+                dialog,
+                *Self,
+                closeConfirmationDisconnect,
+                self,
+                .{},
+            );
+        }
         dialog.present(self.as(gtk.Widget));
+    }
+
+    /// Disconnect (T3563): close the pending pane, pinned so its remote
+    /// session keeps running.
+    fn closeConfirmationDisconnect(
+        _: *CloseConfirmationDialog,
+        self: *Self,
+    ) callconv(.c) void {
+        const handle = self.private().pending_close orelse return;
+        const tree = self.getTree() orelse return;
+        switch (tree.nodes[handle.idx()]) {
+            .leaf => |v| v.pinDetach(),
+            .split => return,
+        }
+        closeConfirmationClose(null, self);
     }
 
     fn closeConfirmationClose(

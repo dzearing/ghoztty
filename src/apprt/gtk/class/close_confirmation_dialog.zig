@@ -6,6 +6,7 @@ const gresource = @import("../build/gresource.zig");
 const i18n = @import("../../../os/main.zig").i18n;
 const Common = @import("../class.zig").Common;
 const Dialog = @import("dialog.zig").Dialog;
+const disconnect_offer = @import("../disconnect_offer.zig");
 
 const log = std.log.scoped(.gtk_ghostty_close_confirmation_dialog);
 
@@ -53,6 +54,19 @@ pub const CloseConfirmationDialog = extern struct {
             );
         };
 
+        /// The user chose **Disconnect** (T3563): close it, but leave its
+        /// remote sessions running. Only emitted after `offerDisconnect`.
+        pub const @"disconnect-request" = struct {
+            pub const name = "disconnect-request";
+            pub const connect = impl.connect;
+            const impl = gobject.ext.defineSignal(
+                name,
+                Self,
+                &.{},
+                void,
+            );
+        };
+
         pub const cancel = struct {
             pub const name = "cancel";
             pub const connect = impl.connect;
@@ -67,6 +81,14 @@ pub const CloseConfirmationDialog = extern struct {
 
     const Private = struct {
         target: Target,
+        /// Set by `offerDisconnect`: the dialog asks Disconnect / Close /
+        /// Cancel and says where the sessions run instead of `Target.body`.
+        disconnect: bool = false,
+        disconnect_body: [disconnect_offer.body_cap]u8 = undefined,
+        disconnect_body_len: usize = 0,
+        /// A response was handled: any later one (the close-response a
+        /// dismissal can add after `answer`) is ignored.
+        answered: bool = false,
         pub var offset: c_int = 0;
     };
 
@@ -84,10 +106,49 @@ pub const CloseConfirmationDialog = extern struct {
         // Setup our title/body text.
         const priv = self.private();
         self.as(Dialog.Parent).setHeading(priv.target.title());
-        self.as(Dialog.Parent).setBody(priv.target.body());
+        self.as(Dialog.Parent).setBody(self.bodyText());
 
         // Show it
         self.as(Dialog).present(parent);
+    }
+
+    /// Offer **Disconnect** (T3563, Mac `SessionDisconnectPolicy`): a third
+    /// button, rightmost and the default (Return picks it), that closes
+    /// locally and leaves the remote sessions `offer` counted running. The
+    /// body becomes the shared scope-neutral wording naming the machine.
+    /// Call before `present`.
+    pub fn offerDisconnect(self: *Self, offer: disconnect_offer.Offer) void {
+        const priv = self.private();
+        const body = offer.body(&priv.disconnect_body);
+        priv.disconnect_body_len = body.len;
+        priv.disconnect = true;
+        const d = self.as(Dialog.Parent);
+        d.addResponse("disconnect", i18n._("Disconnect"));
+        d.setResponseAppearance("disconnect", .suggested);
+        d.setDefaultResponse("disconnect");
+    }
+
+    /// The body the dialog shows (the test seam reads it).
+    pub fn bodyText(self: *Self) [*:0]const u8 {
+        const priv = self.private();
+        if (priv.disconnect) return priv.disconnect_body[0..priv.disconnect_body_len :0];
+        return priv.target.body();
+    }
+
+    /// Whether this dialog offers Disconnect (the test seam reads it).
+    pub fn offersDisconnect(self: *Self) bool {
+        return self.private().disconnect;
+    }
+
+    /// Answer the dialog as if the user pressed `response_id` (`"close"`,
+    /// `"disconnect"`, `"cancel"`), then dismiss it. The DEBUG-ONLY test seam
+    /// `test-answer-close` drives this: Wayland gives a test no input to
+    /// press a button with.
+    pub fn answer(self: *Self, response_id: [*:0]const u8) void {
+        _ = self.ref();
+        defer self.unref();
+        response(self, response_id);
+        self.close();
     }
 
     pub fn close(self: *Self) void {
@@ -98,7 +159,17 @@ pub const CloseConfirmationDialog = extern struct {
         self: *Self,
         response_id: [*:0]const u8,
     ) callconv(.c) void {
-        if (std.mem.orderZ(u8, response_id, "close") == .eq) {
+        const priv = self.private();
+        if (priv.answered) return;
+        priv.answered = true;
+        if (std.mem.orderZ(u8, response_id, "disconnect") == .eq) {
+            signals.@"disconnect-request".impl.emit(
+                self,
+                null,
+                .{},
+                null,
+            );
+        } else if (std.mem.orderZ(u8, response_id, "close") == .eq) {
             signals.@"close-request".impl.emit(
                 self,
                 null,
@@ -157,6 +228,7 @@ pub const CloseConfirmationDialog = extern struct {
 
             // Signals
             signals.@"close-request".impl.register(.{});
+            signals.@"disconnect-request".impl.register(.{});
             signals.cancel.impl.register(.{});
 
             // Virtual methods

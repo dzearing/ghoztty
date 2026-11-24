@@ -23,6 +23,7 @@ const Common = @import("../class.zig").Common;
 const Config = @import("config.zig").Config;
 const Application = @import("application.zig").Application;
 const CloseConfirmationDialog = @import("close_confirmation_dialog.zig").CloseConfirmationDialog;
+const disconnect_offer = @import("../disconnect_offer.zig");
 const SplitTree = @import("split_tree.zig").SplitTree;
 const Surface = @import("surface.zig").Surface;
 const Tab = @import("tab.zig").Tab;
@@ -1354,6 +1355,18 @@ pub const Window = extern struct {
         return false;
     }
 
+    /// Every pane in this window a Disconnect would spare (T3563).
+    fn disconnectOffer(self: *Self) disconnect_offer.Offer {
+        var offer: disconnect_offer.Offer = .{};
+        const tab_view = self.private().tab_view;
+        const n: usize = @intCast(tab_view.getNPages());
+        for (0..n) |i| {
+            const tab = gobject.ext.cast(Tab, tab_view.getNthPage(@intCast(i)).getChild()) orelse continue;
+            tab.getSplitTree().addDisconnectOffer(&offer);
+        }
+        return offer;
+    }
+
     fn isFullscreen(self: *Window) bool {
         return self.as(gtk.Window).isFullscreen() != 0;
     }
@@ -1800,17 +1813,28 @@ pub const Window = extern struct {
         _: *gtk.Window,
         self: *Self,
     ) callconv(.c) c_int {
-        if (self.getNeedsConfirmQuit()) {
-            self.askToClose();
-            return @intFromBool(true);
+        // T3563: a window on a remote machine asks even when idle, and
+        // offers Disconnect.
+        const offer = self.disconnectOffer();
+        switch (disconnect_offer.step(self.getNeedsConfirmQuit(), offer)) {
+            .close => {},
+            .ask_running => {
+                self.askToClose(null);
+                return @intFromBool(true);
+            },
+            .ask_disconnect => {
+                self.askToClose(offer);
+                return @intFromBool(true);
+            },
         }
 
         self.as(gtk.Window).destroy();
         return @intFromBool(false);
     }
 
-    /// Put the "Close Window?" confirmation up over this window.
-    fn askToClose(self: *Self) void {
+    /// Put the "Close Window?" confirmation up over this window, offering
+    /// Disconnect when `offer` counts remote sessions (T3563).
+    fn askToClose(self: *Self, offer: ?disconnect_offer.Offer) void {
         const dialog: *CloseConfirmationDialog = .new(.window);
         _ = CloseConfirmationDialog.signals.@"close-request".connect(
             dialog,
@@ -1819,7 +1843,44 @@ pub const Window = extern struct {
             self,
             .{},
         );
+        if (offer) |o| {
+            dialog.offerDisconnect(o);
+            _ = CloseConfirmationDialog.signals.@"disconnect-request".connect(
+                dialog,
+                *Self,
+                closeConfirmationDisconnect,
+                self,
+                .{},
+            );
+        }
         dialog.present(self.as(gtk.Widget));
+    }
+
+    /// Disconnect (T3563): close the window, its remote sessions pinned so
+    /// they keep running. Still a deliberate close: a relay window's
+    /// relaunch record goes (`RelayWindows.windowDisposed`).
+    fn closeConfirmationDisconnect(
+        _: *CloseConfirmationDialog,
+        self: *Self,
+    ) callconv(.c) void {
+        const tab_view = self.private().tab_view;
+        const n: usize = @intCast(tab_view.getNPages());
+        for (0..n) |i| {
+            const tab = gobject.ext.cast(Tab, tab_view.getNthPage(@intCast(i)).getChild()) orelse continue;
+            tab.getSplitTree().pinRemoteDetach();
+        }
+        self.as(gtk.Window).destroy();
+    }
+
+    /// The close confirmation up over this window, if one is (the
+    /// `close-dialog` test seam, T3563).
+    pub fn openCloseConfirmation(self: *Self) ?*CloseConfirmationDialog {
+        const open = self.openDialog() orelse return null;
+        const obj: *gobject.Object = switch (open) {
+            .adw => |d| d.as(gobject.Object),
+            .window => |w| w.as(gobject.Object),
+        };
+        return gobject.ext.cast(CloseConfirmationDialog, obj);
     }
 
     /// DEBUG-ONLY test seam (T3367): put the window's real close
@@ -1829,7 +1890,7 @@ pub const Window = extern struct {
     /// dialog over a window. Compiled out of every release build.
     pub fn testAskToClose(self: *Self) void {
         if (comptime !build_config.is_debug) return;
-        self.askToClose();
+        self.askToClose(null);
     }
 
     /// Whether a dialog (a close confirmation, a clipboard prompt...) is up
@@ -1897,6 +1958,16 @@ pub const Window = extern struct {
         tab_view.closePageFinish(page, @intFromBool(true));
     }
 
+    /// Disconnect (T3563): close the tab, its remote panes pinned so their
+    /// sessions keep running.
+    fn closeConfirmationDisconnectTab(
+        dialog: *CloseConfirmationDialog,
+        page: *adw.TabPage,
+    ) callconv(.c) void {
+        if (gobject.ext.cast(Tab, page.getChild())) |tab| tab.getSplitTree().pinRemoteDetach();
+        closeConfirmationCloseTab(dialog, page);
+    }
+
     fn closeConfirmationCancelTab(
         _: *CloseConfirmationDialog,
         page: *adw.TabPage,
@@ -1923,13 +1994,28 @@ pub const Window = extern struct {
         // If the tab says it doesn't need confirmation then we go ahead
         // and close immediately. So does one whose close was already
         // confirmed (its only pane's), or that a redo closes (T3590).
-        if (CloseUndo.confirmed_tab == tab or !tab.getNeedsConfirmQuit()) {
+        // T3563: a tab on a remote machine asks even when idle.
+        var offer: disconnect_offer.Offer = .{};
+        if (CloseUndo.confirmed_tab != tab) tab.getSplitTree().addDisconnectOffer(&offer);
+        if (CloseUndo.confirmed_tab == tab or
+            disconnect_offer.step(tab.getNeedsConfirmQuit(), offer) == .close)
+        {
             self.finishTabClose(page);
             return @intFromBool(true);
         }
 
         // Show a confirmation dialog
         const dialog: *CloseConfirmationDialog = .new(.tab);
+        if (offer.offered()) {
+            dialog.offerDisconnect(offer);
+            _ = CloseConfirmationDialog.signals.@"disconnect-request".connect(
+                dialog,
+                *adw.TabPage,
+                closeConfirmationDisconnectTab,
+                page,
+                .{},
+            );
+        }
         _ = CloseConfirmationDialog.signals.@"close-request".connect(
             dialog,
             *adw.TabPage,

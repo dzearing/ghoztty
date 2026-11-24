@@ -45,6 +45,7 @@ const IpcHandlers = @import("../IpcHandlers.zig");
 const PaneBanner = @import("../PaneBanner.zig");
 const PaneDrag = @import("../PaneDrag.zig");
 const RemoteLink = @import("../RemoteLink.zig");
+const disconnect_offer = @import("../disconnect_offer.zig");
 const wk = @import("../webkit.zig");
 const banner_link = @import("../../win32/banner_link.zig");
 const banner_markup = @import("../banner_markup.zig");
@@ -812,6 +813,12 @@ pub const Surface = extern struct {
         /// re-attached.
         spare_session: bool = false,
 
+        /// The user answered **Disconnect** for this remote pane (T3563,
+        /// Mac `SessionDetachPin`): every later CLOSE-on-free marking is
+        /// refused, so its teardown DETACHes and the remote session keeps
+        /// running. Released when an undo puts the pane back.
+        detach_pin: disconnect_offer.DetachPin = .{},
+
         /// The remote machine this pane's shell runs on (T3597): a
         /// `+new-remote-window` window's pane, or a split of one. Holds one
         /// reference, dropped in finalize after the core surface let go of
@@ -1006,6 +1013,39 @@ pub const Surface = extern struct {
     /// `Private.spare_session`.
     pub fn spareSession(self: *Self) void {
         self.private().spare_session = true;
+    }
+
+    /// Record a Disconnect (T3563): this pane's session outlives its close.
+    pub fn pinDetach(self: *Self) void {
+        self.private().detach_pin.pin();
+    }
+
+    /// The pane is live in a tree again (an undone close), so a LATER close
+    /// is a close like any other.
+    pub fn clearDetachPin(self: *Self) void {
+        self.private().detach_pin.clear();
+    }
+
+    /// Mark the core surface CLOSE-on-free - its agent session ends with it -
+    /// unless a Disconnect pinned it. The one place a GTK close marks it.
+    pub fn markSessionClose(self: *Self) void {
+        const priv = self.private();
+        if (priv.spare_session) return;
+        const core_surface = priv.core_surface orelse return;
+        if (priv.detach_pin.resolve(true)) |intent| core_surface.setSessionCloseIntent(intent);
+    }
+
+    /// What a Disconnect would spare in this pane (T3563): add it to `offer`
+    /// when its shell runs on a remote machine.
+    pub fn addDisconnectOffer(self: *Self, offer: *disconnect_offer.Offer) void {
+        const priv = self.private();
+        const link = priv.remote_link orelse return;
+        const core_surface = priv.core_surface;
+        offer.add(.{
+            .has_surface = core_surface != null,
+            .process_exited = self.hasChildExited(),
+            .confirm_close_enabled = if (core_surface) |c| c.config.confirm_close_surface != .false else true,
+        }, link.machine.displayName());
     }
 
     pub fn agentSessionId(self: *Self) ?[]const u8 {
@@ -2821,7 +2861,8 @@ pub const Surface = extern struct {
             // T3400: a pane in-place recovery REPLACED is not a user close -
             // its session is the one its replacement just re-ATTACHed
             // (win32's `agent_recovery.sessionSpared` invariant).
-            if (!Application.default().isQuitting() and !priv.spare_session) v.setSessionCloseIntent(true);
+            // T3563: a Disconnect's pin refuses that marking (`markSessionClose`).
+            if (!Application.default().isQuitting()) self.markSessionClose();
 
             // Deinit the surface
             v.deinit();

@@ -177,7 +177,8 @@ fn treeHas(tree: *const Tree, surface: *const Surface) bool {
 /// The teardown a close would have given the pane: a close, not a quit, so
 /// an agent-backed pane ends its session even when the app is quitting.
 fn endSurface(surface: *Surface) void {
-    if (surface.core()) |core| core.setSessionCloseIntent(true);
+    // T3563: unless the close was a Disconnect (its pin refuses this).
+    surface.markSessionClose();
     surface.unref();
 }
 
@@ -186,9 +187,7 @@ fn endSurface(surface: *Surface) void {
 fn endTab(tab: *Tab) void {
     if (tab.getSurfaceTree()) |tree| {
         var it = tree.iterator();
-        while (it.next()) |entry| {
-            if (entry.view.core()) |core| core.setSessionCloseIntent(true);
-        }
+        while (it.next()) |entry| entry.view.markSessionClose();
     }
     tab.unref();
 }
@@ -562,6 +561,11 @@ fn restoreTab(owner: usize, entry: *Entry) bool {
         return false;
     }
     window.restoreParkedTab(t.tab, t.position);
+    // T3563: back in a live tree, a later close is a close again.
+    {
+        var it = tree.iterator();
+        while (it.next()) |e| e.view.clearDetachPin();
+    }
     log.info("undo: closed tab restored at {d}", .{t.position});
     const ref = newTabRef(t.tab) catch null;
     t.tab.unref(); // the tab view holds it now
@@ -608,6 +612,8 @@ fn restorePane(owner: usize, entry: *Entry) bool {
     defer next.deinit();
     split_tree.setTree(&next);
     split_tree.focusSurface(p.surface);
+    // T3563: back in a live tree, a later close is a close again.
+    p.surface.clearDetachPin();
 
     const id = idOf(p.surface);
     log.info("undo: closed pane {s} restored (exact={})", .{ p.surface.paneId(), place.exact });
