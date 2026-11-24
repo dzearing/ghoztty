@@ -452,6 +452,11 @@ function annotateReadiness(tasks) {
 
 function git(args) {
   return execFileSync('git', ['-C', REPO, ...args], {
+    // windowsHide on EVERY child: after a self-restart (below) this server
+    // is detached with no console, so a console child without it gets a
+    // brand-new console - the default terminal pops a window on the user's
+    // screen every poll (2026-11-24, a window every few seconds).
+    windowsHide: true,
     encoding: 'utf8',
     maxBuffer: 256 * 1024 * 1024,
   });
@@ -876,7 +881,7 @@ function paneHoldsClaude(j) {
       'powershell',
       ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File',
         path.join(REPO, 'scripts', 'go-loop-lock.ps1'), 'status', '-Json'],
-      { cwd: REPO, encoding: 'utf8', timeout: 20000, stdio: ['ignore', 'pipe', 'ignore'] }
+      { cwd: REPO, encoding: 'utf8', timeout: 20000, windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] }
     );
     const st = JSON.parse(out.replace(/^﻿/, ''));
     alive = st.owner_alive_by === 'pane';
@@ -974,7 +979,7 @@ function bootStateSync() {
   if (fx !== undefined) return fx;
   try {
     return parseBootOut(execFileSync('powershell', BOOT_ARGS,
-      { cwd: REPO, encoding: 'utf8', timeout: 60000, stdio: ['ignore', 'pipe', 'ignore'] }));
+      { cwd: REPO, encoding: 'utf8', timeout: 60000, windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] }));
   } catch (e) {
     return parseBootOut(e && e.stdout);
   }
@@ -1651,7 +1656,7 @@ function ps(script, args) {
   return execFileSync(
     'powershell',
     ['-NoProfile', '-NonInteractive', '-File', path.join(__dirname, script), ...args, ...dirs],
-    { encoding: 'utf8', cwd: REPO, maxBuffer: 8 * 1024 * 1024 }
+    { encoding: 'utf8', cwd: REPO, windowsHide: true, maxBuffer: 8 * 1024 * 1024 }
   ).trim();
 }
 

@@ -125,6 +125,15 @@ try {
         Remove-Item $tmp -Force -ErrorAction SilentlyContinue
     }
 
+    # A7: every child the server starts passes windowsHide. After a
+    # self-restart the server is detached with no console, so a git or
+    # powershell child without it gets a NEW console, and the default terminal
+    # put a window on the user's screen every few seconds (2026-11-24).
+    $src = [System.IO.File]::ReadAllText((Join-Path $Repo 'scripts\task-dashboard.js'))
+    $calls = [regex]::Matches($src, '(?s)(?<![.\w])(execFileSync|execFile|execSync|spawnSync|spawn|exec)\((?:[^()]|\((?:[^()]|\([^()]*\))*\))*\)')
+    $bare = @($calls | Where-Object { $_.Value -notmatch 'windowsHide:\s*true' } | ForEach-Object { ($_.Value -split "`n")[0].Trim() })
+    Assert 'A7 every child process the server starts passes windowsHide' ($calls.Count -ge 5 -and $bare.Count -eq 0) "calls=$($calls.Count) without windowsHide: $($bare -join ' | ')"
+
     # --- section B: /api/data carries what the cards need -------------------
     $data = $null
     $r = Get-Http "$Base/api/data" 120
