@@ -1921,8 +1921,9 @@ refusal is made before any dial, and the relay wins when both are given.
   device) and `connection.state`; a local window has neither field.
 - **Not in the layout file**: `SessionLayout` skips remote windows, and a
   remote pane moved into a local window records no session id. Relay windows
-  coming back at relaunch are T3671, per-host defaults T3669; the chooser,
-  pill and reconnect ladder are T3563.
+  coming back at relaunch are T3671, per-host defaults T3669; Close vs
+  Disconnect is T3563 (below); the chooser is T3674, the pill and reconnect
+  ladder T3675.
 
 Acceptance, against a loopback agent started with `--listen 127.0.0.1:<port>
 --headless` (the Linux half of `test/win32/ipc-remote.ps1`) and, in section Y
@@ -1945,6 +1946,52 @@ else by device id, a split and a new tab stay on it, `+close` ends all three
 sessions). `NEGATIVE=1` dials a dead port for the main window and must fail
 R1; `NEGATIVE=relay` dials a device nobody enrolled and must fail Y5 with
 `failed to reach <device> via relay <url>: ...`.
+
+## Closing a remote pane, tab or window: Close vs Disconnect (T3563)
+
+The Mac's `SessionDisconnectPolicy` (docs/reference/remote-machines.md), over
+win32's pure policy in `src/apprt/win32/session_disconnect.zig` through
+`src/apprt/gtk/disconnect_offer.zig` (none lane): which panes a Disconnect
+spares, the one machine to name, the widened gate and the detach pin.
+
+- **An interactive close of anything on a remote machine asks, even idle** -
+  the pane keybind (`SplitTree.surfaceCloseRequest`), a tab's x
+  (`Window.tabViewClosePage`) and the window's x (`windowCloseRequest`). The
+  dialog gets a third button, **Disconnect**, rightmost and the default
+  (Return), and its body is the shared scope-neutral sentence naming the
+  machine and counting the sessions ("the remote machine" when they span
+  several). A local window, a local-agent pane, an exited shell, a viewer and
+  `confirm-close-surface = false` are untouched.
+- **Never widened on the scripted paths**: `+close` (`closeSurfaceNow`,
+  `gtk.Window.destroy`) and a pane close that closes its tab
+  (`CloseUndo.confirmed_tab`) do not ask - a modal there would wedge every
+  later `ghoztty +...`.
+- **Disconnect is a pin, not an intent write** (`Surface.pinDetach`). Every
+  GTK CLOSE marking goes through `Surface.markSessionClose`, which the pin
+  refuses: `finalize`, and `CloseUndo`'s end of a parked pane or tab when the
+  undo window expires. So the pane leaves this app, its link is let go, and
+  the far session keeps running. Only panes on a remote link are pinned. An
+  undo that puts the pane or tab back clears the pin, so a later close ends
+  the session again.
+- **A confirmed tab close finishes on the next idle tick**
+  (`Window.closeTabIdle`): tearing the tab down inside the dialog's own
+  response left the dialog in the window's dialog stack, where libadwaita spent
+  the window's next close request on it.
+- Nothing on Linux can resume a disconnected session yet: that is the
+  chooser, T3674.
+
+Acceptance, against a loopback TCP agent, driven through the DEBUG-ONLY
+`close-dialog --target= [--op=pane|tab|window] [--answer=disconnect|close|cancel]`
+seam (it starts the same close a keybind or an x does, reads the dialog and
+presses a button - Wayland gives the harness no pointer):
+
+```powershell
+powershell -NoProfile -File scripts\linux\wsl-run.ps1 -CommandFile test\linux\cli-remote-disconnect.sh
+```
+
+Ends `CLI REMOTE DISCONNECT: ALL PASS`; the oracle is the remote shell's pid
+(alive after Disconnect, past the 1 s undo window; gone after Close).
+`NEGATIVE=1` answers Close where it means Disconnect and must fail D4.
 
 ## The relay account store: keyring, else a private file (T3341)
 
