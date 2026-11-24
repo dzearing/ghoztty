@@ -162,12 +162,14 @@ sleep 3
 hl_check "T3 Disconnect closes the tab and its remote shell keeps running" $? "out=$out tabs=$(win ntabs rdp) pid=$pt"
 
 # --- a window: the window's x --------------------------------------------------
+echo "probe before W1: $(dialog rdp)"
+mark=$(wc -l < "$APP_LOG")
 out=$(dialog rdp --op=window --answer=cancel)
 [ "$(field "$out" disconnect)" = true ] && [ "$(field "$out" answered)" = cancel ] &&
     has_window rdp && alive "$p0"
 w1=$?
 hl_check "W1 Cancel on the window close keeps rdp and its shell" $w1 "out=$out pid=$p0"
-[ $w1 = 0 ] || grep -i "close request\|dialog\|close_undo\|warn" "$APP_LOG" | tail -15
+[ $w1 = 0 ] || { echo "--- app log since the probe:"; tail -n +"$mark" "$APP_LOG" | head -40; }
 
 out=$(dialog rdp --op=window)
 [ "$(field "$out" open)" = true ] && [ "$(field "$out" disconnect)" = true ]

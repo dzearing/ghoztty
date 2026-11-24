@@ -635,8 +635,13 @@ fn closeDialogSeam(app: Context, request: Request) Allocator.Error![]u8 {
         disconnect: bool = false,
         body: []const u8 = "",
         answered: ?[]const u8 = null,
+        /// Some OTHER dialog is up over the window (its type name).
+        other: ?[]const u8 = null,
     };
     var rep: Rep = .{ .open = false };
+    if (window.openCloseConfirmation() == null) if (window.openDialogTypeName()) |n| {
+        rep.other = n;
+    };
     if (window.openCloseConfirmation()) |dialog| {
         rep.open = true;
         rep.disconnect = dialog.offersDisconnect();

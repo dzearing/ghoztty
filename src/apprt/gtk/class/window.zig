@@ -1874,6 +1874,18 @@ pub const Window = extern struct {
         self.as(gtk.Window).destroy();
     }
 
+    /// The GType name of the dialog up over this window, if any (the
+    /// `close-dialog` seam's diagnostics).
+    pub fn openDialogTypeName(self: *Self) ?[]const u8 {
+        const open = self.openDialog() orelse return null;
+        const obj: *gobject.Object = switch (open) {
+            .adw => |d| d.as(gobject.Object),
+            .window => |w| w.as(gobject.Object),
+        };
+        const class = obj.f_g_type_instance.f_g_class orelse return "?";
+        return std.mem.span(gobject.typeName(class.f_g_type) orelse return "?");
+    }
+
     /// The close confirmation up over this window, if one is (the
     /// `close-dialog` test seam, T3563).
     pub fn openCloseConfirmation(self: *Self) ?*CloseConfirmationDialog {
