@@ -43,13 +43,17 @@ param(
     [int]$Runs = 15,
     [int]$LoadWorkers = 4,
     [string]$Label = 't857-boost-OFF',
-    [string]$Repo = 'D:\git\ghoztty',
+    # Resolved in the body: the worktree this copy lives in (T2037). The literal
+    # 'D:\git\ghoztty' it used to default to made a bare run from lane B
+    # diagnose lane A's binaries.
+    [string]$Repo,
     # Undo only: reactivate the saved scheme, delete leftovers, clear the net.
     [switch]$RestoreOnly,
     # Set boost off and return immediately, leaving the soak to be run by hand.
     # The safety net stays armed, so the machine still recovers on its own.
     [switch]$NoSoak
 )
+if (-not $Repo) { $Repo = Split-Path $PSScriptRoot -Parent }
 
 $ErrorActionPreference = 'Stop'
 

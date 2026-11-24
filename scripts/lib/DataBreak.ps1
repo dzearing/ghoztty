@@ -600,7 +600,7 @@ function Invoke-DataBreakPageWatch {
         [int]$TimeoutSeconds = 1800,
         [int]$Keep = 3,
         [string]$Cdb,
-        [string]$Repo = 'D:\git\ghoztty',
+        [string]$Repo = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..')).TrimEnd('\'),
         [switch]$KeepLog,
         [scriptblock]$Writer = { param($s) Write-Host $s }
     )
@@ -942,7 +942,7 @@ function Invoke-DataBreak {
         [int]$TimeoutSeconds = 1200,
         [int]$Keep = 3,
         [string]$Cdb,
-        [string]$Repo = 'D:\git\ghoztty',
+        [string]$Repo = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..')).TrimEnd('\'),
         [switch]$KeepLog,
         [scriptblock]$Writer = { param($s) Write-Host $s }
     )

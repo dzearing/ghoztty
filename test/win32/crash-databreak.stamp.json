@@ -1,21 +1,23 @@
 {
     "guard":  "crash-databreak",
     "script":  "test/win32/crash-databreak.ps1",
-    "generated":  "2026-11-21T01:35:48-08:00",
-    "commit":  "6a2e8043b",
+    "generated":  "2026-11-23T21:25:25-08:00",
+    "commit":  "a7ac15b3b",
     "uncommitted":  [
+                        "scripts/crash-databreak.ps1",
+                        "scripts/lib/CrashCatch.ps1",
                         "scripts/lib/DataBreak.ps1"
                     ],
     "files":  {
-                  "scripts/crash-databreak.ps1":  "ec45063075848cb962ca00262960aec8380bd5de3f0d9f9bc9f1d25c109e3b0d",
-                  "scripts/lib/CrashCatch.ps1":  "9d9607d0fd750c0537ed48d7711902e29449d5798ff97406bf23d61f48cccf60",
-                  "scripts/lib/DataBreak.ps1":  "a1db0f74d47f8b3fb6e1d818f33f903ffe01fc4c0059478772e3e67bbbe58fc0",
+                  "scripts/crash-databreak.ps1":  "03e868f010ac75c549778e05aa225c97033a1af23bc86eec268cf5708f0dc3b6",
+                  "scripts/lib/CrashCatch.ps1":  "668b51cb8e72660a73bc014fb61d7a5e6970a79d7fae74edeaaaff8b2e553a96",
+                  "scripts/lib/DataBreak.ps1":  "898bd493f7dc079577380d1f50ba8d05951ea5b0a4ba4d492e5e10515a7314bc",
                   "test/win32/crash-databreak.ps1":  "1d4b6f42416ae9bc0e298bf5461be8f5df1f0448c96f3b6b9220230aa5e53f10"
               },
     "code":  {
-                 "scripts/crash-databreak.ps1":  "code1:e9cc905de7779e9fceb0676e2b5936ee9f2f5415e1b80369c00f5952d8f2185c",
-                 "scripts/lib/CrashCatch.ps1":  "code1:dc923e668d93ff096561e5d26eb2b039c6b7d18c5cb39574fcc593e585f6823c",
-                 "scripts/lib/DataBreak.ps1":  "code1:b1d91651acba81b59f6806d07890831b56dca6074d8a0d53b590c79c697f1d83",
+                 "scripts/crash-databreak.ps1":  "code1:a096e107f45f8fcf3586dc2dda9c85f5e2457b13915a21ef8a1db8e1dfece383",
+                 "scripts/lib/CrashCatch.ps1":  "code1:bfe8c96e54ec33d1f979ea6fd539cf1d93751fbaaff96c97892c637fe62f9639",
+                 "scripts/lib/DataBreak.ps1":  "code1:a17d59f09824d30a1333c442a1fd21babde23ac944f5d5848a529952e11573ec",
                  "test/win32/crash-databreak.ps1":  "code1:5c827be7aa2a34f8da087e988bca5bc936f337938e8d877231c40c33b0f3f96f"
              }
 }

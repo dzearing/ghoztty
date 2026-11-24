@@ -210,7 +210,10 @@ param(
     [string]$Label = '',
     [int]$TimeoutSeconds = 900,
     [string]$OutDir = "$env:TEMP\ghoztty-soak",
-    [string]$Repo = 'D:\git\ghoztty',
+    # Resolved in the body: the worktree this copy lives in (T2037). The literal
+    # 'D:\git\ghoztty' it used to default to made a bare run from lane B
+    # diagnose lane A's binaries.
+    [string]$Repo,
     # Extra exe names to resolve beside the lane's own, for a fixture run that
     # needs a lane to present TWO binaries. Every real lane builds one since
     # T434, so without this the per-binary log naming and the per-exe
@@ -218,6 +221,7 @@ param(
     # floor-lane.ps1's parameter of the same name.
     [string[]]$ExtraTestExeNames = @()
 )
+if (-not $Repo) { $Repo = Split-Path $PSScriptRoot -Parent }
 
 $ErrorActionPreference = 'Continue'
 . "$PSScriptRoot\lib\CrashCatch.ps1"

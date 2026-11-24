@@ -590,7 +590,7 @@ function Invoke-CrashDumpAnalysis {
         [int]$Keep = 3,
         [int]$TimeoutSeconds = 300,
         [string]$Cdb,
-        [string]$Repo = 'D:\git\ghoztty',
+        [string]$Repo = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..')).TrimEnd('\'),
         [string]$LaneLog,
         [scriptblock]$Writer = { param($s) Write-Host $s }
     )

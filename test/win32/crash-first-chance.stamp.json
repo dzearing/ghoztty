@@ -1,15 +1,23 @@
 {
     "guard":  "crash-first-chance",
     "script":  "test/win32/crash-first-chance.ps1",
-    "generated":  "2026-10-11T00:25:54-07:00",
-    "commit":  "fe9baf50c",
+    "generated":  "2026-11-23T21:21:26-08:00",
+    "commit":  "a7ac15b3b",
     "uncommitted":  [
-                        "scripts/lib/CrashCatch.ps1"
+                        "scripts/crash-catch.ps1",
+                        "scripts/lib/CrashCatch.ps1",
+                        "scripts/lib/CrashDump.ps1"
                     ],
     "files":  {
-                  "scripts/crash-catch.ps1":  "c8515ad0ae67ec2fc457f54a7477f5afb5fc28281906f261d631ad0a640ca4aa",
-                  "scripts/lib/CrashCatch.ps1":  "9d9607d0fd750c0537ed48d7711902e29449d5798ff97406bf23d61f48cccf60",
-                  "scripts/lib/CrashDump.ps1":  "17d0900f709f2b500e444f9166c1c80a712cfe33ca3f54f8c59594b4efadb670",
+                  "scripts/crash-catch.ps1":  "830f8e5827d8b2eecfa934fece0733f87fc00c736297952450908dd0dab9360c",
+                  "scripts/lib/CrashCatch.ps1":  "668b51cb8e72660a73bc014fb61d7a5e6970a79d7fae74edeaaaff8b2e553a96",
+                  "scripts/lib/CrashDump.ps1":  "633427aa9ba1b300706b2281d962e91609f57eddf68918ad18ad3383b23fffe5",
                   "test/win32/crash-first-chance.ps1":  "87ef370d66a61a2689c51f3d677589eab39e4ac1def7230cc320d4d72ef50a7e"
-              }
+              },
+    "code":  {
+                 "scripts/crash-catch.ps1":  "code1:bdff17025a7023c7744dd17d1915144bee067a2be05e06c87b3264f63fad5081",
+                 "scripts/lib/CrashCatch.ps1":  "code1:bfe8c96e54ec33d1f979ea6fd539cf1d93751fbaaff96c97892c637fe62f9639",
+                 "scripts/lib/CrashDump.ps1":  "code1:e7a3a2c580aaf7588a8537738fd14eebc7d2e3e6c25fe7b7389ef9aa5f24e0e6",
+                 "test/win32/crash-first-chance.ps1":  "code1:a9c8b92311666bf09babf1b368120a050ee1a69c91a9c5c7a1800b0120178130"
+             }
 }

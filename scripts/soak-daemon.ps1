@@ -123,7 +123,10 @@ param(
     [Parameter(Position = 0)]
     [ValidateSet('status', 'start', 'stop', 'pause', 'resume', 'tick', 'run', 'install', 'uninstall', 'busy', 'dry-run')]
     [string]$Command = 'status',
-    [string]$Repo = 'D:\git\ghoztty',
+    # Resolved in the body: the worktree this copy lives in (T2037). The literal
+    # 'D:\git\ghoztty' it used to default to made a bare run from lane B
+    # diagnose lane A's binaries.
+    [string]$Repo,
     # A comma-separated list, not a string[]: this value crosses a process
     # boundary every time `start` launches `run`, and `powershell -File` hands a
     # script its arguments as literal strings, so an array parameter arrives as
@@ -157,6 +160,7 @@ param(
     [string]$IgnoreTrees = '',
     [string]$Reason = ''
 )
+if (-not $Repo) { $Repo = Split-Path $PSScriptRoot -Parent }
 
 $ErrorActionPreference = 'Continue'
 
@@ -188,6 +192,25 @@ $IgnoreTreeList = @($IgnoreTrees -split ',' | ForEach-Object { $_.Trim() } |
 # test on a command line answers "is this process mine?" for the whole family.
 # It lives on the repo's drive because zig 0.15.2 asserts on a cache path whose
 # drive differs from the build's cwd (T243).
+#
+# ONE DAEMON PER BOX, AND IT IS LANE A'S (T2037). The default state dir is
+# per-user, not per-worktree, and `install` registers one per-user scheduled
+# task: a lane-B `start`/`install` would hand the box's idle soak to lane B's
+# checkout (or fight lane A's for the ledger). So the commands that start,
+# register or run THE daemon refuse outside lane a. A run with its own
+# -StateDir is a private daemon (the acceptance harness's shape) and is
+# allowed anywhere; read-only and control commands (status, busy, dry-run,
+# stop, pause, resume) are allowed anywhere too.
+$script:MachineDaemon = -not $StateDir
+if ($script:MachineDaemon -and $Command -in @('start', 'tick', 'run', 'install', 'uninstall')) {
+    . (Join-Path $PSScriptRoot 'lib\LoopLane.ps1')
+    $ownLane = Get-LoopLaneId -Repo (Split-Path $PSScriptRoot -Parent)
+    if (-not (Test-LoopLaneOwnsDelivery $ownLane)) {
+        Write-Host ("LANE REFUSED lane $ownLane does not $Command the box's soak daemon - it is one per-user " +
+            "daemon and belongs to lane a (the main worktree); pass -StateDir for a private one (T2037)")
+        exit 6
+    }
+}
 if (-not $StateDir) {
     $local = if ($env:LOCALAPPDATA) { $env:LOCALAPPDATA } else { Join-Path $env:TEMP 'ghoztty-local' }
     $StateDir = Join-Path $local 'ghoztty\soak-daemon'

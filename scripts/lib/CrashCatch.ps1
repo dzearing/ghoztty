@@ -429,7 +429,7 @@ function Resolve-LaneTestBinary {
     #>
     param(
         [Parameter(Mandatory)][ValidateSet('none', 'win32', 'agent')][string]$Lane,
-        [string]$Repo = 'D:\git\ghoztty',
+        [string]$Repo = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..')).TrimEnd('\'),
         [int]$MaxCandidates = 8,
         [string[]]$ExtraExeNames = @()
     )
@@ -520,7 +520,7 @@ function Get-NewestBuiltBinary {
     #>
     param(
         [Parameter(Mandatory)][string]$Name,
-        [string]$Repo = 'D:\git\ghoztty'
+        [string]$Repo = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..')).TrimEnd('\')
     )
     $root = Join-Path $Repo '.zig-cache\o'
     if (-not (Test-Path -LiteralPath $root)) { return $null }
@@ -551,7 +551,7 @@ function Get-FailingTestBinaryFromLog {
     #>
     param(
         [Parameter(Mandatory)][string]$LogPath,
-        [string]$Repo = 'D:\git\ghoztty'
+        [string]$Repo = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..')).TrimEnd('\')
     )
     if (-not (Test-Path -LiteralPath $LogPath)) { return $null }
     $hit = Select-String -Path $LogPath -Pattern '"([^"]*\.zig-cache[^"]*\.exe)"' -ErrorAction SilentlyContinue |
@@ -584,7 +584,7 @@ function Get-LaneTestBinary {
     #>
     param(
         [Parameter(Mandatory)][ValidateSet('none', 'win32', 'agent')][string]$Lane,
-        [string]$Repo = 'D:\git\ghoztty',
+        [string]$Repo = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..')).TrimEnd('\'),
         [switch]$AllowUnverified
     )
     $out = @()
@@ -916,7 +916,7 @@ function Invoke-CrashCatch {
         [int]$TimeoutSeconds = 1200,
         [int]$Keep = 3,
         [string]$Cdb,
-        [string]$Repo = 'D:\git\ghoztty',
+        [string]$Repo = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..')).TrimEnd('\'),
         [scriptblock]$Writer = { param($s) Write-Host $s }
     )
 

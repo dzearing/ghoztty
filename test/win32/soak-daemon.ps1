@@ -22,6 +22,7 @@
 #   U  a person using the box makes it busy (T1795)
 #   L  a round runs on the lane desktop, never the user's (T1813)
 #   H  stop leaves nothing behind, and stays stopped across a tick (T1795)
+#   R  another lane is refused the box's daemon; a private one is allowed (T2037)
 #
 # Hermetic: its own state directory, its own scratch directory, its own mutex
 # (derived from the state directory), and a FIXTURE command instead of a real
@@ -510,6 +511,44 @@ try {
     $r = Daemon @('start', '-MaxRounds', '1', '-FixtureCommand', 'exit 0', '-YieldPollSeconds', '1', '-IdleWaitSeconds', '1')
     Assert 'H7 an explicit start is what undoes it' ((Daemon @('status')).Out -notmatch 'stopped-by-request')
     Daemon @('stop') | Out-Null
+
+    ""
+    "R. the box's daemon is lane a's: another lane is refused it (T2037)"
+    # The default state dir is per-user, not per-worktree, so a lane-B `start`
+    # used to hand the box's idle soak to lane B's checkout. Driven with the
+    # lane forced to b and LOCALAPPDATA pointed at a sandbox, so the DEFAULT
+    # state dir is in play (that is what makes it the box's daemon) but a broken
+    # refusal starts something harmless that teardown can see and kill.
+    $priorLane = $env:GHOZTTY_LOOP_LANE
+    $priorLocal = $env:LOCALAPPDATA
+    $fakeLocal = Join-Path $stateDir 'fake-localappdata'
+    New-Item -ItemType Directory -Force $fakeLocal | Out-Null
+    try {
+        $env:GHOZTTY_LOOP_LANE = 'b'
+        $env:LOCALAPPDATA = $fakeLocal
+        foreach ($verb in @('start', 'tick', 'run')) {
+            $r = Invoke-DaemonRaw @($verb, '-Repo', $Repo, '-ScratchDir', $scratchDir, '-MaxRounds', '1',
+                '-FixtureCommand', 'exit 0', '-IgnorePids', $PID)
+            Assert "R1 lane b is refused ``$verb`` on the box's daemon (exit 6, LANE REFUSED)" `
+                ($r.Code -eq 6 -and $r.Out -match 'LANE REFUSED lane b') "exit $($r.Code): $($r.Out)"
+        }
+        Assert 'R2 and the refusal wrote nothing to the default state dir' `
+            (-not (Test-Path -LiteralPath (Join-Path $fakeLocal 'ghoztty\soak-daemon\state.json')))
+        $r = Invoke-DaemonRaw @('status', '-Repo', $Repo, '-ScratchDir', $scratchDir)
+        Assert 'R3 read-only status is still answered in lane b' ($r.Code -eq 0 -and $r.Out -notmatch 'LANE REFUSED') `
+            "exit $($r.Code): $($r.Out)"
+        # Positive control: a private daemon (its own -StateDir) is not the box's.
+        $r = Daemon @('run', '-MaxRounds', '1', '-FixtureCommand', 'exit 0', '-YieldPollSeconds', '1',
+            '-IdleWaitSeconds', '1', '-QuitAfterBusySeconds', '90')
+        Assert 'R4 control: lane b may still run a private daemon with its own -StateDir' `
+            ($r.Out -notmatch 'LANE REFUSED' -and $r.Code -ne 6)
+    }
+    finally {
+        if ($null -eq $priorLane) { Remove-Item Env:GHOZTTY_LOOP_LANE -ErrorAction SilentlyContinue }
+        else { $env:GHOZTTY_LOOP_LANE = $priorLane }
+        $env:LOCALAPPDATA = $priorLocal
+        Daemon @('stop') | Out-Null
+    }
 
     Complete-TestBody  # T1039: the last statement of the body an unwind can skip
 }

@@ -1,14 +1,14 @@
 {
     "guard":  "build-cache",
     "script":  "test/win32/build-cache.ps1",
-    "generated":  "2026-11-22T22:40:30-08:00",
-    "commit":  "b8f5c19c0",
+    "generated":  "2026-11-23T21:25:43-08:00",
+    "commit":  "a7ac15b3b",
     "uncommitted":  [
-                        "scripts/floor-lane.ps1"
+                        "scripts/crash-databreak.ps1"
                     ],
     "files":  {
                   "scripts/build-cache.ps1":  "d94c8308363992f42d7ef2c3b729dbce0a7cad28b41f415a7bad39cfab16013a",
-                  "scripts/crash-databreak.ps1":  "ec45063075848cb962ca00262960aec8380bd5de3f0d9f9bc9f1d25c109e3b0d",
+                  "scripts/crash-databreak.ps1":  "03e868f010ac75c549778e05aa225c97033a1af23bc86eec268cf5708f0dc3b6",
                   "scripts/floor-lane.ps1":  "75a211e4acdccc226d1cfd4e5a915cae8acc330ef7ef6e530876d302af448786",
                   "scripts/launch-upgrade.ps1":  "cdac13e044f5b31ec2346cbd23556ea45ddf937972e033f56f7a6451ffbaaaa1",
                   "scripts/lib/BuildCache.ps1":  "ee9ec82ca0da753164d67b9ab808265d29f45e0ec74512987d07bdeaf6fcf0a0",
@@ -18,7 +18,7 @@
               },
     "code":  {
                  "scripts/build-cache.ps1":  "code1:a881a2551b853c41020487d2e38b7e1c2abf97aebba4d8ce002511c6d6e92bb5",
-                 "scripts/crash-databreak.ps1":  "code1:e9cc905de7779e9fceb0676e2b5936ee9f2f5415e1b80369c00f5952d8f2185c",
+                 "scripts/crash-databreak.ps1":  "code1:a096e107f45f8fcf3586dc2dda9c85f5e2457b13915a21ef8a1db8e1dfece383",
                  "scripts/floor-lane.ps1":  "code1:012b7aabf50181fcf0163bb7ce283bfbcff55c58136c421037eda823b0e6b251",
                  "scripts/launch-upgrade.ps1":  "code1:bafd3732a4b148f497466a6a7215616df33652dfe4755e2aae4a986da0f32f9d",
                  "scripts/lib/BuildCache.ps1":  "code1:5ffaa24da9edbe853545916aa6b63591156044ac630695e790da2bc3cc83d8e1",

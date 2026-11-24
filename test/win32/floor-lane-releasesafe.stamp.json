@@ -1,19 +1,19 @@
 {
     "guard":  "lane-releasesafe",
     "script":  "test/win32/floor-lane-releasesafe.ps1",
-    "generated":  "2026-11-22T22:23:12-08:00",
-    "commit":  "b8f5c19c0",
+    "generated":  "2026-11-23T21:27:00-08:00",
+    "commit":  "a7ac15b3b",
     "uncommitted":  [
-                        "scripts/floor-lane.ps1"
+                        "scripts/soak-daemon.ps1"
                     ],
     "files":  {
                   "scripts/floor-lane.ps1":  "75a211e4acdccc226d1cfd4e5a915cae8acc330ef7ef6e530876d302af448786",
-                  "scripts/soak-daemon.ps1":  "d444b820a16c7cfac1a19a4aeae73beaa7af85babaff7e1efc64d871e8773f58",
+                  "scripts/soak-daemon.ps1":  "bd8726720ced0165a658128b044bce3f796b979f57049c92f4e8ab4687aba046",
                   "test/win32/floor-lane-releasesafe.ps1":  "691cb0b20e21706b03a604b3a91d7a5d409e0ce77f8315d29ddd896bccc0fe3e"
               },
     "code":  {
                  "scripts/floor-lane.ps1":  "code1:012b7aabf50181fcf0163bb7ce283bfbcff55c58136c421037eda823b0e6b251",
-                 "scripts/soak-daemon.ps1":  "code1:5d07c8eb61c58169d0491a19ca55afd87789c54a675166c0ac66b6cabff5c58c",
+                 "scripts/soak-daemon.ps1":  "code1:e0504a3985907d902284a87624a005ac8407d98a1a06afb491524d345552a298",
                  "test/win32/floor-lane-releasesafe.ps1":  "code1:644399fc620b31f00b97f06c004f6912ca0f7194bb56dc32a280a6f36c61aed5"
              }
 }

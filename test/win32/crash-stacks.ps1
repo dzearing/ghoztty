@@ -790,6 +790,70 @@ $laneText = ($laneOut | Out-String)
 Check 'floor-lane self-test still passes with the catcher wired in' ($laneText -match 'ALL PASS') `
     "tail: $(($laneOut | Select-Object -Last 3) -join ' / ')"
 
+# ------------------------- 9. a bare run reads ITS OWN checkout, not lane A's (T2037)
+#
+# The crash tools and their libraries used to default -Repo to the literal
+# D:\git\ghoztty, so a bare run from lane B's worktree resolved, caught and
+# symbolised lane A's binaries and reported them as lane B's. A second checkout
+# is faked here (scripts\ only, plus one built exe under its .zig-cache\o) and
+# every probe is run from it WITHOUT -Repo: the answer must name the fake
+# checkout. The literal checkout has no such exe, so the old default answers
+# $null / the literal path and scores red.
+
+$fakeCo = Join-Path $work 'ghoztty-t2037-b'
+New-Item -ItemType Directory -Force (Join-Path $fakeCo 'scripts') | Out-Null
+Copy-Item -Recurse -Force (Join-Path $Repo 'scripts\lib') (Join-Path $fakeCo 'scripts\lib')
+Copy-Item -Force (Join-Path $Repo 'scripts\crash-catch.ps1') (Join-Path $fakeCo 'scripts\crash-catch.ps1')
+$fakeExeDir = Join-Path $fakeCo '.zig-cache\o\t2037hash'
+New-Item -ItemType Directory -Force $fakeExeDir | Out-Null
+$fakeExe = Join-Path $fakeExeDir 't2037-probe.exe'
+Set-Content -LiteralPath $fakeExe -Value 'not a real exe' -Encoding ascii
+$fakeLog = Join-Path $work 't2037-lane.log'
+Set-Content -LiteralPath $fakeLog -Encoding ascii -Value @(
+    "error: while executing test 'x', the following command exited with code 3 (expected exited with code 0):",
+    '".\\.zig-cache\\o\\t2037hash\\t2037-probe.exe" "--seed=0x1"')
+$probe = Join-Path $work 't2037-probe.ps1'
+Set-Content -LiteralPath $probe -Encoding ascii -Value @(
+    ". '$fakeCo\scripts\lib\CrashCatch.ps1'",
+    ". '$fakeCo\scripts\lib\CrashDump.ps1'",
+    ". '$fakeCo\scripts\lib\DataBreak.ps1'",
+    "'NEWEST=' + (Get-NewestBuiltBinary -Name 't2037-probe.exe')",
+    "'FROMLOG=' + (Get-FailingTestBinaryFromLog -LogPath '$fakeLog')")
+$probeOut = @(& powershell -NoProfile -ExecutionPolicy Bypass -File $probe 2>&1 | ForEach-Object { "$_" })
+$probeText = $probeOut -join ' / '
+$newest = [string](@($probeOut | Where-Object { $_ -like 'NEWEST=*' }) | Select-Object -First 1)
+$fromLog = [string](@($probeOut | Where-Object { $_ -like 'FROMLOG=*' }) | Select-Object -First 1)
+Check 'T2037 Get-NewestBuiltBinary with no -Repo finds the exe in the checkout the library lives in' `
+    ($newest -eq ('NEWEST=' + $fakeExe)) "got: $probeText"
+Check 'T2037 Get-FailingTestBinaryFromLog with no -Repo resolves a relative log path against that checkout' `
+    ($fromLog -eq ('FROMLOG=' + $fakeExe)) "got: $probeText"
+# Every lib function that takes -Repo still defaults it from its own file, not
+# the literal: read back the defaults the parser sees, across the three libs.
+$laneALiteral = [regex]::Escape('D:\git\ghoztty')  # @repo-literal-fixture
+$literalDefaults = @(foreach ($lib in @('CrashCatch', 'CrashDump', 'DataBreak')) {
+        Select-String -LiteralPath (Join-Path $Repo "scripts\lib\$lib.ps1") `
+            -Pattern ('^\s*\[string\]\$Repo\s*=\s*''' + $laneALiteral + '''') |
+            ForEach-Object { "$lib.ps1:$($_.LineNumber)" }
+    })
+Check 'T2037 no crash library keeps the lane-A literal as a -Repo default' ($literalDefaults.Count -eq 0) `
+    "still literal: $($literalDefaults -join ', ')"
+# The scripts the task names resolve the same way, in their bodies.
+$literalScripts = @(foreach ($s in @('crash-catch', 'crash-databreak', 'soak-daemon', 'test-binary-soak', 't857-boost-ab')) {
+        $p = Join-Path $Repo "scripts\$s.ps1"
+        $t = Get-Content -LiteralPath $p -Raw
+        if ($t -match ('\[string\]\$Repo\s*=\s*''' + $laneALiteral + '''') -or
+            $t -notmatch [regex]::Escape('if (-not $Repo) { $Repo = Split-Path $PSScriptRoot -Parent }')) { "$s.ps1" }
+    })
+Check 'T2037 every named crash/soak script resolves -Repo from its own checkout' ($literalScripts.Count -eq 0) `
+    "still literal: $($literalScripts -join ', ')"
+# And end to end: crash-catch.ps1 run bare from the fake checkout looks for the
+# lane's binary THERE (the fake has no lane build, so it says where it looked).
+$ccLog = Join-Path $work 't2037-cc.log'
+cmd.exe /c "powershell -NoProfile -File `"$fakeCo\scripts\crash-catch.ps1`" -Lane none > `"$ccLog`" 2>&1" | Out-Null
+$ccText = [string](Get-Content $ccLog -Raw -ErrorAction SilentlyContinue)
+Check 'T2037 crash-catch.ps1 run bare from another checkout searches that checkout' `
+    ($ccText -match [regex]::Escape("under $fakeCo\.zig-cache\o")) "tail: $($ccText -replace '\s+', ' ')"
+
 # --------------------------------------------------------------------- cleanup
 
 Remove-Item $work -Recurse -Force -ErrorAction SilentlyContinue

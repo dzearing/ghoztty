@@ -89,8 +89,12 @@ param(
     [switch]$Disarm,
     [switch]$NoElevate,
     [int]$SinceHours = 24,
-    [string]$Repo = 'D:\git\ghoztty'
+    # Resolved in the body: the worktree this copy lives in (T2037). The literal
+    # 'D:\git\ghoztty' it used to default to made a bare run from lane B
+    # diagnose lane A's binaries.
+    [string]$Repo
 )
+if (-not $Repo) { $Repo = Split-Path $PSScriptRoot -Parent }
 
 $ErrorActionPreference = 'Continue'
 . "$PSScriptRoot\lib\CrashCatch.ps1"
