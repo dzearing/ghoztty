@@ -7488,6 +7488,14 @@ pub const Keybinds = struct {
                 .{ .key = .{ .unicode = 's' }, .mods = .{ .ctrl = true, .shift = true } },
                 .{ .toggle_pane_sidebar = {} },
             );
+            // The Set Pane Banner editor (T3559; mac: cmd+r): Windows'
+            // Ctrl+Shift+B, for Windows' reason: plain ctrl+r is the shell's
+            // reverse history search.
+            try self.set.put(
+                alloc,
+                .{ .key = .{ .unicode = 'b' }, .mods = .{ .ctrl = true, .shift = true } },
+                .{ .prompt_surface_banner = {} },
+            );
         }
         {
             // On macOS we default to super but everywhere else

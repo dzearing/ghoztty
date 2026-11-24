@@ -57,6 +57,8 @@ const color_math = @import("../win32/color_math.zig");
 const Application = @import("class/application.zig").Application;
 const Window = @import("class/window.zig").Window;
 const PaneSidebar = @import("PaneSidebar.zig");
+const BannerEditor = @import("BannerEditor.zig");
+const pane_banner_rules = @import("pane_banner_rules.zig");
 const Tab = @import("class/tab.zig").Tab;
 const Surface = @import("class/surface.zig").Surface;
 const CloseUndo = @import("CloseUndo.zig");
@@ -135,6 +137,7 @@ pub fn handleSeam(app: Context, request: Request) Allocator.Error!server.SeamRep
     if (comptime !build_config.is_debug) return .unhandled;
     if (std.mem.eql(u8, request.action, "press-key")) return .{ .reply = try pressKey(app, request) };
     if (std.mem.eql(u8, request.action, "pane-sidebar")) return .{ .reply = try paneSidebar(app, request) };
+    if (std.mem.eql(u8, request.action, "pane-banner")) return .{ .reply = try paneBanner(app, request) };
     if (!std.mem.eql(u8, request.action, "capture-pane")) return .unhandled;
     return .{ .reply = try capturePane(app, request) };
 }
@@ -204,6 +207,93 @@ fn paneSidebar(app: Context, request: Request) Allocator.Error![]u8 {
     const rep = try sidebar.report(arena);
     var out: std.Io.Writer.Allocating = .init(arena);
     std.json.Stringify.value(.{ .success = true, .sidebar = rep }, .{}, &out.writer) catch return error.OutOfMemory;
+    return c_alloc.dupe(u8, out.written());
+}
+
+/// `pane-banner --target=<pane> [--click=card|chevron]
+/// [--editor-text=<text>] [--editor-key=return|ctrl+return|escape]` (T3559):
+/// the pointer and keyboard the headless harness does not have, for the
+/// banner card and its editor. `--click=card` is a click on the card away
+/// from any link (what its release queues), `--click=chevron` the chevron's
+/// own `clicked`. `--editor-text` replaces the open editor's text and
+/// `--editor-key` presses one key in it through the text box's handler -
+/// `pass` in the reply means the key was left to the text view (Return: a
+/// newline). Reply: the card (`shown`, `collapsible`, `collapsed`) and the
+/// editor (`open`, its `pane`, its `text`), after the clicks and keys.
+fn paneBanner(app: Context, request: Request) Allocator.Error![]u8 {
+    var target_arg: ?[]const u8 = null;
+    var click_arg: ?[]const u8 = null;
+    var text_arg: ?[]const u8 = null;
+    var key_arg: ?[]const u8 = null;
+    for (request.arguments orelse &.{}) |arg| {
+        if (std.mem.startsWith(u8, arg, "--target=")) target_arg = arg["--target=".len..];
+        if (std.mem.startsWith(u8, arg, "--click=")) click_arg = arg["--click=".len..];
+        if (std.mem.startsWith(u8, arg, "--editor-text=")) text_arg = arg["--editor-text=".len..];
+        if (std.mem.startsWith(u8, arg, "--editor-key=")) key_arg = arg["--editor-key=".len..];
+    }
+    const target_name = target_arg orelse return server.errorResponse(c_alloc, "--target is required for pane-banner", .{});
+
+    var arena_state = std.heap.ArenaAllocator.init(c_alloc);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const target = switch (try resolve(arena, app, target_name)) {
+        .found => |t| t,
+        .ambiguous => |windows| return server.errorResponse(c_alloc, "{s}", .{
+            try target_lookup.ambiguityError(arena, target_name, windows),
+        }),
+        .not_found => return server.errorResponse(c_alloc, "pane '{s}' not found in registry", .{target_name}),
+    };
+    const surface = target.surface() orelse
+        return server.errorResponse(c_alloc, "pane '{s}' is no longer alive", .{target_name});
+    const card = surface.paneBannerCard();
+
+    if (click_arg) |click| {
+        const c = card orelse return server.errorResponse(c_alloc, "pane '{s}' has no banner", .{target_name});
+        if (std.mem.eql(u8, click, "card")) {
+            c.cardClicked();
+        } else if (std.mem.eql(u8, click, "chevron")) {
+            c.chevronClicked();
+        } else return server.errorResponse(c_alloc, "--click must be card or chevron", .{});
+    }
+
+    var effect: ?pane_banner_rules.EditorKey = null;
+    if (text_arg != null or key_arg != null) {
+        const editor = BannerEditor.current() orelse
+            return server.errorResponse(c_alloc, "no banner editor is open", .{});
+        if (text_arg) |t| editor.setText(t);
+        if (key_arg) |k| {
+            const r = pane_banner_rules;
+            const press: [2]c_uint = if (std.mem.eql(u8, k, "return"))
+                .{ r.key_return, 0 }
+            else if (std.mem.eql(u8, k, "ctrl+return"))
+                .{ r.key_return, r.mod_control }
+            else if (std.mem.eql(u8, k, "escape"))
+                .{ r.key_escape, 0 }
+            else
+                return server.errorResponse(c_alloc, "--editor-key must be return, ctrl+return or escape", .{});
+            effect = editor.key(press[0], press[1]);
+        }
+    }
+
+    const editor = BannerEditor.current();
+    const shown = if (card) |c| c.getText() != null else false;
+    const rep = .{
+        .success = true,
+        .banner = .{
+            .shown = shown,
+            .collapsible = if (card) |c| c.isCollapsible() else false,
+            .collapsed = if (card) |c| shown and c.isCollapsible() and c.collapsed else false,
+            .text = surface.getPaneBanner(),
+        },
+        .editor = .{
+            .open = editor != null,
+            .pane = if (editor) |e| e.surface.paneId() else null,
+            .text = if (editor) |e| try e.text(arena) else null,
+        },
+        .key_effect = if (effect) |e| @tagName(e) else null,
+    };
+    var out: std.Io.Writer.Allocating = .init(arena);
+    std.json.Stringify.value(rep, .{}, &out.writer) catch return error.OutOfMemory;
     return c_alloc.dupe(u8, out.written());
 }
 

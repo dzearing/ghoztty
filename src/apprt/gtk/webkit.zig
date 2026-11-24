@@ -570,3 +570,32 @@ pub extern fn gtk_widget_set_focusable(widget: *GtkWidget, focusable: c_int) voi
 pub extern fn gtk_orientable_set_orientation(orientable: *GtkWidget, orientation: c_int) void;
 pub extern fn gtk_gesture_click_new() *GtkEventController;
 pub extern fn gtk_event_controller_get_current_event_state(controller: *GtkEventController) c_uint;
+
+// --- The Set Pane Banner editor (T3559) -------------------------------------
+
+/// `GtkTextIter`: a stack struct GTK fills in. 80 bytes on every 64-bit
+/// target (14 pointer/int fields, padded); never read field by field.
+pub const GtkTextIter = extern struct { opaque_bytes: [10]u64 = [_]u64{0} ** 10 };
+pub const GtkTextBuffer = opaque {};
+pub extern fn gtk_text_view_new() *GtkWidget;
+pub extern fn gtk_text_view_get_buffer(view: *GtkWidget) *GtkTextBuffer;
+pub extern fn gtk_text_view_set_wrap_mode(view: *GtkWidget, mode: c_int) void;
+pub extern fn gtk_text_view_set_monospace(view: *GtkWidget, monospace: c_int) void;
+pub extern fn gtk_text_view_set_accepts_tab(view: *GtkWidget, accepts: c_int) void;
+pub extern fn gtk_text_buffer_set_text(buffer: *GtkTextBuffer, text: [*]const u8, len: c_int) void;
+pub extern fn gtk_text_buffer_get_bounds(buffer: *GtkTextBuffer, start: *GtkTextIter, end: *GtkTextIter) void;
+pub extern fn gtk_text_buffer_get_text(buffer: *GtkTextBuffer, start: *const GtkTextIter, end: *const GtkTextIter, include_hidden: c_int) [*:0]u8;
+pub extern fn gtk_text_buffer_select_range(buffer: *GtkTextBuffer, ins: *const GtkTextIter, bound: *const GtkTextIter) void;
+/// `GTK_WRAP_WORD_CHAR`.
+pub const wrap_word_char: c_int = 3;
+pub extern fn adw_alert_dialog_new(heading: ?[*:0]const u8, body: ?[*:0]const u8) *GtkWidget;
+pub extern fn adw_alert_dialog_add_response(dialog: *GtkWidget, id: [*:0]const u8, label: [*:0]const u8) void;
+pub extern fn adw_alert_dialog_set_response_appearance(dialog: *GtkWidget, id: [*:0]const u8, appearance: c_int) void;
+pub extern fn adw_alert_dialog_set_default_response(dialog: *GtkWidget, id: ?[*:0]const u8) void;
+pub extern fn adw_alert_dialog_set_close_response(dialog: *GtkWidget, id: [*:0]const u8) void;
+pub extern fn adw_alert_dialog_set_extra_child(dialog: *GtkWidget, child: ?*GtkWidget) void;
+/// `ADW_RESPONSE_SUGGESTED`.
+pub const adw_response_suggested: c_int = 1;
+pub extern fn adw_dialog_present(dialog: *GtkWidget, parent: ?*GtkWidget) void;
+pub extern fn adw_dialog_force_close(dialog: *GtkWidget) void;
+pub extern fn adw_dialog_set_focus_widget(dialog: *GtkWidget, focus: ?*GtkWidget) void;

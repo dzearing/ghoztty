@@ -1095,6 +1095,12 @@ pub const Surface = extern struct {
 
     // ---- The pane banner (T3339) ------------------------------------------
 
+    /// The banner card itself, or null when this pane never had one (the
+    /// `pane-banner` test seam, T3559).
+    pub fn paneBannerCard(self: *Self) ?*PaneBanner {
+        return self.private().banner;
+    }
+
     /// The pane's banner source, or null when it has none (`+list`'s
     /// `banner` field).
     pub fn getPaneBanner(self: *Self) ?[]const u8 {

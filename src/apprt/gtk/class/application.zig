@@ -32,6 +32,7 @@ const gtk_version = @import("../gtk_version.zig");
 const winprotopkg = @import("../winproto.zig");
 const SessionLayout = @import("../SessionLayout.zig");
 const PaneSidebar = @import("../PaneSidebar.zig");
+const BannerEditor = @import("../BannerEditor.zig");
 const AgentRecovery = @import("../AgentRecovery.zig");
 const ApprtApp = @import("../App.zig");
 const Common = @import("../class.zig").Common;
@@ -906,12 +907,12 @@ pub const Application = extern struct {
             // (T3330 L1 bring-up). Each is a Linux-seat port task; the list
             // and owners are in docs/design/windows-parity-tasks/T3330.md.
             .toggle_pane_sidebar => return Action.togglePaneSidebar(self),
+            .prompt_banner => return Action.promptBanner(self, target),
 
             .toggle_hero_mode,
             .toggle_rearrange_mode,
             .stash_pane,
             .restore_stashed_pane,
-            .prompt_banner,
             => {
                 log.warn("ghoztty action not ported to gtk yet action={}", .{action});
                 return false;
@@ -3315,6 +3316,20 @@ const Action = struct {
             .app => return false,
             .surface => |surface| {
                 surface.rt_surface.gobj().setPaneBanner(value.text);
+                return true;
+            },
+        }
+    }
+
+    /// `prompt_surface_banner` (T3559; Ctrl+Shift+B, the Mac's Cmd+R): the
+    /// Set Pane Banner editor for the pane. A viewer pane has no banner.
+    pub fn promptBanner(app: *Application, target: apprt.Target) bool {
+        switch (target) {
+            .app => return false,
+            .surface => |surface| {
+                const s = surface.rt_surface.gobj();
+                if (s.isViewer()) return false;
+                BannerEditor.open(app.allocator(), s);
                 return true;
             },
         }

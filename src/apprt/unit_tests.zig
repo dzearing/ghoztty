@@ -615,6 +615,9 @@ test {
     // heading sizes, a cell's alignment, a link's local path (T3339). No GTK
     // imports.
     _ = @import("gtk/banner_markup.zig");
+    // ... when the card collapses and to what, and the banner editor's keys
+    // (T3559). No GTK imports.
+    _ = @import("gtk/pane_banner_rules.zig");
     // ... and the pane sidebar's: a row's text, the mode, where the shared
     // flags are kept (T3557). No GTK imports.
     _ = @import("gtk/pane_sidebar_rows.zig");
