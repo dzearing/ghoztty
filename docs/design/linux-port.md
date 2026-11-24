@@ -111,7 +111,7 @@ first commit on `main`), so `next` takes them in that order within the P2 band:
 | stacked-panes | L11e T3567 (done: one stage the shared layout places, minimum + strips, focus brings forward, gutter drags, `+list minimized`; + glides T3625, gutter bar T3626, persistence/undo T3627, featured side pane T3628, live relabel/strip drag/columns T3629) |
 | terminal-resize | L11f T3568 |
 | settings | L11g T3569 |
-| keyboard-shortcuts | L11h T3570 |
+| keyboard-shortcuts | L11h T3570 (done: Ctrl+Shift+/, menu, palette, live catalog, search, Run, cheat sheet; + Run on hover T3639, menu/palette check T3640) |
 | background-windows | L11i T3571 |
 | memory | L11j T3572 |
 | window-modes | L11k T3573 |

@@ -1,8 +1,8 @@
 {
     "guard":  "tree-swap",
     "script":  "test/win32/tree-swap-audit.ps1",
-    "generated":  "2026-11-23T23:27:40-08:00",
-    "commit":  "bb415c56e",
+    "generated":  "2026-11-24T00:38:28-08:00",
+    "commit":  "32129764b",
     "uncommitted":  [
 
                     ],
@@ -343,7 +343,7 @@
                   "src/apprt/win32/shadow_layer.zig":  "7884f74af1ae0f59b8c892227a05c2e8722fe713090fcb5810f33b4830ff21d4",
                   "src/apprt/win32/ShareMachineRow.zig":  "a14730ba50280286a89dd4f567be1bce63f0a2f9488eb72573b65a14da7d6038",
                   "src/apprt/win32/sheet_workers.zig":  "73af86c1b6068a5bd493ac5253f149ffe024cd7a15f1d917c22909faa8998d0a",
-                  "src/apprt/win32/shortcut_catalog.zig":  "fc22666e762e7c0d0f4445c20e8f8c1e896bf30c25700b9ccec830ee2f9d5879",
+                  "src/apprt/win32/shortcut_catalog.zig":  "0683bb8e4e8ae5a182875a017a635b88fa53eba4020baa1e8e48841a45edac11",
                   "src/apprt/win32/shortcut_guide_layout.zig":  "d9356d3a6621e692e33289a3f9ada33dd70126f61567bf2d29414c5c3cd41bcb",
                   "src/apprt/win32/ShortcutGuideWindow.zig":  "fa34210c8821c5a57f0c9fd6068951b7aae86d805948f8ed2d5374b48a5ad3da",
                   "src/apprt/win32/sidebar_symbol.zig":  "f153264518aacc2fdcebe28a85f23c94a5be576cb2784ee094f3a519b1836986",

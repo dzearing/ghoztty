@@ -1353,6 +1353,40 @@ Settings. Still to port: curated pages T3631, lists/keyed keys T3632,
 Config file/backups/undo T3633, the file-mode and local-time fix T3634,
 Sessions & Remote pages T3635, and themes + preview T3636.
 
+## The keyboard shortcut guide (T3570)
+
+`show_keyboard_shortcuts` - **Ctrl+Shift+/** on Linux (GTK's Ctrl+?; plain
+Ctrl+/ is the shell's ^_), the main menu's "Keyboard Shortcuts"
+(`app.show-keyboard-shortcuts`) or the command palette - opens
+`src/apprt/gtk/ShortcutGuideWindow.zig`. Its rows are NOT GTK code: they are
+win32's pure `src/apprt/win32/shortcut_catalog.zig` built from the live
+config against a fresh default one (`docs/reference/keyboard-shortcuts.md`).
+Where Linux words differ (Super, "Quit Ghoztty", the GTK inspector, no
+updater) it is a comptime `linux` branch in that file, so a curation fix is
+made once for both seats.
+
+- The window routes Up/Down/Return/Escape/Ctrl+F itself (a capture-phase key
+  controller), rebuilds on `config_change` (app target), and Runs a row in the
+  most recently focused terminal window (`gtk_application_get_windows` order;
+  the guide is not one of the application's windows).
+- GtkSearchEntry reports `search-changed` after the fact, even for text the
+  guide set: the handler ignores an unchanged query, or a selection made under
+  a query is reset (G15b).
+- The unbound toggle persists in `$XDG_STATE_HOME/ghoztty/shortcut-guide-unbound[-debug]`;
+  the cheat sheet is written to `$XDG_RUNTIME_DIR`.
+- **Seam**: debug-only `hl_ipc shortcut-guide --op=action|open|state|select|run|escape|cheat-sheet|shot|close
+  [--query=] [--category=] [--unbound=0|1] [--down=n] [--path=]`, win32's op
+  names and reply shape (`data.rows[]`). `shot` renders the whole window from
+  its own render; a content-box shot comes out transparent behind white text.
+
+```powershell
+powershell -NoProfile -File scripts\linux\wsl-run.ps1 -CommandFile test\linux\shortcut-guide.sh
+```
+
+Ends `SHORTCUT GUIDE: ALL PASS` (28 checks); `NEGATIVE=1` presses Ctrl+/ and
+must go red; `SHOT_OUT=<dir>` keeps two PNGs. Still open: Run on hover T3639,
+a check through the menu item and the palette T3640.
+
 ## The interop PATH trap
 
 Inside WSL the Windows `PATH` is appended by default, so a bare `ghoztty` can
