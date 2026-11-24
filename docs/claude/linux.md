@@ -1459,6 +1459,37 @@ caches), hence the warm-up. The agent climbs ~40-50 KB per closed session,
 linearly (T3646). A hidden pane does NOT yet give back its frames on GTK -
 the shared release is win32-only (T3645).
 
+## Window modes: the launch latch (T3573)
+
+`docs/reference/window-modes.md`, GTK-translated. `macos-window-mode`
+(`separate` default, `single`) is read **once**, in `Application.init`,
+through win32's pure `src/apprt/win32/window_mode.zig` (`latch`), so the rule
+is one function on both frontends. A reload never moves it: when the file now
+says the other mode the app logs `window mode: <in force> in force; the config
+now says <other>, which takes effect at the next launch`. With
+`quit-after-last-window-closed = false` the app stays resident with no
+window, which looks quit to the person, so the first terminal window opened
+while none is open re-reads it (`relatchIdle`, win32 T3212; logged as
+`window mode: A -> B (re-read with no window open)`). The quick terminal
+never counts.
+
+What single mode then DOES - one shared toplevel, workspaces switched from
+the sidebar's all-windows list - is not built yet. The mechanism is decided
+(T3573's progress log) and carried by T3648 (foundation: each workspace keeps
+its own `Window`, only its content moves into the shared toplevel; one
+owner-of helper replaces every widget-to-window lookup) and T3649-T3655
+(switching, parked layout, shade fade, closing, CLI, activity, persistence).
+Until then `single` is latched and logged and every window is still its own.
+
+```powershell
+powershell -NoProfile -File scripts\linux\wsl-run.ps1 -CommandFile test\linux\window-mode.sh
+```
+
+Ends `WINDOW MODE: ALL PASS` (13 checks). W6 is the negative control: the
+same app with the key unset latches `separate`. A resident app does not quit
+on SIGTERM (T3656), so the script KILLs the first app after a TERM that did
+not work.
+
 ## The interop PATH trap
 
 Inside WSL the Windows `PATH` is appended by default, so a bare `ghoztty` can
