@@ -9483,6 +9483,20 @@ $GuardTable = @(
         )
     },
 
+    # T2179 - the sleep-handshake sweep: a bare Start-Sleep standing in for a
+    # handshake (T1164's section-M flake shape), held to a per-file ratchet
+    # that may only fall; a new harness starts at zero.
+    [pscustomobject]@{
+        Name   = 'sleep-handshake'
+        Script = 'test\win32\sleep-handshake-audit.ps1'
+        Stamp  = 'test\win32\sleep-handshake-audit.stamp.json'
+        Covers = @(
+            'test\win32\sleep-handshake-audit.ps1',
+            'test\win32\lib\SleepAudit.ps1',
+            'test\win32\sleep-handshake-audit.baseline.json'
+        )
+    },
+
     # T2024 - the WMI-bound audit: the shared libraries look processes up in
     # the kernel table (lib\ProcessTable.ps1), and anything left on WMI is
     # bounded. Covers the table itself (section D runs it) and the libraries

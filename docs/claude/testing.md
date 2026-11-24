@@ -1597,6 +1597,17 @@ caller stays under `Stop`, and `$LASTEXITCODE` comes back.
 2026-11-24 sites are a per-file baseline that only goes down. A call whose
 failure IS the assertion says so: `# native-stderr: <reason>`.
 
+**Wait on the condition, never sleep past it** (T2179). A bare `Start-Sleep`
+after an action - "by now the window is up" - passes on an idle box and goes
+red only when the box is busy (T1164's section-M flake). Wait on the thing the
+sleep stands for instead: a `Wait-*` helper or an until-loop with a deadline,
+where the sleep is only the poll interval. `test\win32\sleep-handshake-audit.ps1`
+classifies every sleep (poll / settle / bare, `test\win32\lib\SleepAudit.ps1`)
+and holds the bare count per file to a baseline that only goes down; a new
+harness starts at zero. When the product's own timer IS the subject (a
+debounce, a coalesce window), say so on the line or the line above:
+`# settle: <reason>` - a marker with no reason excuses nothing.
+
 **A pixel aggregate scores its subject, not the whole capture** (T1281). A mean,
 a lit-pixel count or a colour set taken over the full window mixes the subject
 with chrome, so the chrome alone can pass it - T1115's whole-window mean

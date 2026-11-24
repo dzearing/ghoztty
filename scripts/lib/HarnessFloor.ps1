@@ -69,6 +69,7 @@ $script:HARNESS_FLOOR_AUDITS = @(
     [pscustomobject]@{ Name = 'click-coord-audit.ps1'; Why = 'a click is aimed in screen coordinates, so a client offset cannot miss silently and fail a feature that works (T1032)' }
     [pscustomobject]@{ Name = 'echo-marker-audit.ps1'; Why = 'a wait for a typed marker says whether the shell echoing it is enough, so an echo cannot score a command that has not run (T1143)' }
     [pscustomobject]@{ Name = 'native-stderr-audit.ps1'; Why = 'a redirected app call under Stop is wrapped, so the CLI''s "Waiting for Ghoztty to answer" note cannot end a run past its cleanup (T2176)' }
+    [pscustomobject]@{ Name = 'sleep-handshake-audit.ps1'; Why = 'a fixed sleep standing in for a handshake can only get rarer, so a harness cannot newly pass on an idle box and go red on a busy one (T2179)' }
     [pscustomobject]@{ Name = 'pixel-oracle-audit.ps1'; Why = 'a pixel aggregate scores its subject''s region, or says why the whole capture is the region, so chrome alone cannot pass it (T1281)' }
     [pscustomobject]@{ Name = 'seam-audit.ps1'; Why = 'an env seam a script sets is classified, so the state it hides is armed, a named gap, or knowingly out of reach (T796)' }
     [pscustomobject]@{ Name = 'isolation-meta.ps1'; Why = 'a script drives its own endpoints, never the user terminal''s' }
