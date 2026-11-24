@@ -1,14 +1,14 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-11-24T15:40:56-08:00",
-    "commit":  "37b188e98",
+    "generated":  "2026-11-24T15:54:20-08:00",
+    "commit":  "39a2a3e16",
     "uncommitted":  [
-
+                        "test/win32/tab-strip.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "cfa23792d110d499fa4086697daa516d218d0d110e594a7452167a81220ee15e",
-                  "scripts/lib/HarnessFloor.ps1":  "3b6ae6f1b53bd84d541bfa0b46fd0c47eb0d3976d66bf996ef115fc7e2dbf80c",
+                  "scripts/lib/HarnessFloor.ps1":  "01bb2070f33c670359a93275a510f38d74feda84c55069fe5433d91aaec71cd5",
                   "scripts/vt-escape-scan.ps1":  "a23758e33821d194e040b24ac5e9811b705f53c5fc0313633aa1478f11567ced",
                   "test/win32/about-links.ps1":  "cb6ba712f258265f9a5d03dc219567a0025a1f081a2b7d2029586140247906eb",
                   "test/win32/acceptance-parallel.ps1":  "168b64fe36c79ceb90cb24c2edbd2a9dd7a0977cd174423927f31fc9f34306cd",
@@ -354,6 +354,7 @@
                   "test/win32/lib/SharedLog.ps1":  "8d1afd2835838f9e391ce76a4e212a72f64a2773efb602b58209b7eaa4d63e05",
                   "test/win32/lib/ShowText.ps1":  "1e9192fd782ebc9c5634c7a70a355a2c23a8b139e8629f7e345e312a14b32232",
                   "test/win32/lib/SkipAudit.ps1":  "74d79e19797e8aa1aa66043e3af367f5bb058e7c57196c26a0c8ccf30f020fef",
+                  "test/win32/lib/SleepAudit.ps1":  "5a7848f1c893744ac3027311e82473b94e340604d4e7483a38bfe70a2275cf66",
                   "test/win32/lib/StderrCaptureAudit.ps1":  "e25ef8505c7dcefaf623638d0214b86d24b489dce6894d64ac8514905f97a7d4",
                   "test/win32/lib/TestClient.ps1":  "2540c6af1c32c497f17c0e4fe04fc49480072ef7b54d464b12d0bd252897a3c5",
                   "test/win32/lib/TestDesktop.ps1":  "9128062457c903e169d5d099e15c5348bfe81de919be75dc767ee1dd94abbaf2",
@@ -556,6 +557,7 @@
                   "test/win32/single-window-mode.ps1":  "7b602d894485e2949b540550b78bea9a2c262ff5a645b811ea98b2bc15d57275",
                   "test/win32/size-burst-canvas.ps1":  "c64c1f92290f8d5478d7e2d6a11e928d804f58088c05ed4bcfdf0f28c6e05ba0",
                   "test/win32/skip-visibility.ps1":  "fb9d1c819cb4f9ca092fa4f8610032d61c8d7ed7216d4fc45732ac054b271d10",
+                  "test/win32/sleep-handshake-audit.ps1":  "a009d349a848fe3f97f43f387996734cf7211ad861c4372a9472763b21551f44",
                   "test/win32/soak.ps1":  "86bd290ce4c966d453d268f0225abac60992cd9c2dae1e8b49752d45b896b4cb",
                   "test/win32/soak-daemon.ps1":  "7c34969f977bc70c1b4348444ab5288937e1f3a711a5d457bb0238c7b16f81c3",
                   "test/win32/split-dim.ps1":  "f7fddb7e47fe4b82b735103e1f4abcea05e9ec40be893c9bb35590098f611a30",
@@ -580,7 +582,7 @@
                   "test/win32/suite-run.ps1":  "8cc3cab992e19fd46bddd23f273c6df5b5850147a5bfba338c8dd6144640d0b3",
                   "test/win32/tab-color.ps1":  "07f0f69e190399c852b04c37e07666927a6f9f19dbfb31f4c920ee81e697febc",
                   "test/win32/tab-overview-action.ps1":  "e20977448b9d6f5a30acf7e71cfa6cae58389f9e719eab6884dcab83f5de8938",
-                  "test/win32/tab-strip.ps1":  "57a1241476e86fdc749aef34e01e1810ef238ae98bc933144cc13d364d502ffa",
+                  "test/win32/tab-strip.ps1":  "353230f800e330f171386007eef5780fba3463eb720d9792d25e73c40f3d65ba",
                   "test/win32/tab-strip-autohide.ps1":  "0cf86103c3e6cad7fc179939568b35edfddb16dd400b50116d6f602c92478353",
                   "test/win32/tab-tooltip.ps1":  "61873b9c1ca1769ea119310f65bba170f01a8fc85a4958faa53dfce40adef56e",
                   "test/win32/target-staleness.ps1":  "40ccb7c6dd7adc7f580b7dc8b3c505e75f7d50a6da468ea47a062e7da3f759ec",

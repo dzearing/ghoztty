@@ -1,8 +1,8 @@
 {
     "guard":  "task-dashboard",
     "script":  "test/win32/task-dashboard.ps1",
-    "generated":  "2026-11-24T15:28:17-08:00",
-    "commit":  "37b188e98",
+    "generated":  "2026-11-24T15:39:19-08:00",
+    "commit":  "39a2a3e16",
     "uncommitted":  [
 
                     ],

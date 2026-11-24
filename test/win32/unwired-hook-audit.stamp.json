@@ -1,8 +1,8 @@
 {
     "guard":  "unwired-hook",
     "script":  "test/win32/unwired-hook-audit.ps1",
-    "generated":  "2026-11-24T15:25:36-08:00",
-    "commit":  "37b188e98",
+    "generated":  "2026-11-24T15:38:24-08:00",
+    "commit":  "39a2a3e16",
     "uncommitted":  [
 
                     ],
@@ -1658,6 +1658,7 @@
                   "test/win32/single-window-mode.ps1":  "7b602d894485e2949b540550b78bea9a2c262ff5a645b811ea98b2bc15d57275",
                   "test/win32/size-burst-canvas.ps1":  "c64c1f92290f8d5478d7e2d6a11e928d804f58088c05ed4bcfdf0f28c6e05ba0",
                   "test/win32/skip-visibility.ps1":  "fb9d1c819cb4f9ca092fa4f8610032d61c8d7ed7216d4fc45732ac054b271d10",
+                  "test/win32/sleep-handshake-audit.ps1":  "a009d349a848fe3f97f43f387996734cf7211ad861c4372a9472763b21551f44",
                   "test/win32/soak.ps1":  "86bd290ce4c966d453d268f0225abac60992cd9c2dae1e8b49752d45b896b4cb",
                   "test/win32/soak-daemon.ps1":  "7c34969f977bc70c1b4348444ab5288937e1f3a711a5d457bb0238c7b16f81c3",
                   "test/win32/split-dim.ps1":  "f7fddb7e47fe4b82b735103e1f4abcea05e9ec40be893c9bb35590098f611a30",
@@ -1682,7 +1683,7 @@
                   "test/win32/suite-run.ps1":  "8cc3cab992e19fd46bddd23f273c6df5b5850147a5bfba338c8dd6144640d0b3",
                   "test/win32/tab-color.ps1":  "07f0f69e190399c852b04c37e07666927a6f9f19dbfb31f4c920ee81e697febc",
                   "test/win32/tab-overview-action.ps1":  "e20977448b9d6f5a30acf7e71cfa6cae58389f9e719eab6884dcab83f5de8938",
-                  "test/win32/tab-strip.ps1":  "57a1241476e86fdc749aef34e01e1810ef238ae98bc933144cc13d364d502ffa",
+                  "test/win32/tab-strip.ps1":  "353230f800e330f171386007eef5780fba3463eb720d9792d25e73c40f3d65ba",
                   "test/win32/tab-strip-autohide.ps1":  "0cf86103c3e6cad7fc179939568b35edfddb16dd400b50116d6f602c92478353",
                   "test/win32/tab-tooltip.ps1":  "61873b9c1ca1769ea119310f65bba170f01a8fc85a4958faa53dfce40adef56e",
                   "test/win32/target-staleness.ps1":  "40ccb7c6dd7adc7f580b7dc8b3c505e75f7d50a6da468ea47a062e7da3f759ec",

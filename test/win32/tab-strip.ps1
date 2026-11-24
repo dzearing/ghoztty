@@ -140,6 +140,52 @@ function Kill-RepoInstances {
     [void](Stop-RepoGhoztty -Exe $exe -AppOnly -SettleMs 500)
 }
 
+# Launch, then wait for the window itself (T2180) rather than sleeping 4s and
+# hoping: Wait-TestWindow is already the bounded predicate, and a GUI that dies
+# at launch is named on the way out instead of after the sleep.
+function Wait-LaunchedTop($app, [string]$what) {
+    $h = Wait-TestWindow -ProcessId $app.Pid -Class 'GhozttyWindow'
+    if ($h -eq [IntPtr]::Zero) {
+        if ($app.Process -and $app.Process.HasExited) { Write-Host "SETUP FAIL: $what GUI died at launch"; exit 1 }
+        Write-Host "SETUP FAIL: $what top window not found within 20s"; exit 1
+    }
+    return $h
+}
+
+# Resize, then wait for the LAYOUT the resize produces (T2180), not 1200ms: the
+# window rect reads the requested size, the terminal pane under the strip has
+# moved off its pre-resize rect (unless the window was already that size), and
+# that rect has held for $QuietMs. Every geometry read below - the chrome
+# metrics, the strip height off the pane's top - is taken from that rect.
+function Resize-AndSettle([IntPtr]$Window, [int]$Width, [int]$Height, [int]$QuietMs = 300, [int]$TimeoutMs = 8000) {
+    $paneKey = {
+        $p = @(Get-TestChildWindows -Window $Window -Class 'GhozttyTerminal' | Where-Object Visible)
+        if ($p.Count -lt 1) { return '' }
+        "$($p[0].Left),$($p[0].Top),$($p[0].Right),$($p[0].Bottom)"
+    }
+    $wr0 = Get-TestWindowRect -Window $Window
+    $already = ($wr0.Width -eq $Width -and $wr0.Height -eq $Height)
+    $before = & $paneKey
+    [void](Set-TestWindowSize -Window $Window -Width $Width -Height $Height)
+    $sw = [System.Diagnostics.Stopwatch]::StartNew()
+    $last = $null; $since = 0; $wr = $wr0; $cur = ''
+    do {
+        $wr = Get-TestWindowRect -Window $Window
+        $cur = & $paneKey
+        $sized = ($wr.Width -eq $Width -and $wr.Height -eq $Height)
+        $moved = ($cur -ne '' -and ($already -or $cur -ne $before))
+        if ($sized -and $moved) {
+            if ($cur -ne $last) { $last = $cur; $since = $sw.ElapsedMilliseconds }
+            elseif (($sw.ElapsedMilliseconds - $since) -ge $QuietMs) {
+                return "window ${Width}x${Height}, pane $cur held ${QuietMs}ms after $($sw.ElapsedMilliseconds)ms"
+            }
+        } else { $last = $null }
+        Start-Sleep -Milliseconds 50
+    } while ($sw.ElapsedMilliseconds -lt $TimeoutMs)
+    Write-Host "SETUP FAIL: resize to ${Width}x${Height} never settled in ${TimeoutMs}ms (window $($wr.Width)x$($wr.Height); pane before '$before', now '$cur')"
+    exit 1
+}
+
 Kill-RepoInstances
 Start-TestForegroundWatch
 $td = New-TestDesktop -Interactive:$Interactive
@@ -173,10 +219,7 @@ try {
         '--macos-pane-style=flat',
         '--session-persistence=false'
     )
-    Start-Sleep -Seconds 4
-    if ($app.Process -and $app.Process.HasExited) { Write-Host 'SETUP FAIL: GUI died at launch'; exit 1 }
-    $top = Wait-TestWindow -ProcessId $app.Pid -Class 'GhozttyWindow'
-    if ($top -eq [IntPtr]::Zero) { Write-Host 'SETUP FAIL: top window not found'; exit 1 }
+    $top = Wait-LaunchedTop $app 'tab-strip'
 
     # SIZE THE WINDOW. Not cosmetic and not optional (T205): every condition
     # this script sets up is a RATIO of the tab run - "two tabs still get their
@@ -189,8 +232,7 @@ try {
     # inheriting whatever `window_placement-debug` (T85) remembered from the
     # last GUI script that ran - so its conditions depended on RUN ORDER. That
     # is the same class of hazard as T248's target reuse; see T267.
-    Set-TestWindowSize -Window $top -Width 1400 -Height 800 | Out-Null
-    Start-Sleep -Milliseconds 1200
+    Write-Host "INFO  resize: $(Resize-AndSettle -Window $top -Width 1400 -Height 800)"
 
     Assert (-not (Test-TestDesktopLeak -ProcessId $app.Pid)) `
         'the window is NOT enumerable on the interactive desktop'
@@ -569,13 +611,22 @@ try {
     function New-Tab {
         $st = Read-StripState
         $before = if ($null -ne $st) { $st.Count } else { -1 }
+        # Fallback oracle when +list cannot be read (T2180): every tab owns its
+        # own terminal child, so the child count rising IS the new tab.
+        $kids = @(Get-TestChildWindows -Window $top -Class 'GhozttyTerminal').Count
         $fw = Get-TestFocusedWindow -Window $top
         if ($fw -eq 0) {
             $vis = @(Get-TestChildWindows -Window $top -Class 'GhozttyTerminal' | Where-Object Visible)
             if ($vis.Count -gt 0) { $fw = $vis[0].Hwnd }
         }
         [void](Send-TestKeys -Window $top -Target ([IntPtr]$fw) -Modifiers ctrl -Key T)
-        if ($before -ge 0) { [void](Wait-TabCount ($before + 1)) } else { Start-Sleep -Milliseconds 250 }
+        if ($before -ge 0) { [void](Wait-TabCount ($before + 1)) }
+        else {
+            $sw = [System.Diagnostics.Stopwatch]::StartNew()
+            while (@(Get-TestChildWindows -Window $top -Class 'GhozttyTerminal').Count -le $kids -and $sw.ElapsedMilliseconds -lt 8000) {
+                Start-Sleep -Milliseconds 100
+            }
+        }
     }
 
     # -----------------------------------------------------------------------
@@ -1477,13 +1528,9 @@ try {
         '--session-persistence=false',
         '-e', 'cmd.exe', '/K', 'title', $longTitle
     )
-    Start-Sleep -Seconds 4
-    if ($app2.Process -and $app2.Process.HasExited) { Write-Host 'SETUP FAIL: long-title GUI died at launch'; exit 1 }
-    $top = Wait-TestWindow -ProcessId $app2.Pid -Class 'GhozttyWindow'
-    if ($top -eq [IntPtr]::Zero) { Write-Host 'SETUP FAIL: long-title top window not found'; exit 1 }
+    $top = Wait-LaunchedTop $app2 'long-title'
     # Same size as the first window, for the same reason (above).
-    Set-TestWindowSize -Window $top -Width 1400 -Height 800 | Out-Null
-    Start-Sleep -Milliseconds 1200
+    Write-Host "INFO  long-title resize: $(Resize-AndSettle -Window $top -Width 1400 -Height 800)"
 
     # Re-derive the geometry for THIS window: the pixel helpers above read
     # these script-scope variables at call time, so reassigning them re-points

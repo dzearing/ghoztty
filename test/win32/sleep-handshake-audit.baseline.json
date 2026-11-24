@@ -332,7 +332,6 @@
                   "test\\win32\\suite-run.ps1":  5,
                   "test\\win32\\tab-color.ps1":  4,
                   "test\\win32\\tab-overview-action.ps1":  12,
-                  "test\\win32\\tab-strip.ps1":  5,
                   "test\\win32\\tab-strip-autohide.ps1":  3,
                   "test\\win32\\tab-tooltip.ps1":  8,
                   "test\\win32\\target-staleness.ps1":  1,
