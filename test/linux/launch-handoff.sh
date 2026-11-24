@@ -39,12 +39,16 @@ cli() { env -u GHOZTTY_IPC_SOCKET -u GHOZTTY_PANE_ID "$app" "$@"; }
 serving() { cli +list > /dev/null 2>&1; }
 alive() { [ -n "$1" ] && kill -0 "$1" 2>/dev/null; }
 gone() { ! kill -0 "$1" 2>/dev/null; }
-# exit_code <pid> <secs>: wait for a launched child to end, print its status
-# (124 when it is still running after <secs>).
+# exit_code <pid> <secs>: wait for a launched child to end and set $rc to its
+# status (124 when it is still running after <secs>). Not a $(...): a
+# subshell cannot `wait` for the parent shell's child.
 exit_code() {
-    hl_wait_for "$2" gone "$1" || { echo 124; return; }
-    wait "$1" 2>/dev/null; echo $?
+    rc=124
+    hl_wait_for "$2" gone "$1" || return 0
+    wait "$1" 2>/dev/null; rc=$?
 }
+# crash_of <log>: the first lines of a crash in an app log, for a FAIL detail.
+crash_of() { grep -m1 -B2 -A14 -E 'panic|Segmentation|abort|error\(' "$1" 2>/dev/null | tr '\n' ' ' | head -c 2000; }
 vfield() {
     hl_ipc version 2>/dev/null | python3 -c '
 import json, sys
@@ -95,7 +99,7 @@ kill -TERM "$SAME" 2>/dev/null; hl_wait_for 10 gone "$SAME"
 
 # ---- 2. a different build is asked; ending the dialog is Cancel -------------
 hl_launch ASK env "${OTHER[@]}" GHOZTTY_TEST_HANDOFF_DIALOG="$dlg" "$app" --gtk-single-instance=false
-rc=$(exit_code "$ASK" 20)
+exit_code "$ASK" 20
 line=$(head -n1 "$dlg" 2>/dev/null)
 case "$line" in "shown A different Ghoztty is already running|Switch,Open Window,Cancel|"*) true ;; *) false ;; esac
 hl_check "H6 another build's launch shows the dialog: title, then [Switch] [Open Window] [Cancel]" $? "$line"
@@ -109,7 +113,7 @@ hl_check "H9 ... the running build is untouched (still serving, $w0 window(s))" 
 # ---- 3. Open Window: the window and its -e command open in the running build -
 mark="$HL_RUNTIME/joined"
 hl_launch JOIN env "${OTHER[@]}" GHOZTTY_HANDOFF_PROMPT=join "$app" --gtk-single-instance=false -e /bin/sh -c "echo \$\$ > $mark; sleep 120"
-rc=$(exit_code "$JOIN" 20)
+exit_code "$JOIN" 20
 [ "$rc" = 0 ] && grep -q 'the window opened in the running build' "$JOIN_LOG"
 hl_check "H10 Open Window forwards the window and the launch exits 0" $? "rc=$rc $(grep -m2 'handoff' "$JOIN_LOG" | tr '\n' ' ')"
 hl_wait_for 20 test -s "$mark"
@@ -122,8 +126,9 @@ hl_check "H13 ... and is still the app (pid $APP)" $?
 
 # ---- 4. Switch: the running build quits, this launch takes over -------------
 hl_launch SW env "${OTHER[@]}" GHOZTTY_HANDOFF_PROMPT=switch "$app" --gtk-single-instance=false
-hl_wait_for 20 gone "$APP"
-hl_check "H14 Switch: the running build quits" $?
+exit_code "$APP" 20
+[ "$rc" = 0 ]
+hl_check "H14 Switch: the running build quits, cleanly (exit 0, not a crash)" $? "rc=$rc $(crash_of "$APP_LOG")"
 grep -q 'handoff-quit: quitting so the launch of 9.9.9-other' "$APP_LOG"
 hl_check "H15 ... because the launch asked (its log names the launching build)" $? "$(grep -m1 'handoff' "$APP_LOG")"
 sw_serving() { [ "$(vfield pid)" = "$SW" ]; }
@@ -144,7 +149,7 @@ hl_launch NP "$app" --gtk-single-instance=false --session-persistence=false
 hl_wait_for 30 serving
 rm -f "$dlg"
 hl_launch ASK2 env "${OTHER[@]}" GHOZTTY_TEST_HANDOFF_DIALOG="$dlg" "$app" --gtk-single-instance=false
-rc=$(exit_code "$ASK2" 20)
+exit_code "$ASK2" 20
 grep -q 'the terminals open in it will close' "$dlg" 2>/dev/null
 hl_check "H20 against a build without persistence, Switch is priced: the terminals will close" $? "$(head -c 300 "$dlg" 2>/dev/null)"
 
