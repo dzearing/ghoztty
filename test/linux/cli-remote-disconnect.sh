@@ -167,7 +167,9 @@ hl_check "T3 Disconnect closes the tab and its remote shell keeps running" $? "o
 # same reason). So the tab's dialog must be GONE before the window's x.
 no_dialog() { [ "$(field "$(dialog "$1")" open)" = false ]; }
 hl_wait_for 15 no_dialog rdp
-hl_check "W0 the answered tab dialog has left the window" $? "$(dialog rdp)"
+w0=$?
+hl_check "W0 the answered tab dialog has left the window" $w0 "$(dialog rdp)"
+[ $w0 = 0 ] || { echo "--- tab/dialog log:"; grep -n "tab close request\|close-dialog\|close_confirmation\|Gtk-\|Adwaita-" "$APP_LOG" | tail -20; }
 mark=$(wc -l < "$APP_LOG")
 out=$(dialog rdp --op=window --answer=cancel)
 [ "$(field "$out" disconnect)" = true ] && [ "$(field "$out" answered)" = cancel ] &&

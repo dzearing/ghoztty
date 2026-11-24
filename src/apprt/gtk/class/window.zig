@@ -2019,6 +2019,7 @@ pub const Window = extern struct {
         }
 
         // Show a confirmation dialog
+        log.info("tab close request: asking (disconnect offered: {})", .{offer.offered()});
         const dialog: *CloseConfirmationDialog = .new(.tab);
         if (offer.offered()) {
             dialog.offerDisconnect(offer);
