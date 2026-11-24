@@ -84,8 +84,12 @@ sleep 1
 [ "$(grep -c -- '-> ' <(grep 'window mode' "$APP_LOG"))" = 1 ]
 hl_check "W5b a window opened beside an open one does not re-latch" $? "$(grep 'window mode' "$APP_LOG" | tail -4)"
 
+# T3656: with quit-after-last-window-closed = false a SIGTERM logs
+# "quitting" and the app stays up (and ignores a second one), so a TERM that
+# has not worked in 5s is followed by a KILL - or hl_stop would wait forever.
 kill -TERM "$APP" 2>/dev/null
-hl_wait_for 15 sh -c "! kill -0 $APP 2>/dev/null"
+hl_wait_for 5 sh -c "! kill -0 $APP 2>/dev/null" || kill -KILL "$APP" 2>/dev/null
+hl_wait_for 10 sh -c "! kill -0 $APP 2>/dev/null"
 
 # ---- 4. negative control: the key unset latches separate -------------------
 write_cfg ''
