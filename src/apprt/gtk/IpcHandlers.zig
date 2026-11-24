@@ -55,6 +55,8 @@ const capture_seam = @import("capture_seam.zig");
 const pane_snapshot = @import("pane_snapshot.zig");
 const wk = @import("webkit.zig");
 const url_scheme = @import("../ipc/url_scheme.zig");
+const url_activation = @import("url_activation.zig");
+const gtk_url_scheme = @import("url_scheme.zig");
 const terminal_osc = @import("../../terminal/osc.zig").Command;
 const color_math = @import("../win32/color_math.zig");
 const pane_style = @import("pane_style.zig");
@@ -1516,17 +1518,21 @@ fn workingDirectory(arena: Allocator, wd: ?[]const u8) Allocator.Error!?[:0]cons
 /// through the shared verb body - so the name is looked up from the clicking
 /// pane's window first and an unknown or ambiguous name fails the way the
 /// CLI's does. Never handed to the desktop, which would reach whichever build
-/// registered the scheme. A malformed link is swallowed.
+/// registered the scheme. A link that focuses nothing - a malformed one, or a
+/// name nothing (or more than one window) holds - says so in the scheme's
+/// `Can't focus` dialog (T3579), as the Mac's `GhozttyURLScheme.Failure` and
+/// win32's `handleInApp` do; it never logs alone.
 pub fn focusLink(app: Context, url: []const u8, caller_pane: ?[]const u8) void {
-    var name_buf: [512]u8 = undefined;
+    var name_buf: [url_activation.max_target]u8 = undefined;
     const cmd = url_scheme.parse(url, &name_buf) orelse {
-        log.info("viewer link: not a ghoztty command, ignored: {s}", .{url});
-        return;
+        log.info("viewer link: unsupported ghoztty link {s}", .{url});
+        return gtk_url_scheme.present(.{ .unsupported_link = url }, app);
     };
     switch (cmd) {
         .focus => |name| {
             var arg_buf: [600]u8 = undefined;
-            const arg = std.fmt.bufPrint(&arg_buf, "--target={s}", .{name}) catch return;
+            const arg = std.fmt.bufPrint(&arg_buf, "--target={s}", .{name}) catch
+                return gtk_url_scheme.present(.{ .unsupported_link = url }, app);
             const argv = [_][]const u8{arg};
             const reply = verbs.focus(@This(), app, .{
                 .action = "focus",
@@ -1536,6 +1542,8 @@ pub fn focusLink(app: Context, url: []const u8, caller_pane: ?[]const u8) void {
             const r = reply orelse return;
             defer replyAllocator(app).free(r);
             log.info("viewer link: focus {s}: {s}", .{ name, r });
+            const outcome = url_activation.replyOutcome(r);
+            if (url_activation.failureFor(outcome, name)) |f| gtk_url_scheme.present(f, app);
         },
     }
 }

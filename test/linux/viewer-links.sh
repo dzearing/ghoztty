@@ -6,7 +6,8 @@
 #   markdown/code: http(s) -> the default browser; a relative .md/.html link
 #     -> a viewer split beside the pane; any other file -> its default app; a
 #     link to nothing, or mailto:, does nothing; a ghoztty link focuses in
-#     this app.
+#     this app, and one naming nothing shows the scheme's Can't focus
+#     dialog (T3579).
 #   live pages (a rendered .html, a website): a link on the page's own site
 #     follows in the pane (host + port as written; for a rendered page, its
 #     own folder); a click off it takes the banner's scheme - plain to the
@@ -70,6 +71,7 @@ cat > "$fx/doc.md" <<'EOF'
 [mail](mailto:a@b.test)
 [top](#links-one)
 [focus](ghoztty-debug://focus/termwin)
+[gone](ghoztty-debug://focus/nowin-t3579)
 EOF
 printf '# Other Doc\n' > "$fx/other.md"
 printf 'const x = 1;\n' > "$fx/code.zig"
@@ -159,6 +161,8 @@ sink="$HL_RUNTIME/links.out"
     click 'a[href="mailto:a@b.test"]'
     click 'a[href="ghoztty-debug://focus/termwin"]'
     echo "sleep 500"
+    click 'a[href="ghoztty-debug://focus/nowin-t3579"]'
+    echo "sleep 1000"
     echo "state"
     echo "mark md-menu"
     menu 'a[href="other.md"]'
@@ -255,8 +259,13 @@ export GHOZTTY_TEST_VIEWER_PROBE="$H"
 export GHOZTTY_TEST_VIEWER_STEPS="$steps"
 export GHOZTTY_TEST_VIEWER_STEPS_OUT="$out"
 export GHOZTTY_TEST_VIEWER_LINKS="$sink"
+# A link that focuses nothing answers with the scheme's dialog (T3579); the
+# debug seam records it and closes it, as test/linux/url-scheme.sh does.
+dialogs="$HL_RUNTIME/dialogs.out"
+: > "$dialogs"
+export GHOZTTY_TEST_URL_SCHEME_DIALOG="$dialogs"
 hl_launch APP "$app" --gtk-single-instance=false --session-persistence=false -e /bin/sh -c 'PS1="hl$ " exec /bin/sh -i'
-unset GHOZTTY_TEST_VIEWER_DUMP GHOZTTY_TEST_VIEWER_PROBE GHOZTTY_TEST_VIEWER_STEPS GHOZTTY_TEST_VIEWER_STEPS_OUT GHOZTTY_TEST_VIEWER_LINKS
+unset GHOZTTY_TEST_VIEWER_DUMP GHOZTTY_TEST_VIEWER_PROBE GHOZTTY_TEST_VIEWER_STEPS GHOZTTY_TEST_VIEWER_STEPS_OUT GHOZTTY_TEST_VIEWER_LINKS GHOZTTY_TEST_URL_SCHEME_DIALOG
 hl_wait_for 30 test -S "$sock"
 hl_check "K3 the app serves its socket" $?
 
@@ -299,6 +308,10 @@ hl_check "K11 any other file opens in its default app" $? "$(grep '^app' "$sink"
 hl_check "K12 a link to a missing file, and a mailto:, do nothing (the missing one is logged)" $? "$(grep -E 'nope|mailto' "$sink" "$APP_LOG" 2>/dev/null | head -3 | tr '\n' ' ')"
 sunk "focus ghoztty-debug://focus/termwin" && grep -q "viewer link: focus termwin: " "$APP_LOG"
 hl_check "K13 a ghoztty link focuses its target in THIS app" $? "$(grep -m2 'viewer link: focus' "$APP_LOG" | tr '\n' ' ')"
+sunk "focus ghoztty-debug://focus/nowin-t3579" &&
+    grep -q "^shown Can't focus \"nowin-t3579\"|No open Ghoztty window or pane has that name" "$dialogs" &&
+    ! grep -q 'termwin' "$dialogs"
+hl_check "K13a a ghoztty link naming nothing shows the Can't focus dialog (and one that focused shows none)" $? "dialogs: $(tr '\n' ' ' < "$dialogs" 2>/dev/null) log: $(grep -m2 'nowin-t3579' "$APP_LOG" | tr '\n' ' ')"
 has "$(st 1)" "mode=markdown current=$fx/doc.md "
 hl_check "K14 none of those clicks moved the pane" $? "$(st 1)"
 

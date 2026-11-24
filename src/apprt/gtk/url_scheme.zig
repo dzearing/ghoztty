@@ -99,8 +99,11 @@ pub fn openInApp(app: *Application, url: []const u8) void {
 var presenting = false;
 
 /// Show a failure over the app's active window (or on its own when there is
-/// none). One at a time: a burst of links is one dialog.
-fn present(failure: grammar.Failure, app: *Application) void {
+/// none). One at a time: a burst of links is one dialog. Public for the
+/// in-app path too - a viewer page's or pane banner's link
+/// (`IpcHandlers.focusLink`, T3579) - so every way a link can miss answers
+/// with the same dialog, coalesced by the same flag.
+pub fn present(failure: grammar.Failure, app: *Application) void {
     if (quiet() or presenting) return logFailure(failure);
     presenting = true;
     if (!show(failure, app.as(gtk.Application).getActiveWindow(), &presenting)) {
