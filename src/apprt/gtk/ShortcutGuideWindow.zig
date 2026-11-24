@@ -674,7 +674,11 @@ fn onIdleEscape(self: *ShortcutGuideWindow) callconv(.c) c_int {
 
 fn onSearchChanged(entry: *wk.GtkWidget, self: *ShortcutGuideWindow) callconv(.c) void {
     if (self.updating) return;
-    self.setQuery(std.mem.span(wk.gtk_editable_get_text(entry)));
+    const text = std.mem.span(wk.gtk_editable_get_text(entry));
+    // GtkSearchEntry reports a change after the fact (even one the guide
+    // made itself): an unchanged query must not reset the selection.
+    if (std.mem.eql(u8, text, self.query())) return;
+    self.setQuery(text);
 }
 
 fn onSidebarSelected(_: *wk.GtkWidget, row: ?*wk.GtkWidget, self: *ShortcutGuideWindow) callconv(.c) void {
