@@ -58,6 +58,7 @@ const WindowSize = @import("class/application.zig").WindowSize;
 const Window = @import("class/window.zig").Window;
 const Tab = @import("class/tab.zig").Tab;
 const Surface = @import("class/surface.zig").Surface;
+const IpcHandlers = @import("IpcHandlers.zig");
 
 /// The pure half - the path, the first leaf, the size rules, a viewer's
 /// restore - std-only so every test lane runs its tests (T3551).
@@ -116,6 +117,11 @@ pub fn capture(arena: Allocator, app: *Application, snapshots: bool) Allocator.E
         const obj: *gobject.Object = @ptrCast(@alignCast(n.f_data orelse continue));
         const window = gobject.ext.cast(Window, obj) orelse continue;
         if (window.isQuickTerminal()) continue;
+        // T3597: a remote machine's window is not this machine's layout -
+        // its sessions live on THAT machine's agent, and re-attaching them
+        // on the local one would open wrong panes. Bringing remote windows
+        // back at launch is its own record (win32 T3352; Linux T3668).
+        if (IpcHandlers.remoteLinkOf(window) != null) continue;
         const w = try captureWindow(arena, window, windows.items.len, snapshots, &budget) orelse continue;
         try windows.append(arena, w);
     }
@@ -204,7 +210,9 @@ fn captureLeaf(
     };
 
     var leaf: schema.Leaf = .{
-        .session_id = if (surface.agentSessionId()) |id| try arena.dupe(u8, id) else null,
+        // A remote machine's pane moved into a local window (T3597) keeps
+        // no session: that id means nothing to the local agent.
+        .session_id = if (surface.remoteLink() != null) null else if (surface.agentSessionId()) |id| try arena.dupe(u8, id) else null,
         .pane_id = try arena.dupe(u8, surface.paneId()),
         .ipc_name = name,
         .working_directory = if (surface.getPwd()) |p| try arena.dupe(u8, p) else null,

@@ -138,7 +138,7 @@ pub fn startIpc(self: *App) void {
     };
     defer alloc.free(path);
 
-    self.ipc_server = IpcServer.start(alloc, path, IpcHandlers.serve, self.app) catch |err| {
+    self.ipc_server = IpcServer.start(alloc, path, IpcHandlers.serve, self.app, IpcHandlers.takeDeferred) catch |err| {
         switch (err) {
             error.AlreadyServed => log.warn(
                 "IPC: another instance already serves {s}; ghoztty +<verb> reaches that one, not this app",

@@ -11,7 +11,8 @@
 //! `--view` viewer panes on `+new-window` / `+split` (T3411): a viewer is a
 //! `Surface` showing a web view instead of a terminal, listed as `type:
 //! viewer` with its `url`, and refused by the terminal verbs. `handoff-quit`
-//! (T3595) quits for a launch of another build.
+//! (T3595) quits for a launch of another build. `+new-remote-window`
+//! (T3597) opens a window whose panes a remote `ghoztty-agent` hosts.
 //! Every other verb answers a plain "not served by the Linux app yet" error
 //! naming the task that brings it, so a script learns the gap instead of
 //! hanging or guessing.
@@ -73,6 +74,9 @@ const SplitTree = @import("class/split_tree.zig").SplitTree;
 const ext = @import("ext.zig");
 const CloseUndo = @import("CloseUndo.zig");
 const ipc_stash = @import("ipc_stash.zig");
+const ipc_remote_window = @import("ipc_remote_window.zig");
+const RemoteLink = @import("RemoteLink.zig");
+const IpcServer = @import("IpcServer.zig");
 const pane_stash = @import("../win32/pane_stash.zig");
 
 const log = std.log.scoped(.gtk_ipc);
@@ -127,8 +131,57 @@ fn notYet(comptime verb: server.Verb, comptime task: []const u8) Allocator.Error
     );
 }
 
-pub fn handleNewRemoteWindow(_: Context, _: Request) Allocator.Error!?[]u8 {
-    return notYet(.new_remote_window, "T3597");
+/// `+new-remote-window` (T3597): win32's validation and dial over the GTK
+/// window model, in `ipc_remote_window.zig`. The dial runs off this thread
+/// (`takeDeferred`).
+pub fn handleNewRemoteWindow(app: Context, request: Request) Allocator.Error!?[]u8 {
+    return ipc_remote_window.handle(app, request);
+}
+
+/// `IpcServer.TakeDeferred`: work a handler left to finish off the GTK
+/// thread - today only `+new-remote-window`'s dial.
+pub fn takeDeferred(ctx: *anyopaque) ?IpcServer.Deferred {
+    return ipc_remote_window.takeDeferred(ctx);
+}
+
+/// `--from-focused` (T68): on a window riding a remote machine, the new
+/// window re-dials that machine (`ipc_remote_window.fromFocused`); null for a
+/// local (or no) front window, which opens a plain local window.
+pub fn newWindowFromFocused(app: Context, arena: Allocator, args: verb_args.VerbArgs) Allocator.Error!?[]u8 {
+    const front = frontWindow(app) orelse return null;
+    const link = remoteLinkOf(front) orelse return null;
+    // Inherit the active pane's command and its REMOTE cwd (a bounded query
+    // on the parent's own connection), unless the flags name their own.
+    var command: ?[]const u8 = null;
+    var cwd: ?[]const u8 = null;
+    if (front.getActiveSurface()) |s| if (s.remoteLink() == link) if (s.core()) |core| {
+        if (core.remoteCommand()) |c| command = try arena.dupe(u8, c);
+        if (server.nonEmpty(args.working_directory) == null) if (core.remoteSessionId()) |sid| {
+            if (link.conn().queryCwdTimeout(sid, 1500 * std.time.ns_per_ms)) |path| {
+                defer link.conn().alloc.free(path);
+                cwd = try arena.dupe(u8, path);
+            } else |err| log.debug("new window remote inherit: cwd query failed err={}", .{err});
+        };
+    };
+    return try ipc_remote_window.fromFocused(app, arena, link, .{
+        .command = command,
+        .working_directory = cwd,
+    }, args);
+}
+
+/// The remote machine link `window`'s panes ride (T3597), or null for a
+/// local window: the first terminal pane in it that rides one.
+pub fn remoteLinkOf(window: *Window) ?*RemoteLink.Link {
+    const tab_view = window.getTabView();
+    const pages: usize = @intCast(@max(tab_view.getNPages(), 0));
+    for (0..pages) |i| {
+        const page = tab_view.getNthPage(@intCast(i));
+        const tab = gobject.ext.cast(Tab, page.getChild()) orelse continue;
+        const tree = tab.getSplitTree().getTree() orelse continue;
+        var it = tree.iterator();
+        while (it.next()) |entry| if (entry.view.remoteLink()) |l| return l;
+    }
+    return null;
 }
 
 /// `+stash` / `+restore` (T3596): win32's bodies over the GTK split tree,
@@ -1725,8 +1778,8 @@ pub fn isPane(target: Target) bool {
 }
 
 /// Open the window `+new-window` asked for, once the shared checks passed.
-/// `--from-focused` inherits a REMOTE parent's machine on win32; the Linux
-/// app has no remote windows yet (T3597), so it is always a local window here.
+/// A `--from-focused` window on a REMOTE front window never reaches here:
+/// `newWindowFromFocused` opens it on that machine (T3597).
 pub fn openWindow(
     app: Context,
     arena: Allocator,
@@ -1937,6 +1990,9 @@ pub fn createSplit(
         .at = at.surface,
         .ratio = spec.ratio,
         .focus = args.focus,
+        // T3597: off a remote machine's pane, `--command` is that machine's
+        // to run, verbatim - never the local shell wrapping above.
+        .remote_command = if (inherit) null else server.nonEmpty(command),
     }) catch |err| {
         log.warn("IPC split failed err={}", .{err});
         return null;
@@ -2348,6 +2404,7 @@ fn buildWindow(arena: Allocator, app: Context, window: *Window) Allocator.Error!
     }
 
     const name: ?[]const u8 = if (windowName(app, window)) |wn| try arena.dupe(u8, wn) else null;
+    const remote = remoteLinkOf(window);
     return .{
         .id = try std.fmt.allocPrint(arena, "{d}", .{
             window.as(gtk.ApplicationWindow).getId(),
@@ -2356,6 +2413,10 @@ fn buildWindow(arena: Allocator, app: Context, window: *Window) Allocator.Error!
         .target = name,
         .focused = window.as(gtk.Window).isActive() != 0,
         .tabs = tabs,
+        // T3597: a cross-machine window names its machine (T1557) and its
+        // link's state (T609); a local window has neither field.
+        .machine = if (remote) |l| List.machineField(try arena.dupe(u8, l.machine.displayName())) else null,
+        .connection = if (remote) |l| .{ .state = RemoteLink.listState(l.conn().state(), l.retired) } else null,
     };
 }
 

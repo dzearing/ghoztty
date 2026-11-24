@@ -1,0 +1,203 @@
+#!/usr/bin/env bash
+# cli-remote-window.sh - L8d-3 (T3597) acceptance for +new-remote-window
+# against the GTK debug app and a loopback ghoztty-agent listening on TCP
+# (the Linux half of win32's test/win32/ipc-remote.ps1). A remote window's
+# panes are hosted by THAT agent, not the app and not the local agent; +list
+# names the window's machine and link state; a split of a remote pane and
+# `+new-window --from-focused` on a remote window land on the same machine;
+# --command is forwarded into the agent OPEN, for the window and for a split;
+# +close ends the remote session; and the refusals are win32's / the Mac's
+# sentences, made before any dial. Run it ONLY through the wrapper:
+#
+#   powershell -NoProfile -File scripts\linux\wsl-run.ps1 -CommandFile test\linux\cli-remote-window.sh
+#
+# (-Repo clone, the default, tests the committed HEAD.) Everything runs inside
+# the private headless Weston (test/linux/lib/headless.sh), so no window ever
+# reaches WSLg or the user's desktop.
+#
+# NEGATIVE=1 dials a port nothing listens on for the main window, which must
+# FAIL R1.
+#
+# Output: one PASS/FAIL line per check, then 'CLI REMOTE WINDOW: ALL PASS' or
+# 'CLI REMOTE WINDOW: <n> FAILURE(S)'. Exit 0 only on ALL PASS.
+set -u
+. "$PWD/test/linux/lib/headless.sh"
+hl_check_init
+L="CLI REMOTE WINDOW"
+
+log=/tmp/cli-remote-window-build.log
+zig build -Dapp-runtime=gtk -Doptimize=Debug -fno-sys=gtk4-layer-shell > "$log" 2>&1
+rc=$?
+hl_check "S1 zig build -Dapp-runtime=gtk -Doptimize=Debug exits 0" $rc "$(grep -m3 'error:' "$log" | tr '\n' ' ')"
+[ $rc = 0 ] || hl_finish "$L"
+
+hl_start
+hl_check "S2 a private headless Weston is up" $?
+app=$(hl_ghoztty) || hl_finish "$L"
+agent_bin="$(dirname "$app")/ghoztty-agent"
+sock="$XDG_RUNTIME_DIR/ghostty-debug-$(id -u).sock"
+
+cli() { env -u GHOZTTY_IPC_SOCKET -u GHOZTTY_PANE_ID "$app" "$@"; }
+free_port() { python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1])'; }
+listening() { python3 -c 'import socket,sys; s=socket.create_connection(("127.0.0.1",int(sys.argv[1])),1)' "$1" 2>/dev/null; }
+is_ancestor() { # is_ancestor <ancestor> <pid>: 0 when <ancestor> is <pid> or above it.
+    local want=$1 p=$2
+    while [ -n "$p" ] && [ "$p" != 0 ] && [ "$p" != 1 ]; do
+        [ "$p" = "$want" ] && return 0
+        p=$(awk '/^PPid:/ { print $2 }' "/proc/$p/status" 2>/dev/null)
+    done
+    return 1
+}
+alive() { [ -n "$1" ] && kill -0 "$1" 2>/dev/null; }
+
+# The "remote" machine: a TCP-listening agent on loopback. hl_launch tracks
+# it, so hl_stop reaps it and every pane it hosts.
+port=$(free_port)
+dead_port=$(free_port)
+hl_launch RAGENT "$agent_bin" --listen "127.0.0.1:$port" --headless
+hl_wait_for 20 listening "$port"
+hl_check "S3 a ghoztty-agent listens on 127.0.0.1:$port" $? "$(tail -5 "$RAGENT_LOG" 2>/dev/null | tr '\n' ' ')"
+
+# The app: local panes are plain exec panes, so any agent-hosted pane in this
+# run is the TCP agent's. No relay credential anywhere (E3).
+export SHELL=/bin/sh
+export GHOSTTY_ACCOUNT_STORE="$HL_RUNTIME/no-account.dat"
+export GHOSTTY_ACCOUNT_KEYRING=off
+unset GHOSTTY_RELAY_TOKEN
+hl_launch APP "$app" --gtk-single-instance=false --session-persistence=false \
+    -e /bin/sh -c 'PS1="hl$ " exec /bin/sh -i'
+hl_wait_for 30 test -S "$sock"
+f4=$?
+hl_check "S4 the app serves its socket" $f4
+[ $f4 = 0 ] || { echo "--- app log tail:"; tail -40 "$APP_LOG"; hl_finish "$L"; }
+
+# win <mode> <target> [arg]: one +list read about the window named <target>.
+#   machine / state - its `machine` / `connection.state` ("-" when absent)
+#   pid / name      - the shell pid of the leaf named [arg] / the first leaf
+#   count           - how many windows carry `machine`
+#   local           - the target of the first window with no `machine`
+win() {
+    cli +list --json 2>/dev/null | python3 -c '
+import json, sys
+mode, want = sys.argv[1], sys.argv[2]
+arg = sys.argv[3] if len(sys.argv) > 3 else ""
+d = json.load(sys.stdin)["data"]
+def leaves(n):
+    if n["type"] == "split":
+        yield from leaves(n["left"]); yield from leaves(n["right"])
+    else:
+        yield n["terminal"]
+if mode == "count":
+    print(sum(1 for w in d["windows"] if w.get("machine"))); sys.exit(0)
+if mode == "local":
+    print(next((w.get("target") or "" for w in d["windows"] if not w.get("machine")), "")); sys.exit(0)
+if mode == "remote-pids":
+    for w in d["windows"]:
+        if w.get("machine"):
+            for t in w["tabs"]:
+                for l in leaves(t["splits"]): print(l.get("pid") or "")
+    sys.exit(0)
+for w in d["windows"]:
+    if (w.get("target") or "") != want: continue
+    if mode == "machine": print(w.get("machine") or "-")
+    if mode == "state": print((w.get("connection") or {}).get("state") or "-")
+    for t in w["tabs"]:
+        for l in leaves(t["splits"]):
+            if mode == "pid" and (arg == "" or l.get("name") == arg): print(l.get("pid") or ""); sys.exit(0)
+' "$@" 2>/dev/null
+}
+has_window() { cli +list --json 2>/dev/null | grep -q "\"target\":\"$1\""; }
+remote_count_is() { [ "$(win count x)" = "$1" ]; }
+pane_pid() { local p; p=$(win pid "$1" "${2:-}"); [ -n "$p" ] && [ "$p" != 0 ] && printf '%s' "$p"; }
+reads() { cli +read --target="$1" 2>/dev/null | grep -q -- "$2"; }
+
+# --- refusals, all before any dial ---------------------------------------------
+refused() { # refused <label> <expect-substring> <args...>
+    local label=$1 want=$2; shift 2
+    local out rc
+    out=$(cli +new-remote-window "$@" 2>&1); rc=$?
+    [ $rc != 0 ] && printf '%s' "$out" | grep -qF -- "$want" && remote_count_is 0
+    hl_check "$label" $? "rc=$rc out=$out windows=$(win count x)"
+}
+refused "E1 no --host is refused" "--host is required (or use --relay + --device) for +new-remote-window" --port="$port"
+refused "E2 no --port is refused" "--port is required (or use --relay + --device) for +new-remote-window" --host=127.0.0.1
+refused "E3 a relay with no credential is refused as not signed in" \
+    "not signed in: sign in from the machine chooser (ctrl+shift+n), pass --token=, or set GHOSTTY_RELAY_TOKEN to open relay windows" \
+    --relay=https://relay.invalid --device=box
+refused "E4 a port nothing listens on fails to reach the agent" \
+    "failed to reach 127.0.0.1:$dead_port: the agent is not running or not reachable" \
+    --host=127.0.0.1 --port="$dead_port" --name=remdead
+cli +list --json > /dev/null 2>&1
+hl_check "E5 the app still answers after a failed dial" $?
+
+# --- open a remote window --------------------------------------------------------
+main_port=$port
+[ "${NEGATIVE:-0}" = 1 ] && { main_port=$dead_port; echo "  NEGATIVE CONTROL: the main window dials a dead port - this run MUST fail"; }
+out=$(cli +new-remote-window --host=127.0.0.1 --port="$main_port" --name=rem 2>&1); rc=$?
+[ $rc = 0 ] && has_window rem
+hl_check "R1 +new-remote-window --host --port --name=rem opens window rem" $? "rc=$rc out=$out"
+[ "$(win machine rem)" = 127.0.0.1 ] && [ "$(win state rem)" = connected ]
+hl_check "R2 +list names rem's machine 127.0.0.1 and its link connected" $? "machine=$(win machine rem) state=$(win state rem)"
+lw=$(win local x)
+[ -n "$lw" ] && [ "$(win machine "$lw")" = - ] && [ "$(win state "$lw")" = - ]
+hl_check "R3 the local launch window has neither field" $? "local=$lw machine=$(win machine "$lw") state=$(win state "$lw")"
+hl_wait_for 15 pane_pid rem > /dev/null
+rpid=$(pane_pid rem)
+[ -n "$rpid" ] && is_ancestor "$RAGENT" "$rpid" && ! is_ancestor "$APP" "$rpid"
+hl_check "R4 rem's shell is the TCP agent's child, not the app's" $? "pane=$rpid agent=$RAGENT app=$APP"
+cli +send-keys --target=rem 'echo remote-marker-$((6*7))' Enter > /dev/null 2>&1
+hl_wait_for 10 reads rem 'remote-marker-42'
+hl_check "R5 keys reach the remote shell and +read sees its output" $? "$(cli +read --target=rem 2>&1 | tail -3 | tr '\n' ' ')"
+
+out=$(cli +new-remote-window --host=127.0.0.1 --port="$port" --name=remcmd \
+    --command='echo remote-cmd-$((7*6))' 2>&1); rc=$?
+[ $rc = 0 ] && hl_wait_for 10 reads remcmd 'remote-cmd-42'
+hl_check "R6 --command runs on the remote machine (forwarded in the OPEN)" $? "rc=$rc out=$out $(cli +read --target=remcmd 2>&1 | tail -3 | tr '\n' ' ')"
+cpid=$(pane_pid remcmd)
+[ -n "$cpid" ] && is_ancestor "$RAGENT" "$cpid"
+hl_check "R7 remcmd's pane is the TCP agent's too" $? "pane=$cpid agent=$RAGENT"
+
+# --- a split of a remote pane stays on that machine -------------------------------
+out=$(cli +split --target=rem --name=rs 2>&1); rc=$?
+hl_wait_for 15 pane_pid rem rs > /dev/null
+spid=$(pane_pid rem rs)
+[ $rc = 0 ] && [ -n "$spid" ] && is_ancestor "$RAGENT" "$spid" && ! is_ancestor "$APP" "$spid"
+hl_check "P1 +split of rem opens on the TCP agent" $? "rc=$rc out=$out split=$spid agent=$RAGENT"
+out=$(cli +split --target=rem --name=rs2 --command='echo split-cmd-$((5*9))' 2>&1); rc=$?
+split_reads() { cli +read --name=rs2 2>/dev/null | grep -q 'split-cmd-45'; }
+[ $rc = 0 ] && hl_wait_for 10 split_reads
+hl_check "P2 a remote split's --command runs on the remote machine" $? "rc=$rc out=$out $(cli +read --name=rs2 2>&1 | tail -3 | tr '\n' ' ')"
+[ "$(win machine rem)" = 127.0.0.1 ]
+hl_check "P3 rem still names its machine after the splits" $? "machine=$(win machine rem)"
+
+# --- --from-focused on a remote window re-dials its machine ------------------------
+# Leave rem the only window, so it is the front one whatever the compositor
+# says about activation.
+cli +close --target="$lw" > /dev/null 2>&1
+cli +close --target=remcmd > /dev/null 2>&1
+only_rem() { [ "$(cli +list --json 2>/dev/null | python3 -c 'import json,sys; print(len(json.load(sys.stdin)["data"]["windows"]))')" = 1 ] && has_window rem; }
+hl_wait_for 10 only_rem
+hl_check "F1 only rem is left open" $? "$(win count x) remote of $(cli +list --json 2>/dev/null | grep -o '"target":"[^"]*"' | tr '\n' ' ')"
+before=$(win remote-pids x | sort)
+out=$(cli +new-window --from-focused 2>&1); rc=$?
+hl_wait_for 15 remote_count_is 2
+hl_check "F2 +new-window --from-focused on rem opens a second remote window" $? "rc=$rc out=$out remote=$(win count x)"
+newpid=$(comm -13 <(printf '%s\n' "$before") <(win remote-pids x | sort) | grep -v '^$' | head -1)
+[ -n "$newpid" ] && is_ancestor "$RAGENT" "$newpid"
+hl_check "F3 its pane is the TCP agent's" $? "new=$newpid agent=$RAGENT"
+
+# --- +close ends the remote session --------------------------------------------------
+out=$(cli +close --target=rem 2>&1); rc=$?
+gone() { ! alive "$rpid" && ! alive "$spid"; }
+hl_wait_for 10 gone
+g=$?
+[ $rc = 0 ] && [ $g = 0 ] && ! has_window rem
+hl_check "C1 +close --target=rem closes the window and its remote shells end" $? "rc=$rc out=$out rem=$rpid alive=$(alive "$rpid" && echo y) split=$spid alive=$(alive "$spid" && echo y)"
+alive "$RAGENT"
+hl_check "C2 the remote agent itself keeps running" $?
+cli +list --json > /dev/null 2>&1
+hl_check "C3 the app still answers" $?
+grep -q 'no pane rides it any more' "$APP_LOG"
+hl_check "C4 the last pane off rem's link closed the connection" $? "$(grep -m3 'gtk_remote' "$APP_LOG" | tr '\n' ' ')"
+
+hl_finish "$L"

@@ -947,6 +947,10 @@ pub const SplitTree = extern struct {
             at: ?*Surface = null,
             ratio: f16 = 0.5,
             focus: bool = true,
+            /// For a split of a REMOTE machine's pane (T3597): the command
+            /// that machine's shell runs, verbatim. `command` is the local
+            /// one and never reaches a remote agent.
+            remote_command: ?[]const u8 = null,
 
             pub const none: @This() = .{};
         },
@@ -974,6 +978,25 @@ pub const SplitTree = extern struct {
             // `--color` / `--split-color` overwrites it afterwards.
             if (color_math.splitTint(p.backgroundTint())) |tint|
                 surface.applyBackgroundTint(tint);
+            // T3597: a split of a remote machine's pane opens on that
+            // machine, in the parent's REMOTE cwd (a bounded query on the
+            // link, win32's / the Mac's split-time inheritance), running
+            // only a command asked of that machine.
+            if (overrides.view == null) if (p.remoteLink()) |link| {
+                var cwd: ?[]u8 = null;
+                defer if (cwd) |c| link.conn().alloc.free(c);
+                if (p.core()) |core| if (core.remoteSessionId()) |sid| {
+                    cwd = link.conn().queryCwdTimeout(sid, 1500 * std.time.ns_per_ms) catch |err| c: {
+                        log.debug("remote split: cwd query failed err={}", .{err});
+                        break :c null;
+                    };
+                };
+                surface.adoptRemote(.{
+                    .link = link,
+                    .working_directory = cwd,
+                    .command = overrides.remote_command,
+                });
+            };
         }
 
         // Bind is-split property for new surface

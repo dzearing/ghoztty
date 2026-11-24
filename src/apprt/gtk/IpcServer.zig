@@ -50,6 +50,29 @@ const read_timeout_s = 5;
 /// (allocated with `std.heap.c_allocator`), or null for "no reply".
 pub const Handler = *const fn (ctx: *anyopaque, request: []const u8) ?[]u8;
 
+/// Work a handler started that must finish OFF the GTK thread before the
+/// client gets its answer (T3597: `+new-remote-window`'s dial, win32's T3022
+/// hop). The handler leaves one behind; right after it returns, still on the
+/// GTK thread, `TakeDeferred` hands it to the transport, which drops the
+/// handler's placeholder reply, lets the work run on a worker, and only then
+/// calls `finish` back on the GTK thread for the real reply. So the GTK thread
+/// keeps drawing through a slow dial, and the reply still goes out once the
+/// window exists.
+pub const Deferred = struct {
+    ud: *anyopaque,
+    /// Start the work on a worker thread (the deferred's own). Called once.
+    start: *const fn (ud: *anyopaque) void,
+    /// Wait up to `ns` for the work; true once it is done.
+    wait: *const fn (ud: *anyopaque, ns: u64) bool,
+    /// GTK thread: the reply for the finished work.
+    finish: *const fn (ctx: *anyopaque, ud: *anyopaque) ?[]u8,
+    /// Drop the transport's reference (the worker holds its own).
+    release: *const fn (ud: *anyopaque) void,
+};
+
+/// GTK thread, right after the handler: the deferred work it left, if any.
+pub const TakeDeferred = *const fn (ctx: *anyopaque) ?Deferred;
+
 alloc: Allocator,
 path: [:0]u8,
 /// `<path>.reset`: the CLI's rebind request (T3365).
@@ -63,6 +86,7 @@ wake_w: posix.fd_t,
 thread: std.Thread,
 handler: Handler,
 handler_ctx: *anyopaque,
+take_deferred: ?TakeDeferred,
 stopping: std.atomic.Value(bool) = .init(false),
 
 pub const StartError = error{
@@ -80,6 +104,7 @@ pub fn start(
     path: []const u8,
     handler: Handler,
     handler_ctx: *anyopaque,
+    take_deferred: ?TakeDeferred,
 ) !*IpcServer {
     const path_z = try alloc.dupeZ(u8, path);
     errdefer alloc.free(path_z);
@@ -116,6 +141,7 @@ pub fn start(
         .thread = undefined,
         .handler = handler,
         .handler_ctx = handler_ctx,
+        .take_deferred = take_deferred,
     };
     self.thread = try std.Thread.spawn(.{}, acceptLoop, .{self});
     self.thread.setName("gtk-ipc") catch {};
@@ -314,7 +340,15 @@ fn serveOne(self: *IpcServer, conn: posix.fd_t) !void {
         return err;
     };
 
-    const reply = self.onMainThread(body) orelse return;
+    const served = self.onMainThread(.{ .request = body }) orelse return;
+    var reply_opt = served.reply;
+    if (served.deferred) |d| {
+        // The handler's reply was a placeholder: the real one comes from
+        // `finish` once the worker is done (T3597).
+        if (reply_opt) |r| c_alloc.free(r);
+        reply_opt = self.serveDeferred(d);
+    }
+    const reply = reply_opt orelse return;
     defer c_alloc.free(reply);
 
     var out_len: [4]u8 = undefined;
@@ -323,12 +357,39 @@ fn serveOne(self: *IpcServer, conn: posix.fd_t) !void {
     try writeAll(conn, reply);
 }
 
+/// Run deferred work off the GTK thread, then its `finish` on it (T3597).
+/// Owns the transport's reference to `d`: released here when the server
+/// stops first, else handed to the finish job, which releases it only after
+/// `finish` can no longer run - so an abandoned finish never reaches a freed
+/// deferred.
+fn serveDeferred(self: *IpcServer, d: Deferred) ?[]u8 {
+    d.start(d.ud);
+    while (!d.wait(d.ud, 100 * std.time.ns_per_ms)) {
+        if (self.stopping.load(.acquire)) {
+            d.release(d.ud);
+            return null;
+        }
+    }
+    const served = self.onMainThread(.{ .finish = d }) orelse return null;
+    return served.reply;
+}
+
+/// What a main-thread job runs: a request through the handler, or a
+/// deferred's `finish`.
+const Work = union(enum) {
+    request: []u8,
+    finish: Deferred,
+};
+
 /// A request handed to the main thread. Two references: the accept thread
 /// and the idle callback; whichever lets go last frees it.
 const Job = struct {
     server: *IpcServer,
-    request: []u8,
+    work: Work,
     reply: ?[]u8 = null,
+    /// Deferred work the handler left (`TakeDeferred`), until the accept
+    /// thread takes it.
+    deferred: ?Deferred = null,
     done: std.Thread.ResetEvent = .{},
     abandoned: std.atomic.Value(bool) = .init(false),
     refs: std.atomic.Value(u8) = .init(2),
@@ -336,21 +397,32 @@ const Job = struct {
     fn release(job: *Job) void {
         if (job.refs.fetchSub(1, .acq_rel) != 1) return;
         const c_alloc = std.heap.c_allocator;
-        c_alloc.free(job.request);
+        switch (job.work) {
+            .request => |r| c_alloc.free(r),
+            .finish => |d| d.release(d.ud),
+        }
+        // Left by a handler whose client was abandoned: its worker never
+        // started, so only the transport's reference is ours to drop.
+        if (job.deferred) |d| d.release(d.ud);
         if (job.reply) |r| c_alloc.free(r);
         c_alloc.destroy(job);
     }
 };
 
-/// Run the handler on the GTK main thread and wait for its reply. Takes
-/// ownership of `request`. Null when the server stopped first.
-fn onMainThread(self: *IpcServer, request: []u8) ?[]u8 {
+const Served = struct { reply: ?[]u8, deferred: ?Deferred = null };
+
+/// Run `work` on the GTK main thread and wait for its reply. Takes ownership
+/// of `work`. Null when the server stopped first.
+fn onMainThread(self: *IpcServer, work: Work) ?Served {
     const c_alloc = std.heap.c_allocator;
     const job = c_alloc.create(Job) catch {
-        c_alloc.free(request);
+        switch (work) {
+            .request => |r| c_alloc.free(r),
+            .finish => |d| d.release(d.ud),
+        }
         return null;
     };
-    job.* = .{ .server = self, .request = request };
+    job.* = .{ .server = self, .work = work };
     _ = glib.idleAdd(runJob, job);
 
     while (true) {
@@ -364,16 +436,24 @@ fn onMainThread(self: *IpcServer, request: []u8) ?[]u8 {
         };
         break;
     }
-    const reply = job.reply;
+    const served: Served = .{ .reply = job.reply, .deferred = job.deferred };
     job.reply = null;
+    job.deferred = null;
     job.release();
-    return reply;
+    return served;
 }
 
 fn runJob(ud: ?*anyopaque) callconv(.c) c_int {
     const job: *Job = @ptrCast(@alignCast(ud orelse return 0));
     if (!job.abandoned.load(.acquire)) {
-        job.reply = job.server.handler(job.server.handler_ctx, job.request);
+        const s = job.server;
+        switch (job.work) {
+            .request => |r| {
+                job.reply = s.handler(s.handler_ctx, r);
+                if (s.take_deferred) |take| job.deferred = take(s.handler_ctx);
+            },
+            .finish => |d| job.reply = d.finish(s.handler_ctx, d.ud),
+        }
     }
     job.done.set();
     job.release();

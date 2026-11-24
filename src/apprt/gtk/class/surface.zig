@@ -44,6 +44,7 @@ const viewer_chrome = @import("../viewer_chrome.zig");
 const IpcHandlers = @import("../IpcHandlers.zig");
 const PaneBanner = @import("../PaneBanner.zig");
 const PaneDrag = @import("../PaneDrag.zig");
+const RemoteLink = @import("../RemoteLink.zig");
 const wk = @import("../webkit.zig");
 const banner_link = @import("../../win32/banner_link.zig");
 const banner_markup = @import("../banner_markup.zig");
@@ -811,6 +812,18 @@ pub const Surface = extern struct {
         /// re-attached.
         spare_session: bool = false,
 
+        /// The remote machine this pane's shell runs on (T3597): a
+        /// `+new-remote-window` window's pane, or a split of one. Holds one
+        /// reference, dropped in finalize after the core surface let go of
+        /// the connection. Null: a local pane.
+        remote_link: ?*RemoteLink.Link = null,
+        /// The REMOTE-native values this pane's OPEN carries: cwd and shell
+        /// ON THE REMOTE MACHINE, and a command for its shell to run. Never
+        /// the local config's. Owned.
+        remote_working_directory: ?[]u8 = null,
+        remote_shell: ?[]u8 = null,
+        remote_command: ?[]u8 = null,
+
         /// The viewer this pane shows INSTEAD of a terminal (T3411), or null
         /// for a terminal pane. A viewer pane is an ordinary Surface in the
         /// split tree - it splits, resizes, focuses, zooms and closes through
@@ -898,6 +911,11 @@ pub const Surface = extern struct {
             .working_directory = if (overrides.working_directory) |wd| alloc.dupeZ(u8, wd) catch null else null,
             .env = dupeEnv(alloc, overrides.env) catch &.{},
         };
+        // T3597: the first pane of a remote window rides its link.
+        if (RemoteLink.pending_open) |o| {
+            RemoteLink.pending_open = null;
+            self.adoptRemote(o);
+        }
         if (restore) |r| self.adoptRestore(alloc, r);
         if (restore != null) priv.restored = true;
         // T3589: the restored tint, held until the core surface exists.
@@ -908,6 +926,28 @@ pub const Surface = extern struct {
             priv.banner_restored = priv.banner != null;
         };
         return self;
+    }
+
+    /// Ride a remote machine's link (T3597): take a reference and copy the
+    /// REMOTE-native values the OPEN carries. Before the core surface exists
+    /// (`remoteBackend` is read when it is built); a pane that already rides
+    /// one keeps it.
+    pub fn adoptRemote(self: *Self, o: RemoteLink.Open) void {
+        const priv = self.private();
+        if (priv.remote_link != null or priv.core_surface != null or priv.viewer != null) return;
+        if (o.link.retired) return;
+        const alloc = Application.default().allocator();
+        o.link.ref();
+        priv.remote_link = o.link;
+        priv.remote_working_directory = if (o.working_directory) |v| alloc.dupe(u8, v) catch null else null;
+        priv.remote_shell = if (o.shell) |v| alloc.dupe(u8, v) catch null else null;
+        priv.remote_command = if (o.command) |v| alloc.dupe(u8, v) catch null else null;
+    }
+
+    /// The remote machine link this pane rides, or null for a local pane
+    /// (T3597).
+    pub fn remoteLink(self: *Self) ?*RemoteLink.Link {
+        return self.private().remote_link;
     }
 
     /// Take on a recorded pane (T3397): its pane id, and either the session
@@ -2377,6 +2417,16 @@ pub const Surface = extern struct {
     /// directory, and pins the session so it survives the app.
     pub fn remoteBackend(self: *Self) ?CoreSurface.RemoteBackend {
         const priv = self.private();
+        // T3597: a remote machine's pane OPENs on that machine's agent, with
+        // only REMOTE-native values - no shell integration, no local cwd or
+        // shell (core's stall-fix invariant), whatever session persistence
+        // says about local panes.
+        if (priv.remote_link) |link| return .{
+            .connection = link.conn(),
+            .local_shell_integration = false,
+            .working_directory = priv.remote_working_directory,
+            .shell = priv.remote_shell,
+        };
         const config = if (priv.config) |c| c.get() else return null;
         if (!config.@"session-persistence") return null;
         const app = Application.default();
@@ -2771,6 +2821,16 @@ pub const Surface = extern struct {
             alloc.destroy(v);
 
             priv.core_surface = null;
+        }
+        // T3597: after the core surface sent its CLOSE/DETACH, so the last
+        // pane off a remote link is what shuts it down.
+        if (priv.remote_link) |l| {
+            priv.remote_link = null;
+            l.unref();
+        }
+        inline for (.{ "remote_working_directory", "remote_shell", "remote_command" }) |f| {
+            if (@field(priv, f)) |v| alloc.free(v);
+            @field(priv, f) = null;
         }
         if (priv.banner) |b| {
             b.destroy();
@@ -4330,7 +4390,18 @@ pub const Surface = extern struct {
         // shell). The `-e` window carries the command as its own override.
         if (priv.restored) config.@"initial-command" = null;
 
-        if (priv.overrides.command) |c| {
+        // T3597: a remote machine's pane runs only what was asked of THAT
+        // machine. The launch's `-e` and any local command name binaries
+        // here; an explicit remote command is forwarded in the OPEN, marked
+        // explicit the way win32's is (`wait-after-command`).
+        if (priv.remote_link != null) {
+            config.@"initial-command" = null;
+            config.command = null;
+            if (priv.remote_command) |cmd| {
+                config.command = .{ .shell = try config.arenaAlloc().dupeZ(u8, cmd) };
+                config.@"wait-after-command" = true;
+            }
+        } else if (priv.overrides.command) |c| {
             config.command = try c.clone(config._arena.?.allocator());
             // T3337: an IPC `--command`/`-e` was asked for, so an
             // agent-backed pane forwards it in the OPEN rather than dropping
