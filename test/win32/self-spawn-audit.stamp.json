@@ -1,8 +1,8 @@
 {
     "guard":  "self-spawn",
     "script":  "test/win32/self-spawn-audit.ps1",
-    "generated":  "2026-11-24T00:42:37-08:00",
-    "commit":  "de60c4e56",
+    "generated":  "2026-11-24T01:06:26-08:00",
+    "commit":  "87648233a",
     "uncommitted":  [
 
                     ],
@@ -614,7 +614,7 @@
                   "src/build/CombineArchivesStep.zig":  "31be7eee49915ea374e808982c0eb1d1c1bea972a313fb06a55286c3c0abcba0",
                   "src/build/Config.zig":  "1cfd8ea88cdaeb947f947c1125ca6ce1d1f957f2a3da54348ed7e7be66da40f1",
                   "src/build/drive_check.zig":  "a355ce6d3af9b9e1ee61dd60d0595bae80a6074f833734a736c2455f3ad70425",
-                  "src/build/GhosttyAgent.zig":  "a9b57f7c0bbfd9341121f41e72eaae80e16b821e280501edc60d2d8498f03cd7",
+                  "src/build/GhosttyAgent.zig":  "d84fac98460a8d0fdae9b53874987d79f0449fe1799cf0250907f18955aaf160",
                   "src/build/GhosttyBench.zig":  "50387a0b268b3d9ac437bc2dc12abe3d94e84597f9b0d2f45ebc5541d0429676",
                   "src/build/GhosttyCompSpike.zig":  "7dec3acc8e755e707e1dd7b8101f5e3e843c68605ab9aadfe530a8f730021711",
                   "src/build/GhosttyConptySmoke.zig":  "788b736b4a21c87464873580a65b20c99cb239e037d5cff12793f6ceedf49d29",
@@ -930,7 +930,7 @@
                   "src/remote/agent/keepalive.zig":  "08ce019b6d8998aa52868e0101bb1b6549fd8560ed337329ddf420362ff7c5f6",
                   "src/remote/agent/layout_meta.zig":  "7541949239eed45aec6cd00297fa95e56239239e8aab33600439f258f81a00be",
                   "src/remote/agent/link_control.zig":  "8a0fb05ef020d3b2ae734aaa9489547cde0cb9e5e7f2c0bdf6d2782b3274c09c",
-                  "src/remote/agent/main.zig":  "a466caeb9b0ac20dac2d8442bdc8f84fcc255c8e911658f725f343be17d6867c",
+                  "src/remote/agent/main.zig":  "321ed34ba4834532f147f3fcdce1756ce7df4adf088b9f511f55ef5019b75ec4",
                   "src/remote/agent/metrics.zig":  "c4f0863d8706b9b7d24057cff5b388f72cc606a30df05105b19a19f97a68a4d6",
                   "src/remote/agent/msi_ca.zig":  "fa0ef30b29983b3edf5995afbe9ac5d4c5909361ac76b33e0c43651787eb17fb",
                   "src/remote/agent/mux.zig":  "bb91f11b8e95720f71e322fe788d2b7fbeba605e99132ec0ce0f317003f49867",

@@ -707,9 +707,12 @@ fn parseMaxSessions(text: []const u8) ?usize {
 /// The `--build-mode` answer (T1036): the zig build mode, in the same
 /// `- build mode    : .<Mode>` shape `ghoztty +version` prints, plus the
 /// endpoint family this binary actually derives. The second line is the one a
-/// harness should trust: the agent's family follows `agent_build_options.is_debug`
-/// (`-Doptimize=Debug` only), which is NOT the app's `build_config.is_debug`
-/// (Debug or ReleaseSafe), so the mode alone cannot answer it. Pure + tested.
+/// harness should trust: the agent's family follows `agent_build_options.is_debug`.
+/// Since T2051 that is its app's own rule (`agentIsDebug` in
+/// src/build/GhosttyAgent.zig: Debug or ReleaseSafe on win32/GTK, Debug only
+/// on macOS, whose ReleaseSafe app carries the release bundle id), but
+/// the line still reports the baked flag rather than recomputing it from the
+/// mode, so a future drift between the two shows up here. Pure + tested.
 fn buildModeText(buf: []u8, mode: []const u8, is_debug: bool) []const u8 {
     return std.fmt.bufPrint(buf, "ghoztty-agent\n  - build mode    : .{s}\n  - endpoints     : {s}\n", .{
         mode,
@@ -723,12 +726,26 @@ test "buildModeText: mode in the app's shape, endpoint family from is_debug" {
         "ghoztty-agent\n  - build mode    : .Debug\n  - endpoints     : debug\n",
         buildModeText(&buf, "Debug", true),
     );
-    // ReleaseSafe is the case the mode cannot answer: the app would call it
-    // isolated, the agent derives the user's endpoints.
+    // The text reports the flag it is handed, not the mode: a ReleaseFast
+    // build is the user's family.
     try std.testing.expectEqualStrings(
-        "ghoztty-agent\n  - build mode    : .ReleaseSafe\n  - endpoints     : release\n",
-        buildModeText(&buf, "ReleaseSafe", false),
+        "ghoztty-agent\n  - build mode    : .ReleaseFast\n  - endpoints     : release\n",
+        buildModeText(&buf, "ReleaseFast", false),
     );
+}
+
+test "agent endpoint family follows its app's lineage rule (T2051)" {
+    // The flag is baked by `agentIsDebug` in src/build/GhosttyAgent.zig; this
+    // restates the rule from the APP's side and pins it against the mode the
+    // lane compiled under. win32/GTK apps use `build_config.is_debug` (Debug or
+    // ReleaseSafe); the Mac app's lineage is its bundle id, `.debug` only under
+    // the Xcode Debug config (ReleaseSafe builds as ReleaseLocal).
+    const app_rule = switch (builtin.mode) {
+        .Debug => true,
+        .ReleaseSafe => builtin.os.tag != .macos,
+        .ReleaseFast, .ReleaseSmall => false,
+    };
+    try std.testing.expectEqual(app_rule, @import("agent_build_options").is_debug);
 }
 
 const Mode = union(enum) {

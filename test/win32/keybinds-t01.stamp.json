@@ -1,8 +1,8 @@
 {
     "guard":  "keybinds-t01",
     "script":  "test/win32/keybinds-t01.ps1",
-    "generated":  "2026-11-24T00:43:21-08:00",
-    "commit":  "de60c4e56",
+    "generated":  "2026-11-24T01:07:10-08:00",
+    "commit":  "87648233a",
     "uncommitted":  [
 
                     ],

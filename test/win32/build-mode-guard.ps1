@@ -350,9 +350,10 @@ if (Test-Path $Exe) {
 # ============================================================================
 # ghoztty-agent.exe prints a build STAMP on --version, so the app's gate cannot
 # read it. Since T1036 it answers `--build-mode`, and the ENDPOINTS line is what
-# Assert-GhozttyIsolatedAgent trusts - the agent's family follows -Doptimize=Debug
-# only, so a ReleaseSafe agent is on the user's endpoints even though the app's
-# predicate would call the mode isolated (H3 is that case).
+# Assert-GhozttyIsolatedAgent trusts. An agent built before T2051 baked its family
+# from -Doptimize=Debug only, so a ReleaseSafe one of those is on the user's
+# endpoints even though the app's predicate would call the mode isolated (H3 is
+# that case: the gate must believe the binary, not the mode).
 function New-StubAgent($name, $Mode, $Family) {
     $path = Join-Path $tmp "$name.cmd"
     $lines = @('@echo off', 'echo ghoztty-agent')

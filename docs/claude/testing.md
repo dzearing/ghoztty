@@ -1343,8 +1343,10 @@ lie without anybody acting in bad faith.
 **A script that launches `ghoztty-agent.exe` itself asks the agent, not the
 app** (T1036): `Assert-GhozttyIsolatedAgent -Exe $AgentExe` before the first
 launch. It reads `ghoztty-agent --build-mode`, whose `- endpoints : debug|release`
-line is the agent's own answer — and the answer differs from the app's for a
-ReleaseSafe build (the agent's debug family is `-Doptimize=Debug` only; T2051).
+line is the agent's own answer. Since T2051 it follows the app's rule (Debug or
+ReleaseSafe -> debug), but an agent built before that baked `-Doptimize=Debug`
+only, so a stale ReleaseSafe agent still answers `release` — trust the line,
+not the mode.
 An app-side claim does not count for an agent launch, and
 `launch-preflight-audit.ps1` scans for both; `--version`/`--build-mode` queries
 are not launches. `-Allow` passes a release agent only under a private

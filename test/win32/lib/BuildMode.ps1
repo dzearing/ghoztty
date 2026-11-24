@@ -383,11 +383,13 @@ isolating knobs, or declare -UserEndpoints -Reason '<why>'.
 #       - endpoints     : debug
 #
 # The ENDPOINTS line is what this gate reads, not the mode. The agent's family
-# follows `agent_build_options.is_debug`, which is `-Doptimize=Debug` ONLY - so a
-# ReleaseSafe agent derives the user's pipe, guard mutex and state dir even
-# though Test-GhozttyIsolatedBuildMode would call the mode isolated. Measuring
-# the binary is the point of the flag; re-deriving the answer from the mode
-# would re-introduce exactly the guess the flag exists to replace.
+# follows `agent_build_options.is_debug`. Since T2051 that is the app's own rule
+# (Debug or ReleaseSafe), but an agent built before T2051 baked
+# `-Doptimize=Debug` ONLY - a ReleaseSafe one of those derives the user's pipe,
+# guard mutex and state dir even though Test-GhozttyIsolatedBuildMode would call
+# the mode isolated. Measuring the binary is the point of the flag; re-deriving
+# the answer from the mode would re-introduce exactly the guess the flag exists
+# to replace.
 #
 # An agent too old to know the flag answers "unknown argument" and prints no
 # endpoints line, which is refused like any other run this gate cannot vouch
@@ -483,9 +485,10 @@ agent's pipe, guard mutex and state dir are the ones that hold the user's live
 sessions: launching it here would either fight the user's agent for the guard
 or open test sessions inside it, pinned, where nothing reaps them.
 
-Note the agent is NOT the app: it derives the debug endpoints only from
--Doptimize=Debug, so a ReleaseSafe zig-out is refused here even though the app
-half of the same build would pass Assert-GhozttyIsolatedBuild.
+This reads the agent binary's own answer, not the app's: an agent built
+before T2051 derived the debug endpoints only from -Doptimize=Debug, so a
+stale ReleaseSafe agent is refused here even though the app half of a
+ReleaseSafe build would pass Assert-GhozttyIsolatedBuild.
 
 Rebuild zig-out the way CLAUDE.md says, and re-run:
     zig build -Dapp-runtime=win32 -Doptimize=Debug

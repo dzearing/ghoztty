@@ -67,7 +67,12 @@ pub fn init(b: *std.Build, cfg: *const Config, deps: *const SharedDeps) !Agent {
     // single-instance guard splits by lineage so a debug and a release local
     // agent don't fight (their dirs + pipe suffixes are already split per T89a
     // decision 2). The `test-agent` build reuses this module and is `.Debug`.
-    version_opts.addOption(bool, "is_debug", cfg.optimize == .Debug);
+    //
+    //
+    // The rule MUST match the lineage rule of the app that spawns this agent,
+    // because that app derives the agent's endpoints and expects the agent to
+    // agree (T2051): see `agentIsDebug`.
+    version_opts.addOption(bool, "is_debug", agentIsDebug(cfg.target.result.os.tag, cfg.optimize));
     const version_module = version_opts.createModule();
     exe.root_module.addImport("agent_build_options", version_module);
 
@@ -260,6 +265,30 @@ fn parseSemver(s: []const u8) Semver {
     const minor = std.fmt.parseInt(u32, it.next() orelse "0", 10) catch 0;
     const patch = std.fmt.parseInt(u32, it.next() orelse "0", 10) catch 0;
     return .{ .major = major, .minor = minor, .patch = patch };
+}
+
+/// Whether the agent bakes the DEBUG lineage (its pipe, state/log dir, guard
+/// and job names), which must be the lineage of the app that spawns it (T2051):
+///
+/// - Windows and Linux: the app switches on `build_config.is_debug`, which is
+///   Debug OR ReleaseSafe. This used to be `== .Debug` alone, so a ReleaseSafe
+///   win32 zig-out's app took the -debug family while the agent it spawned took
+///   the user's release guard and state dir.
+/// - macOS: the Swift app picks the agent's directory by bundle id, and only
+///   the Xcode `Debug` config carries the `.debug` id - ReleaseSafe builds as
+///   `ReleaseLocal` (GhosttyXcodebuild.zig), the release id. So the Mac agent
+///   stays Debug-only, or its guard would split from the directory its app
+///   hands it.
+///
+/// Every shipped build is ReleaseFast on both platforms, so no user's agent
+/// changes family. Pinned by the "agent endpoint family" test in
+/// src/remote/agent/main.zig, which restates this rule.
+pub fn agentIsDebug(os: std.Target.Os.Tag, optimize: std.builtin.OptimizeMode) bool {
+    return switch (optimize) {
+        .Debug => true,
+        .ReleaseSafe => os != .macos,
+        .ReleaseFast, .ReleaseSmall => false,
+    };
 }
 
 /// Add the agent exe to the install target.
