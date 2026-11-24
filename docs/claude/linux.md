@@ -470,6 +470,42 @@ private runtime dir, so a test app can never meet the user's.
   or `closed`. Acceptance: `wsl-run.ps1 -CommandFile test\linux\cli-undo.sh`,
   ends `CLI UNDO: ALL PASS` (31 checks); `NEGATIVE=1` runs it with undo off
   and must fail.
+- **Pane rearrange mode and pane drops (T3564)**: `toggle_rearrange_mode`
+  (**Ctrl+Shift+.**, the shared default; the command palette's "Toggle
+  Rearrange Mode") is per window (`Window.setRearrangeMode`). On, every pane
+  of every tab shows a 24 px header (`PaneDrag.Header`: a grip icon and the
+  pane's title, an open-hand cursor) at the top of the pane's own vertical
+  box, above any banner, so it takes layout space and every terminal is
+  resized once each way; a pane that arrives while it is on (a split, a
+  drop) grows one on the tree's rebuild. The tab bar is forced visible
+  (`getTabsVisible` true, `getTabsAutohide` false). **Escape** leaves it,
+  through a capture-phase key controller on the window that takes Escape
+  only while the mode is on (`Window.rearrangeKey`). The header is a
+  `GtkDragSource` offering one private mime type,
+  `application/x-ghoztty-pane`, so no terminal's file/text drop target can
+  take it; each split tree's `tree_bin` holds a `GtkDropTargetAsync` for
+  it. The dragged pane is module state set at `drag-begin` (GTK runs one
+  drag at a time), and the drop is win32's pure resolver
+  (`win32/pane_drop.zig`, with `pane_gap.zig`'s dividers) over the split
+  area's own coordinates, made by `gtk/pane_drop_apply.zig` (none-lane
+  tested): split, swap, top-level edge band, divider gap; a drop that would
+  leave the pane in place (`pane_layout.wouldLeaveInPlace`) does nothing.
+  Every move keeps the same `Surface` (same shell, pid and pane id) and
+  focuses the moved pane. Log category `gtk_pane_drag` (`drag began`,
+  `drop pane=... target=... outcome=...`). Not yet: the tab bar and the tab
+  dwell (T3615), cross-window drops (T3616), the ghost card, drop preview
+  and the hover handle with the mode off (T3617), a release over nothing or
+  the header's pop-out button making a new window (T3618). Debug seam:
+  `hl_ipc pane-drag --target=<pane> [--key=escape] [--drop-on=<pane>
+  --fx=<0..1> --fy=<0..1> | --drop-at=<x>,<y>]` replies with `mode`,
+  `tabs_visible`, `tabs_autohide`, `key_effect`, every pane's header
+  (`shown`, `height`, `title`, `content_height`) and the drop (`target`,
+  `side`, `pane`, `outcome`), dropping the TARGET pane through the same
+  `SplitTree.dropPaneAt` a release calls. The harness has no seat, so a
+  pointer drag cannot START headless; the seam is the drop half. Acceptance:
+  `wsl-run.ps1 -CommandFile test\linux\cli-pane-drag.sh`, ends
+  `CLI PANE DRAG: ALL PASS` (23 checks); `NEGATIVE=1` presses Ctrl+Shift+,
+  and must fail D2-D5b, D14 and D15.
 - `+send-keys` and `+read` take a pane id, a pane name or a window name (its
   active pane). `+send-keys` is the Mac's:
   text runs framed as a bracketed paste when the program asked for one, key
