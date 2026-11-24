@@ -1,0 +1,23 @@
+{
+    "guard":  "install-console-twin",
+    "script":  "test/win32/install-console-twin.ps1",
+    "generated":  "2026-11-24T04:13:55-08:00",
+    "commit":  "432c1fb7a",
+    "uncommitted":  [
+                        "dist/windows-installer/build-msi.sh",
+                        "src/apprt/win32/console_twin.zig",
+                        "src/apprt/win32/install_ca.zig",
+                        "src/build/patch_subsystem_main.zig",
+                        "test/win32/install-console-twin.ps1"
+                    ],
+    "files":  {
+                  "dist/windows-installer/build-msi.sh":  "35dcf00bedc93b6520412c6359831132fb85605d82a7f45d13eb17ca0b4baf5a",
+                  "src/apprt/win32/console_twin.zig":  "c503396ea447f2de9163a4b88ab841ad2d4ac994a03591e9dbe4bb8f978906f7",
+                  "src/apprt/win32/install_ca.zig":  "ad1db2dcd426f05d849ab9fda7558b972a2badc67c95765de22312780368b35b",
+                  "src/build/patch_subsystem_main.zig":  "d79d2e5085953a822ab3bef282bab5b4cd0f0cbfd2adf7776c3ad4ec476868e5",
+                  "test/win32/install-console-twin.ps1":  "9563eff29a318ac8c3e21556cc5ce0353efa2a197b331abe9fca6bcfd02cd735"
+              },
+    "code":  {
+                 "test/win32/install-console-twin.ps1":  "code1:dfba81aaecda696aa2f20d329a7bddff2954e775438ec1d4942200867e1c0f73"
+             }
+}

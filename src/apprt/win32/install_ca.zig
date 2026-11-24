@@ -2,13 +2,22 @@
 //! (T1730). Packaged into the MSI's Binary table by
 //! `dist/windows-installer/build-msi.sh`, never installed as a file.
 //!
-//! One export today, `MaintenancePromptCA`, which asks "Repair or Cancel?" when
+//! `MaintenancePromptCA` asks "Repair or Cancel?" when
 //! the package is run for the version already installed. It runs the installed
 //! `ghoztty.exe --install-maintenance` (the dialog lives in the app, so it is
 //! the same dark Ghoztty prompt as every other one), waits for it, and turns
 //! the exe's answer into an ACTION STATUS - the only channel through which
 //! Windows Installer accepts "the user cancelled" quietly. Why an EXE action
 //! could not do this is spelled out in `maintenance_ca.zig`.
+//!
+//! `DeriveConsoleTwinCA` and `RemoveConsoleTwinCA` (T2071) make and take away
+//! `ghoztty.com`, which the package no longer carries as a second 20 MB copy:
+//! it is `ghoztty.exe` with one header word changed (`console_twin.zig`).
+//! Both are DEFERRED actions, so INSTALLDIR arrives as CustomActionData, and
+//! both always return success. RemoveExistingProducts runs early (T2327), so
+//! by the time the twin is derived the previous version is already gone and a
+//! failed install would roll back to nothing at all; a missing twin is a
+//! degraded install the next repair or update fixes, and the log says which.
 //!
 //! msi.dll is resolved at run time rather than linked: this DLL is only ever
 //! loaded by msiexec's custom-action server, which has msi.dll mapped already,
@@ -17,6 +26,7 @@
 
 const std = @import("std");
 const logic = @import("maintenance_ca.zig");
+const twin = @import("console_twin.zig");
 
 const W = std.os.windows;
 const UINT = c_uint;
@@ -143,4 +153,49 @@ export fn MaintenancePromptCA(hInstall: MSIHANDLE) callconv(.winapi) UINT {
     else
         std.unicode.utf8ToUtf16LeStringLiteral("MaintenancePromptCA: answer=repair; proceeding"));
     return result;
+}
+
+fn wide(comptime text: []const u8) [:0]const u16 {
+    return std.unicode.utf8ToUtf16LeStringLiteral(text);
+}
+
+/// Deferred, after InstallFiles: `<INSTALLDIR>ghoztty.com` from the
+/// `ghoztty.exe` InstallFiles just wrote. Install, repair and upgrade alike.
+export fn DeriveConsoleTwinCA(hInstall: MSIHANDLE) callconv(.winapi) UINT {
+    const msi = Msi.load() orelse return 0;
+    var dir_buf: [W.PATH_MAX_WIDE]u16 = undefined;
+    const dir = msi.property(hInstall, "CustomActionData", &dir_buf) orelse {
+        msi.logLine(hInstall, wide("DeriveConsoleTwinCA: no install directory in CustomActionData; ghoztty.com NOT written"));
+        return 0;
+    };
+    msi.logLine(hInstall, switch (twin.derive(std.heap.page_allocator, dir)) {
+        .derived => wide("DeriveConsoleTwinCA: derived ghoztty.com from ghoztty.exe"),
+        .derived_aside => wide("DeriveConsoleTwinCA: derived ghoztty.com; the old one was in use and was moved aside to ghoztty.com.old"),
+        .missing_source => wide("DeriveConsoleTwinCA: ghoztty.exe is not in the install directory; ghoztty.com NOT written"),
+        .read_failed => wide("DeriveConsoleTwinCA: ghoztty.exe could not be read; ghoztty.com NOT written"),
+        .not_a_pe => wide("DeriveConsoleTwinCA: ghoztty.exe is not a GUI or console PE image; ghoztty.com NOT written"),
+        .write_failed => wide("DeriveConsoleTwinCA: ghoztty.com.new could not be written; ghoztty.com NOT updated"),
+        .replace_failed => wide("DeriveConsoleTwinCA: the existing ghoztty.com could not be replaced or moved aside; ghoztty.com NOT updated"),
+    });
+    return 0;
+}
+
+/// Deferred, before RemoveFiles on a full uninstall: the twin is not in the
+/// File table, so nothing else would delete it, and the install directory's
+/// RemoveFolder would then find it not empty and leave it behind.
+export fn RemoveConsoleTwinCA(hInstall: MSIHANDLE) callconv(.winapi) UINT {
+    const msi = Msi.load() orelse return 0;
+    var dir_buf: [W.PATH_MAX_WIDE]u16 = undefined;
+    const dir = msi.property(hInstall, "CustomActionData", &dir_buf) orelse {
+        msi.logLine(hInstall, wide("RemoveConsoleTwinCA: no install directory in CustomActionData; ghoztty.com left in place"));
+        return 0;
+    };
+    const r = twin.remove(dir);
+    msi.logLine(hInstall, if (r.stuck != 0)
+        wide("RemoveConsoleTwinCA: ghoztty.com (or a leftover beside it) is in use and was left in place")
+    else if (r.deleted != 0)
+        wide("RemoveConsoleTwinCA: removed ghoztty.com")
+    else
+        wide("RemoveConsoleTwinCA: no ghoztty.com to remove"));
+    return 0;
 }

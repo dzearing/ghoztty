@@ -111,7 +111,7 @@ function Invoke-MsiSql($Db, [string]$Sql) {
     [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($v)
 }
 function New-Msi {
-    param([string]$Path, [hashtable]$Files, [hashtable]$Props, [hashtable]$ArpRows = @{})
+    param([string]$Path, [hashtable]$Files, [hashtable]$Props, [hashtable]$ArpRows = @{}, [hashtable]$Actions = @{})
     if (Test-Path -LiteralPath $Path) { Remove-Item -LiteralPath $Path -Force }
     $installer = New-Object -ComObject WindowsInstaller.Installer
     $db = $installer.OpenDatabase($Path, 3)   # msiOpenDatabaseModeCreate
@@ -137,6 +137,14 @@ function New-Msi {
                 Invoke-MsiSql $db ("INSERT INTO ``Registry`` (``Registry``, ``Root``, ``Key``, ``Name``, ``Value``, ``Component_``) VALUES ('r{0}', 1, 'Software\Microsoft\Windows\CurrentVersion\Uninstall\[ProductCode]', '{1}', '{2}', 'C_ArpEntry')" -f $i, $k, $ArpRows[$k])
             }
         }
+        # T2071: the custom action that derives ghoztty.com at install time.
+        # Same rule as Registry: no rows, no table.
+        if ($Actions.Count -gt 0) {
+            Invoke-MsiSql $db 'CREATE TABLE `CustomAction` (`Action` CHAR(72) NOT NULL, `Type` SHORT NOT NULL, `Source` CHAR(72), `Target` CHAR(255) PRIMARY KEY `Action`)'
+            foreach ($k in $Actions.Keys) {
+                Invoke-MsiSql $db ("INSERT INTO ``CustomAction`` (``Action``, ``Type``, ``Source``, ``Target``) VALUES ('{0}', 1089, 'GhozttyMsiCa', '{1}')" -f $k, $Actions[$k])
+            }
+        }
         [void]$db.Commit()
     } finally {
         [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($db)
@@ -146,13 +154,23 @@ function New-Msi {
     }
 }
 
+# What ships since T2071: no ghoztty.com File row - the package derives the
+# twin at install time with DeriveConsoleTwin.
 function Get-GoodMsiFiles {
     return @{
         'GHOZTT~1.EXE|ghoztty.exe' = $BuildVersion
-        'GHOZTT~1.COM|ghoztty.com' = $BuildVersion
         'GHOZTT~2.EXE|ghoztty-agent.exe' = $BuildVersion
         'composer.css' = ''
     }
+}
+function Get-GoodMsiActions {
+    return @{ DeriveConsoleTwin = 'DeriveConsoleTwinCA'; RemoveConsoleTwin = 'RemoveConsoleTwinCA' }
+}
+# What shipped before it: the twin as a second full copy, at the same version.
+function Get-CarriedTwinMsiFiles {
+    $f = Get-GoodMsiFiles
+    $f['GHOZTT~1.COM|ghoztty.com'] = $BuildVersion
+    return $f
 }
 function Get-GoodMsiProps {
     return @{
@@ -174,6 +192,7 @@ function New-Release {
         [hashtable]$MsiFiles = (Get-GoodMsiFiles),
         [hashtable]$MsiProps = (Get-GoodMsiProps),
         [hashtable]$ArpRows = (Get-GoodArpRows),
+        [hashtable]$MsiActions = (Get-GoodMsiActions),
         [string]$ReportedCommit = $Commit,
         [scriptblock]$Mutate = $null
     )
@@ -183,7 +202,7 @@ function New-Release {
     $zip = Join-Path $dir "Ghoztty-portable-$Version-x64.zip"
     $msi = Join-Path $dir "Ghoztty-$Version-x64.msi"
     New-Zip -Path $zip -Entries $ZipEntries
-    New-Msi -Path $msi -Files $MsiFiles -Props $MsiProps -ArpRows $ArpRows
+    New-Msi -Path $msi -Files $MsiFiles -Props $MsiProps -ArpRows $ArpRows -Actions $MsiActions
     $assets = @(Get-ChildItem -LiteralPath $dir -File | ForEach-Object { @{ name = $_.Name; size = $_.Length } })
     if ($Mutate) { & $Mutate $dir $zip $msi }
     $json = @{ assets = $assets; commit = $ReportedCommit } | ConvertTo-Json -Depth 4
@@ -229,6 +248,14 @@ Assert 'A2 the verdict line says OK' ($r.Text -match "(?m)^OK \d+ check\(s\) pas
 Assert 'A3 sizes were checked against the reported listing' ($r.Text -match 'bytes GitHub reports')
 Assert 'A4 the tagged commit was compared' ($r.Text -match 'ok\s+cross: the MSI was built from the tagged commit')
 Assert 'A5 the ZIP/MSI build cross-check ran' ($r.Text -match 'ok\s+cross: the ZIP and the MSI carry the same ghoztty\.exe build')
+Assert 'A6 the derived console twin was recognised (T2071)' ($r.Text -match 'ok\s+msi: puts ghoztty\.com on the PATH')
+
+# A release from before T2071 carries the twin and no action, and is still a
+# working install - re-reading an older release must not call it broken.
+$r = Invoke-Checker -Release (New-Release -MsiFiles (Get-CarriedTwinMsiFiles) -MsiActions @{})
+AssertEq 'A7 a pre-T2071 release (twin carried, no action) -> exit 0' 0 $r.Exit
+if ($r.Exit -ne 0) { @($r.Text -split "`n" | Where-Object { $_ -match 'BROKEN|error' }) | Select-Object -First 8 | ForEach-Object { "      checker: $($_.Trim())" } }
+Assert 'A8 and its carried twin is version-checked like the exe' ($r.Text -match 'ok\s+msi: ghoztty\.com carries a file version')
 
 # ============================================================================
 "== B: every defect it exists to catch, one at a time"
@@ -281,6 +308,14 @@ Assert-Broken 'B10d' 'a package with no Apps & Features entry of its own (pre-T2
 $f = Get-GoodMsiFiles
 foreach ($k in @($f.Keys)) { if ($f[$k]) { $f[$k] = '1.2.3.4' } }
 Assert-Broken 'B11' 'the ZIP and the MSI from different builds' (New-Release -MsiFiles $f) 'cross: the ZIP and the MSI carry the same ghoztty\.exe build'
+
+# T2071: the twin neither carried nor derived is the T1052 defect - a
+# `ghoztty` on the PATH that PowerShell does not wait for.
+Assert-Broken 'B13' 'an MSI that neither carries nor derives ghoztty.com' (New-Release -MsiActions @{}) 'msi: puts ghoztty\.com on the PATH'
+Assert-Broken 'B14' 'a DeriveConsoleTwin row pointing at the wrong entry point' `
+    (New-Release -MsiActions @{ DeriveConsoleTwin = 'MaintenancePromptCA' }) 'msi: puts ghoztty\.com on the PATH'
+$f = Get-CarriedTwinMsiFiles; $f['GHOZTT~1.COM|ghoztty.com'] = '1.0.0.1'
+Assert-Broken 'B15' 'a carried twin from a different build (pre-T2071 shape)' (New-Release -MsiFiles $f -MsiActions @{}) 'msi: the app, its twin and the agent are one build'
 
 Assert-Broken 'B12' 'an MSI built from a commit other than the tag''s' `
     (New-Release -ReportedCommit '0123456789abcdef0123456789abcdef01234567') 'cross: the MSI was built from the tagged commit'

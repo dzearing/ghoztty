@@ -4186,6 +4186,22 @@ $GuardTable = @(
             'test\win32\install-maintenance.ps1'
         )
     },
+    # The installer derives ghoztty.com at install time instead of carrying a
+    # second 20 MB copy (T2071). The recipe (build-msi.sh), the DLL actions and
+    # the shared PE edit are one feature: a slip in any of them is an install
+    # whose `ghoztty` from PowerShell does nothing, seen only by a user.
+    [pscustomobject]@{
+        Name   = 'install-console-twin'
+        Script = 'test\win32\install-console-twin.ps1'
+        Stamp  = 'test\win32\install-console-twin.stamp.json'
+        Covers = @(
+            'dist\windows-installer\build-msi.sh',
+            'src\apprt\win32\install_ca.zig',
+            'src\apprt\win32\console_twin.zig',
+            'src\build\patch_subsystem_main.zig',
+            'test\win32\install-console-twin.ps1'
+        )
+    },
     # Somebody actually installs the installer and clicks through it (T1299).
     # Fresh install, upgrade, same-version maintenance, older-over-newer and
     # uninstall, driven with a real msiexec against a real package rewritten to

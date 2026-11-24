@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # build-msi.sh — build the per-user Windows MSI for the Ghoztty terminal.
 #
-# Generates a WiX source (wixl/WiX-v3 subset) that packages ghoztty.exe, its
-# console twin ghoztty.com, the session-persistence agent and the share/
+# Generates a WiX source (wixl/WiX-v3 subset) that packages ghoztty.exe (whose
+# console twin ghoztty.com is DERIVED at install time, T2071), the
+# session-persistence agent and the share/
 # resource tree (themes, shell-integration, terminfo sentinel that
 # src/os/resourcesdir.zig climbs for), compiles it with wixl (GNOME msitools)
 # and validates the result with msiinfo — no Windows box needed.
@@ -173,7 +174,10 @@ SHARE="$REPO_ROOT/zig-out/share"
 # is what the MSI's PATH entry actually resolves: PATHEXT prefers .COM over
 # .EXE, and the GUI ghoztty.exe is not waited for by PowerShell or cmd, so an
 # install without the twin puts a dead `ghoztty` on the user's PATH (T1052).
-[[ -f "$COM_EXE" ]] || { echo "error: $COM_EXE not found — the MSI puts INSTALLDIR on PATH, and without the console twin the ghoztty command line does nothing (T245); build first" >&2; exit 1; }
+# The package does NOT carry it (T2071): it is ghoztty.exe with one header word
+# changed, and carrying it cost ~20 MB of every download. DeriveConsoleTwin
+# (ghoztty-msi-ca.dll, src/apprt/win32/console_twin.zig) writes it after
+# InstallFiles, and the read-back below fails the build if that wiring is gone.
 # The session-persistence agent ships as a REQUIRED sibling of ghoztty.exe
 # (T89h): the app spawns it by that relative location (LocalAgent.zig), and
 # a Windows install without it silently degrades every pane to non-persistent
@@ -326,12 +330,12 @@ def emit_dir(fs_dir, rel_install_dir, indent):
         else:
             emit_file_component(rel_install_dir, p, indent)
 
-# INSTALLDIR contents: ghoztty.exe + ghoztty.com + ghoztty-agent.exe + share
-# tree. The agent is a required sibling: session persistence spawns it by
-# relative location (T89h). The .com twin is what INSTALLDIR-on-PATH resolves
-# for a bare `ghoztty` (T245/T1052).
+# INSTALLDIR contents: ghoztty.exe + ghoztty-agent.exe + share tree. The agent
+# is a required sibling: session persistence spawns it by relative location
+# (T89h). The .com twin is what INSTALLDIR-on-PATH resolves for a bare
+# `ghoztty` (T245/T1052), and it is deliberately NOT a File row: the package
+# derives it from ghoztty.exe at install time (T2071, DeriveConsoleTwin below).
 emit_file_component("", exe, 12)
-emit_file_component("", com_exe, 12)
 emit_file_component("", agent_exe, 12)
 lines.append(f'            <Directory Id="{ident("d", "share")}" Name="share">')
 emit_dir(share, "share", 14)
@@ -783,6 +787,49 @@ template = """<?xml version="1.0" encoding="utf-8"?>
                   Execute="immediate"
                   Return="asyncNoWait"/>
 
+    <!-- T2071: ghoztty.com is made here, not carried.
+
+         (No double hyphen anywhere in this comment: XML forbids one inside a
+         comment and wixl rejects the whole document over it.)
+
+         The console twin is ghoztty.exe with one header word changed, and the
+         package used to carry it as a second full copy: about 20 MB of every
+         download, because no cabinet compressor looks back 35 MB to notice the
+         two files are the same. DeriveConsoleTwin writes it from the exe that
+         InstallFiles has just put down (src/apprt/win32/console_twin.zig), so
+         install, repair and upgrade all leave a twin that matches the exe.
+         RemoveConsoleTwin deletes it on a full uninstall: it is not in the File
+         table, so nothing else would, and the install directory would then be
+         left behind not empty. wixl 0.106 has no RemoveFile element, which is
+         why that is an action too.
+
+         Both are deferred, so INSTALLDIR reaches them as CustomActionData via
+         the property set row in front of each, and both are impersonated
+         (Impersonate yes): this is a per user install and the files are the
+         user's. Return ignore, and the DLL returns success regardless:
+         RemoveExistingProducts runs early (1401), so the previous version is
+         gone by the time the twin is written, and failing here would roll back
+         to no Ghoztty at all. A missing twin is logged in words and repaired by
+         the next repair or update. -->
+    <CustomAction Id="SetDeriveConsoleTwinData"
+                  Property="DeriveConsoleTwin"
+                  Value="[INSTALLDIR]"/>
+    <CustomAction Id="DeriveConsoleTwin"
+                  BinaryKey="GhozttyMsiCa"
+                  DllEntry="DeriveConsoleTwinCA"
+                  Execute="deferred"
+                  Impersonate="yes"
+                  Return="ignore"/>
+    <CustomAction Id="SetRemoveConsoleTwinData"
+                  Property="RemoveConsoleTwin"
+                  Value="[INSTALLDIR]"/>
+    <CustomAction Id="RemoveConsoleTwin"
+                  BinaryKey="GhozttyMsiCa"
+                  DllEntry="RemoveConsoleTwinCA"
+                  Execute="deferred"
+                  Impersonate="yes"
+                  Return="ignore"/>
+
     <InstallExecuteSequence>
       <!-- T2327: a NUMBER, not After="InstallValidate". wixl's sequencer
            emitted that anchor at 6604, after InstallFinalize, and the late
@@ -829,6 +876,14 @@ template = """<?xml version="1.0" encoding="utf-8"?>
       <Custom Action="PrepareInstallDir" Sequence="1040">Installed OR OLDERVERSIONFOUND</Custom>
       <Custom Action="SetLaunchAppCmd" Before="LaunchApp"/>
       <Custom Action="LaunchApp" After="InstallFinalize">NOT Installed AND NOT OLDERVERSIONFOUND AND UILevel &gt; 3 AND LAUNCHAPP = "1"</Custom>
+      <!-- T2071: numbers, for the T1367 reason above. The remove pair runs
+           before RemoveFiles (3500), which is where the install directory's
+           RemoveFolder row is processed; the derive pair runs after
+           InstallFiles (4000) has written the exe it reads. -->
+      <Custom Action="SetRemoveConsoleTwinData" Sequence="3480">REMOVE~="ALL"</Custom>
+      <Custom Action="RemoveConsoleTwin" Sequence="3490">REMOVE~="ALL"</Custom>
+      <Custom Action="SetDeriveConsoleTwinData" Sequence="4005">NOT REMOVE~="ALL"</Custom>
+      <Custom Action="DeriveConsoleTwin" Sequence="4010">NOT REMOVE~="ALL"</Custom>
       <Custom Action="SetRestartAppCmd" Before="RestartApp"/>
       <Custom Action="RestartApp" After="LaunchApp">NOT Installed AND OLDERVERSIONFOUND AND UILevel &gt; 3 AND RESTARTAPP = "1"</Custom>
     </InstallExecuteSequence>
@@ -857,7 +912,9 @@ def tree_bytes(path):
             if not os.path.islink(fp):
                 total += os.path.getsize(fp)
     return total
-size_kb = sum(tree_bytes(p) for p in (exe, com_exe, agent_exe, share, gl)) // 1024
+# The derived ghoztty.com (T2071) is the size of ghoztty.exe and is on disk
+# once installed, so it is counted even though the package does not carry it.
+size_kb = sum(tree_bytes(p) for p in (exe, exe, agent_exe, share, gl)) // 1024
 xml = xml.replace("@ESTIMATED_SIZE_KB@", str(max(size_kb, 1)))
 xml = xml.replace("@PRODUCT_NAME@", PRODUCT_NAME)
 xml = xml.replace("@UPGRADE_CODE@", UPGRADE_CODE)
@@ -920,10 +977,10 @@ msibuild "$OUT" -i "$WORK/Environment.idt"
 # release semver and can repeat or even decrease across rebuilds; an
 # equal/lower table version would re-trigger the T23 vanishing-file rule on
 # upgrade). Table version > on-disk version ⇒ InstallFiles always recopies.
-# ghoztty.com carries ghoztty.exe's version resource verbatim (it IS that
-# image with the subsystem word flipped), so it needs the same row or an
-# upgrade would leave last release's CLI behind next to a fresh app (T1052).
-echo "==> patch File table (ghoztty.exe + ghoztty.com + ghoztty-agent.exe Version = $EXE_FILE_VERSION)"
+# ghoztty.com is not in the table at all since T2071 (it is derived at install
+# time from the exe this row versions), and the patch refuses a package that
+# carries it again.
+echo "==> patch File table (ghoztty.exe + ghoztty-agent.exe Version = $EXE_FILE_VERSION)"
 msiinfo export "$OUT" File > "$WORK/File.idt"
 python3 - "$WORK/File.idt" "$EXE_FILE_VERSION" <<'PYEOF'
 import sys
@@ -932,16 +989,21 @@ with open(path, "r", encoding="utf-8", newline="") as f:
     content = f.read()
 sep = "\r\n" if "\r\n" in content else "\n"
 lines = content.split(sep)
-want = {"ghoztty.exe": 0, "ghoztty.com": 0, "ghoztty-agent.exe": 0}
+want = {"ghoztty.exe": 0, "ghoztty-agent.exe": 0}
+carried_twin = 0
 for i, line in enumerate(lines):
     fields = line.split("\t")
     if len(fields) >= 5 and fields[2] in want:
         fields[4] = ver
         lines[i] = "\t".join(fields)
         want[fields[2]] += 1
+    elif len(fields) >= 5 and fields[2].lower().endswith("ghoztty.com"):
+        carried_twin += 1
 bad = [n for n, c in want.items() if c != 1]
 if bad:
     sys.exit(f"error: expected exactly 1 File-table row for each exe, bad counts: {want}")
+if carried_twin:
+    sys.exit("error: the File table carries ghoztty.com again - it is derived at install time (T2071), and carrying it doubles the download")
 with open(path, "w", encoding="utf-8", newline="") as f:
     f.write(sep.join(lines))
 PYEOF
@@ -1337,6 +1399,105 @@ print("  sequence: CostFinalize={} SetRepairMode={} SetRepairModeFlags={} Mainte
     seq["RemoveExistingProducts"][2] if "RemoveExistingProducts" in seq else "?",
     seq["InstallFinalize"][2] if "InstallFinalize" in seq else "?"))
 print("version bands ok: older / same / newer are three different answers")
+PYEOF
+
+# Read the console-twin wiring back out of the compiled package (T2071). The
+# package no longer carries ghoztty.com; it derives it. So the cost of this
+# wiring being wrong is the T1052 defect, silently: an install whose `ghoztty`
+# on the PATH is the GUI exe, which PowerShell does not wait for. Extracted and
+# fed synthetic tables by test/win32/install-console-twin.ps1, like the blocks
+# above.
+echo "==> verify console twin derivation (CustomAction + sequence + File)"
+python3 - "$WORK/CustomAction.idt" "$WORK/InstallExecuteSequence.idt" "$WORK/File.idt" "$MSI_CA_DLL" <<'PYEOF'
+import sys
+
+def rows(path):
+    with open(path, "r", encoding="utf-8", newline="") as f:
+        lines = f.read().replace("\r\n", "\n").split("\n")
+    # .idt header: column names, column types, table name.
+    return [l.split("\t") for l in lines[3:] if l.strip()]
+
+ca = {r[0]: r for r in rows(sys.argv[1])}
+seq = {r[0]: r for r in rows(sys.argv[2])}
+files = rows(sys.argv[3])
+dll = open(sys.argv[4], "rb").read()
+errs = []
+
+def file_name(r):
+    # File columns: File, Component_, FileName (short|long), FileSize, ...
+    return r[2].lower().split("|")[-1] if len(r) > 2 else ""
+
+# The download half: the twin is not carried.
+if any(file_name(r) == "ghoztty.com" for r in files):
+    errs.append("the File table carries ghoztty.com - the package would be ~20 MB larger for one header word (T2071)")
+if not any(file_name(r) == "ghoztty.exe" for r in files):
+    errs.append("the File table has no ghoztty.exe - there is nothing to derive the console twin from")
+
+# The two DLL actions. Type bits: 1 = DLL from the Binary table, 64 = ignore
+# the return, 128 = async, 1024 = deferred (in script), 2048 = no impersonate.
+for action, entry in (("DeriveConsoleTwin", "DeriveConsoleTwinCA"),
+                      ("RemoveConsoleTwin", "RemoveConsoleTwinCA")):
+    if action not in ca:
+        errs.append(f"CustomAction table has no {action} row - " + (
+            "an install would put no ghoztty.com on the PATH, so `ghoztty +list` from PowerShell would do nothing (T1052)"
+            if action == "DeriveConsoleTwin" else
+            "an uninstall would leave ghoztty.com behind, and with it the install directory"))
+        continue
+    t = int(ca[action][1])
+    if t & 0x3F != 1:
+        errs.append(f"{action} base type is {t & 0x3F}, expected 1 (DLL from the Binary table)")
+    if not t & 0x400:
+        errs.append(f"{action} type {t} is not deferred - an immediate action runs outside the install script and cannot write the install directory as part of it")
+    if t & 0x800:
+        errs.append(f"{action} type {t} is not impersonated - it would write the user's files as LocalSystem")
+    if not t & 64:
+        errs.append(f"{action} type {t} checks its return - a failure would roll back an install whose previous version RemoveExistingProducts has already removed")
+    if t & 128:
+        errs.append(f"{action} type {t} is asynchronous - the script would move on before the twin is written")
+    if ca[action][2] != "GhozttyMsiCa":
+        errs.append(f"{action} source is {ca[action][2]!r}, expected the GhozttyMsiCa binary")
+    if ca[action][3] != entry:
+        errs.append(f"{action} entry point is {ca[action][3]!r}, expected {entry}")
+    if (entry + "\x00").encode() not in dll:
+        errs.append(f"{sys.argv[4]} does not export {entry} - {action} would fail with error 1723")
+
+    # A deferred action reads only CustomActionData, which is the property
+    # named after it: the row in front sets it to the install directory.
+    setter = "Set" + action + "Data"
+    if setter not in ca:
+        errs.append(f"CustomAction table has no {setter} row - {action} would run with no install directory")
+    elif int(ca[setter][1]) != 51 or ca[setter][2] != action or ca[setter][3] != "[INSTALLDIR]":
+        errs.append(f"{setter} is {ca[setter][1:4]!r}, expected type 51 setting {action} to [INSTALLDIR]")
+
+for action in ("InstallInitialize", "RemoveFiles", "InstallFiles", "InstallFinalize",
+               "DeriveConsoleTwin", "RemoveConsoleTwin",
+               "SetDeriveConsoleTwinData", "SetRemoveConsoleTwinData"):
+    if action not in seq:
+        errs.append(f"InstallExecuteSequence has no {action} row")
+if not errs:
+    n = {a: int(seq[a][2]) for a in seq}
+    if not (n["InstallFiles"] < n["SetDeriveConsoleTwinData"] < n["DeriveConsoleTwin"] < n["InstallFinalize"]):
+        errs.append(f"DeriveConsoleTwin is sequenced at {n['DeriveConsoleTwin']} (data {n['SetDeriveConsoleTwinData']}), not after InstallFiles ({n['InstallFiles']}) and before InstallFinalize ({n['InstallFinalize']}) - it would read an exe that is not there yet, or run outside the script")
+    if not (n["InstallInitialize"] < n["SetRemoveConsoleTwinData"] < n["RemoveConsoleTwin"] < n["RemoveFiles"]):
+        errs.append(f"RemoveConsoleTwin is sequenced at {n['RemoveConsoleTwin']} (data {n['SetRemoveConsoleTwinData']}), not between InstallInitialize ({n['InstallInitialize']}) and RemoveFiles ({n['RemoveFiles']}) - the install directory's RemoveFolder is processed in RemoveFiles and would find the twin still there")
+    # Install, repair and upgrade derive; only a full removal removes. A
+    # derive that also ran on uninstall would write a fresh twin into the
+    # directory being taken away.
+    for action in ("SetDeriveConsoleTwinData", "DeriveConsoleTwin"):
+        if seq[action][1].replace(" ", "") != 'NOTREMOVE~="ALL"':
+            errs.append(f"{action} condition is {seq[action][1]!r}, expected NOT REMOVE~=\"ALL\"")
+    for action in ("SetRemoveConsoleTwinData", "RemoveConsoleTwin"):
+        if seq[action][1].replace(" ", "") != 'REMOVE~="ALL"':
+            errs.append(f"{action} condition is {seq[action][1]!r}, expected REMOVE~=\"ALL\"")
+
+if errs:
+    for e in errs:
+        print(f"error: {e}", file=sys.stderr)
+    sys.exit(1)
+print("console twin ok: not carried; DeriveConsoleTwin (DLL, deferred, impersonated) after InstallFiles, RemoveConsoleTwin before RemoveFiles")
+print("  sequence: RemoveConsoleTwin={} RemoveFiles={} InstallFiles={} DeriveConsoleTwin={} InstallFinalize={}".format(
+    seq["RemoveConsoleTwin"][2], seq["RemoveFiles"][2], seq["InstallFiles"][2],
+    seq["DeriveConsoleTwin"][2], seq["InstallFinalize"][2]))
 PYEOF
 
 # Read the no-reboot / Restart-Manager wiring back out of the compiled package

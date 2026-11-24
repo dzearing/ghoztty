@@ -109,6 +109,14 @@ pub fn init(b: *std.Build, cfg: *const Config, deps: *const SharedDeps) !Ghostty
                     .root_source_file = b.path("src/build/patch_subsystem_main.zig"),
                     .target = b.graph.host,
                     .optimize = .Debug,
+                    .imports = &.{.{
+                        .name = "console_twin",
+                        .module = b.createModule(.{
+                            .root_source_file = b.path("src/apprt/win32/console_twin.zig"),
+                            .target = b.graph.host,
+                            .optimize = .Debug,
+                        }),
+                    }},
                 }),
             });
             const patch_run = b.addRunArtifact(patch_tool);

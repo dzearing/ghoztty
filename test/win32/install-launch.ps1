@@ -7,8 +7,10 @@
 #      the PATH entry actually resolves (PATHEXT prefers .COM), and
 #      ghoztty-agent.exe is what makes panes survive a restart -- a package
 #      missing either installs a product that looks fine and is quietly half
-#      there. build-msi.sh refuses to package without them and asserts one
-#      File-table row per exe; this harness is what makes an edit to those
+#      there. build-msi.sh refuses to package without the agent and asserts one
+#      File-table row per exe; since T2071 the twin is DERIVED at install time
+#      by the DeriveConsoleTwin action rather than carried, and the package
+#      refuses to carry it again. This harness is what makes an edit to those
 #      guards ask whether the invariant still holds.
 #
 #   2. The install finishes and nothing opens. Somebody who just double-clicked
@@ -89,16 +91,17 @@ $checks = [ordered]@{
     # A - the package carries the whole product.
     'A1 packaging refuses a build with no agent exe' =
         { param($t) $t.msi -match '\[\[ -f "\$AGENT_EXE" \]\] \|\|' }
-    'A2 packaging refuses a build with no console twin' =
-        { param($t) $t.msi -match '\[\[ -f "\$COM_EXE" \]\] \|\|' }
+    # T2071: the twin is not carried; the package writes it at install time.
+    'A2 the package derives the console twin at install time' =
+        { param($t) $t.msi -match '<Custom Action="DeriveConsoleTwin" Sequence="\d+">NOT REMOVE~="ALL"</Custom>' }
     'A3 the agent gets its own file component' =
         { param($t) $t.msi -match 'emit_file_component\("", agent_exe' }
-    'A4 the File-table patch demands all three exes' =
+    'A4 the File-table patch demands both exes and refuses a carried twin' =
         { param($t)
           $t.msi -match '"ghoztty\.exe": 0' -and
-          $t.msi -match '"ghoztty\.com": 0' -and
           $t.msi -match '"ghoztty-agent\.exe": 0' -and
-          $t.msi -match 'expected exactly 1 File-table row for each exe' }
+          $t.msi -match 'expected exactly 1 File-table row for each exe' -and
+          $t.msi -match 'the File table carries ghoztty\.com again' }
     # T1252. The fallback OpenGL implementation is the third sibling with no
     # symptom: a package without it installs a terminal that starts on every
     # machine with working graphics and REFUSES TO START over Remote Desktop,
@@ -153,11 +156,11 @@ $checks = [ordered]@{
 $mutations = [ordered]@{
     'A1 packaging refuses a build with no agent exe' =
         @{ Key = 'msi'; Find = '[[ -f "$AGENT_EXE" ]] ||'; Replace = 'true ||' }
-    'A2 packaging refuses a build with no console twin' =
-        @{ Key = 'msi'; Find = '[[ -f "$COM_EXE" ]] ||'; Replace = 'true ||' }
+    'A2 the package derives the console twin at install time' =
+        @{ Key = 'msi'; Find = '<Custom Action="DeriveConsoleTwin" Sequence="4010">'; Replace = '<Custom Action="DeriveConsoleTwin" Sequence="4010">0 AND ' }
     'A3 the agent gets its own file component' =
         @{ Key = 'msi'; Find = 'emit_file_component("", agent_exe'; Replace = 'pass  # emit_file_component("", skipped_agent' }
-    'A4 the File-table patch demands all three exes' =
+    'A4 the File-table patch demands both exes and refuses a carried twin' =
         @{ Key = 'msi'; Find = '"ghoztty-agent.exe": 0'; Replace = '' }
     'A5 packaging refuses a build with no fallback OpenGL' =
         @{ Key = 'msi'; Find = '[[ -f "$GL_DIR/opengl32.dll" ]] ||'; Replace = 'true ||' }

@@ -21,8 +21,10 @@
                ghoztty.exe is a GUI binary (2) and ghoztty.com a console one
                (3) - a console ghoztty.exe is a Debug build
       msi      opens through the Windows Installer COM API (no Docker, no
-               msitools); its File table carries ghoztty.exe, ghoztty.com and
-               ghoztty-agent.exe at one shared, non-empty version; the
+               msitools); its File table carries ghoztty.exe and
+               ghoztty-agent.exe at one shared, non-empty version, and the
+               console twin either the same way (releases before T2071) or
+               as the DeriveConsoleTwin action that writes it at install; the
                number it shows in Apps & Features is the tag's (its own HKCU
                entry formats ARPDISPLAYVERSION; Windows' entry is hidden)
       cross    the ZIP's binaries and the MSI's File table carry the same
@@ -119,16 +121,21 @@ function Read-MsiTables([string]$Path) {
     # T2168: the HKCU Apps & Features entry the package writes itself (Name ->
     # Value), since Windows Installer never reads ARPDISPLAYVERSION.
     $arp = @{}
+    # T2071: custom actions (Action -> DLL entry point / target), to tell a
+    # package that derives ghoztty.com at install time from one that lost it.
+    $actions = @{}
     try {
         $db = $installer.OpenDatabase($Path, 0)   # msiOpenDatabaseModeReadOnly
         foreach ($q in @(
                 @{ sql = 'SELECT FileName, Version FROM File'; into = $files; long = $true },
                 @{ sql = 'SELECT Property, Value FROM Property'; into = $props; long = $false },
-                @{ sql = "SELECT Name, Value FROM Registry WHERE Root=1 AND ``Key``='Software\Microsoft\Windows\CurrentVersion\Uninstall\[ProductCode]'"; into = $arp; long = $false; optional = $true })) {
-            # A package with no Registry table has no entry of its own - an
-            # empty answer the checks below report, not an unreadable package.
+                @{ sql = 'SELECT Action, Target FROM CustomAction'; into = $actions; long = $false; optional = 'CustomAction' },
+                @{ sql = "SELECT Name, Value FROM Registry WHERE Root=1 AND ``Key``='Software\Microsoft\Windows\CurrentVersion\Uninstall\[ProductCode]'"; into = $arp; long = $false; optional = 'Registry' })) {
+            # A package with no Registry table has no entry of its own, and one
+            # with no CustomAction table derives nothing - empty answers the
+            # checks below report, not an unreadable package.
             if ($q.ContainsKey('optional')) {
-                $t = $db.OpenView("SELECT ``Name`` FROM ``_Tables`` WHERE ``Name``='Registry'")
+                $t = $db.OpenView("SELECT ``Name`` FROM ``_Tables`` WHERE ``Name``='$($q.optional)'")
                 [void]$t.Execute()
                 $has = $null -ne $t.Fetch()
                 [void]$t.Close()
@@ -157,7 +164,7 @@ function Read-MsiTables([string]$Path) {
         [GC]::Collect()
         [GC]::WaitForPendingFinalizers()
     }
-    return @{ files = $files; props = $props; arp = $arp }
+    return @{ files = $files; props = $props; arp = $arp; actions = $actions }
 }
 
 # ------------------------------------------------------------ collect assets
@@ -336,7 +343,18 @@ try {
     $msiVersion = $null
     if ($msi) {
         $vers = @()
-        foreach ($n in @('ghoztty.exe', 'ghoztty.com', 'ghoztty-agent.exe')) {
+        # T2071: since then the package does not carry ghoztty.com - it is
+        # ghoztty.exe with one header word changed, and DeriveConsoleTwin
+        # writes it at install time. A release from before carries it as a
+        # File row. Either shape is a working install; NEITHER is the T1052
+        # defect (a `ghoztty` on the PATH that PowerShell does not wait for).
+        $carriesTwin = $msi.files.ContainsKey('ghoztty.com')
+        $derivesTwin = $msi.actions['DeriveConsoleTwin'] -eq 'DeriveConsoleTwinCA'
+        Check 'msi: puts ghoztty.com on the PATH (carried, or derived at install)' ($carriesTwin -or $derivesTwin) `
+            'no ghoztty.com File row and no DeriveConsoleTwin action - `ghoztty` from PowerShell would do nothing'
+        $binaries = @('ghoztty.exe', 'ghoztty-agent.exe')
+        if ($carriesTwin) { $binaries = @('ghoztty.exe', 'ghoztty.com', 'ghoztty-agent.exe') }
+        foreach ($n in $binaries) {
             $has = $msi.files.ContainsKey($n)
             Check "msi: installs $n" $has
             if ($has) {

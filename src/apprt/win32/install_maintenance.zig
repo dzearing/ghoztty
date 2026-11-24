@@ -274,6 +274,8 @@ const testing = std.testing;
 
 test {
     _ = @import("maintenance_ca.zig");
+    // The DLL's other half (T2071): the console twin it derives at install.
+    _ = @import("console_twin.zig");
 }
 
 test "the DLL action reads the exit code this file writes" {

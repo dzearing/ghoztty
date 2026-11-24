@@ -181,8 +181,14 @@ Assert "A14b portable ZIP stages the console twin" ($zipSh -match 'cp "\$COM_EXE
 Assert "A14c portable ZIP requires the console twin" ($zipSh -match 'COM_EXE" \]\] \|\|')
 Assert "A14d portable ZIP validates the packaged twin is console-subsystem" (
     ($zipSh -match 'Ghoztty/ghoztty\.com') -and ($zipSh -match 'subsystem != 3'))
-Assert "A15b MSI requires the console twin" ($msiSh -match 'COM_EXE" \]\] \|\|')
-Assert "A15c MSI emits a component for the console twin" ($msiSh -match 'emit_file_component\("", com_exe, 12\)')
+# T2071: the MSI no longer CARRIES the twin (a second 20 MB copy of one header
+# word); it DERIVES it at install time, and build-msi.sh's read-back refuses a
+# package that carries it again. Installed result unchanged: ghoztty.com beside
+# ghoztty.exe, which install-walkthrough.ps1 asserts on a real install.
+Assert "A15b MSI does not carry the console twin" ($msiSh -notmatch 'emit_file_component\("", com_exe')
+Assert "A15c MSI derives the console twin at install" (
+    ($msiSh -match 'DllEntry="DeriveConsoleTwinCA"') -and
+    ($msiSh -match '<Custom Action="DeriveConsoleTwin" Sequence="\d+">NOT REMOVE~="ALL"</Custom>'))
 
 # A15g-A15i: the fallback OpenGL implementation ships in BOTH layouts (T1252).
 # It is the difference between a remote machine where Ghoztty starts and one
@@ -196,10 +202,14 @@ Assert "A15h MSI requires the fallback OpenGL" (
     $msiSh -match 'GL_DIR/opengl32\.dll' -and $msiSh -match 'must carry the fallback OpenGL')
 Assert "A15i both ship its licence beside it" (
     ($zipSh -match 'LICENSE-Mesa\.txt') -and ($msiSh -match 'LICENSE-Mesa\.txt'))
-# Unversioned in the File table means Windows Installer falls back to the
-# created/modified-date rule and can leave last release's CLI beside a fresh
-# app; the twin carries ghoztty.exe's version resource, so it takes the same row.
-Assert "A15d MSI versions the console twin like its siblings" ($msiSh -match 'want = \{[^}]*"ghoztty\.com": 0')
+# Unversioned in the File table meant Windows Installer fell back to the
+# created/modified-date rule and could leave last release's CLI beside a fresh
+# app. Since T2071 the twin has no File row at all - it is re-derived from the
+# freshly installed exe on every install, repair and upgrade - and the version
+# patch refuses a package that carries it again.
+Assert "A15d MSI's version patch refuses a carried console twin" (
+    ($msiSh -notmatch 'want = \{[^}]*"ghoztty\.com": 0') -and
+    ($msiSh -match 'the File table carries ghoztty\.com again'))
 
 # A16-A17: the parse gate, and the trap that made it necessary.
 $errs = $null
@@ -665,8 +675,16 @@ Assert "E4c the shared script pins msitools 0.106" ($msiInstall -match 'MSITOOLS
 $jobM = [regex]::Match($forkCi, '(?ms)^  windows-cross:.*\z')
 Assert "E5 windows-cross publishes nothing" ($jobM.Success -and
     $jobM.Value -notmatch 'gh release' -and
-    $jobM.Value -notmatch 'upload-artifact' -and
     $jobM.Value -notmatch 'gh-pages')
+# E5b (T2071): the ONE thing it keeps is the unsigned MSI, as a short-lived run
+# artifact the Windows seat installs under a throwaway identity - the only
+# package that seat can install-test before a release. Never the ZIP, never
+# kept long enough to look like a download channel.
+$uploads = [regex]::Matches($jobM.Value, '(?ms)uses: actions/upload-artifact@.*?(?=\r?\n      - |\z)')
+Assert "E5b windows-cross keeps only the MSI, briefly, as a run artifact" ($uploads.Count -eq 1 -and
+    $uploads[0].Value -match 'name: windows-msi' -and
+    $uploads[0].Value -match 'path: zig-out/Ghoztty-\*-x64\.msi' -and
+    $uploads[0].Value -match 'retention-days: [1-7]\b')
 
 # E6: gated on tree content, not branch name -- main's tree has no win32
 # frontend, and a branch-name gate would also silence the deliberate-break

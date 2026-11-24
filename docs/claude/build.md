@@ -291,6 +291,11 @@ zig build -Dapp-runtime=win32 -Doptimize=Debug      # -> zig-out\bin\ghoztty.exe
   that shape on sight (`src/cli/com_shim.zig` has the story). Scripts calling
   `ghoztty.exe` by explicit path still need pipe capture, or should call the
   `.com`. Acceptance: `test/win32/cli-shim-redirect.ps1`.
+  **The MSI does not carry the twin** (T2071): its custom-action DLL derives
+  it from the installed `ghoztty.exe` after InstallFiles and deletes it before
+  RemoveFiles, with the same `makeConsoleTwin` the build tool uses
+  (`src/apprt/win32/console_twin.zig`) - about 20 MB off every download. The
+  portable ZIP still ships both. Acceptance: `test/win32/install-console-twin.ps1`.
 - The session-persistence agent builds alongside the app as
   `zig-out\bin\ghoztty-agent.exe` (a required sibling of `ghoztty.exe`); its
   state lives under `%LOCALAPPDATA%\ghoztty\local-agent[-debug]\` and it is
