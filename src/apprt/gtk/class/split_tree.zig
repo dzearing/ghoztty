@@ -1759,6 +1759,7 @@ pub const SplitTree = extern struct {
         }
 
         // Show a confirmation dialog
+        log.info("pane close request: asking (disconnect offered: {})", .{offer.offered()});
         const dialog: *CloseConfirmationDialog = .new(.surface);
         _ = CloseConfirmationDialog.signals.@"close-request".connect(
             dialog,

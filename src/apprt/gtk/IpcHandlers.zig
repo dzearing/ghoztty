@@ -635,6 +635,8 @@ fn closeDialogSeam(app: Context, request: Request) Allocator.Error![]u8 {
         disconnect: bool = false,
         body: []const u8 = "",
         answered: ?[]const u8 = null,
+        /// What the dialog closes: app, tab, window or surface.
+        scope: ?[]const u8 = null,
         /// Some OTHER dialog is up over the window (its type name).
         other: ?[]const u8 = null,
     };
@@ -645,6 +647,7 @@ fn closeDialogSeam(app: Context, request: Request) Allocator.Error![]u8 {
     if (window.openCloseConfirmation()) |dialog| {
         rep.open = true;
         rep.disconnect = dialog.offersDisconnect();
+        rep.scope = dialog.scopeName();
         rep.body = try arena_state.allocator().dupe(u8, std.mem.span(dialog.bodyText()));
         if (answer_arg) |a| {
             const id: [*:0]const u8 = if (std.mem.eql(u8, a, "disconnect"))

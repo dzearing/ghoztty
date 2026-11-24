@@ -137,6 +137,11 @@ pub const CloseConfirmationDialog = extern struct {
         return priv.target.body();
     }
 
+    /// What this dialog closes (the test seam reads it).
+    pub fn scopeName(self: *Self) []const u8 {
+        return @tagName(self.private().target);
+    }
+
     /// Whether this dialog offers Disconnect (the test seam reads it).
     pub fn offersDisconnect(self: *Self) bool {
         return self.private().disconnect;
