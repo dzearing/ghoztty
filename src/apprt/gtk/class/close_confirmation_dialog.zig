@@ -141,14 +141,20 @@ pub const CloseConfirmationDialog = extern struct {
     }
 
     /// Answer the dialog as if the user pressed `response_id` (`"close"`,
-    /// `"disconnect"`, `"cancel"`), then dismiss it. The DEBUG-ONLY test seam
-    /// `test-answer-close` drives this: Wayland gives a test no input to
-    /// press a button with.
+    /// `"disconnect"`, `"cancel"`). The DEBUG-ONLY `close-dialog` seam drives
+    /// this: Wayland gives a test no input to press a button with. The dialog
+    /// is dismissed FIRST, while the widget it was presented on still exists:
+    /// a tab's answer removes that tab, and a dialog closed after its parent
+    /// left the window stays in the window's dialog stack, where it swallows
+    /// the window's next close request.
     pub fn answer(self: *Self, response_id: [*:0]const u8) void {
         _ = self.ref();
         defer self.unref();
-        response(self, response_id);
+        const priv = self.private();
+        if (priv.answered) return;
+        priv.answered = true; // the close below must not answer it first
         self.close();
+        self.dispatch(response_id);
     }
 
     pub fn close(self: *Self) void {
@@ -162,6 +168,10 @@ pub const CloseConfirmationDialog = extern struct {
         const priv = self.private();
         if (priv.answered) return;
         priv.answered = true;
+        self.dispatch(response_id);
+    }
+
+    fn dispatch(self: *Self, response_id: [*:0]const u8) void {
         if (std.mem.orderZ(u8, response_id, "disconnect") == .eq) {
             signals.@"disconnect-request".impl.emit(
                 self,
