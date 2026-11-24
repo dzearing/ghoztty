@@ -1,8 +1,8 @@
 {
     "guard":  "unwired-hook",
     "script":  "test/win32/unwired-hook-audit.ps1",
-    "generated":  "2026-11-23T20:23:08-08:00",
-    "commit":  "1df3eea19",
+    "generated":  "2026-11-23T20:30:32-08:00",
+    "commit":  "d4a3bee4a",
     "uncommitted":  [
 
                     ],
@@ -1548,7 +1548,7 @@
                   "test/win32/pr-health.ps1":  "90d12cddbdc5252db6def47f05eb54527c74c9da86af4528a6f687af5db1997f",
                   "test/win32/printclient-audit.ps1":  "e56ed09ebfd069c592d3a3ac4b39141eecdd2ab02a8b46a6b21964b4d72b9dde",
                   "test/win32/probe-topmost-restore.ps1":  "0def592e8312af57add7e40935b2be576d2cfc1ff7b2b7070f8a236af7432c5a",
-                  "test/win32/process-family.ps1":  "d66e2ac7f288c8ace90f538a8fe7796160d8e605850814041893d7918055e0c2",
+                  "test/win32/process-family.ps1":  "793bb204dbd02d9837ff4b5efeb42f794c24954d80241ec77c270c45d25dc90b",
                   "test/win32/profile-latency.ps1":  "4e43153a8bfc3e39a0736f0cfe6d32f55044e59d37997c83b19bad872f309685",
                   "test/win32/prompt-reflow.ps1":  "566e5e362676f4fe06e2364f1be7255015dc2d9f9c83acef163a2167e6f4aedf",
                   "test/win32/pty-holder.ps1":  "ac9811305a50f2a86dca0af16b2725c8414ed78ebe26c84572ca6599326af88e",
@@ -1755,6 +1755,7 @@
                   "test/win32/window-presenter.ps1":  "5cd3cb6d7813cb05c9748387abbaf915060bfe81ea2758c33d844b00ea4f2493",
                   "test/win32/window-size-memory.ps1":  "de44d45b030df89128ff89acd7bf09556272820bb433cf54a1ce9834ca4b25a8",
                   "test/win32/window-title.ps1":  "e648149d63cc562e8047298986f4e9008d2db024db71fb5139d79ed505890b32",
+                  "test/win32/wmi-bound-audit.ps1":  "054555b6b278d56f99f41989e1b8aa7bac1b95b3eb460d0d59c6c03b8ab6220d",
                   "test/win32/zig-repro-t476.ps1":  "18809a84f951773567de7a6ed8dbe628d2ad3a7872b339e292a2bebd0afb1364"
               }
 }
