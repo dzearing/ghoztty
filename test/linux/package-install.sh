@@ -78,9 +78,9 @@ hl_check "I6 xdg-mime reports $app_id.desktop as the $scheme:// handler" $? "out
 out=$(inst env XDG_DATA_DIRS="$work/home/.local/share:/usr/share" gio mime "x-scheme-handler/$scheme" 2>&1)
 echo "$out" | grep -q "Default application for .x-scheme-handler/$scheme.: $app_id.desktop"
 hl_check "I7 GIO (what a DBusActivatable launch asks) agrees" $? "out=$(echo "$out" | head -3 | tr '\n' ' ')"
-out=$("$bin" +version 2>&1); rc=$?
+out=$(cd / && "$bin" +version 2>&1); rc=$?
 [ $rc = 0 ] && echo "$out" | grep -qi "ghoztty\|version"
-hl_check "I8 the installed binary runs (+version)" $? "rc=$rc $(echo "$out" | head -2 | tr '\n' ' ')"
+hl_check "I8 the installed binary runs (+version) from /, not only from the build tree (T3578: its RUNPATH was .zig-cache)" $? "rc=$rc $(echo "$out" | head -2 | tr '\n' ' ')"
 
 out=$(inst "$pkg/install.sh" --dev 2>&1); rc=$?
 n=$(grep -c "^x-scheme-handler/$scheme=" "$work/home/.config/mimeapps.list")

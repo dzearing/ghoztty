@@ -89,7 +89,7 @@ when everything is present. What it puts where:
 - **apt** (the exact line it runs for whatever is missing):
 
   ```
-  apt-get install -y --no-install-recommends libgtk-4-dev libadwaita-1-dev libwebkitgtk-6.0-dev gettext libxml2-utils python3-gi gir1.2-gtk-4.0 gir1.2-adw-1 mesa-utils weston git curl xz-utils
+  apt-get install -y --no-install-recommends libgtk-4-dev libadwaita-1-dev libwebkitgtk-6.0-dev gettext libxml2-utils python3-gi gir1.2-gtk-4.0 gir1.2-adw-1 mesa-utils weston git curl xz-utils desktop-file-utils xdg-utils patchelf dpkg-dev
   ```
 
   Ubuntu 24.04 gives GTK 4.14.5, libadwaita 1.5.0 and WebKitGTK 2.52.6 (`webkitgtk-6.0`, the GTK4 build, for viewer panes).
@@ -1853,12 +1853,40 @@ it ran, so a skipped test cannot read as a pass. Ends `SECRET STORE: ALL PASS`.
 
 **The tarball.** `scripts/linux/package.sh` builds the GTK app into a private
 prefix and tars it as `zig-out/dist/ghoztty-linux-<arch>-<release|debug>-<sha>.tar.gz`
-(one top-level `ghoztty/`: `bin/`, `share/`, plus `install.sh`).
-`PKG_OPTIMIZE=ReleaseFast` (default) or `Debug`; `PKG_OUT` moves it.
+(one top-level `ghoztty/`: `bin/`, `lib/ghoztty/`, `share/`, plus
+`install.sh` and `.package-info`, the version/commit/mode record the .deb
+builder reads). `PKG_OPTIMIZE=ReleaseFast` (default) or `Debug`; `PKG_OUT`
+moves it.
 
 ```powershell
 powershell -NoProfile -File scripts\linux\wsl-run.ps1 -CommandFile scripts\linux\package.sh
 ```
+
+**The one private library, and the RUNPATH trap** (T3578). Ubuntu does not
+package `libgtk4-layer-shell`, so the build makes it from source and the app
+links it dynamically. Zig's link step leaves `bin/ghoztty` a RUNPATH of
+`.zig-cache/o/<hash>` - a path relative to the *current directory* - so a
+packaged copy found the library only when started from the repo root, and
+`package-install.sh` passed because it ran from there. `package.sh` now moves
+the library to `lib/ghoztty/` and sets the RUNPATH to `$ORIGIN/../lib/ghoztty`
+with patchelf (installed by `setup-distro.sh`), which holds for the tarball,
+`~/.local/opt` and the .deb's `/usr`. It also drops the build's developer
+artifacts (`include/`, `libghostty-vt`, pkg-config files). Every packaging
+test runs its binary from `/` so the trap cannot pass again.
+
+**The .deb** (T3578). `scripts/linux/package-deb.sh [TARBALL]` (default: a
+fresh release `package.sh` build) lays the same tree out under `/usr`
+(`/usr/bin/ghoztty`, `/usr/lib/ghoztty/`, `/usr/share/...`), points the Exec
+lines at `/usr/bin/ghoztty`, takes `Depends` from `dpkg-shlibdeps`, and writes
+`zig-out/dist/ghoztty_<ver>+<commit count>.g<sha>_<arch>.deb`. A Debug tarball
+is refused (exit 3). It has no maintainer scripts: the desktop database, icon
+and MIME caches are refreshed by the dpkg file triggers desktop-file-utils,
+hicolor-icon-theme and shared-mime-info declare, and the entry's `MimeType` is
+what makes it the system-wide `ghoztty://` handler.
+
+**The AppImage** is not built yet (T3658): WebKitGTK spawns its web and network
+helper processes from a path fixed at its own build time, which an AppDir has
+to relocate.
 
 **Installing it** (`ghoztty/install.sh`, from the unpacked tree; never sudo,
 nothing outside `$HOME`): the tree goes to `~/.local/opt/ghoztty`, a symlink to
@@ -1913,9 +1941,29 @@ powershell -NoProfile -File scripts\linux\wsl-run.ps1 -CommandFile test\linux\pa
 `URL SCHEME: ALL PASS` (both paths, by name and pane id, both spellings, every
 miss, burst coalescing in and out of process) and `PACKAGE INSTALL: ALL PASS`
 (a Debug package into a throwaway `HOME`; `desktop-file-validate`, xdg-mime
-and `gio mime` agree). Not covered: a release package (T3578), .deb/AppImage
-(T3578), and a real desktop's browser handing a click to xdg-open - the
-harness has no browser, so that last hop is the person at the keyboard's.
+and `gio mime` agree; the installed binary runs from `/`).
+
+```powershell
+powershell -NoProfile -File scripts\linux\wsl-run.ps1 -CommandFile test\linux\package-release.sh
+```
+
+`PACKAGE RELEASE: ALL PASS` (T3578, about 6 minutes: a release and a debug
+build). R: the ReleaseFast tarball carries the release app id and scheme, its
+RUNPATH is `$ORIGIN`, it runs from `/`. I: `install.sh` installs it without
+`--dev`. S: the installed release app and a `zig-out` dev build side by side in
+one headless Weston and one private bus - `ghoztty://focus/<name>` through the
+release binary reaches only the release app, is a miss for a name only the dev
+build holds, and leaves the dev build's layout and focus exactly as they were;
+each owns only its own bus name and socket. D: the .deb's control, `/usr`-only
+contents, Exec lines, root ownership, no file clashing with an installed
+package, `apt-get install --simulate` resolving its Depends, a `dpkg --root`
+install into a throwaway root (never this distro's `/usr`) that runs, the
+MIME cache once the trigger's command runs, `dpkg -r` removing every file, and
+a Debug tarball refused.
+
+Not covered: the AppImage (T3658), a real `apt install` on a clean machine,
+and a real desktop's browser handing a click to xdg-open - the harness has no
+browser, so that last hop is the person at the keyboard's.
 
 ## Distro state (2026-11-21)
 

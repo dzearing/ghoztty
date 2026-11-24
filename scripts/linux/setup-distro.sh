@@ -32,6 +32,9 @@ APT_PKGS=(
     # T3343: install.sh registers the ghoztty:// handler with xdg-mime, and
     # the packaging test validates the desktop entry.
     desktop-file-utils xdg-utils
+    # T3578: package.sh points the binary's RUNPATH at its private lib, and
+    # package-deb.sh builds the .deb (dpkg-deb, dpkg-shlibdeps for Depends).
+    patchelf dpkg-dev
 )
 
 missing=()
