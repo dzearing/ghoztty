@@ -1,12 +1,10 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-11-24T02:26:54-08:00",
-    "commit":  "52793071f",
+    "generated":  "2026-11-24T02:45:50-08:00",
+    "commit":  "8ac5e3254",
     "uncommitted":  [
-                        "test/win32/auto-launch-cwd.ps1",
-                        "test/win32/new-window-cwd.ps1",
-                        "test/win32/session-reattach.ps1"
+
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "e3d359fb624aa2c8abf555bea66b63a798c01ec9dce023416631191e2c943050",
@@ -56,7 +54,7 @@
                   "test/win32/arp-sweep.ps1":  "97c08fac944b2ce622e5817dc673c0f22b7ecea06d9485c2628fb24c9985c1eb",
                   "test/win32/arp-version.ps1":  "3f483140196d74ac80c620bbde5f25e6bdb07cfa0e7891c50a5bd6e0dea73d51",
                   "test/win32/asserted-nothing.ps1":  "98ac55e5d2ce106e56c4db1fb90839112a1156b3851acf352b9e93246a09acb0",
-                  "test/win32/auto-launch-cwd.ps1":  "002e496da7dca52636d1c20a319e19963bf5f7f6621d9d517b71aa7ea748d11a",
+                  "test/win32/auto-launch-cwd.ps1":  "91a9c1d183bc0000ca79541b7d0afa38e812932b140306784b1279d6c37a8630",
                   "test/win32/background-blur.ps1":  "dffab046e7560e606416751d4441733b0b9acd8630dcf61d3da36389b04edc9a",
                   "test/win32/background-window-frame.ps1":  "558f33f7cd12663f4fba03479038e7cc924b5fb119da50efc006958b278f7791",
                   "test/win32/banner-resize-repaint.ps1":  "98cd5883d482b80f74733ccb24ff1a80cf72d7e561b1c8c70f057c607e9c55ca",
@@ -393,7 +391,7 @@
                   "test/win32/msiexec-sentinel-audit.ps1":  "53eb9d7cc515b056197a00a9bac5093e10a899bb0800f38dc77ab58f56456062",
                   "test/win32/msi-upgrade.ps1":  "756713b20450fba0ca2ab0f9cfcf923b93bee1e449300266acbf7ada59d8cb84",
                   "test/win32/neuter-audit.ps1":  "b2057597d46fad5597ff832b399d8ee9a585f9131fbfe7244b7cea9bf44bd928",
-                  "test/win32/new-window-cwd.ps1":  "c0216fd60e55bf22aded6ee60f0a290a0ceecf5b026a4f9775aed61bc994999e",
+                  "test/win32/new-window-cwd.ps1":  "eb6a08b97f370f44faec0f8ba489863b9a427b81ec2f727dc385cd9434f85f8b",
                   "test/win32/new-window-maximized.ps1":  "ae6d8e38ff402b3a80d94c6970c51618e6670dd1add82b9790bf47656c7ecae7",
                   "test/win32/notification-click-focus.ps1":  "3aa1620e8914dac09fe3134fe439f714bab40641d9f66707f4affbed9d1661af",
                   "test/win32/notification-click-real.ps1":  "b33fa702fc8e68c5e1a266258fc56e5a0b97a25dbe529d2f0720b3b119394655",
@@ -522,7 +520,7 @@
                   "test/win32/session-layout-preserve.ps1":  "3ea74234321fd0a2f5bcb47483c976aaa7b7d53dcc1281dd3e37412bb404dc0f",
                   "test/win32/session-open.ps1":  "a8676a1822dccea06051cf7afe281c2c2315e2332c941b6baedd67136bb7cab3",
                   "test/win32/session-persistence.ps1":  "51a7c24d49223245e258d954a5095445d320c668c9977d80430312346405fbb5",
-                  "test/win32/session-reattach.ps1":  "bbebc511b41437b283226093bef560e6dc9dcb4f3c74abc1c15ef8f5ce6fa274",
+                  "test/win32/session-reattach.ps1":  "309ce4ebb81422fea8fdfcedae50ce2a7c4ac0548ea8c9b0a75cc499b69f85f7",
                   "test/win32/session-reattach-zombie.ps1":  "5c138604f0566d659fe5ce841b372cbf1393c1f1d9dfafcfaf5835f043ef1f7e",
                   "test/win32/session-reboot-tui.ps1":  "7b44e424cb750a2b4eb01d41046dd4967c477d345507d72bc8ad02cd0a064ef5",
                   "test/win32/session-relaunch.ps1":  "d70beb312417f04466ee1b86e101048a603d1ab5fac04bb85f3321441926d38e",
