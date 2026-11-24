@@ -33,6 +33,11 @@ sock="$XDG_RUNTIME_DIR/ghostty-debug-$(id -u).sock"
 manifest="$XDG_CONFIG_HOME/ghoztty/session-layout-debug.json"
 cli() { env -u GHOZTTY_IPC_SOCKET -u GHOZTTY_PANE_ID "$app" "$@"; }
 export SHELL=/bin/sh
+# T3589's render check (RT3) reads an UNFOCUSED split's pixels: without this,
+# unfocused-split-opacity dims it and no pixel is the raw tint (cli-color.sh's
+# config, minus the colours this test does not read).
+mkdir -p "$XDG_CONFIG_HOME/ghostty"
+printf 'background-opacity = 1\nunfocused-split-opacity = 1\n' > "$XDG_CONFIG_HOME/ghostty/config.ghostty"
 serving() { env -u GHOZTTY_IPC_SOCKET -u GHOZTTY_PANE_ID "$app" +list > /dev/null 2>&1; }
 alive() { [ -n "$1" ] && kill -0 "$1" 2>/dev/null; }
 is_ancestor() {
