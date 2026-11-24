@@ -1243,7 +1243,7 @@ providers, and between providers order wins, not specificity - a rule in
 repeated there, or it silently loses in a dark theme.
 
 Not yet: glass panes (T3622), the seed in the session layout and the desk under
-the sidebar/header bar (T3623), the flat style's 6px gutter (T3624).
+the sidebar/header bar (T3623), the 1px line down the flat style's gutter (T3624; the 6px gutter itself came with T3567's stage).
 
 ```powershell
 powershell -NoProfile -File scripts\linux\wsl-run.ps1 -CommandFile test\linux\pane-style.sh
@@ -1251,6 +1251,54 @@ powershell -NoProfile -File scripts\linux\wsl-run.ps1 -CommandFile test\linux\pa
 
 Ends `PANE STYLE: ALL PASS` (16 checks; geometry and pixels from the window's
 own render via `capture-pane --window`, probed with `hl_png_pixel`).
+
+## Stacked panes: one stage the shared layout places (T3567)
+
+`docs/reference/stacked-panes.md` on GTK. A split tab is no longer nested
+`GtkPaned`s: `SplitTree.onRebuild` puts every card on ONE stage (a `GtkBox`
+with a `GtkCustomLayout`, `SplitTree.newStage`), and its allocate callback
+(`placeStage`) lays the tab out with win32's pure engine, imported in place
+like `pane_layout.zig` already was: `pane_stack_grid` (tree -> frames),
+`pane_stack_state` (focus history, collapses; one per `SplitTree`) and
+`stack_drag` (every gutter drag). So GTK and win32 compute the same layout
+from the same tree. A lone or zoomed pane still sits in the tree's `AdwBin`.
+
+- **Minimum and stacking.** `macos-pane-min-width/-height` (read every
+  layout, so a reload restacks). A row that cannot fit keeps a run on show and
+  minimizes the rest. A minimized card is hidden with `child_visible` (never
+  re-allocated, so its terminal keeps its last size) and its **strip face** -
+  a `.pane-strip` label named by the sidebar row's rule
+  (`pane_sidebar_rows.text`) - is allocated over its tab, turned 90 degrees in
+  a row (`gsk_transform_rotate`; `pane_stage_rules.labelPlacement`). Faces are
+  trimmed by their tuck (`stripFace`) so they never overlap.
+- **Focus brings a pane forward.** `placeStage` notes the last-focused pane
+  (`noteFocus`); `propSurfaceFocused` and `focusSurface` (CLI `--focus`, the
+  sidebar) queue a relayout. A strip click is a press + release on the stage's
+  `GtkGestureDrag` (`stagePress`/`stageRelease`).
+- **Gutters.** Every divider and grip is a `RowDrag` (`stagePress` hit-tests
+  `Grid.dividerAt`/`stackHandleAt`; `stageDrag` applies the step's ratios with
+  `resizeInPlace`), with a `col-resize`/`row-resize` cursor over it.
+- **Gutter widths.** Elevated: the engine's 10px gap, the grid inset by the
+  card's 5px CSS margin, and each card allocated that margin larger
+  (`cardAllocation`), so the look is T3566's exactly. Flat: Mac's 6px
+  `flatGap` (pane-style.sh S12); the 1px line in it is T3624.
+- `+list` reports `minimized` (`SplitTree.isMinimized`).
+
+**The `pane-stack` seam** (debug only): `pane-stack --target=<pane>
+[--press=x,y] [--drag=dx,dy]... [--release=dx,dy]` replies the stage as laid
+out (each pane's frame, `minimized`, `focused`, strip rect; every gutter by
+kind `divider|grip|edge`) after running the press/drag/release through the
+same functions the real gesture calls - the headless harness has no seat.
+
+```powershell
+powershell -NoProfile -File scripts\linux\wsl-run.ps1 -CommandFile test\linux\stacked-panes.sh
+```
+
+Ends `STACKED PANES: ALL PASS` (25 checks).
+
+Not yet: glides and elevation (T3625), the gutter bar and double-click
+(T3626), collapses in the session layout and undo (T3627), the featured side
+pane (T3628), live relabel, strip drags and a column test (T3629).
 
 ## The interop PATH trap
 
