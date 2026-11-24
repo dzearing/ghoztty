@@ -583,9 +583,22 @@ pub const Application = extern struct {
             // A restored launch shows the restored windows, not a fresh one
             // beside them - unless the launch named a command (`-e`), which
             // still opens its own window.
-            if (config.@"initial-window" and
-                (restored == 0 or config.@"initial-command" != null))
-                self.as(gio.Application).activate();
+            if (config.@"initial-window") {
+                if (restored == 0) {
+                    self.as(gio.Application).activate();
+                } else if (config.@"initial-command") |cmd| {
+                    // T3594 (win32's T406): the `-e` window carries the
+                    // command as its own override. Core would hand
+                    // `initial-command` to whichever pane realizes first,
+                    // and the restored panes - which never take it - may
+                    // realize before this one, so without the override the
+                    // command reached no pane at all. Opened after the
+                    // restore, so it is the window in front.
+                    self.newWindow(null, .{ .command = cmd }) catch |err|
+                        log.warn("launch command window failed err={}", .{err});
+                    log.info("launch command: opened its window beside the {d} restored", .{restored});
+                }
+            }
         }
 
         // From here on the app keeps the manifest current (T3397).

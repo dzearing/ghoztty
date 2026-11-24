@@ -297,6 +297,75 @@ hl_check "RB5 the relaunched pa keeps its own banner instead of the notice" $? "
 hl_wait_for 5 tints_listed
 hl_check "RT5 after the agent restart the relaunched pb and pc keep their tints" $? "pa=$(leaf_field pa background_tint) pb=$(leaf_field pb background_tint) pc=$(leaf_field pc background_tint)"
 
+# ---- 5c. a restored launch still runs its own -e command (T3594) -----------
+# The relaunch rebuilds both windows AND opens one for -e, whose command runs
+# there. It used to reach no pane: core hands `initial-command` to whichever
+# pane realizes first, a restored pane took it (and the script's title) over a
+# fresh shell, and the -e window opened a plain shell.
+kill -TERM "$APP6" 2>/dev/null; hl_wait_for 15 sh -c "! kill -0 $APP6 2>/dev/null"
+eM="$HL_RUNTIME/launch-e.pid"; eS="$HL_RUNTIME/launch-e.sh"
+printf '#!/bin/sh\necho ready-launch-e\necho $$ > %s\nexec sleep 100000\n' "$eM" > "$eS"; chmod +x "$eS"
+hl_launch APP7 "$app" --gtk-single-instance=false -e "$eS"
+hl_wait_for 30 serving
+hl_wait_for 20 test -s "$eM"
+hl_check "RE1 a restored launch runs its -e command" $? "marker=$(cat "$eM" 2>/dev/null) log=$(grep -m1 'launch command' "$APP7_LOG")"
+five_live() { [ "$(live_leaves)" = 5 ]; }
+hl_wait_for 15 five_live
+# e_window: "<window id>|<target>|<window title>" of the window whose pane runs the script.
+e_window() {
+    cli +list --json 2>/dev/null | python3 -c '
+import json, sys
+want = sys.argv[1]
+d = json.load(sys.stdin)["data"]
+def walk(n):
+    if n["type"] == "split":
+        yield from walk(n["left"]); yield from walk(n["right"])
+    else:
+        yield n["terminal"]
+for w in d["windows"]:
+    for t in w["tabs"]:
+        for l in walk(t["splits"]):
+            pid = str(l.get("pid") or 0)
+            # the listed pid is the script or one of its ancestors
+            p, hit = want, False
+            while p and p not in ("0", "1"):
+                if p == pid: hit = True; break
+                try: p = [x.split()[1] for x in open("/proc/%s/status" % p) if x.startswith("PPid:")][0]
+                except Exception: break
+            if hit: print("%s|%s|%s" % (w["id"], w.get("target") or "-", w.get("title") or "")); sys.exit(0)
+' "$(cat "$eM" 2>/dev/null)" 2>/dev/null
+}
+ew=$(e_window); eid=$(printf '%s' "$ew" | cut -d'|' -f1)
+[ -n "$eid" ] && [ "$(printf '%s' "$ew" | cut -d'|' -f2)" != wa ] && [ "$(shape | grep -c .)" = 3 ]
+hl_check "RE2 the -e command runs in its own new window, beside the two restored ones" $? "e=$ew windows=$(shape | tr '\n' '|')"
+[ "$(leaf_field pa pid)" = "$relA" ] && [ "$(live_leaves)" = 5 ]
+hl_check "RE3 the restored panes are still re-attached (pa on the same pid), none re-run for -e" $? "pa=$(leaf_field pa pid)/$relA live=$(live_leaves)"
+no_e_title() { ! cli +list --json 2>/dev/null | python3 -c '
+import json, sys
+eid = sys.argv[1]
+d = json.load(sys.stdin)["data"]
+def walk(n):
+    if n["type"] == "split":
+        yield from walk(n["left"]); yield from walk(n["right"])
+    else:
+        yield n["terminal"]
+for w in d["windows"]:
+    if str(w["id"]) == eid: continue
+    for t in w["tabs"]:
+        for l in walk(t["splits"]):
+            if "launch-e" in (l.get("title") or ""): sys.exit(0)
+sys.exit(1)
+' "$eid" 2>/dev/null; }
+no_e_title
+hl_check "RE4 no restored pane took the -e script's title" $? "$(cli +list --json 2>/dev/null | head -c 600)"
+grep -q 'launch command: opened its window beside the 2 restored' "$APP7_LOG"
+hl_check "RE5 the app logs that it opened the launch command's window beside the 2 restored" $? "$(grep -m1 -E 'launch command|session layout: restored' "$APP7_LOG")"
+# Close the -e window so section 6 meets the two restored windows it expects.
+[ -n "$eid" ] && cli +close --target="$eid" > /dev/null 2>&1
+hl_wait_for 10 sh -c "! kill -0 $(cat "$eM" 2>/dev/null || echo 0) 2>/dev/null"
+hl_check "RE6 closing the -e window ends its command" $?
+APP6=$APP7
+
 # ---- 6. what the user closes stays closed ----------------------------------
 cli +close --target=wa > /dev/null 2>&1
 hl_wait_for 10 sh -c "! kill -0 $relA 2>/dev/null"
@@ -318,8 +387,8 @@ hl_wait_for 30 serving
 hl_wait_for 10 sh -c "[ \"\$(env -u GHOZTTY_IPC_SOCKET -u GHOZTTY_PANE_ID '$app' +list --json 2>/dev/null | grep -o '\"type\":\"leaf\"' | wc -l)\" = 1 ]"
 hl_check "R22 the next launch opens one fresh window with one pane" $? "$(shape | tr '\n' '|')"
 
-grep -E 'panic|reached unreachable' "$APP_LOG" "$APP2_LOG" "$APP3_LOG" "$APP4_LOG" "$APP5_LOG" "$APP6_LOG" > /dev/null 2>&1
+grep -E 'panic|reached unreachable' "$APP_LOG" "$APP2_LOG" "$APP3_LOG" "$APP4_LOG" "$APP5_LOG" "$APP6_LOG" "$APP7_LOG" > /dev/null 2>&1
 [ $? != 0 ]
-hl_check "R23 no app log carries a panic" $? "$(grep -h -m2 -E 'panic|unreachable' "$APP_LOG" "$APP2_LOG" "$APP3_LOG" "$APP4_LOG" "$APP5_LOG" "$APP6_LOG" 2>/dev/null | tr '\n' ' ')"
+hl_check "R23 no app log carries a panic" $? "$(grep -h -m2 -E 'panic|unreachable' "$APP_LOG" "$APP2_LOG" "$APP3_LOG" "$APP4_LOG" "$APP5_LOG" "$APP6_LOG" "$APP7_LOG" 2>/dev/null | tr '\n' ' ')"
 
 hl_finish "$L"

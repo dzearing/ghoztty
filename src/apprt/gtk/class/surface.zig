@@ -828,6 +828,12 @@ pub const Surface = extern struct {
         /// session-interrupted notice keeps to the scrollback instead of
         /// replacing the pane's own banner (win32's T422).
         banner_restored: bool = false,
+        /// Built by a session restore (T3594), whether it re-attaches or
+        /// opens fresh. Such a pane never takes this launch's `-e`
+        /// (`initial-command`): that command belongs to the window the
+        /// launch opens for it, not to whatever pane happens to realize
+        /// first (core hands it to `app.first`).
+        restored: bool = false,
 
         /// The banner link a right-click last opened the link menu on
         /// (T3561), as the banner wrote it: what the menu's rows act on.
@@ -887,6 +893,7 @@ pub const Surface = extern struct {
             .env = dupeEnv(alloc, overrides.env) catch &.{},
         };
         if (restore) |r| self.adoptRestore(alloc, r);
+        if (restore != null) priv.restored = true;
         // T3589: the restored tint, held until the core surface exists.
         if (restore) |r| if (r.tint) |rgb| self.applyBackgroundTint(rgb);
         // After the pane id: the card and its test dump name the pane.
@@ -4308,6 +4315,14 @@ pub const Surface = extern struct {
             priv.context,
         );
         defer config.deinit();
+
+        // T3594: a restored pane is what the last run left, not what this
+        // launch asked for, so it must not take the launch's `-e` - core
+        // gives `initial-command` to whichever surface realizes first, and
+        // a restored pane realizing before the `-e` window used to eat it
+        // (the command never ran; the pane took its title over a fresh
+        // shell). The `-e` window carries the command as its own override.
+        if (priv.restored) config.@"initial-command" = null;
 
         if (priv.overrides.command) |c| {
             config.command = try c.clone(config._arena.?.allocator());

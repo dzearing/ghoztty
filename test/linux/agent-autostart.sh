@@ -63,8 +63,8 @@ run_app() {
     hl_wait_for 30 test -s "$m"
 }
 # Each launch starts from no saved layout: what this test asks is when the
-# login entry is written, not what a relaunch restores (session-restore.sh),
-# and a restored launch loses its own -e command today (T3594).
+# login entry is written, not what a relaunch restores (session-restore.sh,
+# whose 5c also covers a restored launch's own -e command, T3594).
 stop_app() {
     kill -TERM "$APP" 2>/dev/null; wait "$APP" 2>/dev/null
     rm -f "$XDG_CONFIG_HOME"/ghoztty/session-layout*.json
