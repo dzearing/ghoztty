@@ -515,11 +515,11 @@ pub const SplitTree = extern struct {
 
     fn stageAllocate(widget: *wk.GtkWidget, width: c_int, height: c_int, _: c_int) callconv(.c) void {
         const tree_widget = ext.getAncestor(Self, @ptrCast(@alignCast(widget))) orelse return;
-        tree_widget.placeStage(widget, width, height);
+        tree_widget.placeStage(widget, width, height, true);
     }
 
     /// Lay the tab out with the shared engine and place every card and face.
-    fn placeStage(self: *Self, stage: *wk.GtkWidget, width: c_int, height: c_int) void {
+    fn placeStage(self: *Self, stage: *wk.GtkWidget, width: c_int, height: c_int, place: bool) void {
         const priv = self.private();
         if (priv.stage != stage) return;
         const tree = priv.tree orelse return;
@@ -559,6 +559,12 @@ pub const SplitTree = extern struct {
         ) catch return;
         // The runs on show stick to the next layout (`stickyRun`).
         state.noteStacks(grid.result.stacks.items) catch {};
+        defer {
+            if (priv.grid) |*old| old.deinit();
+            priv.grid = grid;
+        }
+        // The test seam asks for the layout as it stands now, between frames.
+        if (!place) return;
 
         var home_buf: [std.fs.max_path_bytes]u8 = undefined;
         const home = homedir.home(&home_buf) catch null;
@@ -612,9 +618,21 @@ pub const SplitTree = extern struct {
             const tr = wk.gsk_transform_translate(null, &.{ .x = @floatFromInt(a.left), .y = @floatFromInt(a.top) });
             wk.gtk_widget_allocate(card, @max(a.width(), min_w), @max(a.height(), min_h), -1, tr);
         }
+    }
 
-        if (priv.grid) |*old| old.deinit();
-        priv.grid = grid;
+    /// Recompute the stage's layout now, without placing anything (the next
+    /// frame places it): what the `pane-stack` seam reads after a drag step.
+    pub fn layoutNow(self: *Self) void {
+        const stage = self.private().stage orelse return;
+        self.placeStage(stage, wk.gtk_widget_get_width(stage), wk.gtk_widget_get_height(stage), false);
+    }
+
+    /// Whether `surface` is minimized into a strip as the stage was last laid
+    /// out (`+list`'s `minimized`, win32 T2103).
+    pub fn isMinimized(self: *Self, surface: *Surface) bool {
+        const grid = &(self.private().grid orelse return false);
+        const p = grid.placement(paneKey(surface)) orelse return false;
+        return p.is_tucked or p.is_sliver;
     }
 
     fn relayoutStage(self: *Self) void {
@@ -663,38 +681,35 @@ pub const SplitTree = extern struct {
         return pane_stack_layout.settingRow(alloc, built.nodes, root, d, items, shares) catch null;
     }
 
-    fn stageDragBegin(gesture: *wk.GtkEventController, x: f64, y: f64, self: *Self) callconv(.c) void {
+    /// What a press on the stage took hold of.
+    pub const Press = enum { none, divider, grip, strip };
+
+    /// A press at (x, y) in the stage's coordinates: a gutter begins a row
+    /// drag, a strip is held until it is let go; anything else is the pane's.
+    /// The real gesture and the `pane-stack` test seam both come here.
+    pub fn stagePress(self: *Self, x: f64, y: f64) Press {
         const priv = self.private();
         priv.strip_press = null;
-        const grid = &(priv.grid orelse {
-            _ = wk.gtk_gesture_set_state(gesture, wk.sequence_denied);
-            return;
-        });
+        const grid = &(priv.grid orelse return .none);
         const px: i32 = @intFromFloat(@round(x));
         const py: i32 = @intFromFloat(@round(y));
         if (grid.dividerAt(px, py)) |i| {
             const d = grid.result.dividers.items[i];
             const centre = d.node_frame.start(d.direction) + d.position - d.row.start;
-            if (self.beginRowDrag(d.row, d.direction, d.index, centre)) {
-                _ = wk.gtk_gesture_set_state(gesture, wk.sequence_claimed);
-                return;
-            }
+            if (self.beginRowDrag(d.row, d.direction, d.index, centre)) return .divider;
         } else if (grid.stackHandleAt(px, py)) |i| {
             const h = grid.result.stack_handles.items[i];
             const centre = h.frame.start(h.direction) + h.position - h.row.start;
-            if (self.beginRowDrag(h.row, h.direction, stack_drag.gripBoundary(h), centre)) {
-                _ = wk.gtk_gesture_set_state(gesture, wk.sequence_claimed);
-                return;
-            }
+            if (self.beginRowDrag(h.row, h.direction, stack_drag.gripBoundary(h), centre)) return .grip;
         } else if (grid.stripAt(px, py)) |id| {
             priv.strip_press = id;
-            _ = wk.gtk_gesture_set_state(gesture, wk.sequence_claimed);
-            return;
+            return .strip;
         }
-        _ = wk.gtk_gesture_set_state(gesture, wk.sequence_denied);
+        return .none;
     }
 
-    fn stageDragUpdate(_: *wk.GtkEventController, dx: f64, dy: f64, self: *Self) callconv(.c) void {
+    /// The pointer `dx`, `dy` from where the press was.
+    pub fn stageDrag(self: *Self, dx: f64, dy: f64) void {
         const priv = self.private();
         const rd = &(priv.row_drag orelse return);
         const position = if (rd.direction == .horizontal) dx else dy;
@@ -707,7 +722,8 @@ pub const SplitTree = extern struct {
         self.relayoutStage();
     }
 
-    fn stageDragEnd(_: *wk.GtkEventController, dx: f64, dy: f64, self: *Self) callconv(.c) void {
+    /// The press let go `dx`, `dy` from where it was.
+    pub fn stageRelease(self: *Self, dx: f64, dy: f64) void {
         const priv = self.private();
         if (priv.row_drag != null) {
             self.endRowDrag();
@@ -724,6 +740,84 @@ pub const SplitTree = extern struct {
         priv.last_focused.set(s);
         self.relayoutStage();
         s.grabFocus();
+    }
+
+    fn stageDragBegin(gesture: *wk.GtkEventController, x: f64, y: f64, self: *Self) callconv(.c) void {
+        const held = self.stagePress(x, y);
+        _ = wk.gtk_gesture_set_state(gesture, if (held == .none) wk.sequence_denied else wk.sequence_claimed);
+    }
+
+    fn stageDragUpdate(_: *wk.GtkEventController, dx: f64, dy: f64, self: *Self) callconv(.c) void {
+        self.stageDrag(dx, dy);
+    }
+
+    fn stageDragEnd(_: *wk.GtkEventController, dx: f64, dy: f64, self: *Self) callconv(.c) void {
+        self.stageRelease(dx, dy);
+    }
+
+    /// The stage as last laid out, for the `pane-stack` test seam: each
+    /// pane's frame, whether it is minimized and the strip that shows, and
+    /// every gutter that takes the mouse. Allocated in `arena`. Null when the
+    /// tab shows one pane.
+    pub const StageReport = struct {
+        pub const Pane = struct {
+            pane: []const u8,
+            minimized: bool,
+            focused: bool,
+            frame: [4]i32,
+            strip: ?[4]i32,
+        };
+        pub const Gutter = struct { kind: []const u8, direction: []const u8, rect: [4]i32 };
+        width: c_int,
+        height: c_int,
+        panes: []const Pane,
+        gutters: []const Gutter,
+    };
+
+    fn rectArr(r: pane_stack_grid.PxRect) [4]i32 {
+        return .{ r.left, r.top, r.width(), r.height() };
+    }
+
+    pub fn stageReport(self: *Self, arena: Allocator) Allocator.Error!?StageReport {
+        const priv = self.private();
+        const stage = priv.stage orelse return null;
+        const grid = &(priv.grid orelse return null);
+        const tree = priv.tree orelse return null;
+        const focused = priv.last_focused.get();
+        defer if (focused) |f| f.unref();
+        var panes: std.ArrayList(StageReport.Pane) = .empty;
+        var it = tree.iterator();
+        while (it.next()) |entry| {
+            const p = grid.placement(paneKey(entry.view)) orelse continue;
+            const mini = p.is_tucked or p.is_sliver;
+            try panes.append(arena, .{
+                .pane = try arena.dupe(u8, entry.view.paneId()),
+                .minimized = mini,
+                .focused = focused == entry.view,
+                .frame = rectArr(p.rect),
+                .strip = if (mini) if (p.tab) |t| rectArr(t) else null else null,
+            });
+        }
+        var gutters: std.ArrayList(StageReport.Gutter) = .empty;
+        for (0..grid.result.dividers.items.len) |i| try gutters.append(arena, .{
+            .kind = "divider",
+            .direction = @tagName(grid.result.dividers.items[i].direction),
+            .rect = rectArr(grid.dividerGutter(i)),
+        });
+        for (0..grid.result.stack_handles.items.len) |i| try gutters.append(arena, .{
+            .kind = switch (grid.result.stack_handles.items[i].kind) {
+                .between => "grip",
+                .expand => "edge",
+            },
+            .direction = @tagName(grid.result.stack_handles.items[i].direction),
+            .rect = rectArr(grid.stackHandleGutter(i)),
+        });
+        return .{
+            .width = wk.gtk_widget_get_width(stage),
+            .height = wk.gtk_widget_get_height(stage),
+            .panes = panes.items,
+            .gutters = gutters.items,
+        };
     }
 
     /// After a step of a row drag, the tree's side of it (Mac `dragRow`): all

@@ -148,6 +148,7 @@ pub fn handleSeam(app: Context, request: Request) Allocator.Error!server.SeamRep
     if (std.mem.eql(u8, request.action, "pane-banner")) return .{ .reply = try paneBanner(app, request) };
     if (std.mem.eql(u8, request.action, "pane-drag")) return .{ .reply = try paneDrag(app, request) };
     if (std.mem.eql(u8, request.action, "pane-mouse")) return .{ .reply = try paneMouse(app, request) };
+    if (std.mem.eql(u8, request.action, "pane-stack")) return .{ .reply = try paneStack(app, request) };
     if (std.mem.eql(u8, request.action, "read-clipboard")) return .{ .reply = try readClipboard(app, request) };
     if (!std.mem.eql(u8, request.action, "capture-pane")) return .unhandled;
     return .{ .reply = try capturePane(app, request) };
@@ -327,6 +328,76 @@ fn paneBanner(app: Context, request: Request) Allocator.Error![]u8 {
         .key_effect = if (effect) |e| @tagName(e) else null,
     };
     var out: std.Io.Writer.Allocating = .init(arena);
+    std.json.Stringify.value(rep, .{}, &out.writer) catch return error.OutOfMemory;
+    return c_alloc.dupe(u8, out.written());
+}
+
+/// `pane-stack --target=<pane> [--press=<x>,<y>] [--drag=<dx>,<dy>]...
+/// [--release=<dx>,<dy>]` (T3567): the stacked-panes stage of the target's
+/// tab - each pane's frame, whether it is minimized and the strip that shows,
+/// and every gutter that takes the mouse (`divider`, `grip`, `edge`) - after
+/// an optional press, drag steps and release, in order, at the stage's
+/// coordinates, through the same `SplitTree.stagePress`/`stageDrag`/
+/// `stageRelease` the stage's real drag gesture calls. The headless harness
+/// has no seat, so no pointer can press. Reply `press`: what the press took
+/// hold of (`none|divider|grip|strip`); `stage`: null when the tab shows one
+/// pane.
+fn paneStack(app: Context, request: Request) Allocator.Error![]u8 {
+    var target_arg: ?[]const u8 = null;
+    for (request.arguments orelse &.{}) |arg| {
+        if (std.mem.startsWith(u8, arg, "--target=")) target_arg = arg["--target=".len..];
+    }
+    const target_name = target_arg orelse return server.errorResponse(c_alloc, "--target is required for pane-stack", .{});
+
+    var arena_state = std.heap.ArenaAllocator.init(c_alloc);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const target = switch (try resolve(arena, app, target_name)) {
+        .found => |t| t,
+        .ambiguous => |windows| return server.errorResponse(c_alloc, "{s}", .{
+            try target_lookup.ambiguityError(arena, target_name, windows),
+        }),
+        .not_found => return server.errorResponse(c_alloc, "pane '{s}' not found in registry", .{target_name}),
+    };
+    const surface = target.surface() orelse
+        return server.errorResponse(c_alloc, "pane '{s}' is no longer alive", .{target_name});
+    const tree = ext.getAncestor(SplitTree, surface.as(gtk.Widget)) orelse
+        return server.errorResponse(c_alloc, "pane '{s}' is not in a split tree", .{target_name});
+
+    const pair = struct {
+        fn parse(s: []const u8) ?[2]f64 {
+            var parts = std.mem.splitScalar(u8, s, ',');
+            const a = std.fmt.parseFloat(f64, parts.next() orelse return null) catch return null;
+            const b = std.fmt.parseFloat(f64, parts.next() orelse return null) catch return null;
+            return .{ a, b };
+        }
+    }.parse;
+
+    tree.layoutNow();
+    var press: ?[]const u8 = null;
+    for (request.arguments orelse &.{}) |arg| {
+        if (std.mem.startsWith(u8, arg, "--press=")) {
+            const p = pair(arg["--press=".len..]) orelse return server.errorResponse(c_alloc, "--press must be <x>,<y>", .{});
+            press = @tagName(tree.stagePress(p[0], p[1]));
+        } else if (std.mem.startsWith(u8, arg, "--drag=")) {
+            const p = pair(arg["--drag=".len..]) orelse return server.errorResponse(c_alloc, "--drag must be <dx>,<dy>", .{});
+            tree.stageDrag(p[0], p[1]);
+            tree.layoutNow();
+        } else if (std.mem.startsWith(u8, arg, "--release=")) {
+            const p = pair(arg["--release=".len..]) orelse return server.errorResponse(c_alloc, "--release must be <dx>,<dy>", .{});
+            tree.stageRelease(p[0], p[1]);
+            tree.layoutNow();
+        }
+    }
+
+    const Rep = struct {
+        success: bool = true,
+        press: ?[]const u8,
+        stage: ?SplitTree.StageReport,
+    };
+    const rep: Rep = .{ .press = press, .stage = try tree.stageReport(arena) };
+    var out: std.Io.Writer.Allocating = .init(c_alloc);
+    defer out.deinit();
     std.json.Stringify.value(rep, .{}, &out.writer) catch return error.OutOfMemory;
     return c_alloc.dupe(u8, out.written());
 }
@@ -1926,6 +1997,8 @@ const ListLeaves = struct {
             // An unnamed pane answers to its id, the Mac's fallback.
             .name = if (surface.ipcName()) |nm| try arena.dupe(u8, nm) else id,
             .focused = surface == self.active,
+            // T3567: minimized into a stacked row's strip (win32 T2103).
+            .minimized = if (ext.getAncestor(SplitTree, surface.as(gtk.Widget))) |t| t.isMinimized(surface) else false,
             .exit_code = null,
             // T3411: a viewer leaf says so, with what it shows now (the Mac's
             // `type`/`url`; `+list` prints it as `view: <title>  <url>`).
