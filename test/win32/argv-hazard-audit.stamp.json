@@ -1,10 +1,10 @@
 {
     "guard":  "argv-hazard",
     "script":  "test/win32/argv-hazard-audit.ps1",
-    "generated":  "2026-11-24T05:11:56-08:00",
-    "commit":  "30503cdd2",
+    "generated":  "2026-11-24T05:36:08-08:00",
+    "commit":  "4e130a464",
     "uncommitted":  [
-                        "scripts/git-commit-guard.ps1"
+
                     ],
     "files":  {
                   "scripts/acceptance-parallel.ps1":  "4b958ede38c0911c4945146f0a52810ebbf8c01d44ac8a60532f2eb77f8fd0af",
@@ -52,7 +52,7 @@
                   "scripts/go-loop-lock.ps1":  "eda6fc5f2bc851e11a9718ddbdd529d9fb9a5ce06637703e93800f37ccc0a2bb",
                   "scripts/go-loop-pane-probe.ps1":  "e491be3477c3236c4e10af70db2f40e9d632c45f83bf860f4b09fe6eeda5e2b7",
                   "scripts/go-loop-watchdog.ps1":  "37f19f9ce08a701645b7267fea8411125b9112d83ef5ff0cbddb8e380f058d67",
-                  "scripts/guard-due.ps1":  "2e59d3d55b485fb2d0bf70903dbafa651bb41eb8d811f69b3e998ca9e7af92b3",
+                  "scripts/guard-due.ps1":  "ad8bfeda72eb84d83d8273411255b12d0e8250fe6bacf677fa2f0ca69282a528",
                   "scripts/harness-floor.ps1":  "e3d359fb624aa2c8abf555bea66b63a798c01ec9dce023416631191e2c943050",
                   "scripts/hero-glide-onscreen.ps1":  "46d211f7ec7843d13506f4e3bd13933630339adb8aff13b5c97d69ae3fd248a7",
                   "scripts/hidden-windows-cpu.ps1":  "61551ac8760570d16a46ab2ef235c9792a2e29fb9e9d116ebbc23a5ce9051876",
@@ -127,7 +127,7 @@
                   "scripts/upgrade-ghoztty-windows.ps1":  "83fc5645440aeb390dc05c1cb432420dcd136a1833af441aa0cbb2ad2fe6c40c",
                   "scripts/upstream-remote.ps1":  "1eaafbe08c8b98e9520b96cbba2db8799879864d2a5163f0e64277636793cfbc",
                   "scripts/upstream-stage.ps1":  "a51dc2a35a5f4e1dcec4f5e7e16b2b895ec39af1b6a25bea056c780dba6aa81f",
-                  "scripts/verify-release-assets.ps1":  "a9b3a63b4540c4feed70b834444ad82fd6adf8312c8dad05789cd06797caae18",
+                  "scripts/verify-release-assets.ps1":  "ce19b1e7b4220c24cb20bd21659b4f1a01e18156d00f20280e591dbc712e233b",
                   "scripts/verify-release-clean.ps1":  "bda3aa7cdea27a60aeaa864d6319aa662e3f68dfdefc707a6205012278a6edab",
                   "scripts/vt-escape-scan.ps1":  "a23758e33821d194e040b24ac5e9811b705f53c5fc0313633aa1478f11567ced",
                   "scripts/watchdog-ghoztty-windows.ps1":  "83c84a3e39fa70558219214014f9171145dff9acf2fefc00b221a2a9a28a06f2",
