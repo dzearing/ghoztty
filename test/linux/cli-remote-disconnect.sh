@@ -43,6 +43,11 @@ hl_check "S1 zig build -Dapp-runtime=gtk -Doptimize=Debug exits 0" $rc "$(grep -
 
 hl_start
 hl_check "S2 a private headless Weston is up" $?
+# DIAG: animations off (the harness's private config dir), to test whether
+# an answered dialog only lingers because its close animation never ends.
+[ "${ANIM:-off}" = off ] && { mkdir -p "$XDG_CONFIG_HOME/gtk-4.0"; printf '[Settings]
+gtk-enable-animations=false
+' > "$XDG_CONFIG_HOME/gtk-4.0/settings.ini"; }
 app=$(hl_ghoztty) || hl_finish "$L"
 agent_bin="$(dirname "$app")/ghoztty-agent"
 sock="$XDG_RUNTIME_DIR/ghostty-debug-$(id -u).sock"
