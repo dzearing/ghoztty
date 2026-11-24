@@ -5,7 +5,9 @@
 # the pane is out of +list but its shell keeps running; ctrl+shift+z puts it
 # back where it was, by name, same shell; ctrl+shift+y does it again; only
 # when the undo expires does the shell end. `+close --force` is never undoable,
-# and an undo in one window never reaches another. Run it ONLY through the
+# and an undo in one window never reaches another. T3590: a closed TAB (by
+# its close key, by +close of its only pane, or Close Other Tabs as one
+# group) parks the same way and comes back at its position. Run it ONLY through the
 # wrapper:
 #
 #   powershell -NoProfile -File scripts\linux\wsl-run.ps1 -CommandFile test\linux\cli-undo.sh
@@ -42,7 +44,9 @@ cli() { env -u GHOZTTY_IPC_SOCKET -u GHOZTTY_PANE_ID "$app" "$@"; }
 
 export SHELL=/bin/sh
 hl_launch APP "$app" --gtk-single-instance=false --session-persistence=false \
-    --undo-timeout=${timeout_s}s -e /bin/sh -c 'PS1="hl$ " exec /bin/sh -i'
+    --undo-timeout=${timeout_s}s \
+    --keybind=ctrl+shift+t=new_tab --keybind=ctrl+shift+w=close_tab:this \
+    --keybind=ctrl+alt+shift+o=close_tab:other -e /bin/sh -c 'PS1="hl$ " exec /bin/sh -i'
 hl_wait_for 30 test -S "$sock"
 hl_check "U3 the app serves its socket" $?
 
@@ -66,8 +70,16 @@ def leaves(n):
         yield from leaves(n["left"]); yield from leaves(n["right"])
     else:
         yield n["terminal"]
+if mode == "tpid":
+    for w in d["windows"]:
+        for t in w["tabs"]:
+            for l in leaves(t["splits"]):
+                if l.get("name") == want or l.get("id") == want: print(l.get("pid") or "")
+    sys.exit(0)
 for w in d["windows"]:
     if (w.get("target") or "") != want: continue
+    if mode == "tabs":
+        print(",".join("+".join(l.get("name", "") for l in leaves(t["splits"])) for t in w["tabs"]))
     tab = next((t for t in w["tabs"] if t.get("selected")), w["tabs"][0])
     if mode == "shape": print(shape(tab["splits"]))
     for l in leaves(tab["splits"]):
@@ -175,6 +187,82 @@ hl_wait_for 10 shape_is uw "$full"
 back=$?
 [ $swapped = 0 ] && [ $back = 0 ]
 hl_check "R9 a rearrange that leaves nothing out (b and c swapped) undoes too" $? "out=$out $(dump)"
+
+# --- a closed tab (T3590) -------------------------------------------------------
+
+tabs_of() { list_py tabs "$1"; }
+tabs_are() { [ "$(tabs_of "$1")" = "$2" ]; }
+tpid() { list_py tpid "$1"; }
+tdump() { echo "ux tabs=$(tabs_of ux)"; }
+ntabs() { tabs_of "$1" | tr ',' '\n' | grep -c .; }
+ntabs_is() { [ "$(ntabs "$1")" = "$2" ]; }
+press "$x" ctrl+shift+t > /dev/null
+hl_wait_for 10 ntabs_is ux 2
+t2=$(tabs_of ux); t2=${t2##*,}
+press "$t2" ctrl+shift+t > /dev/null
+hl_wait_for 10 ntabs_is ux 3
+t3=$(tabs_of ux); t3=${t3##*,}
+three="$x,$t2,$t3"
+pid_x=$(tpid "$x"); pid_t2=$(tpid "$t2"); pid_t3=$(tpid "$t3")
+tabs_are ux "$three" && alive "$pid_t2" && alive "$pid_t3"
+hl_check "T1 window ux holds three tabs ($three) with live shells" $? "$(tdump) t2=$pid_t2 t3=$pid_t3"
+
+press "$t2" ctrl+shift+w > /dev/null
+hl_wait_for 10 tabs_are ux "$x,$t3"
+hl_check "T2 closing tab 2 takes it out of +list" $? "$(tdump)"
+alive "$pid_t2"
+hl_check "T3 its shell is still running while the undo lasts" $? "pid_t2=$pid_t2"
+out=$(undo "$a")
+sleep 1
+tabs_are ux "$x,$t3"
+hl_check "T4 ctrl+shift+z in window uw does not reach ux's tab close" $? "out=$out $(tdump)"
+out=$(undo "$x")
+hl_wait_for 10 tabs_are ux "$three"
+hl_check "T5 ctrl+shift+z in ux puts the tab back where it was ($three)" $? "out=$out $(tdump)"
+[ "$(tpid "$t2")" = "$pid_t2" ]
+hl_check "T6 ...with the same shell (pid $pid_t2)" $? "now=$(tpid "$t2")"
+cli +send-keys --target="$t2" 'echo T7_$((40+2))' Enter > /dev/null 2>&1
+read_t2() { cli +read --name="$t2" --lines=20 2>/dev/null | grep -q 'T7_42'; }
+hl_wait_for 10 read_t2
+hl_check "T7 the restored tab's pane runs what it is sent" $? "$(cli +read --name="$t2" --lines=6 2>&1 | tr '\n' '|' | head -c 300)"
+out=$(redo "$x")
+hl_wait_for 10 tabs_are ux "$x,$t3"
+alive "$pid_t2"
+hl_check "T8 ctrl+shift+y closes the tab again, parked (shell alive)" $? "out=$out $(tdump) pid_t2=$pid_t2"
+out=$(undo "$x")
+hl_wait_for 10 tabs_are ux "$three"
+hl_check "T9 ctrl+shift+z after the redo brings it back again" $? "out=$out $(tdump)"
+
+# The tab's only pane closing is the tab closing: it parks as a tab.
+cli +close --target="$t2" > /dev/null 2>&1
+hl_wait_for 10 tabs_are ux "$x,$t3"
+alive "$pid_t2"
+hl_check "T10 +close of tab 2's only pane closes the tab, parked (shell alive)" $? "$(tdump) pid_t2=$pid_t2"
+out=$(undo "$x")
+hl_wait_for 10 tabs_are ux "$three"
+[ "$(tpid "$t2")" = "$pid_t2" ]
+hl_check "T11 ctrl+shift+z brings that tab back, same shell" $? "out=$out $(tdump)"
+
+# Close Other Tabs is ONE undo.
+press "$t3" ctrl+alt+shift+o > /dev/null
+hl_wait_for 10 tabs_are ux "$t3"
+alive "$pid_x" && alive "$pid_t2"
+hl_check "T12 Close Other Tabs leaves only tab 3; the others' shells still run" $? "$(tdump) x=$pid_x t2=$pid_t2"
+out=$(undo "$t3")
+hl_wait_for 10 tabs_are ux "$three"
+hl_check "T13 one ctrl+shift+z brings both back, in order ($three)" $? "out=$out $(tdump)"
+out=$(redo "$t3")
+hl_wait_for 10 tabs_are ux "$t3"
+hl_check "T14 one ctrl+shift+y closes both again" $? "out=$out $(tdump)"
+out=$(undo "$t3")
+hl_wait_for 10 tabs_are ux "$three"
+hl_check "T15 ...and one ctrl+shift+z restores both again" $? "out=$out $(tdump)"
+
+# Expiry ends a parked tab's shell.
+press "$t2" ctrl+shift+w > /dev/null
+hl_wait_for 10 tabs_are ux "$x,$t3"
+hl_wait_for $((timeout_s + 10)) dead "$pid_t2"
+hl_check "T16 a closed tab's shell ends once the undo expires" $? "pid_t2=$pid_t2 $(tdump)"
 
 # --- expiry ---------------------------------------------------------------------
 

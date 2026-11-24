@@ -2241,6 +2241,12 @@ pub const Surface = extern struct {
         );
     }
 
+    /// Whether this pane's shell has exited (T3590: a tab of only those has
+    /// nothing an undo could bring back).
+    pub fn hasChildExited(self: *Self) bool {
+        return self.private().child_exited;
+    }
+
     pub fn childExited(
         self: *Self,
         data: apprt.surface.Message.ChildExited,

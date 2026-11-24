@@ -545,6 +545,15 @@ pub const Window = extern struct {
             .end => tab_view.getNPages(),
         };
 
+        return self.attachTabPage(tab, position);
+    }
+
+    /// Put `tab` into this window's tab view at `position`, select it, and
+    /// wire it up: the page's title and tooltip, and the tree's changes. A
+    /// new tab and a closed tab an undo brings back (T3590) both come here.
+    fn attachTabPage(self: *Self, tab: *Tab, position: c_int) *adw.TabPage {
+        const tab_view = self.private().tab_view;
+
         // Add the page and select it
         const page = tab_view.insert(tab.as(gtk.Widget), position);
         tab_view.setSelectedPage(page);
@@ -583,6 +592,53 @@ pub const Window = extern struct {
         );
 
         return page;
+    }
+
+    /// Put a closed tab back at `position` (clamped), selected, with focus
+    /// on the pane it had (T3590). The caller keeps its own reference.
+    pub fn restoreParkedTab(self: *Self, tab: *Tab, position: c_int) void {
+        const tab_view = self.private().tab_view;
+        const n = tab_view.getNPages();
+        _ = self.attachTabPage(tab, @max(0, @min(position, n)));
+        if (tab.getActiveSurface()) |s| tab.getSplitTree().focusSurface(s);
+    }
+
+    /// A tab being parked for undo (T3590) stops reporting its tree's
+    /// changes here: it is no longer in this window. `attachTabPage` wires
+    /// them again when it comes back.
+    pub fn detachParkedTab(self: *Self, tab: *Tab) void {
+        _ = gobject.signalHandlersDisconnectMatched(
+            tab.getSplitTree().as(gobject.Object),
+            .{ .data = true },
+            0,
+            0,
+            null,
+            null,
+            self,
+        );
+    }
+
+    /// Close `tab` with no confirmation (a redo, or the tab's only pane
+    /// closing, which the pane's own close already confirmed). With undo on
+    /// it is parked like any other tab close. False when it is not here.
+    pub fn closeTabNow(self: *Self, tab: *Tab) bool {
+        if (ext.getAncestor(Self, tab.as(gtk.Widget)) != self) return false;
+        const tab_view = self.private().tab_view;
+        const page = tab_view.getPage(tab.as(gtk.Widget));
+        CloseUndo.confirmed_tab = tab;
+        defer CloseUndo.confirmed_tab = null;
+        tab_view.closePage(page);
+        return true;
+    }
+
+    /// Finish closing `page` (its confirmation, if any, answered yes),
+    /// parking its tab for undo first when undo is on (T3590).
+    fn finishTabClose(self: *Self, page: *adw.TabPage) void {
+        const tab_view = self.private().tab_view;
+        if (gobject.ext.cast(Tab, page.getChild())) |tab| {
+            _ = CloseUndo.parkTab(self, tab, tab_view.getPagePosition(page));
+        }
+        tab_view.closePageFinish(page, @intFromBool(true));
     }
 
     pub const SelectTab = union(enum) {
@@ -1773,6 +1829,10 @@ pub const Window = extern struct {
             log.warn("close confirmation called for non-existent page", .{});
             return;
         };
+        if (ext.getAncestor(Self, tab_view.as(gtk.Widget))) |window| {
+            window.finishTabClose(page);
+            return;
+        }
         tab_view.closePageFinish(page, @intFromBool(true));
     }
 
@@ -1795,15 +1855,15 @@ pub const Window = extern struct {
         page: *adw.TabPage,
         self: *Self,
     ) callconv(.c) c_int {
-        const priv = self.private();
         const child = page.getChild();
         const tab = gobject.ext.cast(Tab, child) orelse
             return @intFromBool(false);
 
         // If the tab says it doesn't need confirmation then we go ahead
-        // and close immediately.
-        if (!tab.getNeedsConfirmQuit()) {
-            priv.tab_view.closePageFinish(page, @intFromBool(true));
+        // and close immediately. So does one whose close was already
+        // confirmed (its only pane's), or that a redo closes (T3590).
+        if (CloseUndo.confirmed_tab == tab or !tab.getNeedsConfirmQuit()) {
+            self.finishTabClose(page);
             return @intFromBool(true);
         }
 

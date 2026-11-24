@@ -1618,6 +1618,11 @@ pub const SplitTree = extern struct {
         // always the "previous" surface unless we're the leftmost then
         // its the next.
         const old_tree = self.getTree() orelse return;
+
+        // T3590: the tab's only pane closing is its tab closing. With undo
+        // on, the tab closes whole, tree intact, so it is parked as a tab.
+        if (CloseUndo.closeTabInstead(self, old_tree, handle)) return;
+
         const next_focus: ?*Surface = next_focus: {
             const alloc = Application.default().allocator();
             const next_handle: Surface.Tree.Node.Handle =

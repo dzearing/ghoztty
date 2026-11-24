@@ -14,6 +14,7 @@ const Common = @import("../class.zig").Common;
 const Config = @import("config.zig").Config;
 const Application = @import("application.zig").Application;
 const SplitTree = @import("split_tree.zig").SplitTree;
+const CloseUndo = @import("../CloseUndo.zig");
 const Surface = @import("surface.zig").Surface;
 const TitleDialog = @import("title_dialog.zig").TitleDialog;
 const window_activity = @import("../window_activity.zig");
@@ -464,6 +465,10 @@ pub const Tab = extern struct {
 
         // Delegate to our parent to handle this, since this will emit
         // a close-page signal that the parent can intercept.
+        // Several tabs closing at once are one undo (T3590, win32 T1874's
+        // Close Other Tabs group).
+        if (mode != .this) CloseUndo.beginGroup();
+        defer if (mode != .this) CloseUndo.endGroup();
         switch (mode) {
             .this => tab_view.closePage(page),
             .other => tab_view.closeOtherPages(page),
