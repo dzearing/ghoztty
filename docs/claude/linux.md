@@ -289,8 +289,31 @@ private runtime dir, so a test app can never meet the user's.
   `$GHOZTTY_TEST_BANNER_DUMP` (`BANNER <pane-id> shown|cleared`, one line per
   widget, `END`). Acceptance: `wsl-run.ps1 -CommandFile
   test\linux\cli-banner.sh`, ends `CLI BANNER: ALL PASS` (32 checks). Not
-  yet: collapse and the Ctrl+R editor (T3559), restore (T3560), the link
-  menu (T3561). A banner's title names its pane's sidebar row (below).
+  yet: restore (T3560), the link menu (T3561). A banner's title names its
+  pane's sidebar row (below).
+- **Banner collapse and the editor (T3559)**: the card is a horizontal box -
+  the blocks, then a flat chevron (`pan-up`/`pan-down-symbolic`) shown only
+  while the banner has a line under its first (`pane_banner_rules.collapsible`,
+  win32's rule). A click on the card or the chevron folds it to its title row
+  (`collapsedBlocks`: the first block, a list's first item, a table's header)
+  and back; GTK lays the pane out once per click, so the terminal is resized
+  once. The card's release is queued to an idle so a link's `activate-link`
+  or the chevron's `clicked`, both later, can take the click instead. A new
+  text keeps the fold, a clear resets it. The editor (`BannerEditor.zig`) is
+  an `AdwAlertDialog` with a monospace `GtkTextView`, filled with the banner
+  and all selected: Return is the view's newline, Ctrl+Return saves, Escape
+  cancels (`editorKey`), blank clears; one at a time. Opened by
+  `prompt_surface_banner`, bound to **Ctrl+Shift+B** on Linux (Windows'
+  chord; plain Ctrl+R is the shell's history search). Libadwaita 1.5 here has
+  no `adw_dialog_set_focus_widget`, so the text box takes focus by hand after
+  `present`. The dump gains a `state fixed|expanded|collapsed` line. Debug
+  seam: `hl_ipc pane-banner --target=<pane> [--click=card|chevron]
+  [--editor-text=<text>] [--editor-key=return|ctrl+return|escape]` replies
+  with the card (`shown`, `collapsible`, `collapsed`, `text`), the editor
+  (`open`, `pane`, `text`) and `key_effect` (`save|cancel|pass`). Acceptance:
+  `wsl-run.ps1 -CommandFile test\linux\cli-banner-edit.sh`, ends
+  `CLI BANNER EDIT: ALL PASS` (32 checks); `NEGATIVE=1` presses Ctrl+R and
+  must fail E1-E4.
 - **The pane sidebar (T3557)**: `PaneSidebar.zig`, a card in a horizontal
   row (`sidebar_row` in `window.blp`) before the tab view, listing the
   active tab's panes in reading order (a split's left/top side first, as
