@@ -360,6 +360,10 @@ $Registry = @(
     [pscustomobject]@{ Label = 'HELD BY OTHER LANE'; Kind = 'status' }
     [pscustomobject]@{ Label = 'FINISHED IN OTHER LANE'; Kind = 'status' }
     [pscustomobject]@{ Label = 'RELEASED IN OTHER LANE'; Kind = 'status' }
+    # T2038: `next` skips a task the upstream ref already shows closed when
+    # this worktree has not pulled the close. A report (it picks other work),
+    # held to by I3/I5 of test\win32\parity-tasks-lanes.ps1.
+    [pscustomobject]@{ Label = 'CLOSED UPSTREAM'; Kind = 'status' }
     [pscustomobject]@{ Label = 'LEDGER OFF'; Kind = 'status' }
     # 4f366d19d: `next` re-queues tasks parked for an idle box when the box
     # reads idle. A report, never a gate: it hands work out, it refuses none.

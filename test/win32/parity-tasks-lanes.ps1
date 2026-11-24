@@ -46,6 +46,11 @@
 #      until its copy matches the released one; the watchdog heartbeat keeps
 #      the lane's own unpushed reservations alive; a plain abandonment still
 #      releases. Negative control: release-at-todo hands the parent out.
+#   I. Closed upstream, never pulled (T2038): once the reservation has aged
+#      out, a lane whose @{u} carries the close but whose copy still reads it
+#      todo (or in-progress) is not handed it - fresh or as a resume - and is
+#      told CLOSED UPSTREAM ... pull; a task re-opened in this lane's own
+#      commit still is. Negative control: GHOZTTY_LOOP_NO_UPSTREAM_CHECK=1.
 #
 # Hermetic: fixtures, ledger and gate files live under $env:TEMP; the real task
 # dir and the real ledger (%LOCALAPPDATA%\ghoztty\loop-ledger.json) are never
@@ -626,6 +631,60 @@ try {
     $null = Task-Run @('set-status', 'T1', '-Status', 'todo') $dirB 'b' @{ GHOZTTY_LOOP_LEDGER_NO_RESERVE = '1' }
     $r = Task-Run @('next', '-Claim') $dirA 'a'
     Assert 'H13 negative control: with release-at-todo the other lane IS handed the split parent' ($r.Out -match 'NEXT: T1\b') $r.Out
+
+    # --- I. closed upstream, never pulled here (T2038) -----------------------------
+    # The reservation ends a TTL after the push; a lane that has not pulled by
+    # then still reads the task todo. Both lanes here are clones of one bare
+    # repo; `git fetch` in lane a stands in for the shared refs two worktrees
+    # have, where the other lane's push alone advances @{u}.
+    ""
+    'I. a task the upstream already shows closed is not handed to a lane that has not pulled'
+    $bareI = Join-Path $work 'origin-i.git'
+    $gitIn = {
+        param([string]$Dir, [string[]]$GitArgs)
+        $eapI = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+        try { & git -C $Dir -c user.name=t -c user.email=t@t @GitArgs 2>&1 | Out-Null; return ($LASTEXITCODE -eq 0) }
+        finally { $ErrorActionPreference = $eapI }
+    }
+    Reset-Lanes
+    if (Test-Path $bareI) { Remove-Item -Recurse -Force $bareI }
+    Remove-Item -Recurse -Force $dirA
+    $eapI0 = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+    try { & git init -q --bare $bareI 2>&1 | Out-Null } finally { $ErrorActionPreference = $eapI0 }
+    $okI = (& $gitIn $dirB @('init', '-q')) -and (& $gitIn $dirB @('add', '-A')) -and (& $gitIn $dirB @('commit', '-q', '-m', 'fixture')) -and
+        (& $gitIn $dirB @('remote', 'add', 'origin', $bareI)) -and (& $gitIn $dirB @('push', '-q', '-u', 'origin', 'HEAD'))
+    $branchI = [string](& git -C $dirB rev-parse --abbrev-ref HEAD 2>$null)
+    $okI = $okI -and (& $gitIn $work @('clone', '-q', '--branch', $branchI.Trim(), $bareI, $dirA))
+    Assert 'I0 setup: both lanes are clones of one upstream' ($okI -and (Test-Path (Join-Path $dirA 'T1.md')))
+    # Lane b finishes T1 and pushes; the reservation has since aged out.
+    $null = Task-Run @('next', '-Claim') $dirB 'b'
+    $null = Task-Run @('set-status', 'T1', '-Status', 'done') $dirB 'b'
+    $pushedI = (& $gitIn $dirB @('commit', '-q', '-am', 'T1 done')) -and (& $gitIn $dirB @('push', '-q'))
+    Remove-LedgerFile
+    $fetchedI = & $gitIn $dirA @('fetch', '-q')
+    Assert 'I1 setup: the close is pushed, lane a has fetched but not pulled, no reservation left' (
+        $pushedI -and $fetchedI -and (Get-FileStatus $dirA 'T1') -eq 'todo' -and $null -eq (Get-ClaimLane 'T1'))
+    $r = Task-Run @('next') $dirA 'a' @{ GHOZTTY_LOOP_NO_UPSTREAM_CHECK = '1' }
+    Assert 'I2 negative control: without the upstream check lane a is offered the finished task' ($r.Out -match 'NEXT: T1\b') $r.Out
+    $r = Task-Run @('next', '-Claim') $dirA 'a'
+    Assert 'I3 with it, lane a skips T1, names the upstream close and says pull' (
+        $r.Out -notmatch 'NEXT: T1\b' -and $r.Out -match 'CLOSED UPSTREAM: T1 \(done on origin/\S+, 1 commit\(s\) this worktree has not pulled - pull\)') $r.Out
+    Assert 'I4 ...claims the next task, and leaves T1 unwritten and unclaimed' (
+        $r.Out -match 'CLAIMED: T2\b' -and (Get-FileStatus $dirA 'T1') -eq 'todo' -and $null -eq (Get-ClaimLane 'T1')) $r.Out
+    # A dead turn left T1 in-progress in lane a's copy: still not a resume.
+    New-FixtureTask -Dir $dirA -Id 'T1' -Status 'in-progress' -WithLog
+    $r = Task-Run @('next', '-Claim') $dirA 'a'
+    Assert 'I5 a stale in-progress copy of an upstream-closed task is not RESUMED' (
+        $r.Out -notmatch 'RESUME: T1\b' -and $r.Out -match 'CLOSED UPSTREAM: T1\b' -and $r.Out -match 'RESUME: T2\b') $r.Out
+    # Pulled, then re-opened in a commit of lane a's own: HEAD is ahead and
+    # nothing on T1 is behind, so the upstream's older close does not count.
+    $reopened = (& $gitIn $dirA @('checkout', '--', '.')) -and (& $gitIn $dirA @('pull', '-q', '--ff-only'))
+    $p1 = Join-Path $dirA 'T1.md'
+    [System.IO.File]::WriteAllText($p1, ([System.IO.File]::ReadAllText($p1) -replace '(?m)^status:.*$', 'status: "todo"'), (New-Object System.Text.UTF8Encoding $false))
+    $reopened = $reopened -and (& $gitIn $dirA @('commit', '-q', '-am', 'reopen T1'))
+    $r = Task-Run @('next') $dirA 'a'
+    Assert 'I6 a task this lane re-opened in its own (unpushed) commit is offered, not skipped' (
+        $reopened -and $r.Out -match 'NEXT: T1\b' -and $r.Out -notmatch 'CLOSED UPSTREAM') $r.Out
     Complete-TestBody
 }
 finally {

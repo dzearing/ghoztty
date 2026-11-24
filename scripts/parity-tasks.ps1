@@ -1576,9 +1576,24 @@ switch ($Command) {
             }
             else { Write-Host ("HELD BY OTHER LANE: {0} (lane {1})" -f $HeldId, $HeldClaim.lane) }
         }
+        # T2038: the reservation above lasts a TTL past the push; past that, a
+        # lane that never pulled still reads the task open. Its own upstream
+        # ref (advanced by the other lane's push - worktrees share refs) says
+        # otherwise, so ask it. Memoised: the same candidate can be met twice.
+        $upClosed = @{}
+        $behindNames = @()
+        $closedUpstream = {
+            param($Cand)
+            if (-not $upClosed.ContainsKey($Cand.Id)) { $upClosed[$Cand.Id] = Get-LedgerUpstreamClose -Path $Cand.Path }
+            $u = $upClosed[$Cand.Id]
+            if ($null -eq $u) { return $false }
+            Write-Host ("CLOSED UPSTREAM: {0} ({1} on {2}, {3} commit(s) this worktree has not pulled - pull)" -f $Cand.Id, $u.Status, $u.Upstream, $u.Behind)
+            return $true
+        }
         $inflight = @()
         foreach ($t in @($ordered | Where-Object { $_.Status -match '^in-progress' -and (Test-SeatMatch $_.Seat $wantSeat) -and (Test-LaneMatch $_.Lane) })) {
             if ($heldElsewhere.ContainsKey($t.Id)) { & $sayHeld $t.Id $heldElsewhere[$t.Id]; $heldNames += $t.Id; continue }
+            if (& $closedUpstream $t) { $behindNames += $t.Id; continue }
             $inflight += $t
         }
         if ($inflight.Count -gt 0) {
@@ -1707,6 +1722,7 @@ switch ($Command) {
                 else { $unmet += ("{0}[open: {1}]" -f $d, ($open -join '+')) }
             }
             if ($unmet.Count -eq 0) {
+                if (& $closedUpstream $t) { $behindNames += $t.Id; continue }
                 # T1981: the claim is decided in the ledger BEFORE anything is
                 # printed or written, as one atomic check-and-set. Two lanes
                 # that both reached this task race here; the loser names the
@@ -1795,6 +1811,7 @@ switch ($Command) {
         if ($otherSeat.Count -gt 0) { Write-Host ("Other seat: {0}" -f ($otherSeat -join ', ')) }
         if ($otherLane.Count -gt 0) { Write-Host ("Other lane: {0}" -f ($otherLane -join ', ')) }
         if ($heldNames.Count -gt 0) { Write-Host ("Held by another lane: {0}" -f ($heldNames -join ', ')) }
+        if ($behindNames.Count -gt 0) { Write-Host ("Closed upstream, not pulled here: {0} - pull" -f ($behindNames -join ', ')) }
         exit 1
     }
 

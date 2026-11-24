@@ -540,6 +540,37 @@ function Get-LedgerUpstreamText {
     finally { $ErrorActionPreference = $eap }
 }
 
+# Has the UPSTREAM closed a task this worktree still reads open (T2038)? The
+# T2033 reservation keeps a finished task away from the other lane only until a
+# TTL after the push; a lane that has not pulled by then would be handed it
+# again. So `next` also asks git directly: when commits on `@{u}` that this
+# worktree's HEAD lacks touched the task file, and the upstream copy reads
+# closed, the task is finished elsewhere and this lane is merely behind.
+# Never fetches: worktrees share their refs, so the other lane's own push is
+# what advances `@{u}` here. A task this lane re-opened in a commit of its own
+# (HEAD ahead, nothing behind on that file) is not matched. Returns
+# @{ Status; Upstream; Behind } or $null (open, not behind, no git, no upstream,
+# or GHOZTTY_LOOP_NO_UPSTREAM_CHECK=1 - the negative control's switch).
+function Get-LedgerUpstreamClose {
+    param([string]$Path)
+    if ($env:GHOZTTY_LOOP_NO_UPSTREAM_CHECK -eq '1') { return $null }
+    $ctx = Get-LedgerGitContext -Path $Path
+    if ($null -eq $ctx -or -not $ctx.Upstream) { return $null }
+    $eap = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        $behind = [string](& git -C $ctx.Top rev-list --count 'HEAD..@{u}' -- $ctx.Rel 2>$null | Select-Object -Last 1)
+        if ($LASTEXITCODE -ne 0 -or -not $behind -or [int]$behind -le 0) { return $null }
+        $status = Get-LedgerStatusFromText (Get-LedgerUpstreamText -Ctx $ctx)
+        if (-not (Test-LedgerClosedStatus $status)) { return $null }
+        $up = [string](& git -C $ctx.Top rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>$null | Select-Object -Last 1)
+        if (-not $up) { $up = '@{u}' }
+        return [pscustomobject]@{ Status = $status; Upstream = $up.Trim(); Behind = [int]$behind }
+    }
+    catch { return $null }
+    finally { $ErrorActionPreference = $eap }
+}
+
 # Why setting $Id back to todo must NOT release it outright: a list of reasons
 # (empty = a plain abandonment, release it), or $null when there is no git
 # upstream to compare with (release it, as before T2386).

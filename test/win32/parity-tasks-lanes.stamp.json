@@ -1,19 +1,21 @@
 {
     "guard":  "parity-tasks-lanes",
     "script":  "test/win32/parity-tasks-lanes.ps1",
-    "generated":  "2026-11-21T20:44:23-08:00",
-    "commit":  "13cee8df8",
+    "generated":  "2026-11-23T21:11:41-08:00",
+    "commit":  "1b72ce2f2",
     "uncommitted":  [
-                        "scripts/parity-tasks.ps1"
+                        "scripts/lib/LoopLedger.ps1",
+                        "scripts/parity-tasks.ps1",
+                        "test/win32/parity-tasks-lanes.ps1"
                     ],
     "files":  {
-                  "scripts/lib/LoopLedger.ps1":  "925856ccac93bf14d6d9edfcf34bbc99ab044de1b496d30c2e31c437df83819a",
-                  "scripts/parity-tasks.ps1":  "5fdcc42933845af4dd07b455db41888282fdad748f8dbd6531e8765dbda45f2c",
-                  "test/win32/parity-tasks-lanes.ps1":  "0ea40fdd89dbf37e287727eb97d5153afa3e9f656e120df2b18302f31c49fff1"
+                  "scripts/lib/LoopLedger.ps1":  "009cc831d7dd98144a973784e1c12aa4a8ba0138baafe24b258e70e5ddb46bb7",
+                  "scripts/parity-tasks.ps1":  "6d89c66e808dc7b14e72c8163efd9e0a154bf8a520eca8ef8aad47e743bc7a14",
+                  "test/win32/parity-tasks-lanes.ps1":  "a459572bffc3391dc3da86425a546825969d17b8c3b38dfaa0fbeb821101c6b4"
               },
     "code":  {
-                 "scripts/lib/LoopLedger.ps1":  "code1:7708e1481678a347f65f2dc05aafe13f7ee77a94f319dd53cc6f8a65ff04cfaf",
-                 "scripts/parity-tasks.ps1":  "code1:ff311d618ca0843d195eb67296a05dfd09c246d98439d67f61ae0f042178573b",
-                 "test/win32/parity-tasks-lanes.ps1":  "code1:0c33917bebdc0c7ed7d39cec4c0b086097277f333925c9f2d24c21f1712ce2ba"
+                 "scripts/lib/LoopLedger.ps1":  "code1:32f9c2e26537025c318a3ca029a2f685c1c35163cad8b145b1a3b79fd6edb84d",
+                 "scripts/parity-tasks.ps1":  "code1:71ff1a79e77f84005f9a7be32ff4e0cab84f0b8fd2e0de9e2a8b2df91b898652",
+                 "test/win32/parity-tasks-lanes.ps1":  "code1:9c045076f235bcc2e22ec3bf591cde67a5502feecb700977c12c74f9744060b1"
              }
 }

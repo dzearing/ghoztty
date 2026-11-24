@@ -1,8 +1,8 @@
 {
     "guard":  "gate-negatives",
     "script":  "test/win32/gate-negatives.ps1",
-    "generated":  "2026-11-21T20:42:22-08:00",
-    "commit":  "13cee8df8",
+    "generated":  "2026-11-23T21:20:53-08:00",
+    "commit":  "1b72ce2f2",
     "uncommitted":  [
                         "scripts/parity-tasks.ps1",
                         "test/win32/gate-negatives.ps1"
@@ -11,14 +11,14 @@
                   "scripts/ci-status.ps1":  "e71f5180b132afed86eebc918efd289b1b2e9e35ffc1d46a28881cfe573eca5a",
                   "scripts/go-loop-exec.ps1":  "f14b52f885f4db1e3a9aa1a1707bf51710558711f624dd1c98f7ac7319f43ebe",
                   "scripts/lib/DigestState.ps1":  "3b0d48ec0c53dfeace8df7d1d9fd675b3541f1f9205a0af31987bdf60be00d0e",
-                  "scripts/parity-tasks.ps1":  "5fdcc42933845af4dd07b455db41888282fdad748f8dbd6531e8765dbda45f2c",
-                  "test/win32/gate-negatives.ps1":  "aae5633720a9d07aa05234044ce89b3492d4a9211578e78e588873f16032144a"
+                  "scripts/parity-tasks.ps1":  "6d89c66e808dc7b14e72c8163efd9e0a154bf8a520eca8ef8aad47e743bc7a14",
+                  "test/win32/gate-negatives.ps1":  "08ee7c4d67c664a4d594cafc39aa0a0c5c7e8d4f28e72a9a0532427d9510a45a"
               },
     "code":  {
                  "scripts/ci-status.ps1":  "code1:d631ebeec06660b4b6c364a6e17c0a9eb90cf84c0774f932325b9f57d6bd4aa9",
                  "scripts/go-loop-exec.ps1":  "code1:103e27c205828413a02f929cdad757568b445762ace4c8c156829d043dd4372d",
                  "scripts/lib/DigestState.ps1":  "code1:d956d293f941b58701840da44538dff6fbdb86bf7bc24b1debc7c656a67362ad",
-                 "scripts/parity-tasks.ps1":  "code1:ff311d618ca0843d195eb67296a05dfd09c246d98439d67f61ae0f042178573b",
-                 "test/win32/gate-negatives.ps1":  "code1:d510348b255f985c775b5eb045512afa47df5902914522b42b341b590555783f"
+                 "scripts/parity-tasks.ps1":  "code1:71ff1a79e77f84005f9a7be32ff4e0cab84f0b8fd2e0de9e2a8b2df91b898652",
+                 "test/win32/gate-negatives.ps1":  "code1:5ccb1533357d1a73b0cec8e181c10e8d274c7b235ff300d58dd6624b0452fe43"
              }
 }
