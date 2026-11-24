@@ -336,7 +336,9 @@ out=$(cli +close --target=relwin 2>&1); rc=$?
 ygone() { ! alive "$ypid" && ! alive "$yspid" && ! alive "$ytpid"; }
 hl_wait_for 10 ygone
 g=$?
-[ $rc = 0 ] && [ $g = 0 ] && ! has_window relwin
+# Non-vacuous: +close of an unknown target answers 0 (verbs are idempotent),
+# so the three pids must have existed for "they ended" to mean anything.
+[ -n "$ypid" ] && [ -n "$yspid" ] && [ -n "$ytpid" ] && [ $rc = 0 ] && [ $g = 0 ] && ! has_window relwin
 hl_check "Y13 +close --target=relwin ends its relayed sessions (pane, split and tab)" $? "rc=$rc out=$out pane=$ypid alive=$(alive "$ypid" && echo y) split=$yspid alive=$(alive "$yspid" && echo y) tab=$ytpid alive=$(alive "$ytpid" && echo y)"
 alive "$RLAGENT" && alive "$RELAY"
 hl_check "Y14 the relayed agent and the relay keep running" $? "agent=$(alive "$RLAGENT" && echo y) relay=$(alive "$RELAY" && echo y)"
