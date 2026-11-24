@@ -1,18 +1,20 @@
 {
     "guard":  "install-launch",
     "script":  "test/win32/install-launch.ps1",
-    "generated":  "2026-11-22T17:02:12-08:00",
-    "commit":  "cec9a8df7",
+    "generated":  "2026-11-24T04:28:56-08:00",
+    "commit":  "432c1fb7a",
     "uncommitted":  [
-                        ".github/workflows/fork-ci.yml"
+                        ".github/workflows/fork-ci.yml",
+                        "dist/windows-installer/build-msi.sh",
+                        "test/win32/install-launch.ps1"
                     ],
     "files":  {
-                  ".github/workflows/fork-ci.yml":  "125a7fedf10b7c315c1ecd10ad705c7d74d1045a8fc27dfac7dc90a214d7fb42",
-                  "dist/windows-installer/build-msi.sh":  "366a80161b9cc243de25c0c4c786238d24e696c18224d21d2f9afa97e4e19383",
+                  ".github/workflows/fork-ci.yml":  "9b05043cfab7688d8a095ff1e138fd2f2da5024deee1f6d9838ac2a89a34bac8",
+                  "dist/windows-installer/build-msi.sh":  "35dcf00bedc93b6520412c6359831132fb85605d82a7f45d13eb17ca0b4baf5a",
                   "dist/windows-installer/build-release-artifacts.sh":  "0e1f38f77a2655a038c775bb8e4508f9db74ed019b1a28862f3ffa909a5940c3",
-                  "test/win32/install-launch.ps1":  "df8a8917d448d735d327ae87bcfde00f09a665dcbe0737ae56c4c0487d8225ca"
+                  "test/win32/install-launch.ps1":  "13bb4e37b028cfdb3f4cc18afcb2ea630463fe5a4909a7932cb187a3b512709c"
               },
     "code":  {
-                 "test/win32/install-launch.ps1":  "code1:7a891dd146a36bc11af49c24b4d01166734a0fb757a471e8f240bc6c85930fda"
+                 "test/win32/install-launch.ps1":  "code1:d635cd2ed242455a6e6f7a496dbcd691a81dc2e2a07eb95711f35199492e48a5"
              }
 }

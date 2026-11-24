@@ -1,13 +1,13 @@
 {
     "guard":  "arp-orphan",
     "script":  "test/win32/arp-orphan.ps1",
-    "generated":  "2026-11-22T10:29:24-08:00",
-    "commit":  "a34fce0e1",
+    "generated":  "2026-11-24T04:31:44-08:00",
+    "commit":  "432c1fb7a",
     "uncommitted":  [
-                        "test/win32/arp-orphan.ps1"
+                        "dist/windows-installer/build-msi.sh"
                     ],
     "files":  {
-                  "dist/windows-installer/build-msi.sh":  "366a80161b9cc243de25c0c4c786238d24e696c18224d21d2f9afa97e4e19383",
+                  "dist/windows-installer/build-msi.sh":  "35dcf00bedc93b6520412c6359831132fb85605d82a7f45d13eb17ca0b4baf5a",
                   "scripts/msi-test-identity.ps1":  "f4114e015c29fa884abebff8fb7e057aab52582cf89584351f7b9b0c08ecce63",
                   "test/win32/arp-orphan.ps1":  "95e87a32e053c5b9b742b494cce2ede2c2a4639b494c62fd46b0bf257cf19ec9",
                   "test/win32/lib/ThrowawayProduct.ps1":  "44251729c95f1c92ef33b4dff3b867356a29e4f64e2af6f849d1732cf4de2bae"

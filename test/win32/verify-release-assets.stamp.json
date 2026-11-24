@@ -1,21 +1,22 @@
 {
     "guard":  "verify-release-assets",
     "script":  "test/win32/verify-release-assets.ps1",
-    "generated":  "2026-11-23T13:15:58-08:00",
-    "commit":  "723bc2478",
+    "generated":  "2026-11-24T03:49:14-08:00",
+    "commit":  "432c1fb7a",
     "uncommitted":  [
-                        "scripts/daily-publish.ps1"
+                        "scripts/verify-release-assets.ps1",
+                        "test/win32/verify-release-assets.ps1"
                     ],
     "files":  {
                   "scripts/daily-publish.ps1":  "08178386e3525122b9715a9bb5f32e0d28175c7440f15f684764251ab7e50c66",
                   "scripts/delivery-manifest.ps1":  "e1d865b58a35c5d226f2078a8e0d4e274d75fbbb5adc2f5aa2639382ae71de60",
-                  "scripts/verify-release-assets.ps1":  "a9b3a63b4540c4feed70b834444ad82fd6adf8312c8dad05789cd06797caae18",
-                  "test/win32/verify-release-assets.ps1":  "f7f34687c3a45c4c3ac1285b95e1c533c1b15936c1f73401c972d3e77115a12f"
+                  "scripts/verify-release-assets.ps1":  "ce19b1e7b4220c24cb20bd21659b4f1a01e18156d00f20280e591dbc712e233b",
+                  "test/win32/verify-release-assets.ps1":  "b5a798c36076a6ccb82cf39576a7fdedb5d1f34310755dc973f9f425996e5327"
               },
     "code":  {
                  "scripts/daily-publish.ps1":  "code1:c79847df5820acf00a04aff0243182aff6c0fa0014189faa2df8c2676fc3d2c8",
                  "scripts/delivery-manifest.ps1":  "code1:320328379574361dd4adabdcd2af640fce04c4ab2c6845d0eb6c5252dda250aa",
-                 "scripts/verify-release-assets.ps1":  "code1:38125fc94f8ec3af3bf24067e6c9f0ae7cdd8886f29dadb48156c069b3d36207",
-                 "test/win32/verify-release-assets.ps1":  "code1:d61c46d102fc916e817f00dfa2f66daca9f4e4ac3f14c5b9de818b5c24262e2a"
+                 "scripts/verify-release-assets.ps1":  "code1:c21cfd672c222bb3dd946951271791e0e7e8f6b921b6aa4c2ebca4bc386a40e8",
+                 "test/win32/verify-release-assets.ps1":  "code1:e3596f96979dc7456e8cc652e8c623739669515647b3499fe05dedd0b7023f70"
              }
 }

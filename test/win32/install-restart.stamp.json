@@ -1,13 +1,13 @@
 {
     "guard":  "install-restart",
     "script":  "test/win32/install-restart.ps1",
-    "generated":  "2026-11-20T16:00:46-08:00",
-    "commit":  "08f1ebf3b",
+    "generated":  "2026-11-24T04:28:54-08:00",
+    "commit":  "432c1fb7a",
     "uncommitted":  [
-
+                        "dist/windows-installer/build-msi.sh"
                     ],
     "files":  {
-                  "dist/windows-installer/build-msi.sh":  "366a80161b9cc243de25c0c4c786238d24e696c18224d21d2f9afa97e4e19383",
+                  "dist/windows-installer/build-msi.sh":  "35dcf00bedc93b6520412c6359831132fb85605d82a7f45d13eb17ca0b4baf5a",
                   "src/apprt/win32/restart_manager.zig":  "bff00d42af691800dfa199dd1cda16b807c10d1140be76c9ea06e6637f90bcd4",
                   "test/win32/install-restart.ps1":  "8b5d287e53876170027ce6dba82d31afb89b9a1e7db242f761606d893da7cae7"
               },

@@ -1,14 +1,15 @@
 {
     "guard":  "cli-shim-redirect",
     "script":  "test/win32/cli-shim-redirect.ps1",
-    "generated":  "2026-11-22T05:12:07-08:00",
-    "commit":  "b4cb5eedc",
+    "generated":  "2026-11-24T04:26:30-08:00",
+    "commit":  "432c1fb7a",
     "uncommitted":  [
-                        "test/win32/cli-shim-redirect.ps1"
+                        "src/build/GhosttyExe.zig",
+                        "src/build/patch_subsystem_main.zig"
                     ],
     "files":  {
-                  "src/build/GhosttyExe.zig":  "03676835bbdeed91a052c94e6aa0d416cf6133b3868f40b11c116b50f7174783",
-                  "src/build/patch_subsystem_main.zig":  "013a54d4c1c27001967999517853021da975ad4b523e06c8058b74de96c51543",
+                  "src/build/GhosttyExe.zig":  "70da73ddeccdd92097081b79b1b3650e81f18665be71b783378af1ab78576a2c",
+                  "src/build/patch_subsystem_main.zig":  "d79d2e5085953a822ab3bef282bab5b4cd0f0cbfd2adf7776c3ad4ec476868e5",
                   "src/cli/com_shim.zig":  "2a8e81d192077280e76e99d30de3ec62256def112f9f4e113f8b18cda8e3cbd9",
                   "test/win32/cli-shim-redirect.ps1":  "6b3c196cf43c06cb19e7fd5592f31a9491a5ff8c87c96ec0a31fedc4f5b8ce50"
               },
