@@ -878,7 +878,7 @@ fn shortcutGuideSeam(app: Context, request: Request) Allocator.Error![]u8 {
     } else if (std.mem.eql(u8, op, "shot")) {
         // The window from its own render (`pane_snapshot`), as win32's `shot`.
         const path = shot_path orelse return server.errorResponse(c_alloc, "--path=<file.png> is required for --op=shot", .{});
-        const bytes = pane_snapshot.png(w.content orelse w.window) orelse
+        const bytes = pane_snapshot.png(w.window) orelse
             return server.errorResponse(c_alloc, "the guide produced no frame to capture", .{});
         defer wk.g_bytes_unref(bytes);
         var len: usize = 0;
