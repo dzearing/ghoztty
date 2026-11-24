@@ -109,7 +109,7 @@ for w in d["windows"]:
 has_window() { cli +list --json 2>/dev/null | grep -q "\"target\":\"$1\""; }
 remote_count_is() { [ "$(win count x)" = "$1" ]; }
 pane_pid() { local p; p=$(win pid "$1" "${2:-}"); [ -n "$p" ] && [ "$p" != 0 ] && printf '%s' "$p"; }
-reads() { cli +read --target="$1" 2>/dev/null | grep -q -- "$2"; }
+reads() { cli +read --name="$1" 2>/dev/null | grep -q -- "$2"; }
 
 # --- refusals, all before any dial ---------------------------------------------
 refused() { # refused <label> <expect-substring> <args...>
@@ -147,12 +147,12 @@ rpid=$(pane_pid rem)
 hl_check "R4 rem's shell is the TCP agent's child, not the app's" $? "pane=$rpid agent=$RAGENT app=$APP"
 cli +send-keys --target=rem 'echo remote-marker-$((6*7))' Enter > /dev/null 2>&1
 hl_wait_for 10 reads rem 'remote-marker-42'
-hl_check "R5 keys reach the remote shell and +read sees its output" $? "$(cli +read --target=rem 2>&1 | tail -3 | tr '\n' ' ')"
+hl_check "R5 keys reach the remote shell and +read sees its output" $? "$(cli +read --name=rem 2>&1 | tail -3 | tr '\n' ' ')"
 
 out=$(cli +new-remote-window --host=127.0.0.1 --port="$port" --name=remcmd \
-    --command='echo remote-cmd-$((7*6))' 2>&1); rc=$?
+    --command='echo remote-cmd-$((7*6)); exec sleep 120' 2>&1); rc=$?
 [ $rc = 0 ] && hl_wait_for 10 reads remcmd 'remote-cmd-42'
-hl_check "R6 --command runs on the remote machine (forwarded in the OPEN)" $? "rc=$rc out=$out $(cli +read --target=remcmd 2>&1 | tail -3 | tr '\n' ' ')"
+hl_check "R6 --command runs on the remote machine (forwarded in the OPEN)" $? "rc=$rc out=$out $(cli +read --name=remcmd 2>&1 | tail -3 | tr '\n' ' ')"
 cpid=$(pane_pid remcmd)
 [ -n "$cpid" ] && is_ancestor "$RAGENT" "$cpid"
 hl_check "R7 remcmd's pane is the TCP agent's too" $? "pane=$cpid agent=$RAGENT"
