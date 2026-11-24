@@ -605,6 +605,11 @@ fn closeDialogSeam(app: Context, request: Request) Allocator.Error![]u8 {
         if (std.mem.startsWith(u8, arg, "--answer=")) answer_arg = arg["--answer=".len..];
     }
     const target_name = target_arg orelse return server.errorResponse(c_alloc, "--target is required for close-dialog", .{});
+    // A dialog answered in the same main-loop turn that presented it never
+    // leaves the window's dialog stack: start the close and answer it in two
+    // requests, as a person would.
+    if (op_arg != null and answer_arg != null)
+        return server.errorResponse(c_alloc, "close-dialog: --op and --answer go in separate requests", .{});
     var arena_state = std.heap.ArenaAllocator.init(c_alloc);
     defer arena_state.deinit();
     const target = switch (try resolve(arena_state.allocator(), app, target_name)) {

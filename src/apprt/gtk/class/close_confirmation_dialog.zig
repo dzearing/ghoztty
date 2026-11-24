@@ -1,8 +1,6 @@
 const std = @import("std");
 const gobject = @import("gobject");
 const gtk = @import("gtk");
-const adw = @import("adw");
-const adw_version = @import("../adw_version.zig");
 
 const gresource = @import("../build/gresource.zig");
 const i18n = @import("../../../os/main.zig").i18n;
@@ -149,22 +147,15 @@ pub const CloseConfirmationDialog = extern struct {
 
     /// Answer the dialog as if the user pressed `response_id` (`"close"`,
     /// `"disconnect"`, `"cancel"`). The DEBUG-ONLY `close-dialog` seam drives
-    /// this: Wayland gives a test no input to press a button with. The dialog
-    /// is dismissed FIRST, while the widget it was presented on still exists:
-    /// a tab's answer removes that tab, and a dialog closed after its parent
-    /// left the window stays in the window's dialog stack, where it swallows
-    /// the window's next close request.
+    /// this: Wayland gives a test no input to press a button with. Answer a
+    /// dialog that is fully up: one closed in the same main-loop turn that
+    /// presented it never leaves the window's dialog stack (the seam refuses
+    /// `--op` with `--answer` for that reason).
     pub fn answer(self: *Self, response_id: [*:0]const u8) void {
         _ = self.ref();
         defer self.unref();
-        const priv = self.private();
-        if (priv.answered) return;
-        priv.answered = true; // the close below must not answer it first
-        // libadwaita's own close (Escape's path), not a forced one.
-        if (comptime adw_version.supportsDialogs()) {
-            _ = self.as(adw.Dialog).close();
-        } else self.close();
-        self.dispatch(response_id);
+        response(self, response_id);
+        self.close();
     }
 
     pub fn close(self: *Self) void {

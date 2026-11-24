@@ -1958,22 +1958,6 @@ pub const Window = extern struct {
         _: *CloseConfirmationDialog,
         page: *adw.TabPage,
     ) callconv(.c) void {
-        // T3563: finish on the next idle tick, once the dialog has closed.
-        // Tearing the tab down inside the dialog's own response left the
-        // dialog in the window's dialog stack for good, where it swallowed
-        // the window's next close request.
-        _ = page.as(gobject.Object).ref();
-        _ = glib.idleAdd(closeTabIdle, page);
-    }
-
-    fn closeTabIdle(ud: ?*anyopaque) callconv(.c) c_int {
-        const page: *adw.TabPage = @ptrCast(@alignCast(ud orelse return 0));
-        defer page.as(gobject.Object).unref();
-        finishConfirmedTabClose(page);
-        return 0;
-    }
-
-    fn finishConfirmedTabClose(page: *adw.TabPage) void {
         const tab_view = ext.getAncestor(
             adw.TabView,
             page.getChild().as(gtk.Widget),

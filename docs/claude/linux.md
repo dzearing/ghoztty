@@ -1973,17 +1973,17 @@ spares, the one machine to name, the widened gate and the detach pin.
   the far session keeps running. Only panes on a remote link are pinned. An
   undo that puts the pane or tab back clears the pin, so a later close ends
   the session again.
-- **A confirmed tab close finishes on the next idle tick**
-  (`Window.closeTabIdle`): tearing the tab down inside the dialog's own
-  response left the dialog in the window's dialog stack, where libadwaita spent
-  the window's next close request on it.
 - Nothing on Linux can resume a disconnected session yet: that is the
   chooser, T3674.
 
 Acceptance, against a loopback TCP agent, driven through the DEBUG-ONLY
 `close-dialog --target= [--op=pane|tab|window] [--answer=disconnect|close|cancel]`
 seam (it starts the same close a keybind or an x does, reads the dialog and
-presses a button - Wayland gives the harness no pointer):
+presses a button - Wayland gives the harness no pointer). Start the close and
+answer it in TWO requests (the seam refuses both at once): a dialog answered
+in the same main-loop turn that presented it never leaves the window's dialog
+stack, and libadwaita then spends the window's next close request dismissing
+it - a harness trap, since no person can click before the dialog is up.
 
 ```powershell
 powershell -NoProfile -File scripts\linux\wsl-run.ps1 -CommandFile test\linux\cli-remote-disconnect.sh

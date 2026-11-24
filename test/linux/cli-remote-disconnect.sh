@@ -43,11 +43,6 @@ hl_check "S1 zig build -Dapp-runtime=gtk -Doptimize=Debug exits 0" $rc "$(grep -
 
 hl_start
 hl_check "S2 a private headless Weston is up" $?
-# DIAG: animations off (the harness's private config dir), to test whether
-# an answered dialog only lingers because its close animation never ends.
-[ "${ANIM:-off}" = off ] && { mkdir -p "$XDG_CONFIG_HOME/gtk-4.0"; printf '[Settings]
-gtk-enable-animations=false
-' > "$XDG_CONFIG_HOME/gtk-4.0/settings.ini"; }
 app=$(hl_ghoztty) || hl_finish "$L"
 agent_bin="$(dirname "$app")/ghoztty-agent"
 sock="$XDG_RUNTIME_DIR/ghostty-debug-$(id -u).sock"
@@ -143,9 +138,9 @@ gone=$?
 sleep 3 # past the 1 s undo window: the parked pane's end has run
 [ $gone = 0 ] && alive "$pa"
 hl_check "D4 Disconnect removes rdp-a here and its remote shell keeps running" $? "out=$out gone=$gone pid=$pa"
-echo "DIAG probe after D4: $(dialog rdp)"
 
-out=$(dialog rdp-b --op=pane --answer=close)
+dialog rdp-b --op=pane > /dev/null
+out=$(dialog rdp-b --answer=close)
 hl_wait_for 10 no_pane rdp-b && hl_wait_for 10 dead "$pb"
 hl_check "D5 Close removes rdp-b and ends its remote shell" $? "out=$out pid=$pb"
 
@@ -168,21 +163,16 @@ sleep 3
 hl_check "T3 Disconnect closes the tab and its remote shell keeps running" $? "out=$out tabs=$(win ntabs rdp) pid=$pt"
 
 # --- a window: the window's x --------------------------------------------------
-# An answered dialog animates out; until it has, libadwaita spends the
-# window's next close request on dismissing it (`+close --force` loops for the
-# same reason). So the tab's dialog must be GONE before the window's x.
+# Every answered dialog has left: a lingering one would swallow the window's
+# next close request (libadwaita spends it on dismissing the dialog).
 no_dialog() { [ "$(field "$(dialog "$1")" open)" = false ]; }
 hl_wait_for 15 no_dialog rdp
-w0=$?
-hl_check "W0 the answered tab dialog has left the window" $w0 "$(dialog rdp)"
-[ $w0 = 0 ] || { echo "--- tab/dialog log:"; grep -n -v "received action" "$APP_LOG" | sed -n "/tab close request/,/zzzz/p" | grep -v "debug(\|cell_size" | head -40; }
-mark=$(wc -l < "$APP_LOG")
-out=$(dialog rdp --op=window --answer=cancel)
+hl_check "W0 the answered tab dialog has left the window" $? "$(dialog rdp)"
+dialog rdp --op=window > /dev/null
+out=$(dialog rdp --answer=cancel)
 [ "$(field "$out" disconnect)" = true ] && [ "$(field "$out" answered)" = cancel ] &&
     has_window rdp && alive "$p0"
-w1=$?
-hl_check "W1 Cancel on the window close keeps rdp and its shell" $w1 "out=$out pid=$p0"
-[ $w1 = 0 ] || { echo "--- app log since the probe:"; tail -n +"$mark" "$APP_LOG" | head -40; }
+hl_check "W1 Cancel on the window close keeps rdp and its shell" $? "out=$out pid=$p0"
 
 out=$(dialog rdp --op=window)
 [ "$(field "$out" open)" = true ] && [ "$(field "$out" disconnect)" = true ]
@@ -195,7 +185,8 @@ sleep 2
 hl_check "W3 Disconnect closes window rdp and its remote shell keeps running" $? "out=$out gone=$gone pid=$p0"
 
 pc=$(remote rdc)
-out=$(dialog rdc --op=window --answer=close)
+dialog rdc --op=window > /dev/null
+out=$(dialog rdc --answer=close)
 hl_wait_for 10 no_window rdc && hl_wait_for 10 dead "$pc"
 hl_check "W4 Close on a remote window ends its remote shell" $? "out=$out pid=$pc"
 
