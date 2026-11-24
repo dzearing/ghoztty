@@ -66,9 +66,11 @@ pub fn devXdgPath(alloc: Allocator) ![]const u8 {
 }
 
 /// True when this build keeps its own config file apart from the shared
-/// XDG one (a Windows development build). macOS does the same through
-/// its Application Support folder instead.
-pub const uses_dev_xdg_path = builtin.os.tag == .windows and build_config.is_dev_build;
+/// XDG one: a Windows or Linux development build. Linux joined in T3569:
+/// its Settings window writes the preferred file, and without this a debug
+/// build would rewrite the installed release's config. macOS does the same
+/// through its Application Support folder instead.
+pub const uses_dev_xdg_path = builtin.os.tag != .macos and build_config.is_dev_build;
 
 /// Default path for the macOS Application Support configuration file.
 /// Returned value must be freed by the caller.
@@ -210,8 +212,8 @@ test "a development build keeps its config apart from the release app's" {
     try testing.expect(std.mem.indexOf(u8, preferred, build_config.bundle_id ++ ".debug/") != null);
 }
 
-test "a Windows development build writes its own config file, never the shared one" {
-    if (comptime builtin.os.tag != .windows) return error.SkipZigTest;
+test "a Windows or Linux development build writes its own config file, never the shared one" {
+    if (comptime builtin.os.tag == .macos) return error.SkipZigTest;
     const testing = std.testing;
     const alloc = testing.allocator;
 

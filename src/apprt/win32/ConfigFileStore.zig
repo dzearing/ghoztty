@@ -29,6 +29,7 @@ const Allocator = std.mem.Allocator;
 
 const ConfigFileText = @import("ConfigFileText.zig");
 const managed_file = @import("managed_file.zig");
+const xdg = @import("../../os/xdg.zig");
 
 /// A wall-clock reading for a backup's name.
 pub const Stamp = struct {
@@ -92,7 +93,14 @@ pub fn deinit(self: *ConfigFileStore) void {
 /// backup is named after its file, and the two builds write different files
 /// (`config.ghostty` / `config-debug.ghostty`), so neither prunes the
 /// other's. Caller owns the result.
+///
+/// On Linux (T3569) the same folder sits under the XDG state directory,
+/// `$XDG_STATE_HOME/ghoztty/config-backups` (default `~/.local/state`) -
+/// state the app keeps, not config the user edits.
 pub fn defaultBackupDir(alloc: Allocator) ![]u8 {
+    if (builtin.os.tag != .windows) {
+        return xdg.state(alloc, .{ .subdir = "ghoztty/config-backups" });
+    }
     const base = try std.process.getEnvVarOwned(alloc, "LOCALAPPDATA");
     defer alloc.free(base);
     return std.fs.path.join(alloc, &.{ base, "ghoztty", "config-backups" });

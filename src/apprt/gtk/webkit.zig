@@ -647,6 +647,11 @@ pub extern fn gsk_transform_rotate(next: ?*GskTransform, angle: f32) ?*GskTransf
 pub extern fn gtk_widget_set_child_visible(widget: *GtkWidget, child_visible: c_int) void;
 pub extern fn gtk_widget_get_child_visible(widget: *GtkWidget) c_int;
 pub extern fn gtk_widget_queue_allocate(widget: *GtkWidget) void;
+// The Settings window (T3569).
+pub extern fn gtk_window_destroy(window: *GtkWidget) void;
+pub extern fn gtk_button_new_with_label(label: [*:0]const u8) *GtkWidget;
+pub extern fn gtk_list_box_set_selection_mode(box: *GtkWidget, mode: c_int) void;
+
 /// `GtkEventSequenceState`.
 pub const sequence_claimed: c_int = 1;
 pub const sequence_denied: c_int = 2;

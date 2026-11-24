@@ -150,6 +150,7 @@ pub fn handleSeam(app: Context, request: Request) Allocator.Error!server.SeamRep
     if (std.mem.eql(u8, request.action, "pane-mouse")) return .{ .reply = try paneMouse(app, request) };
     if (std.mem.eql(u8, request.action, "pane-stack")) return .{ .reply = try paneStack(app, request) };
     if (std.mem.eql(u8, request.action, "read-clipboard")) return .{ .reply = try readClipboard(app, request) };
+    if (std.mem.eql(u8, request.action, "settings")) return .{ .reply = try settingsSeam(app, request) };
     if (!std.mem.eql(u8, request.action, "capture-pane")) return .unhandled;
     return .{ .reply = try capturePane(app, request) };
 }
@@ -703,6 +704,106 @@ fn readClipboard(app: Context, request: Request) Allocator.Error![]u8 {
     clipboard.readTextAsync(null, readClipboardDone, path.ptr);
     log.info("read-clipboard target={s} primary={} local={} -> {s}", .{ target_name, primary, clipboard.isLocal() != 0, out });
     return std.fmt.allocPrint(c_alloc, "{{\"success\":true,\"started\":true,\"local\":{}}}", .{clipboard.isLocal() != 0});
+}
+
+/// `settings --op=<op>` (T3569): the Settings window, by the op names
+/// win32's `ipc_settings.zig` uses, so the two acceptance scripts read
+/// alike. Every op calls what the window's own signal handlers call.
+///
+///   --op=action                  perform `open_config` (the app action)
+///   --op=state [--key=<k>]       open?, file, query, row count, and one key
+///   --op=search --value=<q>      typing in the search field
+///   --op=set --key=<k> --value=<v>   typing in the row + Return
+///   --op=reset --key=<k>         the row's Reset button
+///   --op=close                   the window's close button
+fn settingsSeam(app: Context, request: Request) Allocator.Error![]u8 {
+    const SettingsWindow = @import("SettingsWindow.zig");
+    var op: []const u8 = "state";
+    var key: ?[]const u8 = null;
+    var val: ?[]const u8 = null;
+    for (request.arguments orelse &.{}) |arg| {
+        if (std.mem.startsWith(u8, arg, "--op=")) op = arg["--op=".len..];
+        if (std.mem.startsWith(u8, arg, "--key=")) key = arg["--key=".len..];
+        if (std.mem.startsWith(u8, arg, "--value=")) val = arg["--value=".len..];
+    }
+
+    var ok: ?bool = null;
+    if (std.mem.eql(u8, op, "action")) {
+        _ = app.performAction(.app, .open_config, {}) catch |err|
+            return server.errorResponse(c_alloc, "open_config failed: {}", .{err});
+    } else if (std.mem.eql(u8, op, "close")) {
+        if (SettingsWindow.current()) |w| w.close();
+    } else if (!std.mem.eql(u8, op, "state")) {
+        const w = SettingsWindow.current() orelse
+            return server.errorResponse(c_alloc, "the Settings window is not open", .{});
+        if (std.mem.eql(u8, op, "search")) {
+            w.setQuery(val orelse "");
+        } else if (std.mem.eql(u8, op, "set") or std.mem.eql(u8, op, "reset")) {
+            const k = key orelse return server.errorResponse(c_alloc, "--key is required for --op={s}", .{op});
+            const result = if (std.mem.eql(u8, op, "set"))
+                w.setValue(k, val orelse return server.errorResponse(c_alloc, "--value is required for --op=set", .{}))
+            else
+                w.resetKey(k);
+            ok = result catch |err| switch (err) {
+                error.OutOfMemory => return error.OutOfMemory,
+                error.UnknownKey => return server.errorResponse(c_alloc, "no setting named '{s}'", .{k}),
+                error.Overridden => return server.errorResponse(c_alloc, "'{s}' is set by a file that loads later", .{k}),
+                error.List => return server.errorResponse(c_alloc, "'{s}' is a list; this slice edits plain keys only", .{k}),
+            };
+        } else return server.errorResponse(c_alloc, "unknown --op '{s}'", .{op});
+    }
+
+    var arena_state = std.heap.ArenaAllocator.init(c_alloc);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var out: std.Io.Writer.Allocating = .init(c_alloc);
+    errdefer out.deinit();
+    var jws: std.json.Stringify = .{ .writer = &out.writer };
+    writeSettingsState(&jws, arena, SettingsWindow.current(), key, ok) catch return error.OutOfMemory;
+    return out.toOwnedSlice();
+}
+
+fn writeSettingsState(jws: *std.json.Stringify, arena: Allocator, w_opt: anytype, key: ?[]const u8, ok: ?bool) !void {
+    try jws.beginObject();
+    try jws.objectField("success");
+    try jws.write(true);
+    if (ok) |o| {
+        try jws.objectField("ok");
+        try jws.write(o);
+    }
+    try jws.objectField("open");
+    try jws.write(w_opt != null);
+    if (w_opt) |w| {
+        try jws.objectField("file");
+        try jws.write(w.mainPath());
+        try jws.objectField("query");
+        try jws.write(w.query.items);
+        const keys = try w.visibleKeys(arena);
+        try jws.objectField("matched");
+        try jws.write(keys.len);
+        try jws.objectField("rows");
+        try jws.write(w.rows.items.len);
+        if (key) |k| {
+            try jws.objectField("key");
+            try jws.beginObject();
+            try jws.objectField("name");
+            try jws.write(k);
+            try jws.objectField("value");
+            try jws.write(w.value(k));
+            try jws.objectField("shown");
+            try jws.write(w.shownValue(k));
+            try jws.objectField("set_in_file");
+            try jws.write(w.isSetInFile(k));
+            try jws.objectField("modified");
+            try jws.write(w.isModified(k));
+            try jws.objectField("problem");
+            try jws.write(w.problem(k));
+            try jws.objectField("override");
+            try jws.write(try w.overrideFor(arena, k));
+            try jws.endObject();
+        }
+    }
+    try jws.endObject();
 }
 
 fn readClipboardDone(source: ?*gobject.Object, res: *gio.AsyncResult, ud: ?*anyopaque) callconv(.c) void {

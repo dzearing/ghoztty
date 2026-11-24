@@ -4100,7 +4100,7 @@ pub fn deinit(self: *Config) void {
 ///   2. XDG config dir
 ///   3. "Application Support" directory (macOS only; a development build
 ///      uses its own `<bundle id>.debug` folder, see `config_bundle_id`).
-///      A Windows development build loads its own `config-debug.ghostty`
+///      A Windows or Linux development build loads its own `config-debug.ghostty`
 ///      beside the XDG file instead (`file_load.devXdgPath`).
 ///   4. CLI flags
 ///   5. Recursively defined configuration files

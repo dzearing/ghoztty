@@ -2320,6 +2320,12 @@ pub const Application = extern struct {
             url,
         ) catch |err| log.warn("unable to open url: {}", .{err});
     }
+
+    /// The Settings window's "Open File" (T3569): the config file in the
+    /// desktop's text editor.
+    pub fn openConfigFile(self: *Application) void {
+        _ = Action.openConfigFile(self);
+    }
 };
 
 /// All apprt action handlers
@@ -2823,7 +2829,16 @@ const Action = struct {
         log.info("window shown in the background (no activation request)", .{});
     }
 
+    /// `open_config` opens the Settings window (T3569), as on the Mac and
+    /// Windows; the file itself is the window's "Open File" button.
     pub fn openConfig(self: *Application) bool {
+        @import("../SettingsWindow.zig").open(self);
+        return true;
+    }
+
+    /// Open the config file in the desktop's text editor: upstream's
+    /// `open_config`, now the Settings window's "Open File".
+    pub fn openConfigFile(self: *Application) bool {
         // Get the config file path
         const alloc = self.allocator();
         const path = configpkg.edit.openPath(alloc) catch |err| {
