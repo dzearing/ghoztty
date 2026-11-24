@@ -220,13 +220,37 @@ try {
         "$env:ProgramFiles\Microsoft\Edge\Application\msedge.exe"
     ) | Where-Object { Test-Path $_ } | Select-Object -First 1
     if ($edge) {
-        $dom = Join-Path $env:TEMP "task-dashboard-selftest-$PID.html"
-        & cmd /c "`"$edge`" --headless=new --disable-gpu --hide-scrollbars --virtual-time-budget=20000 --dump-dom `"$Base/?selftest=event`" > `"$dom`" 2>nul"
-        $domText = if (Test-Path $dom) { [System.IO.File]::ReadAllText($dom) } else { '' }
+        # A PRIVATE profile, always (T2111). Without --user-data-dir Edge uses
+        # %LOCALAPPDATA%'s default profile: alone that is the user's real one,
+        # and in an acceptance worker (its own fresh LOCALAPPDATA) it is a
+        # brand-new profile, so Edge runs first-run setup and its helper
+        # processes outlive the launcher while still holding the redirected
+        # stdout - the ReadAllText below then threw a sharing violation and
+        # aborted the suite. dashboard-dom.ps1 has always done it this way.
+        $edgeWork = Join-Path $env:TEMP "task-dashboard-edge-$PID"
+        New-Item -ItemType Directory -Force -Path $edgeWork | Out-Null
+        $dom = Join-Path $edgeWork 'dom.html'
+        $edgeProfile = Join-Path $edgeWork 'edge-profile'
+        & cmd /c "`"$edge`" --headless=new --disable-gpu --hide-scrollbars --no-first-run --user-data-dir=`"$edgeProfile`" --virtual-time-budget=20000 --dump-dom `"$Base/?selftest=event`" > `"$dom`" 2>nul"
+        # A helper that still holds the file a moment after the launcher exits
+        # is waited out (bounded), not allowed to abort every later section.
+        $domText = ''
+        $readErr = ''
+        $deadline = (Get-Date).AddSeconds(20)
+        while (Test-Path $dom) {
+            try { $domText = [System.IO.File]::ReadAllText($dom); $readErr = ''; break }
+            catch [System.IO.IOException] {
+                $readErr = $_.Exception.Message
+                if ((Get-Date) -gt $deadline) { break }
+                Start-Sleep -Milliseconds 250
+            }
+        }
         $verdictLine = ([regex]::Match($domText, 'T505-SELFTEST [^<]*')).Value
         Assert 'E1 the in-browser click path passes' ($verdictLine -eq 'T505-SELFTEST PASS') `
-            "got '$verdictLine'"
-        Remove-Item $dom -Force -ErrorAction SilentlyContinue
+            "got '$verdictLine'$(if ($readErr) { '; dom file still locked after 20s: ' + $readErr })"
+        # The profile is a scratch dir this script made; a still-exiting
+        # helper may hold a file in it, which is not worth a failure.
+        Remove-Item $edgeWork -Recurse -Force -ErrorAction SilentlyContinue
     } else {
         Write-Host 'SKIP  E1: Edge is not installed on this box'
         $script:skipped++
