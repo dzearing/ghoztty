@@ -183,6 +183,51 @@ label.resize-overlay {
 }
 
 /*
+ * The elevated pane style (T3566; docs/reference/pane-style.md, Mac
+ * PaneElevation/PaneCard/PaneFocusGlow). The split tree paints the window's
+ * gradient desk itself (split_tree.zig snapshotDesk); here every pane's
+ * scrolled window is a raised card with an 11px radius, and ONE 10px gutter
+ * runs pane to pane and pane to window edge - half as each card's margin,
+ * half as the tree's padding. The divider line goes: the gap is the divider,
+ * and GtkPaned still drags it. The focused card of several is backlit (an
+ * outset shadow, which GTK draws only outside the card) and its hairline rim
+ * goes from 10% to 34% white (black on a light desk). pane_style.zig holds
+ * the numbers. The flat style carries none of these classes.
+ */
+.pane-elevated {
+  padding: 5px;
+}
+
+.window .pane-elevated .split paned > separator {
+  background-color: transparent;
+}
+
+.pane-elevated .pane-card {
+  margin: 5px;
+  border-radius: 11px;
+  outline-style: solid;
+  outline-width: 1px;
+  outline-offset: -1px;
+  outline-color: rgba(255, 255, 255, 0.10);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.30), 0 4px 14px rgba(0, 0, 0, 0.22);
+}
+
+.pane-elevated .pane-card.pane-focused {
+  outline-color: rgba(255, 255, 255, 0.34);
+  box-shadow: 0 0 18px 3px rgba(255, 255, 255, 0.20), 0 1px 2px rgba(0, 0, 0, 0.30);
+}
+
+.pane-elevated.pane-desk-light .pane-card {
+  outline-color: rgba(0, 0, 0, 0.10);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12), 0 4px 14px rgba(0, 0, 0, 0.10);
+}
+
+.pane-elevated.pane-desk-light .pane-card.pane-focused {
+  outline-color: rgba(0, 0, 0, 0.34);
+  box-shadow: 0 0 18px 3px rgba(255, 255, 255, 0.85), 0 1px 2px rgba(0, 0, 0, 0.12);
+}
+
+/*
  * The sticky pane banner (T3339; docs/reference/banners.md): a raised card
  * above the terminal, which is laid out below it rather than under it.
  */

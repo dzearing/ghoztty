@@ -280,6 +280,44 @@ print("w=%d h=%d colors=%d match=%.3f" % (w, h, len(colors), match / float(w * h
 PY
 }
 
+# hl_png_pixel <file.png> <x> <y> [<x> <y> ...]: the pixel at each point, one
+# 'r g b' line per point (T3566). Same decoder as hl_png_stats; a point off
+# the image prints 'off'.
+hl_png_pixel() {
+    python3 -I - "$@" <<'PY'
+import struct, sys, zlib
+path = sys.argv[1]
+pts = [(int(sys.argv[i]), int(sys.argv[i + 1])) for i in range(2, len(sys.argv) - 1, 2)]
+d = open(path, "rb").read()
+assert d[:8] == b"\x89PNG\r\n\x1a\n", "not a PNG"
+pos, idat, w = 8, b"", 0
+while pos < len(d):
+    ln, typ = struct.unpack(">I4s", d[pos:pos+8]); chunk = d[pos+8:pos+8+ln]; pos += 12 + ln
+    if typ == b"IHDR": w, h, depth, ctype = struct.unpack(">IIBB", chunk[:10])
+    elif typ == b"IDAT": idat += chunk
+assert depth == 8 and ctype in (2, 6), "unsupported PNG depth=%d type=%d" % (depth, ctype)
+bpp = 3 if ctype == 2 else 4
+raw, stride = zlib.decompress(idat), w * bpp
+prev, rows, i = bytearray(stride), [], 0
+for _ in range(h):
+    f = raw[i]; line = bytearray(raw[i+1:i+1+stride]); i += 1 + stride
+    for x in range(stride):
+        a = line[x-bpp] if x >= bpp else 0; b = prev[x]; c = prev[x-bpp] if x >= bpp else 0
+        if f == 1: line[x] = (line[x] + a) & 255
+        elif f == 2: line[x] = (line[x] + b) & 255
+        elif f == 3: line[x] = (line[x] + (a + b) // 2) & 255
+        elif f == 4:
+            p = a + b - c; pa, pb, pc = abs(p-a), abs(p-b), abs(p-c)
+            line[x] = (line[x] + (a if pa <= pb and pa <= pc else b if pb <= pc else c)) & 255
+    rows.append(line); prev = line
+for (x, y) in pts:
+    if 0 <= x < w and 0 <= y < h:
+        print("%d %d %d" % tuple(rows[y][x*bpp:x*bpp+3]))
+    else:
+        print("off")
+PY
+}
+
 # hl_tree <pid>: <pid> and every descendant, one per line (parents first).
 hl_tree() {
     local root=$1

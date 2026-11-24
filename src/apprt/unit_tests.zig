@@ -669,6 +669,9 @@ test {
     // and divider inserts, and the in-place drop that does nothing (T3564).
     // No GTK imports.
     _ = @import("gtk/pane_drop_apply.zig");
+    // The pane style: which windows get their own gradient desk, which card
+    // is lit, the desk texture's size and pixels (T3566). No GTK imports.
+    _ = @import("gtk/pane_style.zig");
     // ... and the POSIX half of win32's git runner it spawns git through:
     // the deadline and the cancel end the whole process group (T3417).
     // Off Windows only, whose win32 lane covers the job object - importing it

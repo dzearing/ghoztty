@@ -23,6 +23,7 @@ const Window = @import("window.zig").Window;
 const PaneDrag = @import("../PaneDrag.zig");
 const pane_drop = @import("../../win32/pane_drop.zig");
 const pane_drop_apply = @import("../pane_drop_apply.zig");
+const pane_style = @import("../pane_style.zig");
 const wk = @import("../webkit.zig");
 
 const log = std.log.scoped(.gtk_ghostty_split_tree);
@@ -169,8 +170,114 @@ pub const SplitTree = extern struct {
         /// close dialog.
         pending_close: ?Surface.Tree.Node.Handle,
 
+        /// The gradient desk under the cards in the elevated pane style
+        /// (T3566): a small texture of the window's gradient, stretched
+        /// over the tree, and what it was rendered for. Owned.
+        desk_texture: ?*wk.GdkTexture = null,
+        desk_key: pane_style.DeskKey = .{},
+
         pub var offset: c_int = 0;
     };
+
+    // ---- The pane style (T3566; docs/reference/pane-style.md) ---------------
+
+    const PaneLook = struct { style: pane_style.Style, is_light: bool };
+
+    /// The style every window draws now (`macos-pane-style`, which applies
+    /// to every window at once) and whether its desk is the light one.
+    fn paneLook() PaneLook {
+        const config_obj = Application.default().getConfig();
+        defer config_obj.unref();
+        const cfg = config_obj.get();
+        const bg = cfg.background;
+        return .{
+            .style = Window.paneStyleOf(cfg),
+            .is_light = pane_style.isLight(.{ .r = bg.r, .g = bg.g, .b = bg.b }),
+        };
+    }
+
+    fn setClass(widget: *wk.GtkWidget, class: [:0]const u8, on: bool) void {
+        if (on) wk.gtk_widget_add_css_class(widget, class) else wk.gtk_widget_remove_css_class(widget, class);
+    }
+
+    /// Mark the tree and its panes for `style.css`: the tree carries the
+    /// style (and the light desk), every pane's scrolled window is a card
+    /// that clips its terminal to its rounded corners, and the focused pane
+    /// of several is the backlit one. Run after every rebuild and focus move.
+    pub fn syncPaneStyle(self: *Self) void {
+        const look = paneLook();
+        const elevated = pane_style.hasDesk(look.style);
+        const tree_widget: *wk.GtkWidget = @ptrCast(self);
+        setClass(tree_widget, pane_style.tree_class_elevated, elevated);
+        setClass(tree_widget, pane_style.tree_class_light, elevated and look.is_light);
+
+        const priv = self.private();
+        const tree = priv.tree orelse return;
+        // A zoomed tree shows one pane, which has nothing to stand out from.
+        var count: usize = 0;
+        if (tree.zoomed != null) count = 1 else {
+            var it = tree.iterator();
+            while (it.next()) |_| count += 1;
+        }
+        const focused = priv.last_focused.get();
+        defer if (focused) |f| f.unref();
+
+        var it = tree.iterator();
+        while (it.next()) |entry| {
+            const card = ext.getAncestor(SurfaceScrolledWindow, entry.view.as(gtk.Widget)) orelse continue;
+            const w: *wk.GtkWidget = @ptrCast(card);
+            setClass(w, pane_style.card_class, elevated);
+            // GTK_OVERFLOW_HIDDEN: the terminal is clipped to the card's
+            // rounded corners; the rim and the shadow are the card's own.
+            wk.gtk_widget_set_overflow(w, if (elevated) 1 else 0);
+            setClass(w, pane_style.card_class_focused, pane_style.isFocusedCard(look.style, count, focused == entry.view));
+        }
+    }
+
+    /// The desk, drawn before the children so every card sits on it.
+    fn snapshotDesk(self: *Self, snap: *wk.GtkSnapshot) void {
+        const look = paneLook();
+        if (!pane_style.hasDesk(look.style)) return;
+        const widget = self.as(gtk.Widget);
+        const w = widget.getWidth();
+        const h = widget.getHeight();
+        if (w <= 0 or h <= 0) return;
+        const variant: ?pane_style.Variant = if (ext.getAncestor(Window, widget)) |win| win.deskVariant() else null;
+
+        const priv = self.private();
+        const key: pane_style.DeskKey = .{
+            .w = @intCast(w),
+            .h = @intCast(h),
+            .seed = if (variant) |v| v.seed else null,
+            .is_light = look.is_light,
+        };
+        if (priv.desk_texture == null or !priv.desk_key.eql(key)) {
+            const size = pane_style.deskSize(key.w, key.h);
+            const alloc = Application.default().allocator();
+            const buf = alloc.alloc(u32, size.w * size.h) catch return;
+            defer alloc.free(buf);
+            pane_style.renderDesk(buf, size, @floatFromInt(w), @floatFromInt(h), pane_style.Palette.forWindow(variant, look.is_light));
+            const bytes = wk.g_bytes_new(buf.ptr, buf.len * @sizeOf(u32));
+            defer wk.g_bytes_unref(bytes);
+            const tex = wk.gdk_memory_texture_new(
+                @intCast(size.w),
+                @intCast(size.h),
+                wk.GDK_MEMORY_B8G8R8A8_PREMULTIPLIED,
+                bytes,
+                size.w * @sizeOf(u32),
+            ) orelse return;
+            if (priv.desk_texture) |old| wk.g_object_unref(old);
+            priv.desk_texture = tex;
+            priv.desk_key = key;
+        }
+        const rect: wk.GrapheneRect = .{ .w = @floatFromInt(w), .h = @floatFromInt(h) };
+        wk.gtk_snapshot_append_scaled_texture(snap, priv.desk_texture.?, wk.GSK_SCALING_FILTER_LINEAR, &rect);
+    }
+
+    fn snapshot(self: *Self, snap: *gtk.Snapshot) callconv(.c) void {
+        self.snapshotDesk(@ptrCast(snap));
+        gtk.Widget.virtual_methods.snapshot.call(Class.parent, self.as(gtk.Widget), snap);
+    }
 
     fn init(self: *Self, _: *Class) callconv(.c) void {
         gtk.Widget.initTemplate(self.as(gtk.Widget));
@@ -836,6 +943,8 @@ pub const SplitTree = extern struct {
     fn dispose(self: *Self) callconv(.c) void {
         const priv = self.private();
         priv.last_focused.set(null);
+        if (priv.desk_texture) |t| wk.g_object_unref(t);
+        priv.desk_texture = null;
         if (priv.rebuild_source) |v| {
             if (glib.Source.remove(v) == 0) {
                 log.warn("unable to remove rebuild source", .{});
@@ -1069,6 +1178,7 @@ pub const SplitTree = extern struct {
         // the surface is destroyed.
         if (!surface.getFocused()) return;
         self.private().last_focused.set(surface);
+        self.syncPaneStyle();
 
         // Our active surface probably changed
         self.as(gobject.Object).notifyByPspec(properties.@"active-surface".impl.param_spec);
@@ -1139,6 +1249,9 @@ pub const SplitTree = extern struct {
         if (ext.getAncestor(Window, self.as(gtk.Widget))) |window| {
             if (window.rearrangeMode()) self.syncRearrangeHeaders(true);
         }
+
+        // Every pane is a card, and the focused one of several is lit (T3566).
+        self.syncPaneStyle();
 
         // Replacing our tree widget hierarchy can reset focus state.
         // If we have a last-focused surface, restore focus to it.
@@ -1318,6 +1431,8 @@ pub const SplitTree = extern struct {
             // Virtual methods
             gobject.Object.virtual_methods.dispose.implement(class, &dispose);
             gobject.Object.virtual_methods.finalize.implement(class, &finalize);
+            // The elevated pane style's gradient desk (T3566).
+            gtk.Widget.virtual_methods.snapshot.implement(class, &snapshot);
         }
 
         pub const as = C.Class.as;

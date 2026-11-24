@@ -33,6 +33,7 @@ const CloseUndo = @import("../CloseUndo.zig");
 const PaneSidebar = @import("../PaneSidebar.zig");
 const wk = @import("../webkit.zig");
 const window_activity = @import("../window_activity.zig");
+const pane_style = @import("../pane_style.zig");
 
 const log = std.log.scoped(.gtk_ghostty_window);
 
@@ -245,6 +246,14 @@ pub const Window = extern struct {
         /// Pane rearrange mode (T3564): every pane shows its drag header
         /// and the tab bar is forced visible. Per window, like the Mac's.
         rearrange_mode: bool = false,
+
+        /// The window's own gradient desk in the elevated pane style
+        /// (T3566; Mac `PaneDeskVariant`): null is the shared ocean.
+        /// Decided on first use - a hand-opened window follows
+        /// `macos-window-gradient` - unless `+new-window --color` set it
+        /// first (`setDeskVariant`).
+        desk_variant: ?pane_style.Variant = null,
+        desk_variant_decided: bool = false,
 
         /// The configuration that this surface is using.
         config: ?*Config = null,
@@ -752,6 +761,23 @@ pub const Window = extern struct {
         priv.winproto.syncAppearance() catch |err| {
             log.warn("failed to sync winproto appearance error={}", .{err});
         };
+
+        // `macos-pane-style` applies to every window at once, a reload
+        // included (T3566): re-mark every tab's cards and redraw its desk.
+        self.syncPaneStyle();
+    }
+
+    /// Re-apply the pane style to every tab: the cards' classes and the desk.
+    pub fn syncPaneStyle(self: *Self) void {
+        const priv = self.private();
+        const n = priv.tab_view.getNPages();
+        var i: c_int = 0;
+        while (i < n) : (i += 1) {
+            const tab = gobject.ext.cast(Tab, priv.tab_view.getNthPage(i).getChild()) orelse continue;
+            const tree = tab.getSplitTree();
+            tree.syncPaneStyle();
+            tree.as(gtk.Widget).queueDraw();
+        }
     }
 
     /// Sync the state of any actions on this window.
@@ -1086,6 +1112,44 @@ pub const Window = extern struct {
             const win = gobject.ext.cast(Self, obj) orelse continue;
             if (win.private().pane_sidebar) |s| s.refresh();
         }
+    }
+
+    // ---- The gradient desk (T3566) ------------------------------------------
+
+    /// The window's gradient: its own variant, or null for the shared ocean.
+    /// A window nobody gave one to is a hand-opened window, so the first ask
+    /// decides it from `macos-pane-style` / `macos-window-gradient`.
+    pub fn deskVariant(self: *Self) ?pane_style.Variant {
+        const priv = self.private();
+        if (!priv.desk_variant_decided) {
+            const c = priv.config orelse return null;
+            priv.desk_variant_decided = true;
+            const cfg = c.get();
+            priv.desk_variant = pane_style.variantForNewWindow(
+                paneStyleOf(cfg),
+                switch (cfg.@"macos-window-gradient") {
+                    .random => .random,
+                    .ocean => .ocean,
+                },
+            );
+        }
+        return priv.desk_variant;
+    }
+
+    /// Give the window its gradient (`+new-window --color`: a random one for
+    /// `random`, the ocean otherwise), over the hand-opened default.
+    pub fn setDeskVariant(self: *Self, variant: ?pane_style.Variant) void {
+        const priv = self.private();
+        priv.desk_variant = variant;
+        priv.desk_variant_decided = true;
+        if (self.getSelectedTab()) |tab| tab.getSplitTree().as(gtk.Widget).queueDraw();
+    }
+
+    pub fn paneStyleOf(cfg: *const configpkg.Config) pane_style.Style {
+        return switch (cfg.@"macos-pane-style") {
+            .elevated => .elevated,
+            .flat => .flat,
+        };
     }
 
     // ---- Pane rearrange mode (T3564) -----------------------------------------

@@ -57,6 +57,7 @@ const wk = @import("webkit.zig");
 const url_scheme = @import("../ipc/url_scheme.zig");
 const terminal_osc = @import("../../terminal/osc.zig").Command;
 const color_math = @import("../win32/color_math.zig");
+const pane_style = @import("pane_style.zig");
 
 const Application = @import("class/application.zig").Application;
 const Window = @import("class/window.zig").Window;
@@ -1307,10 +1308,21 @@ pub fn openWindow(
     // T92: an empty `--title=` means "no pin".
     if (args.title) |title| if (title.len > 0) window.setTitleOverride(title);
 
-    // `--color` (T67, T3382): tint the window's first pane - background,
-    // contrast foreground and adjusted palette (Mac applyColorScheme). The
-    // window's own gradient desk is T3566.
-    if (resolveColor(args.color)) |tint| if (window.getActiveSurface()) |s| s.applyBackgroundTint(tint);
+    // The window's gradient desk (T3566): a programmatic window is on the
+    // shared ocean unless `--color=random` in the elevated style gives it
+    // its OWN gradient - and then the terminal keeps its theme colour.
+    // Otherwise `--color` (T67, T3382) tints the window's first pane -
+    // background, contrast foreground and adjusted palette (Mac
+    // applyColorScheme).
+    const style = style: {
+        const config = app.getConfig();
+        defer config.unref();
+        break :style Window.paneStyleOf(config.get());
+    };
+    window.setDeskVariant(pane_style.variantForColor(args.color, style));
+    if (!pane_style.colorIsWindowGradient(args.color, style)) {
+        if (resolveColor(args.color)) |tint| if (window.getActiveSurface()) |s| s.applyBackgroundTint(tint);
+    }
 
     // DEBUG-ONLY test seam (T3367): the window named by
     // GHOZTTY_TEST_ASK_TO_CLOSE opens with its close confirmation up, so

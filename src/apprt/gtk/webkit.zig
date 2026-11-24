@@ -543,6 +543,14 @@ pub extern fn gtk_widget_get_scale_factor(widget: *GtkWidget) c_int;
 pub extern fn g_bytes_new(data: ?*const anyopaque, size: usize) *GBytes;
 pub extern fn g_bytes_get_data(bytes: *GBytes, size: ?*usize) ?[*]const u8;
 pub extern fn gdk_texture_new_from_bytes(bytes: *GBytes, err: *?*GError) ?*GdkTexture;
+
+// The pane style's gradient desk (T3566): a small texture of the shared
+// gradient, stretched under a split tree's cards. Format 0 is
+// GDK_MEMORY_B8G8R8A8_PREMULTIPLIED.
+pub const GDK_MEMORY_B8G8R8A8_PREMULTIPLIED: c_int = 0;
+pub extern fn gdk_memory_texture_new(width: c_int, height: c_int, format: c_int, bytes: *GBytes, stride: usize) ?*GdkTexture;
+pub extern fn gtk_snapshot_append_scaled_texture(snapshot: *GtkSnapshot, texture: *GdkTexture, filter: c_int, bounds: *const GrapheneRect) void;
+pub const GSK_SCALING_FILTER_LINEAR: c_int = 0;
 pub extern fn gtk_picture_new_for_paintable(paintable: ?*anyopaque) *GtkWidget;
 pub extern fn gtk_picture_set_content_fit(picture: *GtkWidget, fit: c_int) void;
 pub extern fn gtk_picture_set_can_shrink(picture: *GtkWidget, can_shrink: c_int) void;

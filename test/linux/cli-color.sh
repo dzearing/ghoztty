@@ -135,18 +135,30 @@ for _ in $(seq 1 50); do [ -n "$(id_of short '*')" ] && break; sleep 0.2; done
 [ $rc = 0 ] && [ "$(tint_of short '*')" = "#aa55cc" ]
 hl_check "K20 --color=#a5c is the #aa55cc short form" $? "rc=$rc $o tint='$(tint_of short '*')'"
 
+# In the elevated pane style (the default) `+new-window --color=random` is the
+# window's OWN gradient desk and the terminal keeps its theme colour (T3566,
+# pane-style.md); `random` on a split still tints.
 o=$(cli +new-window --target=rnd --color=random 2>&1); rc=$?
 for _ in $(seq 1 50); do [ -n "$(id_of rnd '*')" ] && break; sleep 0.2; done
-rt=$(tint_of rnd '*')
+[ $rc = 0 ] && [ -z "$(tint_of rnd '*')" ]
+r1=$?
+hl_wait_for 15 mostly "$(id_of rnd '*')" 32 48 64
+r2=$?
+[ $r1 = 0 ] && [ $r2 = 0 ]
+hl_check "K21 elevated +new-window --color=random is the window's gradient: no tint, the pane keeps #203040" $? "rc=$rc $o tint='$(tint_of rnd '*')' fill=$(fill "$(id_of rnd '*')" 32 48 64)"
+
+o=$(cli +split --target=rnd --name=rsplit --color=random 2>&1); rc=$?
+for _ in $(seq 1 50); do [ -n "$(id_of rnd rsplit)" ] && break; sleep 0.2; done
+rt=$(tint_of rnd rsplit)
 printf '%s' "$rt" | grep -Eq '^#[0-9a-f]{6}$'
-hl_check "K21 --color=random lists a concrete #rrggbb tint" $? "rc=$rc $o tint='$rt'"
+hl_check "K22a +split --color=random lists a concrete #rrggbb tint" $? "rc=$rc $o tint='$rt'"
 rr=$((16#${rt:1:2})); rg=$((16#${rt:3:2})); rb=$((16#${rt:5:2}))
 [ $rr -lt 80 ] && [ $rg -lt 80 ] && [ $rb -lt 80 ]
 r1=$?
-hl_wait_for 15 mostly "$(id_of rnd '*')" $rr $rg $rb
+hl_wait_for 15 mostly "$(id_of rnd rsplit)" $rr $rg $rb
 r2=$?
 [ $r1 = 0 ] && [ $r2 = 0 ]
-hl_check "K22 the random tint is dark and is what the pane renders" $? "tint=$rt fill=$(fill "$(id_of rnd '*')" $rr $rg $rb)"
+hl_check "K22 the random split tint is dark and is what the pane renders" $? "tint=$rt fill=$(fill "$(id_of rnd rsplit)" $rr $rg $rb)"
 
 # ---- the contrast foreground comes with the tint ------------------------------
 # Reverse video paints each cell in the FOREGROUND colour, so a screenful of
