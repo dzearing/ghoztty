@@ -40175,3 +40175,6 @@ WebKitGTK's script message carries no frame, and a page-world handler is visible
 ## 2026-11-23 16:08 lane a - T2018: the chooser Kill-hover red was the harness, not the button
 - Root cause: `Get-CardFill` read the card colour from the patch just left of Kill, which T1746's Show / Resume button has occupied since it landed. The reference became the button's fill, so the whole 34x34 Kill box scored as ink at rest (1156) and hover read as less. The reference is now a 4 DIP strip at the card's left edge (`CardX`). The app was right all along.
 - Evidence: `chooser-kill-hover.ps1` ALL PASS (18) via acceptance-parallel on a fresh debug build (rest=80, hot=809, leave=80, second cycle identical); `-NegativeControl` red on its one assertion. No Mac half: Windows test harness only.
+## 2026-11-23 17:08 lane a - T2019: layout-blobs F5b was already fixed by T1768
+- CHECK FIRST held: the "extra session" was never opened by the recovery. Section E read the alive set inside the close-undo park (T1874), so the closed window's session was still counted. f34525fc2 (T1768) made E wait for the alive count to fall to 2 before the hard kill. Closed on that commit, no code change.
+- Evidence: `layout-blobs.ps1` 4/4 ALL PASS (34 assertions) via acceptance-parallel on 619b450b7, fresh debug build. No Mac half: Windows test harness only.
