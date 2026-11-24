@@ -199,7 +199,10 @@ label.resize-overlay {
 }
 
 .window .pane-elevated .split paned > separator {
+  background: none;
   background-color: transparent;
+  box-shadow: none;
+  border-style: none;
 }
 
 .pane-elevated .pane-card {

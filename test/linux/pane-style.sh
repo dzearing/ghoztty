@@ -104,9 +104,12 @@ read -r cr cg cb <<< "$(px "$a" $(( ax + aw / 2 )) $midy)"
 near "$cr" "$cg" "$cb" 32 48 64
 hl_check "S6 control: the middle of a card is its terminal (#203040)" $? "center=$cr,$cg,$cb"
 
-read -r gr gg gb <<< "$(px "$a" $(( ax + aw + gap / 2 )) $midy)"
-! near "$gr" "$gg" "$gb" 32 48 64 && [ $(( gb - gr )) -ge 10 ]
-hl_check "S7 the gutter between the cards is the ocean desk, not the terminal (blue leads red)" $? "gutter=$gr,$gg,$gb"
+# Beside the card, and dead centre of the gutter where GtkPaned's separator
+# sits: no divider line is drawn over the desk in the elevated style.
+read -r gr gg gb <<< "$(px "$a" $(( ax + aw + 2 )) $midy)"
+read -r sr sg sb <<< "$(px "$a" $(( ax + aw + gap / 2 )) $midy)"
+! near "$gr" "$gg" "$gb" 32 48 64 && [ $(( gb - gr )) -ge 10 ] && [ $(( sb - sr )) -ge 10 ]
+hl_check "S7 the gutter between the cards is the ocean desk with no divider line (blue leads red)" $? "beside=$gr,$gg,$gb centre=$sr,$sg,$sb"
 
 read -r lr lg lb <<< "$(px "$a" $(( ax - 3 )) $midy)"
 ! near "$lr" "$lg" "$lb" 32 48 64 && [ $(( lb - lr )) -ge 10 ]
