@@ -1,8 +1,8 @@
 {
     "guard":  "resume-offset",
     "script":  "test/win32/session-resume-offset.ps1",
-    "generated":  "2026-11-23T15:36:05-08:00",
-    "commit":  "1139b2074",
+    "generated":  "2026-11-23T15:52:35-08:00",
+    "commit":  "66ab78781",
     "uncommitted":  [
 
                     ],

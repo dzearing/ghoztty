@@ -1,8 +1,8 @@
 {
     "guard":  "session-reattach-zombie",
     "script":  "test/win32/session-reattach-zombie.ps1",
-    "generated":  "2026-11-23T15:34:24-08:00",
-    "commit":  "1139b2074",
+    "generated":  "2026-11-23T15:50:55-08:00",
+    "commit":  "66ab78781",
     "uncommitted":  [
 
                     ],
