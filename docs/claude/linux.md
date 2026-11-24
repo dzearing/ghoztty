@@ -1876,6 +1876,57 @@ agent, the switch back when systemd goes away, and nothing under the real
 `~/.config`. The "user systemd is reachable" state is the marker file made
 under the harness's private runtime dir.
 
+## Remote-machine windows: `+new-remote-window` (T3597)
+
+`+new-remote-window --host=<h> --port=<p>` (direct TCP) or `--relay=<base>
+--device=<id> [--token=]` opens a window whose panes a REMOTE `ghoztty-agent`
+hosts. Validation, refusal sentences and the relay token tiers are win32's
+(`apprt/win32/ipc_remote_window.zig`, which byte-match the Mac): every
+refusal is made before any dial, and the relay wins when both are given.
+
+- **The dial runs off the GTK thread.** `src/apprt/gtk/ipc_remote_window.zig`
+  validates on the GTK thread and leaves win32's std-only dial job
+  (`win32/ipc_remote_dial.zig`, T3022); `IpcServer` takes it through its
+  `TakeDeferred` hook, dials on a worker, then runs the open on the GTK
+  thread and only then replies, so `+list` right after the verb sees the
+  window. Other IPC verbs queue behind a slow dial (one accept thread), but
+  the windows keep drawing.
+- **The panes hold the link, not the window** (`src/apprt/gtk/RemoteLink.zig`).
+  A GTK pane can leave its window, so each pane riding a machine holds a
+  reference; the last one finalized (after its core surface sent its CLOSE or
+  DETACH) shuts the connection down off-thread. The memory is kept until exit
+  because core surfaces borrow `*Connection` (the `LocalAgent.retired` rule).
+- **What a remote pane sends**: only REMOTE-native values -
+  `local_shell_integration = false`, no local cwd, shell, `-e` or
+  `initial-command`; an explicit `--command` is forwarded in the OPEN with
+  `wait-after-command` (win32's marker). The agent runs its own shell's
+  convention, so a command that exits leaves a waiting pane.
+- **Same machine**: a split of a remote pane (`SplitTree.newSplitAt`) rides
+  the parent's link in its REMOTE cwd (a 1.5 s `queryCwdTimeout`), and
+  `+split --command` there is that machine's to run (`remote_command`).
+  `+new-window --from-focused` on a remote front window re-dials its machine
+  on the GTK thread, inheriting the active pane's command and remote cwd
+  (win32 `openRemoteWindowFrom`).
+- **`+list`** gives a remote window `machine` (the host, or the relay name /
+  device) and `connection.state`; a local window has neither field.
+- **Not in the layout file**: `SessionLayout` skips remote windows, and a
+  remote pane moved into a local window records no session id. Relay windows
+  coming back at relaunch, a new TAB on the same machine, and per-host
+  defaults are T3668; the chooser, pill and reconnect ladder are T3563.
+
+Acceptance, against a loopback agent started with `--listen 127.0.0.1:<port>
+--headless` (the Linux half of `test/win32/ipc-remote.ps1`):
+
+```powershell
+powershell -NoProfile -File scripts\linux\wsl-run.ps1 -CommandFile test\linux\cli-remote-window.sh
+```
+
+Ends `CLI REMOTE WINDOW: ALL PASS` (26 checks: the four refusals, the panes
+descend from the TCP agent and not the app, keys and `--command` round-trip,
+splits and `--from-focused` stay on the machine, `+close` ends the remote
+shells and closes the link). `NEGATIVE=1` dials a dead port for the main
+window and must fail R1.
+
 ## The relay account store: keyring, else a private file (T3341)
 
 The Linux row of Keychain -> DPAPI: `src/remote/relay_account.zig` keeps the
