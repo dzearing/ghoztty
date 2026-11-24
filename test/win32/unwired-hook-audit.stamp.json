@@ -1,8 +1,8 @@
 {
     "guard":  "unwired-hook",
     "script":  "test/win32/unwired-hook-audit.ps1",
-    "generated":  "2026-11-24T02:52:57-08:00",
-    "commit":  "59856e9b7",
+    "generated":  "2026-11-24T03:10:18-08:00",
+    "commit":  "eee7cf61c",
     "uncommitted":  [
 
                     ],
@@ -1617,7 +1617,7 @@
                   "test/win32/session-layout-preserve.ps1":  "3ea74234321fd0a2f5bcb47483c976aaa7b7d53dcc1281dd3e37412bb404dc0f",
                   "test/win32/session-open.ps1":  "a8676a1822dccea06051cf7afe281c2c2315e2332c941b6baedd67136bb7cab3",
                   "test/win32/session-persistence.ps1":  "51a7c24d49223245e258d954a5095445d320c668c9977d80430312346405fbb5",
-                  "test/win32/session-reattach.ps1":  "1f05c245e3d29c57e63f4454ea7628ec3033ae018192cad91f98d78c1bd471a0",
+                  "test/win32/session-reattach.ps1":  "bbebc511b41437b283226093bef560e6dc9dcb4f3c74abc1c15ef8f5ce6fa274",
                   "test/win32/session-reattach-zombie.ps1":  "5c138604f0566d659fe5ce841b372cbf1393c1f1d9dfafcfaf5835f043ef1f7e",
                   "test/win32/session-reboot-tui.ps1":  "7b44e424cb750a2b4eb01d41046dd4967c477d345507d72bc8ad02cd0a064ef5",
                   "test/win32/session-relaunch.ps1":  "d70beb312417f04466ee1b86e101048a603d1ab5fac04bb85f3321441926d38e",

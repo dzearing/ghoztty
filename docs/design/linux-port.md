@@ -113,7 +113,7 @@ first commit on `main`), so `next` takes them in that order within the P2 band:
 | settings | L11g T3569 |
 | keyboard-shortcuts | L11h T3570 (done: Ctrl+Shift+/, menu, palette, live catalog, search, Run, cheat sheet; + Run on hover T3639, menu/palette check T3640) |
 | background-windows | L11i T3571 (done: hidden panes stop building frames and catch up on show, held window title; + viewer polls/animations in a minimized window T3643) |
-| memory | L11j T3572 |
+| memory | L11j T3572 (done: pane/tab/window/viewer teardown measured, nothing leaks; + hidden/idle panes give back their frames T3645, agent per-session growth T3646) |
 | window-modes | L11k T3573 |
 
 ## The Linux lane

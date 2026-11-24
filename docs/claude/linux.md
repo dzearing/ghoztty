@@ -1425,6 +1425,40 @@ full screen every 10 ms cost 9-10 CPU ticks over 4 s in a background tab
 against 209-242 on screen. `NEGATIVE=1` keeps that pane on screen for the
 "hidden" sample and must fail B4 alone.
 
+## Teardown memory: what a closed pane gives back (T3572)
+
+`docs/reference/memory.md`'s teardown invariants, measured on GTK. On this
+frontend the core surface (renderer and IO threads, pty, GL targets) is freed
+in the `Surface` GObject's **finalize**, so anything still holding a
+reference to a closed pane - a closure, a signal handler, a weak ref that is
+really strong - keeps all of it. Thread count is the sharpest oracle: each
+open terminal pane is 2 threads and 9 fds in the app.
+
+```powershell
+powershell -NoProfile -File scripts\linux\wsl-run.ps1 -CommandFile test\linux\pane-close-memory.sh
+```
+
+One window stays open; each scenario (`split`, `rapid` - closed while it
+starts, `tab`, `window`, `viewer`) runs 8 warm-up and 12 measured
+open/close cycles, each close waited past `undo-timeout` (1 s), and asserts
+per cycle: app private memory (`smaps_rollup` Private_*) <= 1 MB, threads
+<= 0.5, fds <= 0.5, descendant processes <= 0.2 and their memory <= 1 MB.
+Descendants are the app's (WebKit web processes) AND the session agent's
+(pane shells live under `ghoztty-agent`, not the app). The app runs with
+`LIBGL_ALWAYS_SOFTWARE=1`, so its GL textures are its own memory and a
+leaked render target would show (P0d checks no d3d12 driver is mapped).
+Ends `PANE CLOSE MEMORY: ALL PASS` (32 checks), about 6 minutes.
+`NEGATIVE=1` leaves the panes open and must fail every budget check.
+The wrapper does not pass environment variables into WSL: for `SCENARIOS`,
+`CYCLES`, `WARMUP`, `REPORT=1` (every sample) or `NEGATIVE=1`, write a
+scratch command file that exports them and then holds the script's text.
+
+Measured 2026-11-24: nothing in the app leaks per close. The app's memory
+climbs ~15 MB over the first ten cycles and then holds (allocator and GTK
+caches), hence the warm-up. The agent climbs ~40-50 KB per closed session,
+linearly (T3646). A hidden pane does NOT yet give back its frames on GTK -
+the shared release is win32-only (T3645).
+
 ## The interop PATH trap
 
 Inside WSL the Windows `PATH` is appended by default, so a bare `ghoztty` can
