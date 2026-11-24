@@ -51,6 +51,7 @@ const wk = @import("webkit.zig");
 const rows = @import("pane_sidebar_rows.zig");
 const all = @import("pane_sidebar_all.zig");
 const search_cap = @import("../win32/pane_sidebar_search.zig").cap;
+const pane_stash = @import("../win32/pane_stash.zig");
 const Application = @import("class/application.zig").Application;
 const Window = @import("class/window.zig").Window;
 const Surface = @import("class/surface.zig").Surface;
@@ -200,6 +201,9 @@ pub const Row = struct {
     tooltip: ?[:0]u8 = null,
     selected: bool = false,
     viewer: bool = false,
+    /// A pane out of its window's layout (T3596): dimmed, and a click
+    /// brings it back to its slot and focuses it (Mac's stashed-row click).
+    stashed: bool = false,
     count: usize = 0,
     folded: bool = false,
     depth: u8 = 0,
@@ -570,6 +574,8 @@ fn addPaneRow(self: *PaneSidebar, surface: *Surface, selected: bool, expanded: b
         try self.alloc.dupeZ(u8, label);
 
     const button = rowButton(selected, tooltip);
+    const stashed = pane_stash.isStashed(surface);
+    if (stashed) wk.gtk_widget_add_css_class(button, "pane-sidebar-stashed");
     const content = wk.gtk_box_new(orientation_horizontal, 8);
     // An outline pane sits one step in from its window's row (the only
     // indent the outline has; grouped windows line up with lone ones).
@@ -594,6 +600,7 @@ fn addPaneRow(self: *PaneSidebar, surface: *Surface, selected: bool, expanded: b
         .tooltip = tooltip,
         .selected = selected,
         .viewer = viewer,
+        .stashed = stashed,
         .depth = depth,
     };
     _ = wk.g_signal_connect_data(button, "clicked", @ptrCast(&onRowClicked), r, null, 0);
@@ -800,8 +807,12 @@ pub fn focusPane(self: *PaneSidebar, pane_id: []const u8) bool {
             while (it.next()) |entry| {
                 if (!std.mem.eql(u8, entry.view.paneId(), pane_id)) continue;
                 const here = win == self.window and tab_view.getSelectedPage() == page;
-                log.info("pane sidebar row clicked pane={s} other_window={}", .{ pane_id, !here });
-                tab.getSplitTree().focusSurface(entry.view);
+                log.info("pane sidebar row clicked pane={s} other_window={} stashed={}", .{ pane_id, !here, pane_stash.isStashed(entry.view) });
+                // A stashed pane's row restores it to its slot, focused (T3596).
+                if (pane_stash.isStashed(entry.view))
+                    _ = tab.getSplitTree().restoreSurface(entry.view, true)
+                else
+                    tab.getSplitTree().focusSurface(entry.view);
                 // Another window's (or tab's) pane: its own present request
                 // selects its tab and raises its window.
                 if (!here) entry.view.present();
@@ -920,6 +931,7 @@ pub fn report(self: *PaneSidebar, arena: Allocator) Allocator.Error!rows.Report 
         .label_shown = self.mode == .expanded,
         .tooltip = r.tooltip,
         .selected = r.selected,
+        .stashed = r.stashed,
         .kind = switch (r.kind) {
             .pane => if (r.viewer) "viewer" else "terminal",
             else => @tagName(r.kind),

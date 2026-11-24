@@ -7488,6 +7488,13 @@ pub const Keybinds = struct {
                 .{ .key = .{ .unicode = 's' }, .mods = .{ .ctrl = true, .shift = true } },
                 .{ .toggle_pane_sidebar = {} },
             );
+            // Stash the pane (T3596; mac: shift+cmd+m "minimize the pane"):
+            // Windows' Ctrl+Shift+M (T1827), unbound here before.
+            try self.set.put(
+                alloc,
+                .{ .key = .{ .unicode = 'm' }, .mods = .{ .ctrl = true, .shift = true } },
+                .{ .stash_pane = {} },
+            );
             // The keyboard shortcut guide (T3570; mac: cmd+/): Windows'
             // Ctrl+Shift+/ (T2591), which is also GTK's own Ctrl+? for a
             // shortcuts window. Plain Ctrl+/ stays the shell's ^_ undo.

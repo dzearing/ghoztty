@@ -72,6 +72,8 @@ const Surface = @import("class/surface.zig").Surface;
 const SplitTree = @import("class/split_tree.zig").SplitTree;
 const ext = @import("ext.zig");
 const CloseUndo = @import("CloseUndo.zig");
+const ipc_stash = @import("ipc_stash.zig");
+const pane_stash = @import("../win32/pane_stash.zig");
 
 const log = std.log.scoped(.gtk_ipc);
 
@@ -128,11 +130,14 @@ fn notYet(comptime verb: server.Verb, comptime task: []const u8) Allocator.Error
 pub fn handleNewRemoteWindow(_: Context, _: Request) Allocator.Error!?[]u8 {
     return notYet(.new_remote_window, "T3597");
 }
-pub fn handleStash(_: Context, _: Request) Allocator.Error!?[]u8 {
-    return notYet(.stash, "T3596");
+
+/// `+stash` / `+restore` (T3596): win32's bodies over the GTK split tree,
+/// in `ipc_stash.zig`.
+pub fn handleStash(app: Context, request: Request) Allocator.Error!?[]u8 {
+    return ipc_stash.stashOrRestore(app, request, false);
 }
-pub fn handleRestore(_: Context, _: Request) Allocator.Error!?[]u8 {
-    return notYet(.restore, "T3596");
+pub fn handleRestore(app: Context, request: Request) Allocator.Error!?[]u8 {
+    return ipc_stash.stashOrRestore(app, request, true);
 }
 
 // ---------------------------------------------------------------------------
@@ -1264,7 +1269,7 @@ fn windowIterator(app: Context) WindowIterator {
     return .{ .node = app.as(gtk.Application).getWindows() };
 }
 
-const PaneAt = struct { window: *Window, surface: *Surface };
+pub const PaneAt = struct { window: *Window, surface: *Surface };
 
 /// Every terminal pane in every window and tab, in order.
 const PaneIterator = struct {
@@ -1364,7 +1369,7 @@ pub const Target = union(enum) {
     }
 };
 
-const Resolved = union(enum) {
+pub const Resolved = union(enum) {
     found: Target,
     /// Panes in several windows hold the name, none of them the caller's.
     ambiguous: []const []const u8,
@@ -1373,7 +1378,7 @@ const Resolved = union(enum) {
 
 /// What `name` means, by T2250's order: a pane id first (an id names exactly
 /// one pane), then `target_lookup.pick` over the named windows and panes.
-fn resolve(arena: Allocator, app: Context, name: []const u8) Allocator.Error!Resolved {
+pub fn resolve(arena: Allocator, app: Context, name: []const u8) Allocator.Error!Resolved {
     var panes = paneIterator(app);
     while (panes.next()) |p| {
         if (std.mem.eql(u8, p.surface.paneId(), name)) return .{ .found = .{ .pane = p } };
@@ -1417,7 +1422,7 @@ fn resolveGlobal(arena: Allocator, app: Context, name: []const u8) Allocator.Err
 
 /// The reply for a name `resolve` did not find: the ambiguity sentence when
 /// several windows hold it, else the handler's own not-found text.
-fn missingResponse(
+pub fn missingResponse(
     arena: Allocator,
     resolved: Resolved,
     name: []const u8,
@@ -1971,7 +1976,7 @@ fn namedPaneIn(window: *Window, app: Context, name: []const u8) ?PaneAt {
 }
 
 /// The tab holding `surface` in `window`.
-fn tabOf(window: *Window, surface: *Surface) ?*Tab {
+pub fn tabOf(window: *Window, surface: *Surface) ?*Tab {
     const tab_view = window.getTabView();
     const pages: usize = @intCast(@max(tab_view.getNPages(), 0));
     for (0..pages) |i| {
@@ -2377,6 +2382,8 @@ const ListLeaves = struct {
             // An unnamed pane answers to its id, the Mac's fallback.
             .name = if (surface.ipcName()) |nm| try arena.dupe(u8, nm) else id,
             .focused = surface == self.active,
+            // T3596: out of the layout, still in the tree (win32 T1827).
+            .stashed = pane_stash.isStashed(surface),
             // T3567: minimized into a stacked row's strip (win32 T2103).
             .minimized = if (ext.getAncestor(SplitTree, surface.as(gtk.Widget))) |t| t.isMinimized(surface) else false,
             .exit_code = null,

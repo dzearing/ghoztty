@@ -26,6 +26,7 @@ const pane_drop_apply = @import("../pane_drop_apply.zig");
 const pane_style = @import("../pane_style.zig");
 const pane_stage = @import("../pane_stage_rules.zig");
 const pane_stack_grid = @import("../../win32/pane_stack_grid.zig");
+const pane_stash = @import("../../win32/pane_stash.zig");
 const pane_stack_layout = @import("../../win32/pane_stack_layout.zig");
 const pane_stack_state = @import("../../win32/pane_stack_state.zig");
 const stack_drag = @import("../../win32/stack_drag.zig");
@@ -480,6 +481,7 @@ pub const SplitTree = extern struct {
         priv.faces.clearRetainingCapacity();
         var it = tree.iterator();
         while (it.next()) |entry| {
+            if (pane_stash.isStashed(entry.view)) continue; // T3596: no card, no strip
             const face = wk.gtk_label_new(null);
             wk.gtk_widget_add_css_class(face, strip_class);
             wk.gtk_label_set_ellipsize(face, 3); // PANGO_ELLIPSIZE_END
@@ -526,7 +528,7 @@ pub const SplitTree = extern struct {
         const alloc = Application.default().allocator();
         const state = self.stackState();
 
-        var built = pane_stack_grid.buildWith(alloc, tree, paneKey, .all) catch return;
+        var built = pane_stack_grid.buildWith(alloc, tree, paneKey, .visible) catch return;
         defer built.deinit(alloc);
         // Carry each collapse over whatever changed the tree since the last
         // layout (a close, a split, a drop), as win32's layout does.
@@ -570,6 +572,8 @@ pub const SplitTree = extern struct {
         const home = homedir.home(&home_buf) catch null;
         var it = tree.iterator();
         while (it.next()) |entry| {
+            // A stashed pane is not on this stage (T3596).
+            if (pane_stash.isStashed(entry.view)) continue;
             const id = paneKey(entry.view);
             const card: *wk.GtkWidget = @ptrCast(cardOf(entry.view));
             const face = priv.faces.get(id);
@@ -675,7 +679,7 @@ pub const SplitTree = extern struct {
     fn rowRatios(self: *Self, d: pane_stack_layout.Direction, items: []const []const pane_stack_layout.Id, shares: ?[]const f64) ?[]pane_stack_layout.RowRatio {
         const tree = self.private().tree orelse return null;
         const alloc = Application.default().allocator();
-        var built = pane_stack_grid.buildWith(alloc, tree, paneKey, .all) catch return null;
+        var built = pane_stack_grid.buildWith(alloc, tree, paneKey, .visible) catch return null;
         defer built.deinit(alloc);
         const root = built.root orelse return null;
         return pane_stack_layout.settingRow(alloc, built.nodes, root, d, items, shares) catch null;
@@ -1086,6 +1090,15 @@ pub const SplitTree = extern struct {
     pub fn goto(self: *Self, to: Surface.Tree.Goto) bool {
         const tree = self.getTree() orelse return false;
         const active = self.getActiveSurfaceHandle() orelse return false;
+        // With panes stashed, navigate the arrangement on screen (T3596,
+        // win32 `gotoVisible`): a stashed pane is never a focus target.
+        if (pane_stash.stashedCount(tree.*) > 0) {
+            const from = tree.nodes[active.idx()].leaf;
+            const surface = gotoVisible(tree, from, to) orelse return false;
+            if (surface == from) return false;
+            self.focusSurface(surface);
+            return true;
+        }
         const target = if (tree.goto(
             Application.default().allocator(),
             active,
@@ -1208,6 +1221,8 @@ pub const SplitTree = extern struct {
         const tree = self.getTree() orelse return null;
         var it = tree.iterator();
         while (it.next()) |entry| {
+            // A stashed pane is out of sight (T3596): never the active one.
+            if (pane_stash.isStashed(entry.view)) continue;
             if (entry.view.getFocused()) return entry.handle;
         }
 
@@ -1221,7 +1236,7 @@ pub const SplitTree = extern struct {
             // We need to find the handle of the last focused surface.
             it = tree.iterator();
             while (it.next()) |entry| {
-                if (entry.view == v) return entry.handle;
+                if (entry.view == v and !pane_stash.isStashed(v)) return entry.handle;
             }
         }
 
@@ -1258,6 +1273,103 @@ pub const SplitTree = extern struct {
         // window holds the keyboard to report the focus back.
         self.relayoutStage();
         self.as(gobject.Object).notifyByPspec(properties.@"active-surface".impl.param_spec);
+    }
+
+    // -- Stash (T3596, win32 T1827, Mac `stashPane` / `restorePane`) --------
+    //
+    // A stashed pane stays a leaf of the tree - running, targetable, listed -
+    // and only the layout skips it: no card on the stage, and a split with a
+    // stashed side collapses into the other (`pane_stack_grid`'s `.visible`).
+    // The mark is on the Surface (`stash_seq`), so a restore puts it back in
+    // exactly the slot it left. `setTree` re-establishes the invariants after
+    // every tree change (`pane_stash.normalize`).
+
+    pub const StashError = pane_stash.StashError;
+
+    /// Stash `surface`. Idempotent: stashing a stashed pane changes nothing.
+    /// Refused when it is the last pane on screen (`LastVisiblePane`) or not
+    /// in this tree (`NotInTree`). When it was the tab's focused pane, focus
+    /// goes to the neighbor a close would pick; otherwise it stays put.
+    pub fn stashSurface(self: *Self, surface: *Surface) StashError!void {
+        const tree = self.getTree() orelse return error.NotInTree;
+        if (!pane_stash.contains(tree.*, surface)) return error.NotInTree;
+        if (pane_stash.isStashed(surface)) return;
+        try pane_stash.checkStash(tree.*, surface);
+
+        // Decide focus against the layout before the pane leaves it.
+        const was_active = if (self.getActiveSurface()) |a| a == surface else false;
+        const next: ?*Surface = if (was_active)
+            gotoVisible(tree, surface, .previous) orelse gotoVisible(tree, surface, .next)
+        else
+            null;
+
+        pane_stash.mark(surface);
+        self.stashChanged();
+        if (next) |n| self.focusSurface(n);
+        log.info("stashed pane={s} visible={}", .{ surface.paneId(), pane_stash.visibleLeafCount(self.getTree().?.*) });
+    }
+
+    /// Put a stashed `surface` back in the slot it left. With `focus` it
+    /// becomes the tab's focused pane; without, focus is untouched (a CLI
+    /// `+restore` without `--focus`). Restoring a pane on screen succeeds.
+    /// False when it is not in this tree.
+    pub fn restoreSurface(self: *Self, surface: *Surface, focus: bool) bool {
+        const tree = self.getTree() orelse return false;
+        if (!pane_stash.contains(tree.*, surface)) return false;
+        if (pane_stash.isStashed(surface)) {
+            pane_stash.unmark(surface);
+            self.stashChanged();
+            log.info("restored pane={s} visible={}", .{ surface.paneId(), pane_stash.visibleLeafCount(self.getTree().?.*) });
+        }
+        if (focus) self.focusSurface(surface);
+        return true;
+    }
+
+    /// The `restore_stashed_pane` keybind: the top of the stash, focused.
+    /// False when nothing is stashed.
+    pub fn restoreTopStashed(self: *Self) bool {
+        const tree = self.getTree() orelse return false;
+        const top = pane_stash.topStashed(tree.*) orelse return false;
+        return self.restoreSurface(top, true);
+    }
+
+    /// The stash moved but the tree did not: re-set it, so every listener of
+    /// a tree change - the rebuild, the window's sidebar and title - redraws.
+    fn stashChanged(self: *Self) void {
+        const tree = self.getTree() orelse return;
+        var copy = tree.clone(Application.default().allocator()) catch |err| {
+            log.warn("stash change not redrawn: {}", .{err});
+            return;
+        };
+        defer copy.deinit();
+        self.setTree(&copy);
+    }
+
+    /// The leaf a single-pane build shows: the first on screen, else the
+    /// root (a tree with nothing stashed, or a broken invariant).
+    fn firstVisibleHandle(tree: *const Surface.Tree) Surface.Tree.Node.Handle {
+        var it = tree.iterator();
+        while (it.next()) |entry| {
+            if (!pane_stash.isStashed(entry.view)) return entry.handle;
+        }
+        return .root;
+    }
+
+    /// `Tree.goto` over the arrangement on screen (win32 `gotoVisible`): from
+    /// `from` (on screen now) to the pane `to` names, mapped back BY VIEW -
+    /// the visible clone numbers its nodes differently. Null when there is
+    /// none, or on OOM.
+    fn gotoVisible(tree: *const Surface.Tree, from: *Surface, to: Surface.Tree.Goto) ?*Surface {
+        const alloc = Application.default().allocator();
+        var visible = pane_stash.visibleClone(tree.*, alloc) catch return null;
+        defer visible.deinit();
+        var it = visible.iterator();
+        const start = while (it.next()) |entry| {
+            if (entry.view == from) break entry.handle;
+        } else return null;
+        const target = (visible.goto(alloc, start, to) catch return null) orelse return null;
+        const view = visible.nodes[target.idx()].leaf;
+        return if (view == from) null else view;
     }
 
     /// Close `surface` now, with no confirmation: the CLI's `+close` drives
@@ -1384,6 +1496,9 @@ pub const SplitTree = extern struct {
             assert(priv.tree == null);
             assert(!new_tree.isEmpty());
             priv.tree = ext.boxedCopy(Surface.Tree, new_tree);
+            // Whatever changed the tree, a tab always shows a pane and never
+            // zooms into a stashed one (T3596, win32 `pane_stash.normalize`).
+            _ = pane_stash.normalize(priv.tree.?);
             self.connectSurfaceHandlers();
         }
 
@@ -1549,6 +1664,8 @@ pub const SplitTree = extern struct {
         if (tree.zoomed != null) {
             tree.zoomed = null;
         } else {
+            // One pane on screen, the rest stashed: nothing to zoom (T3596).
+            if (!pane_stash.isVisiblySplit(tree.*)) return;
             const active = self.getActiveSurfaceHandle() orelse return;
             if (tree.zoomed == active) return;
             tree.zoom(active);
@@ -1622,9 +1739,17 @@ pub const SplitTree = extern struct {
         // T3590: the tab's only pane closing is its tab closing. With undo
         // on, the tab closes whole, tree intact, so it is parked as a tab.
         if (CloseUndo.closeTabInstead(self, old_tree, handle)) return;
+        // Read now: `setTree` below frees `old_tree`.
+        const had_stash = pane_stash.stashedCount(old_tree.*) > 0;
 
         const next_focus: ?*Surface = next_focus: {
             const alloc = Application.default().allocator();
+            // With panes stashed, the neighbor is one on screen (T3596).
+            if (had_stash) {
+                const from = old_tree.nodes[handle.idx()].leaf;
+                break :next_focus gotoVisible(old_tree, from, .previous) orelse
+                    gotoVisible(old_tree, from, .next);
+            }
             const next_handle: Surface.Tree.Node.Handle =
                 (old_tree.goto(alloc, handle, .previous) catch null) orelse
                 (old_tree.goto(alloc, handle, .next) catch null) orelse
@@ -1654,8 +1779,15 @@ pub const SplitTree = extern struct {
         self.setTree(&new_tree);
 
         // Grab focus. We have to set this on the "last focused" because our
-        // focus will be set when the tree is redrawn.
-        if (next_focus) |v| priv.last_focused.set(v);
+        // focus will be set when the tree is redrawn. A close that left only
+        // stashed panes brought the top one back (`normalize`): it takes it.
+        if (next_focus) |v| {
+            priv.last_focused.set(v);
+        } else if (had_stash) {
+            if (self.getTree()) |t| {
+                if (pane_stash.keepOrFirstVisible(t.*, null)) |v| priv.last_focused.set(v);
+            }
+        }
     }
 
     fn propSurfaceFocused(
@@ -1729,14 +1861,17 @@ pub const SplitTree = extern struct {
         if (tree.isEmpty()) {
             self.dropStage();
             priv.tree_bin.setChild(null);
-        } else if (tree.zoomed == null and tree.nodes[0] == .split) {
+        } else if (tree.zoomed == null and pane_stash.isVisiblySplit(tree.*)) {
             // Several panes on show: one stage the shared layout places
-            // (T3567). Each card is detached from the old widgets first.
+            // (T3567). Each card is detached from the old widgets first. A
+            // stashed pane gets no card (T3596): its old one goes with the
+            // old stage, and a restore builds it a new one.
             var results: [pane_drop_apply.max_leaves]BuildTreeResult = undefined;
             var cards: [pane_drop_apply.max_leaves]*gtk.Widget = undefined;
             var n: usize = 0;
             var it = tree.iterator();
             while (it.next()) |entry| {
+                if (pane_stash.isStashed(entry.view)) continue;
                 if (n == results.len) break;
                 results[n] = self.buildTree(tree, entry.handle);
                 cards[n] = results[n].widget;
@@ -1746,9 +1881,11 @@ pub const SplitTree = extern struct {
             self.dropStage();
             priv.tree_bin.setChild(self.newStage(tree, cards[0..n]));
         } else {
+            // Zoomed, or one pane on show: the zoomed pane, else the one
+            // on-screen leaf (the others stashed, T3596), else the root.
             const built = self.buildTree(
                 tree,
-                tree.zoomed orelse .root,
+                tree.zoomed orelse firstVisibleHandle(tree),
             );
             defer built.deinit();
             self.dropStage();

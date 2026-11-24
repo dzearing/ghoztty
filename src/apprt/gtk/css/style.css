@@ -302,6 +302,11 @@ label.resize-overlay {
   background-color: alpha(@accent_bg_color, 0.35);
 }
 
+/* A stashed pane's row (T3596): out of the layout, so dimmed. */
+.pane-sidebar .pane-sidebar-row.pane-sidebar-stashed {
+  opacity: 0.55;
+}
+
 /*
  * The keyboard shortcut guide (T3570): keycaps and row badges.
  */

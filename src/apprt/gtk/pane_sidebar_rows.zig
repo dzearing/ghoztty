@@ -157,6 +157,8 @@ pub const Report = struct {
         label_shown: bool,
         tooltip: ?[]const u8,
         selected: bool,
+        /// A pane stashed out of its window's layout (T3596).
+        stashed: bool = false,
         /// `terminal` / `viewer` for a pane; `window`, `project`,
         /// `ungrouped` for a header; `tile` for a rail window tile.
         kind: []const u8,

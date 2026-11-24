@@ -936,9 +936,10 @@ pub const Application = extern struct {
             .prompt_banner => return Action.promptBanner(self, target),
             .toggle_rearrange_mode => return Action.toggleRearrangeMode(target),
 
+            .stash_pane => return Action.stashPane(target),
+            .restore_stashed_pane => return Action.restoreStashedPane(target),
+
             .toggle_hero_mode,
-            .stash_pane,
-            .restore_stashed_pane,
             => {
                 log.warn("ghoztty action not ported to gtk yet action={}", .{action});
                 return false;
@@ -3390,6 +3391,38 @@ const Action = struct {
                 };
                 window.toggleRearrangeMode();
                 return true;
+            },
+        }
+    }
+
+    /// `stash_pane` (T3596, win32 `stashFocusedPane`): stash the focused
+    /// pane. Not performed - the key goes on to the terminal - when it is
+    /// the last pane on screen, or the window is the Quick Terminal (which
+    /// has no sidebar to bring it back from).
+    pub fn stashPane(target: apprt.Target) bool {
+        switch (target) {
+            .app => return false,
+            .surface => |core| {
+                const surface = core.rt_surface.surface;
+                const window = ext.getAncestor(Window, surface.as(gtk.Widget)) orelse return false;
+                if (window.isQuickTerminal()) return false;
+                const tree = ext.getAncestor(SplitTree, surface.as(gtk.Widget)) orelse return false;
+                tree.stashSurface(surface) catch return false;
+                return true;
+            },
+        }
+    }
+
+    /// `restore_stashed_pane` (T3596, win32 `restoreTopStashedPane`): bring
+    /// back the top of the focused tab's stash and focus it. Not performed
+    /// with nothing stashed.
+    pub fn restoreStashedPane(target: apprt.Target) bool {
+        switch (target) {
+            .app => return false,
+            .surface => |core| {
+                const surface = core.rt_surface.surface;
+                const tree = ext.getAncestor(SplitTree, surface.as(gtk.Widget)) orelse return false;
+                return tree.restoreTopStashed();
             },
         }
     }

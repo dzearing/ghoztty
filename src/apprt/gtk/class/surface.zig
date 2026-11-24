@@ -58,6 +58,12 @@ const log = std.log.scoped(.gtk_ghostty_surface);
 pub const Surface = extern struct {
     const Self = @This();
     parent_instance: Parent,
+    /// The pane's place in its tab's stash (T3596, win32 `PaneView.stash_seq`,
+    /// `win32/pane_stash.zig`): 0 on screen, else stashed - out of the layout,
+    /// still a leaf of the tree - with the larger number the more recent.
+    /// On the instance rather than in `Private` because the shared stash code
+    /// reads `view.stash_seq` off any tree's leaf. GObject zero-fills it.
+    stash_seq: u64 = 0,
     pub const Parent = adw.Bin;
     pub const Implements = [_]type{gtk.Scrollable};
     pub const getGObjectType = gobject.ext.defineClass(Self, .{
