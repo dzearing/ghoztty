@@ -2969,12 +2969,24 @@ fn seatedAboveOwner(hwnd: HWND, root: HWND) bool {
 /// So the ex-style is read back and the call retried, up to
 /// `overlay_zorder.band_change_attempts`. Callers that care get `false` and
 /// can say so rather than reporting a float that never happened.
+///
+/// What actually refuses a promotion (T3609): a window this one OWNS that
+/// already carries a stray `WS_EX_TOPMOST` while its owner does not. Measured
+/// on the test desktop: a HIDDEN pane scrollbar sat at `ex=0x80800a8`, and
+/// every `HWND_TOPMOST` on its owner — 63 calls over five seconds — returned
+/// TRUE and left the owner at `0x100`; one `HWND_NOTOPMOST` on the scrollbar
+/// and the very next call landed (`0x108`). The overlay heal cannot catch it
+/// first, because a hidden popup is not re-seated. So when a promotion does
+/// not take, every stray owned window is demoted before the retry: the OS
+/// lifts the owned windows into the band along with their owner anyway, so
+/// nothing that belongs there is lost.
 pub fn setTopmost(hwnd: HWND, want: bool) bool {
     const insert_after = if (want) HWND_TOPMOST else HWND_NOTOPMOST;
     const flags = SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE;
     var attempt: u8 = 0;
     while (attempt < overlay_zorder.band_change_attempts) : (attempt += 1) {
         if (overlay_zorder.bandSettled(GetWindowLongW(hwnd, GWL_EXSTYLE), want)) return true;
+        if (want and attempt == 1) _ = demoteStrayOwnedWindows(hwnd);
         _ = SetWindowPos(hwnd, insert_after, 0, 0, 0, 0, flags);
     }
     const settled = overlay_zorder.bandSettled(GetWindowLongW(hwnd, GWL_EXSTYLE), want);
@@ -2983,6 +2995,33 @@ pub fn setTopmost(hwnd: HWND, want: bool) bool {
         .{ want, overlay_zorder.band_change_attempts },
     );
     return settled;
+}
+
+/// Clear a stray `WS_EX_TOPMOST` (`overlay_zorder.isStray`) from every window
+/// `owner` owns, visible or not — the blocker `setTopmost` describes (T3609).
+/// Returns how many were demoted. Walks every top-level window, so it belongs
+/// on a failure path, not a hot one.
+pub fn demoteStrayOwnedWindows(owner: HWND) u32 {
+    const Ctx = struct {
+        owner: HWND,
+        owner_ex: u32,
+        demoted: u32 = 0,
+        fn visit(h: HWND, lparam: isize) callconv(.winapi) i32 {
+            const ctx: *@This() = @ptrFromInt(@as(usize, @bitCast(lparam)));
+            if (GetWindow(h, GW_OWNER) != ctx.owner) return 1;
+            if (!overlay_zorder.isStray(GetWindowLongW(h, GWL_EXSTYLE), ctx.owner_ex)) return 1;
+            _ = SetWindowPos(h, HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+            ctx.demoted += 1;
+            return 1;
+        }
+    };
+    var ctx: Ctx = .{ .owner = owner, .owner_ex = GetWindowLongW(owner, GWL_EXSTYLE) };
+    _ = EnumWindows(&Ctx.visit, @bitCast(@intFromPtr(&ctx)));
+    if (ctx.demoted > 0) std.log.scoped(.win32).info(
+        "topmost: demoted {d} stray topmost owned window(s) blocking a promotion",
+        .{ctx.demoted},
+    );
+    return ctx.demoted;
 }
 
 /// Re-assert the z-order of an owned overlay popup — the banner strip, dim

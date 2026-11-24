@@ -1,8 +1,8 @@
 {
     "guard":  "persistence-flag",
     "script":  "test/win32/persistence-flag.ps1",
-    "generated":  "2026-11-23T15:46:39-08:00",
-    "commit":  "ab26b1d38",
+    "generated":  "2026-11-23T18:45:10-08:00",
+    "commit":  "cca44468e",
     "uncommitted":  [
 
                     ],
@@ -16,6 +16,6 @@
                  "test/win32/lib/HarnessScope.ps1":  "code1:01632df0c006fb3987ae845a2acbafb09a23869437cb2dc452be7f75da784ae5",
                  "test/win32/lib/PersistenceSweep.ps1":  "code1:d78429a75cc1ac51aabdaeef4b25e51fd9a212b21ddeb1ed6aaea2bbaf3b5f32",
                  "test/win32/lib/TestDesktop.ps1":  "code1:8dc5ba2640052ad4f648ba9b6bf45520579d956869194bf593296dba21c1d317",
-                 "test/win32/persistence-flag.ps1":  "code1:a274069186108d99becdd0da3bd6a68a6c5d8d06b30205d17b67c3b48ce2dafb"
+                 "test/win32/persistence-flag.ps1":  "code1:3f913d80192190c9fe54e6dda166d4e3c3999e1fbef016ae06442d00566a68e0"
              }
 }
