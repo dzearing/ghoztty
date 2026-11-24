@@ -175,7 +175,7 @@ no_dialog() { [ "$(field "$(dialog "$1")" open)" = false ]; }
 hl_wait_for 15 no_dialog rdp
 w0=$?
 hl_check "W0 the answered tab dialog has left the window" $w0 "$(dialog rdp)"
-[ $w0 = 0 ] || { echo "--- tab/dialog log:"; grep -n -v "received action" "$APP_LOG" | grep -i "tab close\|answering\|window close\|gtk-\|adwaita\|critical\|warn\|undo" | tail -30; }
+[ $w0 = 0 ] || { echo "--- tab/dialog log:"; grep -n -v "received action" "$APP_LOG" | sed -n "/tab close request/,/zzzz/p" | grep -v "debug(\|cell_size" | head -40; }
 mark=$(wc -l < "$APP_LOG")
 out=$(dialog rdp --op=window --answer=cancel)
 [ "$(field "$out" disconnect)" = true ] && [ "$(field "$out" answered)" = cancel ] &&
