@@ -1,8 +1,8 @@
 {
     "guard":  "argv-hazard",
     "script":  "test/win32/argv-hazard-audit.ps1",
-    "generated":  "2026-11-24T10:23:14-08:00",
-    "commit":  "8218b0165",
+    "generated":  "2026-11-24T12:03:17-08:00",
+    "commit":  "87dc89090",
     "uncommitted":  [
 
                     ],
@@ -122,7 +122,7 @@
                   "scripts/suite-run.ps1":  "ec673a3b7deb5b60d9992dc26273e5a2f0c414d5206bc99de94e2774ef480935",
                   "scripts/t470-ring-measure.ps1":  "427dc0cada150aadb214a007e32238f1d75d3751ad40a02260b325157672f143",
                   "scripts/t857-boost-ab.ps1":  "57e0577817a74642cb26688667389345556d03474791d9a4eafabf297069e38b",
-                  "scripts/task-dashboard.ps1":  "6aee526699c987901ed71e8d493e376ad26a1abf98956a41546644c94ccb10d6",
+                  "scripts/task-dashboard.ps1":  "373581cd79cefd0dacbcdd0c2a8798fa74d3a560f88b22ff86796d692974e398",
                   "scripts/test-binary-soak.ps1":  "45cee03760887e721da36e438607276545b95ffc481649d7c8f41d75bc0087da",
                   "scripts/upgrade-ghoztty-windows.ps1":  "83fc5645440aeb390dc05c1cb432420dcd136a1833af441aa0cbb2ad2fe6c40c",
                   "scripts/upstream-remote.ps1":  "1eaafbe08c8b98e9520b96cbba2db8799879864d2a5163f0e64277636793cfbc",

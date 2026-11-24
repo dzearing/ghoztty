@@ -768,6 +768,11 @@ try {
         Assert 'J5 the next save that parses is picked up' `
             ($id4 -and $id4.pid -ne $id2.pid -and $id4.code -eq $id4.onDisk) "id4=$($id4 | ConvertTo-Json -Compress)"
     }
+} catch {
+    # An unwind here must end red, not skip J's remaining legs and still
+    # reach a green verdict (body-complete-audit D1).
+    $script:fail++
+    Write-Host "  FAIL J section aborted: $($_.Exception.Message)"
 } finally {
     Stop-FixtureServer $fixJ
     Start-Sleep -Milliseconds 500

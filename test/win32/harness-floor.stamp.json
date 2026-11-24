@@ -1,10 +1,10 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-11-24T11:46:07-08:00",
-    "commit":  "602f394f9",
+    "generated":  "2026-11-24T12:19:44-08:00",
+    "commit":  "87dc89090",
     "uncommitted":  [
-                        "test/win32/soak.ps1"
+                        "test/win32/task-dashboard.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "cfa23792d110d499fa4086697daa516d218d0d110e594a7452167a81220ee15e",
@@ -580,7 +580,7 @@
                   "test/win32/tab-strip-autohide.ps1":  "0cf86103c3e6cad7fc179939568b35edfddb16dd400b50116d6f602c92478353",
                   "test/win32/tab-tooltip.ps1":  "61873b9c1ca1769ea119310f65bba170f01a8fc85a4958faa53dfce40adef56e",
                   "test/win32/target-staleness.ps1":  "40ccb7c6dd7adc7f580b7dc8b3c505e75f7d50a6da468ea47a062e7da3f759ec",
-                  "test/win32/task-dashboard.ps1":  "e1b3d488c839c02a5d26182640d9284701cd40aa5dabbf020814a4d239e21fb3",
+                  "test/win32/task-dashboard.ps1":  "7e5447566eda3d3bdf881904c2ec57a0c9f08be6971edc1c8c4764652fbd82a2",
                   "test/win32/terminal-link-paths.ps1":  "6fd5a42894831216f8371205fb6ab089201ddbdfda7aace1ee4cf2b42eec67f3",
                   "test/win32/test-binary-soak.ps1":  "e9c98bf87a0216e367b8bdde320fc7c01253286b7f6be286914ec378bb016a16",
                   "test/win32/test-client-build.ps1":  "d827e9b68c6124ad3ce866640b212afa5dcd311813cc8bff5f9a1da5c5195ca1",

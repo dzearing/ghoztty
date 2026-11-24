@@ -1,21 +1,19 @@
 {
     "guard":  "task-dashboard",
     "script":  "test/win32/task-dashboard.ps1",
-    "generated":  "2026-11-24T11:55:24-08:00",
-    "commit":  "89d44df75",
+    "generated":  "2026-11-24T12:15:45-08:00",
+    "commit":  "87dc89090",
     "uncommitted":  [
-                        "scripts/task-dashboard.js",
-                        "scripts/task-dashboard.ps1",
                         "test/win32/task-dashboard.ps1"
                     ],
     "files":  {
                   "scripts/task-dashboard.js":  "45ae1bdf517e2b766027b426402de7e1b1e9e557951a68597013d6820139a1f4",
                   "scripts/task-dashboard.page.html":  "84977f7550a00e9fb174f773be5b557da00cca25dbfdbe23e4e7823287cf2df5",
                   "scripts/task-dashboard.ps1":  "373581cd79cefd0dacbcdd0c2a8798fa74d3a560f88b22ff86796d692974e398",
-                  "test/win32/task-dashboard.ps1":  "4da94f34d956ecc2eda427cde27e504e53e1076c5375445f2bd94407e651cde4"
+                  "test/win32/task-dashboard.ps1":  "7e5447566eda3d3bdf881904c2ec57a0c9f08be6971edc1c8c4764652fbd82a2"
               },
     "code":  {
                  "scripts/task-dashboard.ps1":  "code1:fac316b1ddc9547be0e5885524af0c4cd76d5439a8f0dfa5d439a73228ec2a08",
-                 "test/win32/task-dashboard.ps1":  "code1:f36d34552650f23895359154f299eaae846638a86eba7a96afd7fdfb5e6e95ed"
+                 "test/win32/task-dashboard.ps1":  "code1:655d2886448cf18660ca5c180ac9d030678e924d0ddf9b3d99e0177e81e22957"
              }
 }

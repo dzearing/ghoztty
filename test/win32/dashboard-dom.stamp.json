@@ -1,13 +1,13 @@
 {
     "guard":  "dashboard-dom",
     "script":  "test/win32/dashboard-dom.ps1",
-    "generated":  "2026-11-23T14:56:12-08:00",
-    "commit":  "464bd6f6c",
+    "generated":  "2026-11-24T12:02:15-08:00",
+    "commit":  "87dc89090",
     "uncommitted":  [
 
                     ],
     "files":  {
-                  "scripts/task-dashboard.js":  "73937d8335b48fb979078178c85d7c048a5f978b63d5efe855f9eb465c7692db",
+                  "scripts/task-dashboard.js":  "45ae1bdf517e2b766027b426402de7e1b1e9e557951a68597013d6820139a1f4",
                   "scripts/task-dashboard.page.html":  "84977f7550a00e9fb174f773be5b557da00cca25dbfdbe23e4e7823287cf2df5",
                   "test/win32/dashboard-dom.ps1":  "588b973da60dc74921f6acd2e47ff5d2ce448fe06359f6551a16e1b5e4d779cf",
                   "test/win32/lib/dashboard-dom-selftest.js":  "1d33d64ecaf4bcc7cb7dd376138bde0702b68965cc39364c443efa96a6d7da8f",
