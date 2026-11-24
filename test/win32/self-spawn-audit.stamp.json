@@ -1,8 +1,8 @@
 {
     "guard":  "self-spawn",
     "script":  "test/win32/self-spawn-audit.ps1",
-    "generated":  "2026-11-24T07:46:24-08:00",
-    "commit":  "00e260234",
+    "generated":  "2026-11-24T08:13:14-08:00",
+    "commit":  "7a3eff09a",
     "uncommitted":  [
 
                     ],
@@ -26,7 +26,7 @@
                   "src/apprt/gtk/capture_seam.zig":  "6866cd688571dbba0eb9e83d3ac20a3119b51549268937182ed4d17a5117d5b6",
                   "src/apprt/gtk/cgroup.zig":  "372cae8dcb5e10e5068debf3132f25e98b0f86c48bd535a661cd10192d68502a",
                   "src/apprt/gtk/class.zig":  "8d1e5c64e3d97635e21c0861e73c1f957c52aa939100357e039d1f5dc690d8cc",
-                  "src/apprt/gtk/class/application.zig":  "3f79312ff967b9fb158239427a58ff74c5f8e8f8b85421c36e7cb79cc16fc559",
+                  "src/apprt/gtk/class/application.zig":  "60dd65dd35c96cd6c921963af0e7f1deef66fc61635c6dde8ef1fff54c3e6eae",
                   "src/apprt/gtk/class/clipboard_confirmation_dialog.zig":  "ce0b3150d6909398ec46c7a1c2e3cc8add359ee816dc50c856349202217129c3",
                   "src/apprt/gtk/class/close_confirmation_dialog.zig":  "bac38a30d9884382c21589362d613f5557ed793319d3a376469c8bcf57217123",
                   "src/apprt/gtk/class/command_palette.zig":  "10444412c2ea843d22a7874311e73eec5ee7d63662d7f242da7319ded2407a94",
@@ -42,7 +42,7 @@
                   "src/apprt/gtk/class/resize_overlay.zig":  "28e96fba32fa79da6736d51965583f17655d59899fec3964a717b66364160a07",
                   "src/apprt/gtk/class/search_overlay.zig":  "d3e6ca662b546ccadcee62fa3d564addb1df6e7ea420eab6492bc06a89f08158",
                   "src/apprt/gtk/class/split_tree.zig":  "640d3e96e105735600808200ffc215e5ffbebcab9ad6301dc23a3ffbee7f96f3",
-                  "src/apprt/gtk/class/surface.zig":  "ecb461074511a8bafbb39eede6e24a4a8e7e8c613d239db54922f450c32778bf",
+                  "src/apprt/gtk/class/surface.zig":  "a4a5bb640477c6013af66e2bab9863dd5866d90314110672d59e33f2dd56f0ec",
                   "src/apprt/gtk/class/surface_child_exited.zig":  "6b4cf3d1ed4ed891ca02f841973bd1518acb76451830172e87ab9512e711ff1b",
                   "src/apprt/gtk/class/surface_scrolled_window.zig":  "88e36e9a7318aa492360697ec08c6914cd3c672f16d320c79f12ba3c85297d3c",
                   "src/apprt/gtk/class/tab.zig":  "b6b1c77cd00cac666ddc8fc5cb1bde60b4b750adbd71ef8500277928cfbbd067",
