@@ -1220,6 +1220,13 @@ pub const Surface = extern struct {
         const box_w: *wk.GtkWidget = @ptrCast(box);
         wk.gtk_orientable_set_orientation(box_w, 1); // GTK_ORIENTATION_VERTICAL
         wk.gtk_box_prepend(box_w, banner.box);
+        // The terminal keeps at least one pixel under the card (T3560). A
+        // pane's terminal starts on its GL area's first resize; a banner put
+        // back by a restore before the pane is laid out, in a pane too short
+        // for it, would otherwise leave the GL area at zero height - never
+        // resized, so the pane never starts its shell. As on the Mac, a tall
+        // banner may squeeze the terminal; it may not stop it.
+        gl.setSizeRequest(-1, 1);
         banner.owner = self;
         banner.on_link = &bannerLink;
         banner.pane_id = self.paneId();
