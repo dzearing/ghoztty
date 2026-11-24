@@ -35,9 +35,16 @@
 #       the app shows (the unfocused dim wash, a scrollbar) reach outside the
 #       window - the window clips a card sliding past its edge, nothing clips
 #       the card's popups
+#   S7) T2131: a strip that STAYS a strip through a run change slides with
+#       the run. From s2 | s3 on show with P and s1 tucked before it, a click
+#       on s1's strip keeps P tucked and changes its strip's rect; the debug
+#       build's `stack strip glide` oracle (T2417) must draw it at 2+ rects
+#       on the way. Before T2417 the window painted it at its new rect from
+#       the first frame
 #
 # -NegativeControl sets the slide to 0 ms (an instant re-layout, the answer
-# before T2102) and keeps S1 as written: it MUST fail.
+# before T2102) and keeps S1 and S7 as written: both MUST fail (observed
+# 2026-11-24: S1 0 positions, S7 0 rects).
 #
 # Hermetic: per-run LOCALAPPDATA, per-run agent binary override, a private IPC
 # pipe suffix, and it only ever kills ghoztty processes launched from this
@@ -337,6 +344,34 @@ try {
     Assert ($tuckedNow.Count -eq 2) "S5: still two tucked ($($tuckedNow.Count))"
     Assert ($shownChanged -ge 1) "S5: control - the resize resized the panes on show ($shownChanged)"
     Assert ($tuckedNow.Count -gt 0 -and $tuckedSame -eq $tuckedNow.Count) "S5: no tucked pane was resized ($tuckedSame of $($tuckedNow.Count) unchanged)"
+
+    # ---- S7: a strip that stays a strip slides with the run (T2131) ----------
+    # The run is s2 | s3 with P and s1 tucked on its leading side. A click on
+    # s1's strip brings s1 on show, s3 goes behind, and P STAYS a strip - but
+    # it no longer reaches under s1, so its strip's rect changes. On Mac a
+    # strip is part of its card and moves with it; before T2417 the window
+    # painted it at its new rect from the first frame. Read where the debug
+    # build's `stack strip glide` oracle (T2417) drew it.
+    Say "== click s1's strip: P stays tucked, its strip must glide"
+    $panes7 = @(Get-Panes $top)
+    $s1Pane = if ($panes7.Count -eq 4) { $panes7[1] } else { $null }
+    if ($null -eq $s1Pane -or $s1Pane.Visible -or $panes7[0].Visible) {
+        $script:fail++
+        Say "FAIL  S7: setup - expected P and s1 tucked on the leading side (got $(Format-Cols $panes7))"
+    } else {
+        $log7 = Get-LogLength
+        $sx7 = $s1Pane.Left + [int]($minStrip / 2)
+        $sy7 = $s1Pane.Top + [int](($s1Pane.Bottom - $s1Pane.Top) / 2)
+        [void](Send-TestMouse -Window $top -X $sx7 -Y $sy7)
+        Start-Sleep -Milliseconds ($slideMs + 1200)
+        $after7 = @(Get-Panes $top)
+        $glides = @(Get-Content -Path $script:errlog -ErrorAction SilentlyContinue | Select-Object -Skip $log7 |
+                ForEach-Object { if ($_ -match 'stack strip glide (left=-?\d+ top=-?\d+ right=-?\d+ bottom=-?\d+)') { $Matches[1] } } | Sort-Object -Unique)
+        Say ("      after: {0}; strip drawn at {1} rects" -f (Format-Cols $after7), $glides.Count)
+        foreach ($g in ($glides | Select-Object -First 3)) { Say "      $g" }
+        Assert ($after7.Count -eq 4 -and $after7[1].Visible -and -not $after7[0].Visible) "S7: s1 is on show and P is still tucked ($(Format-Cols $after7))"
+        Assert ($glides.Count -ge 2) "S7: P's strip is drawn at $($glides.Count) rects on its way (need 2+): it slides with the run, it does not jump"
+    }
 
     Complete-TestBody
 } catch {
