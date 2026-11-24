@@ -50,6 +50,7 @@ const url_scheme = @import("../url_scheme.zig");
 const wslg_gpu = @import("../wslg_gpu.zig");
 const viewer_chrome = @import("../viewer_chrome.zig");
 const CloseUndo = @import("../CloseUndo.zig");
+const window_mode = @import("../../win32/window_mode.zig");
 const builtin = @import("builtin");
 
 const log = std.log.scoped(.gtk_ghostty_application);
@@ -289,6 +290,14 @@ pub const Application = extern struct {
             break :err def;
         };
         defer config.deinit();
+
+        // Single-window mode is decided here, once (T3573; Mac `WindowMode`,
+        // win32 T3180): a window is built for one mode or the other, so a
+        // later reload - or a Settings edit - only takes effect at the next
+        // launch. Shares win32's pure latch so the rule cannot drift.
+        log.info("window mode: {s} (latched at launch)", .{
+            @tagName(window_mode.latch(config.@"macos-window-mode")),
+        });
 
         const saved_language: ?[:0]const u8 = saved_language: {
             const old_language = old_language: {
@@ -2789,6 +2798,29 @@ const Action = struct {
         return win;
     }
 
+    /// The first terminal window opened while none is open reads
+    /// `macos-window-mode` again (T3573, win32 T3212 `relatchIdle`): with
+    /// `quit-after-last-window-closed` off the app stays resident with no
+    /// window, which looks quit to the person, so this window is their next
+    /// launch and a mode chosen meanwhile takes effect here. Never while any
+    /// other terminal window - shown, hidden, or held for an undo of its
+    /// close - is still built for the old mode. The quick terminal does not
+    /// count either way: it is never a workspace.
+    fn relatchWindowModeIfIdle(self: *Application, win: *Window) void {
+        if (win.isQuickTerminal()) return;
+        var node: ?*glib.List = self.as(gtk.Application).getWindows();
+        while (node) |n| : (node = n.f_next) {
+            const obj: *gobject.Object = @ptrCast(@alignCast(n.f_data orelse continue));
+            const other = gobject.ext.cast(Window, obj) orelse continue;
+            if (other == win or other.isQuickTerminal()) continue;
+            return;
+        }
+        const now = self.private().config.get().@"macos-window-mode";
+        if (window_mode.relatchIdle(now)) |old| {
+            log.info("window mode: {s} -> {s} (re-read with no window open)", .{ @tagName(old), @tagName(now) });
+        }
+    }
+
     fn initAndShowWindow(
         self: *Application,
         win: *Window,
@@ -2807,6 +2839,8 @@ const Action = struct {
             pub const none: @This() = .{};
         },
     ) void {
+        self.relatchWindowModeIfIdle(win);
+
         // Setup a binding so that whenever our config changes so does the
         // window. There's never a time when the window config should be out
         // of sync with the application config.
@@ -3012,6 +3046,15 @@ const Action = struct {
             break :config try .new(alloc, &config);
         };
         defer config.unref();
+
+        // The window mode never follows a reload (T3573): say so when the
+        // file now disagrees with the mode this launch runs in.
+        const file_mode = config.get().@"macos-window-mode";
+        if (file_mode != window_mode.current()) {
+            log.info("window mode: {s} in force; the config now says {s}, which takes effect at the next launch", .{
+                @tagName(window_mode.current()), @tagName(file_mode),
+            });
+        }
 
         // Update the proper target. This will trigger a `config_change`
         // apprt action which will propagate the config properly to our
