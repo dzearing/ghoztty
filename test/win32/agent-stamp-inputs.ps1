@@ -29,6 +29,8 @@
 #   D  the recipe and the scanner agree, and the widened list reached the BINARY:
 #      the built agent's stamp is the git answer for that same path set
 #   E  exclusions are declared with a reason - never a silent hole in the list
+#   F  manifest discovery chooses by CONTENT, not recency (T2069): a newer,
+#      small manifest that merely names the entry point does not win
 #
 # Static + one cached build; no app, no CLI, no windows.
 #
@@ -62,8 +64,12 @@ $Recipe = Join-Path $Repo 'src\build\GhosttyAgent.zig'
 # code and the report a caller sees, not a function this script could hold
 # differently.
 function Invoke-Scan([hashtable]$Opts) {
-    $argv = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $Scanner, '-Repo', $Repo)
+    # Section F scans a synthetic tree, so -Repo is overridable.
+    $scanRepo = $Repo
+    if ($Opts.ContainsKey('Repo')) { $scanRepo = $Opts['Repo'] }
+    $argv = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $Scanner, '-Repo', $scanRepo)
     foreach ($k in $Opts.Keys) {
+        if ($k -eq 'Repo') { continue }
         $v = $Opts[$k]
         if ($v -is [switch] -or $v -is [bool]) { if ($v) { $argv += "-$k" } ; continue }
         # One argument, ';'-joined: powershell -File passes each argv element
@@ -225,6 +231,49 @@ try {
     Assert 'E2 no exclusion shadows a stamp path' `
         (($ex | Where-Object { $paths -contains $_.path }).Count -eq 0) `
         (($ex | ForEach-Object { $_.path }) -join ', ')
+
+    # -----------------------------------------------------------------------
+    ""
+    "F. manifest discovery chooses by content, not recency (T2069)"
+    # -----------------------------------------------------------------------
+
+    # The 2026-10-17 shape: the NEWEST .zig-cache\h file naming
+    # remote\agent\main.zig resolved to 13 in-tree inputs, and B3/C1 went red
+    # over a manifest that was not the agent build. A synthetic tree reproduces
+    # it with no build: an older manifest naming 205 real files, a newer one
+    # naming the entry point and 12.
+    $fake = Join-Path $fixtureDir 'tree'
+    $fh = Join-Path $fake '.zig-cache\h'
+    New-Item -ItemType Directory -Force -Path $fh, (Join-Path $fake 'src\remote\agent'), (Join-Path $fake 'src\f') | Out-Null
+    Set-Content -LiteralPath (Join-Path $fake 'src\remote\agent\main.zig') -Value '// entry' -Encoding ASCII
+    $many = @('src/remote/agent/main.zig')
+    foreach ($i in 1..205) {
+        $rel = 'src/f/f{0:000}.zig' -f $i
+        Set-Content -LiteralPath (Join-Path $fake ($rel -replace '/', '\')) -Value '//' -Encoding ASCII
+        $many += $rel
+    }
+    $big = Join-Path $fh 'big.txt'
+    $small = Join-Path $fh 'small.txt'
+    Write-Manifest $big $many
+    Write-Manifest $small ($many | Select-Object -First 13)
+    (Get-Item -LiteralPath $big).LastWriteTime = (Get-Date).AddMinutes(-10)
+    (Get-Item -LiteralPath $small).LastWriteTime = Get-Date
+
+    $f1 = Invoke-Scan @{ Repo = $fake; StampPaths = 'src'; Format = 'json' }
+    $f1r = $null
+    try { $f1r = $f1.Text | ConvertFrom-Json } catch { }
+    Assert 'F1 the newer small manifest loses to the older real one' `
+        ($null -ne $f1r -and ($f1r.manifest -like '*/big.txt')) $f1.Text
+    Assert 'F1b and the inputs read are the real one''s 206' `
+        ($null -ne $f1r -and @($f1r.inputs).Count -eq 206) $f1.Text
+
+    # With only the small one there, the honest answer is "could not answer",
+    # naming what was rejected - never a verdict read off 13 inputs.
+    Remove-Item -LiteralPath $big -Force
+    $f2 = Invoke-Scan @{ Repo = $fake; StampPaths = 'src' }
+    Assert 'F2 only an under-floor manifest present is exit 2, not a verdict' ($f2.Code -eq 2) $f2.Text
+    Assert 'F2b and the refusal names the rejected manifest and its count' `
+        ($f2.Text -match 'rejected .*small\.txt \(13 inputs\)') $f2.Text
 
     # -----------------------------------------------------------------------
     # Negative control: the check must be able to go RED against the LIVE tree,

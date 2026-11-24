@@ -1,8 +1,8 @@
 {
     "guard":  "unwired-hook",
     "script":  "test/win32/unwired-hook-audit.ps1",
-    "generated":  "2026-11-24T03:10:18-08:00",
-    "commit":  "eee7cf61c",
+    "generated":  "2026-11-24T03:13:02-08:00",
+    "commit":  "066952673",
     "uncommitted":  [
 
                     ],
@@ -1243,7 +1243,7 @@
                   "test/win32/agent-sharing-uplink.ps1":  "1af396252ddcc7ef09f92e687a042e5d23a8f55dec730d2a74a70f234a9de7d2",
                   "test/win32/agent-shell-integration.ps1":  "6548cc27513354ad43ae96e0db22350b6898d169b4edca044bffdb6972d7720f",
                   "test/win32/agent-sibling-resolve.ps1":  "008e915d0bd423968168199706c94bbcaeaaccaaa4a160816999c6205facd464",
-                  "test/win32/agent-stamp-inputs.ps1":  "96b125e6d59506d12af8a5e4efff0e358975b4e096026a9f485865c3d1f96c37",
+                  "test/win32/agent-stamp-inputs.ps1":  "5ffc240653e41bb86e540c6fd647e9225614ee0c9f6288b353209d88b6bcbc6b",
                   "test/win32/agent-upgrade.ps1":  "2445cdace45a8f56d662490116609bc921ff3de23cb89bee45db0be9cf9fe5ae",
                   "test/win32/agent-user-env.ps1":  "bfeb37fd8f252900b37aafe4fed65466093d23788984077b14c1f50616b9a22a",
                   "test/win32/app-restart.ps1":  "220c45d3793ad8ef5cbe62ede8d8fd207722e9d09656907f84bab3b7edac8723",
@@ -1405,7 +1405,7 @@
                   "test/win32/goto-window.ps1":  "46d315222e373a99e41e10787bf31cbd847e3cd8c383da93e902008f549627a1",
                   "test/win32/guard-due.ps1":  "f32bba80075ab29f3f54a393efa8bce66ebff065c30d52d03cbc4c40338d7d1e",
                   "test/win32/gui-launch-command.ps1":  "cfb6969d2fb9ed206a283ef53a92b01faa83dccafb07e343ec1db374cd35adc9",
-                  "test/win32/gui-postmortem.ps1":  "b621c58624501914bb14d520cfe6aab2ec5a94cc5ce7d7ae509965fb22d84ac0",
+                  "test/win32/gui-postmortem.ps1":  "b9cce844222cd55e667a85aedba38109eeacdc8576524998be403b558b782ba4",
                   "test/win32/hard-delete-sites.ps1":  "f0e6c5b18f1e786cab6acf996e3bcb9d8b1da46d99c9bfbc7f5664a12dacd71c",
                   "test/win32/harness-exitcode-audit.ps1":  "9568a9718f2cfba7d2bc2b8f9813a74ba8767a062a20dea8f236fc56fa3ee4e5",
                   "test/win32/harness-floor.ps1":  "1db054250529b447363a296512d10e0b44eef62f4ac94b957ddd29ef11c922c5",
@@ -1617,7 +1617,7 @@
                   "test/win32/session-layout-preserve.ps1":  "3ea74234321fd0a2f5bcb47483c976aaa7b7d53dcc1281dd3e37412bb404dc0f",
                   "test/win32/session-open.ps1":  "a8676a1822dccea06051cf7afe281c2c2315e2332c941b6baedd67136bb7cab3",
                   "test/win32/session-persistence.ps1":  "51a7c24d49223245e258d954a5095445d320c668c9977d80430312346405fbb5",
-                  "test/win32/session-reattach.ps1":  "bbebc511b41437b283226093bef560e6dc9dcb4f3c74abc1c15ef8f5ce6fa274",
+                  "test/win32/session-reattach.ps1":  "1f05c245e3d29c57e63f4454ea7628ec3033ae018192cad91f98d78c1bd471a0",
                   "test/win32/session-reattach-zombie.ps1":  "5c138604f0566d659fe5ce841b372cbf1393c1f1d9dfafcfaf5835f043ef1f7e",
                   "test/win32/session-reboot-tui.ps1":  "7b44e424cb750a2b4eb01d41046dd4967c477d345507d72bc8ad02cd0a064ef5",
                   "test/win32/session-relaunch.ps1":  "d70beb312417f04466ee1b86e101048a603d1ab5fac04bb85f3321441926d38e",

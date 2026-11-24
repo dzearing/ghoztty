@@ -1,14 +1,14 @@
 {
     "guard":  "unroll-count",
     "script":  "test/win32/unroll-count-audit.ps1",
-    "generated":  "2026-11-23T23:36:51-08:00",
-    "commit":  "90caf3994",
+    "generated":  "2026-11-24T03:18:06-08:00",
+    "commit":  "066952673",
     "uncommitted":  [
-                        "scripts/git-commit-guard.ps1"
+                        "scripts/agent-stamp-inputs.ps1"
                     ],
     "files":  {
                   "scripts/acceptance-parallel.ps1":  "4b958ede38c0911c4945146f0a52810ebbf8c01d44ac8a60532f2eb77f8fd0af",
-                  "scripts/agent-stamp-inputs.ps1":  "559de37ae22cd0d6dfd5957e86be89ff09bba7d6ee399749235aba23b2b7cde3",
+                  "scripts/agent-stamp-inputs.ps1":  "c124afe82a09be3273f4c9c09e5461fc91b2ea23d03fbe1f9575b5993e1243a5",
                   "scripts/arp-version-check.ps1":  "5b54ae7cb88d3517dc9c5d250e95c44d7a02a34fdc31ac57656d09b17d088615",
                   "scripts/bell-fade-onscreen.ps1":  "13b481236a845edaab2ae60a6d7ebcf08082c764cc3db6a687c6c60182075f3f",
                   "scripts/blur-backdrop-probe.ps1":  "161435ffccf4a2e759d1f24887ced73c4c7c44da9d473a24eccbd977dc4cc38f",

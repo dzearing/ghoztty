@@ -1,20 +1,21 @@
 {
     "guard":  "agent-stamp-inputs",
     "script":  "test/win32/agent-stamp-inputs.ps1",
-    "generated":  "2026-11-24T01:12:16-08:00",
-    "commit":  "87648233a",
+    "generated":  "2026-11-24T03:08:12-08:00",
+    "commit":  "066952673",
     "uncommitted":  [
-                        "src/build/GhosttyAgent.zig"
+                        "scripts/agent-stamp-inputs.ps1",
+                        "test/win32/agent-stamp-inputs.ps1"
                     ],
     "files":  {
-                  "scripts/agent-stamp-inputs.ps1":  "559de37ae22cd0d6dfd5957e86be89ff09bba7d6ee399749235aba23b2b7cde3",
+                  "scripts/agent-stamp-inputs.ps1":  "c124afe82a09be3273f4c9c09e5461fc91b2ea23d03fbe1f9575b5993e1243a5",
                   "src/apprt/win32/agent_upgrade.zig":  "49c5c7ceea8da9bbf31619d51bfdede3b0e3d952e59553c4447410fd508895e9",
                   "src/build/GhosttyAgent.zig":  "d84fac98460a8d0fdae9b53874987d79f0449fe1799cf0250907f18955aaf160",
                   "src/remote/agent_build.zig":  "a5c429e91c7eed2a6995e2fbf8459962a16e0dc519c96f6c479fa3ad2d744d2f",
-                  "test/win32/agent-stamp-inputs.ps1":  "96b125e6d59506d12af8a5e4efff0e358975b4e096026a9f485865c3d1f96c37"
+                  "test/win32/agent-stamp-inputs.ps1":  "5ffc240653e41bb86e540c6fd647e9225614ee0c9f6288b353209d88b6bcbc6b"
               },
     "code":  {
-                 "scripts/agent-stamp-inputs.ps1":  "code1:04dcca71034459a21559de3e7c80c4e77273eabb01c079a7ea3a3754855cac6b",
-                 "test/win32/agent-stamp-inputs.ps1":  "code1:ba975cd9870c408836d495a55c161a2f4d0d396d8d5cc87c7538e5bec8c0e0cb"
+                 "scripts/agent-stamp-inputs.ps1":  "code1:a716da2fc4dc4a374c79e3423431f7f76037519d1b23f8c4ef98cac4c22e1422",
+                 "test/win32/agent-stamp-inputs.ps1":  "code1:a2428e5769819877d2c9a2a56242ca6e0db297c716ffea115f7c55e32d2dbefd"
              }
 }

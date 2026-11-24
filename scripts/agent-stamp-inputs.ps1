@@ -44,8 +44,12 @@ param(
     [string]$Manifest,
     # Override the stamp path list (same shape as GhosttyAgent.zig's argv), again
     # so the harness can prove the finding path fires.
-    [string[]]$StampPaths
+    [string[]]$StampPaths,
+    # The fewest in-tree inputs a discovered manifest must resolve to before it
+    # is taken as the agent build's (T2069). Ignored with -Manifest.
+    [int]$MinInputs = 200
 )
+$script:Rejected = @()
 
 $ErrorActionPreference = 'Stop'
 if (-not $Repo) { $Repo = Split-Path $PSScriptRoot -Parent }
@@ -138,11 +142,19 @@ function Get-ManifestInputs([string]$RepoRoot, [string]$ManifestPath) {
 # newest manifest here - naming every source under the MIRROR's path, which the
 # input filter below rightly drops, leaving a dozen survivors and a red B3/C1
 # that has nothing to do with the code (T1070's turn found it).
-function Find-Manifest([string]$RepoRoot) {
+#
+# And the manifest must LOOK like the agent build by content, not merely be the
+# newest that names main.zig (T2069). Recency alone is how a 13-input manifest
+# won once; any cached step that names the entry point and is written after the
+# agent compile would win the same way. So a candidate also has to resolve to
+# at least -MinInputs files in this tree (the agent compiles ~1250; B3's bar is
+# 200), and the newest that does is the answer. None passing is exit 2 - "could
+# not answer" - never a verdict read off the wrong manifest.
+function Find-Manifest([string]$RepoRoot, [int]$Floor) {
     $dir = Join-Path $RepoRoot '.zig-cache\h'
     if (-not (Test-Path -LiteralPath $dir)) { return $null }
     $root = (Normalize $RepoRoot) + '/'
-    $hit = Get-ChildItem -LiteralPath $dir -Filter *.txt -ErrorAction SilentlyContinue |
+    $candidates = Get-ChildItem -LiteralPath $dir -Filter *.txt -ErrorAction SilentlyContinue |
         Sort-Object LastWriteTime -Descending |
         Where-Object {
             $m = Select-String -Path $_.FullName -SimpleMatch 'remote\agent\main.zig' | Select-Object -First 1
@@ -152,10 +164,13 @@ function Find-Manifest([string]$RepoRoot) {
             $p = Normalize $parts[5]
             # Relative (to a prefix of this build) or absolute under this tree.
             (-not ($p -match '^[A-Za-z]:/')) -or $p.StartsWith($root, [StringComparison]::OrdinalIgnoreCase)
-        } |
-        Select-Object -First 1
-    if (-not $hit) { return $null }
-    return $hit.FullName
+        }
+    foreach ($c in $candidates) {
+        $n = @(Get-ManifestInputs $RepoRoot $c.FullName).Count
+        if ($n -ge $Floor) { return $c.FullName }
+        $script:Rejected += "$(Normalize $c.FullName) ($n inputs)"
+    }
+    return $null
 }
 
 # ---------------------------------------------------------------------------
@@ -176,9 +191,10 @@ if ($Build) {
     }
 }
 
-if (-not $Manifest) { $Manifest = Find-Manifest $Repo }
+if (-not $Manifest) { $Manifest = Find-Manifest $Repo $MinInputs }
 if (-not $Manifest -or -not (Test-Path -LiteralPath $Manifest)) {
     Write-Output "ERROR: no agent build manifest under .zig-cache\h - run with -Build, or run: zig build agent -Dapp-runtime=win32 -Doptimize=Debug"
+    foreach ($r in $script:Rejected) { Write-Output "  rejected (under $MinInputs in-tree inputs): $r" }
     exit 2
 }
 
