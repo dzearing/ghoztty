@@ -819,6 +819,7 @@ fn writeSettingsState(jws: *std.json.Stringify, arena: Allocator, w_opt: anytype
 ///   --op=run         Return
 ///   --op=escape      Escape
 ///   --op=cheat-sheet write the cheat sheet (never opens it); reply names it
+///   --op=shot --path=<file.png>   the window from its own render
 ///   --op=close       the title bar's close button
 ///   filters on any op: --query=<q> --category=<all|name> --unbound=<0|1>
 fn shortcutGuideSeam(app: Context, request: Request) Allocator.Error![]u8 {
@@ -828,8 +829,10 @@ fn shortcutGuideSeam(app: Context, request: Request) Allocator.Error![]u8 {
     var cat: ?[]const u8 = null;
     var unbound: ?bool = null;
     var down: i32 = 1;
+    var shot_path: ?[]const u8 = null;
     for (request.arguments orelse &.{}) |arg| {
         if (std.mem.startsWith(u8, arg, "--op=")) op = arg["--op=".len..];
+        if (std.mem.startsWith(u8, arg, "--path=")) shot_path = arg["--path=".len..];
         if (std.mem.startsWith(u8, arg, "--query=")) q = arg["--query=".len..];
         if (std.mem.startsWith(u8, arg, "--category=")) cat = arg["--category=".len..];
         if (std.mem.startsWith(u8, arg, "--unbound=")) unbound = std.mem.eql(u8, arg["--unbound=".len..], "1");
@@ -872,6 +875,17 @@ fn shortcutGuideSeam(app: Context, request: Request) Allocator.Error![]u8 {
     } else if (std.mem.eql(u8, op, "cheat-sheet")) {
         sheet = w.writeCheatSheet(c_alloc) catch |err|
             return server.errorResponse(c_alloc, "cheat sheet failed ({s})", .{@errorName(err)});
+    } else if (std.mem.eql(u8, op, "shot")) {
+        // The window from its own render (`pane_snapshot`), as win32's `shot`.
+        const path = shot_path orelse return server.errorResponse(c_alloc, "--path=<file.png> is required for --op=shot", .{});
+        const bytes = pane_snapshot.png(w.window) orelse
+            return server.errorResponse(c_alloc, "the guide produced no frame to capture", .{});
+        defer wk.g_bytes_unref(bytes);
+        var len: usize = 0;
+        const data = wk.g_bytes_get_data(bytes, &len) orelse
+            return server.errorResponse(c_alloc, "the guide produced no frame to capture", .{});
+        writeCapture(path, data[0..len]) catch |err|
+            return server.errorResponse(c_alloc, "could not write '{s}' ({s})", .{ path, @errorName(err) });
     } else if (!std.mem.eql(u8, op, "state") and !std.mem.eql(u8, op, "open") and !std.mem.eql(u8, op, "action")) {
         return server.errorResponse(c_alloc, "unknown --op '{s}'", .{op});
     }
