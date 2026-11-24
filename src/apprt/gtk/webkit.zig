@@ -570,6 +570,13 @@ pub extern fn gtk_widget_set_focusable(widget: *GtkWidget, focusable: c_int) voi
 pub extern fn gtk_orientable_set_orientation(orientable: *GtkWidget, orientation: c_int) void;
 pub extern fn gtk_gesture_click_new() *GtkEventController;
 pub extern fn gtk_event_controller_get_current_event_state(controller: *GtkEventController) c_uint;
+// The banner link menu (T3561): a right-click gesture on a banner label that
+// claims the press over the label's own Copy Link menu.
+pub extern fn gtk_gesture_single_set_button(gesture: *GtkEventController, button: c_uint) void;
+pub extern fn gtk_gesture_set_state(gesture: *GtkEventController, state: c_int) c_int;
+pub extern fn gtk_event_controller_get_widget(controller: *GtkEventController) *GtkWidget;
+pub extern fn gtk_label_get_current_uri(label: *GtkWidget) ?[*:0]const u8;
+pub extern fn gtk_widget_translate_coordinates(src: *GtkWidget, dest: *GtkWidget, src_x: f64, src_y: f64, dest_x: *f64, dest_y: *f64) c_int;
 
 // --- The Set Pane Banner editor (T3559) -------------------------------------
 

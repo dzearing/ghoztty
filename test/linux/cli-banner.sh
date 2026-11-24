@@ -42,8 +42,13 @@ dump="$HL_RUNTIME/banner-dump"
 
 export SHELL=/bin/sh
 export GHOZTTY_TEST_BANNER_DUMP="$dump"
+# Every link hand-off is recorded there and the ones that would leave the
+# app are not run (Viewer.linkSink), so the link menu checks stay in Weston.
+links="$HL_RUNTIME/links"
+: > "$links"
+export GHOZTTY_TEST_VIEWER_LINKS="$links"
 hl_launch APP "$app" --gtk-single-instance=false --working-directory="$fixture" -e /bin/sh -c 'PS1="hl$ " exec /bin/sh -i'
-unset GHOZTTY_TEST_BANNER_DUMP
+unset GHOZTTY_TEST_BANNER_DUMP GHOZTTY_TEST_VIEWER_LINKS
 hl_wait_for 30 test -S "$sock"
 f3=$?
 hl_check "F3 the app serves its socket" $f3
@@ -196,18 +201,90 @@ hl_check "O2 an empty OSC 7778 clears it" $? "banner=$(leaf banner)"
 
 # ---- +set-state ------------------------------------------------------------
 
+# wtitle: the first window's title as +list reports it (GtkWindow:title).
+wtitle() { cli +list --json 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin)["data"]["windows"][0].get("title") or "")' 2>/dev/null; }
+title0=$(wtitle)
+
 out=$(cli +set-state --target="$pid" --state=busy 2>&1); rc=$?
 [ $rc = 0 ] && [ "$(leaf state)" = "busy" ]
 hl_check "S1 +set-state --state=busy on the pane lists state busy" $? "rc=$rc out=$out state=$(leaf state)"
+t=$(wtitle)
+[ -n "$title0" ] && [ "$t" = "$title0 (busy)" ]
+hl_check "S1t the window title gains ' (busy)' (T3561)" $? "before='$title0' now='$t'"
+grep -q 'activity: tab=0 state=busy loading=true' "$APP_LOG"
+hl_check "S1m its tab shows the busy spinner (AdwTabPage:loading)" $? "$(grep -m2 'activity: tab' "$APP_LOG" | tr '\n' '|')"
 
 out=$(cli +set-state --target="$win" --state=needs_input 2>&1); rc=$?
 [ $rc = 0 ] && [ "$(leaf state)" = "needs_input" ]
 hl_check "S2 a window target sets every terminal pane in it" $? "rc=$rc out=$out state=$(leaf state)"
+t=$(wtitle)
+[ "$t" = "$title0 (question)" ]
+hl_check "S2t needs_input shows its human label, ' (question)', never the token" $? "now='$t'"
+grep -q 'activity: tab=0 state=needs_input loading=false attention=true' "$APP_LOG"
+hl_check "S2m its tab asks for attention" $? "$(grep 'activity: tab' "$APP_LOG" | tail -2 | tr '\n' '|')"
 
 osc '7777;idle'
 is_idle() { [ "$(leaf state)" = "idle" ]; }
 hl_wait_for 10 is_idle
 hl_check "S3 OSC 7777 from the pane sets its state" $? "state=$(leaf state)"
+t=$(wtitle)
+[ "$t" = "$title0" ]
+hl_check "S3t idle drops the suffix" $? "now='$t'"
+
+out=$(cli +rename --target="$win" --title=pinned 2>&1)
+cli +set-state --target="$pid" --state=busy > /dev/null 2>&1
+t=$(wtitle)
+[ "$t" = "pinned (busy)" ]
+hl_check "S4t a pinned title carries the suffix too (Mac computeTitle)" $? "rename=$out now='$t'"
+cli +set-state --target="$pid" --state=idle > /dev/null 2>&1
+cli +rename --target="$win" --title= > /dev/null 2>&1
+t=$(wtitle)
+[ "$t" = "$title0" ]
+hl_check "S5t unpinned and idle, the title is the tab's again" $? "now='$t'"
+
+# ---- the banner link menu (T3561) -------------------------------------------
+# A right-click on a link pops banner_link's menu; under the sink the menu is
+# recorded and a row is run by `pane-banner --menu-pick`.
+
+sink_has() { grep -Fxq -- "$1" "$links"; }
+cli +set-banner --target="$pid" "[w](https://example.com/) [f]($fixture/docs/a.md) [g](ghoztty://focus/$pid)" > /dev/null 2>&1
+hl_ipc pane-banner --target="$pid" --link-menu=https://example.com/ > /dev/null
+sink_has "menu web https://example.com/ rows=open_browser|side_pane,new_window|copy"
+hl_check "M1 a web link's menu: browser | side pane, new window | copy link" $? "$(tail -3 "$links" | tr '\n' '|')"
+hl_ipc pane-banner --target="$pid" --link-menu="$fixture/docs/a.md" > /dev/null
+sink_has "menu file $fixture/docs/a.md rows=reveal|side_pane,new_window|open_default_app|copy"
+hl_check "M2 a file link's menu: reveal | side pane, new window | default app | copy path" $? "$(tail -3 "$links" | tr '\n' '|')"
+hl_ipc pane-banner --target="$pid" --menu-pick=copy > /dev/null
+sink_has "copy $fixture/docs/a.md"
+hl_check "M3 Copy Path copies the file's path" $? "$(tail -3 "$links" | tr '\n' '|')"
+hl_ipc pane-banner --target="$pid" --menu-pick=side_pane > /dev/null
+sink_has "split $fixture/docs/a.md"
+hl_check "M4 Open in Side Pane splits a viewer beside the pane" $? "$(tail -3 "$links" | tr '\n' '|')"
+hl_ipc pane-banner --target="$pid" --link-menu="ghoztty://focus/$pid" > /dev/null
+sink_has "menu command ghoztty://focus/$pid rows=focus|copy"
+hl_check "M5 a ghoztty:// link's menu: focus | copy link" $? "$(tail -3 "$links" | tr '\n' '|')"
+hl_ipc pane-banner --target="$pid" --link-menu=https://example.com/ > /dev/null
+hl_ipc pane-banner --target="$pid" --menu-pick=open_browser > /dev/null
+sink_has "browser https://example.com/"
+hl_check "M6 Open in Default Browser hands the link to the browser (recorded, never run)" $? "$(tail -3 "$links" | tr '\n' '|')"
+out=$(hl_ipc pane-banner --target="$pid" --menu-pick=nope)
+echo "$out" | grep -q "no menu row 'nope'"
+hl_check "M7 an unknown row is refused by name" $? "$out"
+# Close what M4 opened so the viewer checks below see one viewer.
+for v in $(cli +list --json 2>/dev/null | python3 -c '
+import json, sys
+d = json.load(sys.stdin)["data"]
+def walk(n):
+    if n["type"] == "split":
+        yield from walk(n["left"]); yield from walk(n["right"])
+    else:
+        yield n["terminal"]
+for w in d["windows"]:
+    for t in w["tabs"]:
+        for l in walk(t["splits"]):
+            if l.get("type") == "viewer": print(l["id"])
+'); do cli +close --target="$v" > /dev/null 2>&1; done
+cli +set-banner --target="$pid" --clear > /dev/null 2>&1
 
 # ---- a viewer pane has neither ---------------------------------------------
 

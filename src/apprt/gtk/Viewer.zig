@@ -1469,32 +1469,49 @@ fn resolvePageRelative(self: *Viewer, href: []const u8) ?[:0]u8 {
 /// (the same menu a banner link shows); separators become GMenu sections.
 fn showLinkMenu(self: *Viewer) void {
     const target = self.menu_target orelse return;
-    var buf: [links.max_items]links.Item = undefined;
-    const items = links.menu(self.menu_kind, &buf);
+    if (linkMenuSink(self.alloc, self.menu_kind, target)) return;
+    popLinkMenu(wk.asWidget(self.view), self.menu_kind, self.pointer_x, self.pointer_y, &onMenuAction, self);
+}
 
-    // The test seam: a headless Weston has no seat, so a grabbing popup
-    // cannot be shown there. What the menu WOULD offer is recorded, and the
-    // steps runner's `menu-pick` runs a row's action.
-    if (comptime build_config.is_debug) {
-        var line: std.ArrayList(u8) = .empty;
-        defer line.deinit(self.alloc);
-        // `<kind> <target> rows=a|b,c|d`: `|` is a separator, `,` joins a
-        // group.
-        line.print(self.alloc, "{s} {s} rows=", .{ @tagName(self.menu_kind), target }) catch return;
-        var comma = false;
-        for (items) |it| switch (it) {
-            .separator => {
-                line.append(self.alloc, '|') catch return;
-                comma = false;
-            },
-            .cmd => |c| {
-                if (comma) line.append(self.alloc, ',') catch return;
-                line.appendSlice(self.alloc, c.action_name) catch return;
-                comma = true;
-            },
-        };
-        if (linkSink("menu", line.items)) return;
-    }
+/// The test seam for a link menu (the viewer's and the pane banner's,
+/// T3561): a headless Weston has no seat, so a grabbing popup cannot be shown
+/// there. What the menu WOULD offer is recorded as
+/// `menu <kind> <target> rows=a|b,c|d` (`|` a separator, `,` joins a group),
+/// and the caller runs a row by its seam instead. True when recorded - the
+/// menu must then not pop.
+pub fn linkMenuSink(alloc: std.mem.Allocator, kind: links.Kind, target: []const u8) bool {
+    if (comptime !build_config.is_debug) return false;
+    var buf: [links.max_items]links.Item = undefined;
+    const items = links.menu(kind, &buf);
+    var line: std.ArrayList(u8) = .empty;
+    defer line.deinit(alloc);
+    line.print(alloc, "{s} {s} rows=", .{ @tagName(kind), target }) catch return false;
+    var comma = false;
+    for (items) |it| switch (it) {
+        .separator => {
+            line.append(alloc, '|') catch return false;
+            comma = false;
+        },
+        .cmd => |c| {
+            if (comma) line.append(alloc, ',') catch return false;
+            line.appendSlice(alloc, c.action_name) catch return false;
+            comma = true;
+        },
+    };
+    return linkSink("menu", line.items);
+}
+
+/// What a link menu row's `activate` calls: the row's id is the action's
+/// name (`links.idFromActionName`).
+pub const LinkMenuActivate = fn (action: *wk.GSimpleAction, param: ?*anyopaque, ud: ?*anyopaque) callconv(.c) void;
+
+/// Pop a link menu for a `kind` link at (`x`, `y`) in `anchor`'s
+/// coordinates: `banner_link`'s rows, order and ids with the Linux titles,
+/// separators as GMenu sections. Each row activates `on_action` with `ud`.
+/// One popover per right-click, unparented once it closes.
+pub fn popLinkMenu(anchor: *wk.GtkWidget, kind: links.Kind, x: f64, y: f64, on_action: *const LinkMenuActivate, ud: ?*anyopaque) void {
+    var buf: [links.max_items]links.Item = undefined;
+    const items = links.menu(kind, &buf);
 
     const group = wk.g_simple_action_group_new();
     defer wk.g_object_unref(group);
@@ -1511,7 +1528,7 @@ fn showLinkMenu(self: *Viewer) void {
         },
         .cmd => |c| {
             const action = wk.g_simple_action_new(c.action_name.ptr, null);
-            _ = wk.g_signal_connect_data(action, "activate", @ptrCast(&onMenuAction), self, null, 0);
+            _ = wk.g_signal_connect_data(action, "activate", @ptrCast(on_action), ud, null, 0);
             wk.g_action_map_add_action(group, action);
             wk.g_object_unref(action);
             var detailed: [64]u8 = undefined;
@@ -1523,14 +1540,14 @@ fn showLinkMenu(self: *Viewer) void {
     if (section_items > 0) wk.g_menu_append_section(root_menu, null, section);
     wk.g_object_unref(section);
 
-    const w = wk.asWidget(self.view);
+    const w = anchor;
     wk.gtk_widget_insert_action_group(w, "vlink", group);
     const pop = wk.gtk_popover_menu_new_from_model(root_menu);
     wk.gtk_widget_set_parent(pop, w);
     wk.gtk_popover_set_has_arrow(pop, 0);
     const rect: wk.GdkRectangle = .{
-        .x = @intFromFloat(@max(0, self.pointer_x)),
-        .y = @intFromFloat(@max(0, self.pointer_y)),
+        .x = @intFromFloat(@max(0, x)),
+        .y = @intFromFloat(@max(0, y)),
         .width = 1,
         .height = 1,
     };

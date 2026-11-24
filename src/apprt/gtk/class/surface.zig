@@ -46,6 +46,7 @@ const PaneBanner = @import("../PaneBanner.zig");
 const wk = @import("../webkit.zig");
 const banner_link = @import("../../win32/banner_link.zig");
 const banner_markup = @import("../banner_markup.zig");
+const viewer_links = @import("../viewer_links.zig");
 // The pure tint math win32 uses (T67): hex parsing, the contrast scheme.
 const color_math = @import("../../win32/color_math.zig");
 const Tab = @import("tab.zig").Tab;
@@ -812,6 +813,11 @@ pub const Surface = extern struct {
         /// replacing the pane's own banner (win32's T422).
         banner_restored: bool = false,
 
+        /// The banner link a right-click last opened the link menu on
+        /// (T3561), as the banner wrote it: what the menu's rows act on.
+        /// Owned (c allocator).
+        banner_menu_target: ?[:0]u8 = null,
+
         /// The activity state `+set-state` / OSC 7777 last gave this pane
         /// (T3339): `+list` reports it as `state`.
         activity_state: terminal.osc.Command.ActivityState = .idle,
@@ -1143,8 +1149,14 @@ pub const Surface = extern struct {
         return self.private().activity_state;
     }
 
+    /// Both roads land here (`+set-state` and OSC 7777): the window shows
+    /// the most urgent state of its panes in its title and on its tabs
+    /// (T3561).
     pub fn setActivityState(self: *Self, state: terminal.osc.Command.ActivityState) void {
-        self.private().activity_state = state;
+        const priv = self.private();
+        if (priv.activity_state == state) return;
+        priv.activity_state = state;
+        if (ext.getAncestor(Window, self.as(gtk.Widget))) |window| window.syncActivity();
     }
 
     /// The pane's tint, or null when it shows the configured background.
@@ -1229,6 +1241,7 @@ pub const Surface = extern struct {
         gl.setSizeRequest(-1, 1);
         banner.owner = self;
         banner.on_link = &bannerLink;
+        banner.on_link_menu = &bannerLinkMenu;
         banner.pane_id = self.paneId();
         priv.banner = banner;
         return banner;
@@ -1253,7 +1266,48 @@ pub const Surface = extern struct {
     fn bannerLink(owner: *anyopaque, target: []const u8, ctrl: bool, shift: bool) void {
         const self: *Self = @ptrCast(@alignCast(owner));
         const kind = banner_link.kindOf(target);
-        const act = banner_link.clickAction(kind, ctrl, shift);
+        self.bannerLinkAction(banner_link.clickAction(kind, ctrl, shift), target);
+    }
+
+    /// A right-click on a banner link (T3561): the link menu every platform
+    /// shares (`banner_link.build` - a web link's browser / side pane / new
+    /// window / copy, a file's reveal / side pane / new window / default app
+    /// / copy path, a `ghoztty://` link's focus / copy), popped at the press.
+    /// The rows are the viewer's link menu's, so the two cannot drift. A
+    /// file link is named by its path, which is what Copy Path copies.
+    fn bannerLinkMenu(owner: *anyopaque, target: []const u8, x: f64, y: f64) void {
+        const self: *Self = @ptrCast(@alignCast(owner));
+        const priv = self.private();
+        const kind = banner_link.kindOf(target);
+        const owned = std.heap.c_allocator.dupeZ(u8, target) catch return;
+        if (priv.banner_menu_target) |old| std.heap.c_allocator.free(old);
+        priv.banner_menu_target = owned;
+        var buf: [std.fs.max_path_bytes]u8 = undefined;
+        const shown = if (kind == .file) banner_markup.localPath(&buf, target) orelse target else target;
+        if (Viewer.linkMenuSink(std.heap.c_allocator, kind, shown)) return;
+        const banner = priv.banner orelse return;
+        Viewer.popLinkMenu(banner.box, kind, x, y, &onBannerMenuAction, self);
+    }
+
+    fn onBannerMenuAction(action: *wk.GSimpleAction, _: ?*anyopaque, ud: ?*anyopaque) callconv(.c) void {
+        const self: *Self = @ptrCast(@alignCast(ud orelse return));
+        const id = viewer_links.idFromActionName(std.mem.span(wk.g_action_get_name(action))) orelse return;
+        _ = self.pickBannerMenuRow(id);
+    }
+
+    /// Run a row of the banner's last link menu on its link. False when no
+    /// menu was opened. What a row's activation runs, and what the test
+    /// seam calls (`pane-banner --menu-pick=<row>`).
+    pub fn pickBannerMenuRow(self: *Self, id: banner_link.Id) bool {
+        const target = self.private().banner_menu_target orelse return false;
+        log.info("banner link menu: {s} on {s}", .{ viewer_links.actionName(id), target });
+        self.bannerLinkAction(banner_link.action(id), target);
+        return true;
+    }
+
+    /// What a banner link's click or menu row does with it.
+    fn bannerLinkAction(self: *Self, act: banner_link.Action, target: []const u8) void {
+        const kind = banner_link.kindOf(target);
         var buf: [std.fs.max_path_bytes]u8 = undefined;
         const path = if (kind == .file) banner_markup.localPath(&buf, target) else null;
         const widget: *wk.GtkWidget = @ptrCast(self);
@@ -1277,7 +1331,14 @@ pub const Surface = extern struct {
                 if (Viewer.linkSink("reveal", p)) return;
                 Viewer.revealPathFrom(widget, p);
             },
-            .copy => {},
+            // A file's path, else the link as written (Copy Path / Copy Link).
+            .copy => {
+                const text = path orelse target;
+                if (Viewer.linkSink("copy", text)) return;
+                const z = std.heap.c_allocator.dupeZ(u8, text) catch return;
+                defer std.heap.c_allocator.free(z);
+                wk.gdk_clipboard_set_text(wk.gtk_widget_get_clipboard(widget), z.ptr);
+            },
         }
     }
 
@@ -2547,6 +2608,10 @@ pub const Surface = extern struct {
         if (priv.banner) |b| {
             b.destroy();
             priv.banner = null;
+        }
+        if (priv.banner_menu_target) |t| {
+            std.heap.c_allocator.free(t);
+            priv.banner_menu_target = null;
         }
         if (priv.mouse_hover_url) |v| {
             glib.free(@ptrCast(@constCast(v)));

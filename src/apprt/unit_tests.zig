@@ -618,6 +618,9 @@ test {
     // ... when the card collapses and to what, and the banner editor's keys
     // (T3559). No GTK imports.
     _ = @import("gtk/pane_banner_rules.zig");
+    // ... and the activity state a window shows: the title suffix, the most
+    // urgent pane, its tabs' marks (T3561). No GTK imports.
+    _ = @import("gtk/window_activity.zig");
     // ... and the pane sidebar's: a row's text, the mode, where the shared
     // flags are kept (T3557). No GTK imports.
     _ = @import("gtk/pane_sidebar_rows.zig");

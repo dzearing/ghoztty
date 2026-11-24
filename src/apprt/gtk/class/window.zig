@@ -31,6 +31,7 @@ const CommandPalette = @import("command_palette.zig").CommandPalette;
 const WeakRef = @import("../weak_ref.zig").WeakRef;
 const CloseUndo = @import("../CloseUndo.zig");
 const PaneSidebar = @import("../PaneSidebar.zig");
+const window_activity = @import("../window_activity.zig");
 
 const log = std.log.scoped(.gtk_ghostty_window);
 
@@ -227,9 +228,6 @@ pub const Window = extern struct {
         /// config on a per-window basis.
         window_decoration: ?configpkg.WindowDecoration = null,
 
-        /// Binding group for our active tab.
-        tab_bindings: *gobject.BindingGroup,
-
         /// The window's IPC name (`+new-window --target`, else a minted
         /// `window-N`; T3370). Window names are global. Owned.
         ipc_name: ?[]u8 = null,
@@ -329,10 +327,8 @@ pub const Window = extern struct {
             self.as(gtk.Widget).addCssClass("devel");
         }
 
-        // Setup our tab binding group. This ensures certain properties
-        // are only synced from the currently active tab.
-        priv.tab_bindings = gobject.BindingGroup.new();
-        priv.tab_bindings.bind("title", self.as(gobject.Object), "title", .{});
+        // The title follows the selected tab through `syncTitle` (T3561),
+        // not a property binding: it carries the activity suffix too.
 
         // Set our window icon. We can't set this in the blueprint file
         // because its dependent on the build config.
@@ -945,14 +941,7 @@ pub const Window = extern struct {
         priv.title_override = null;
         const t = title orelse "";
         if (t.len > 0) priv.title_override = alloc.dupeZ(u8, t) catch null;
-
-        priv.tab_bindings.setSource(null);
-        if (priv.title_override) |pinned| {
-            self.as(gtk.Window).setTitle(pinned);
-            return;
-        }
-        const page = priv.tab_view.getSelectedPage() orelse return;
-        priv.tab_bindings.setSource(page.getChild().as(gobject.Object));
+        self.syncTitle();
     }
 
     /// Returns the configuration for this window. The reference count
@@ -1380,8 +1369,6 @@ pub const Window = extern struct {
             priv.config = null;
         }
 
-        priv.tab_bindings.setSource(null);
-
         // Before the template's widgets go: it removes its rows from them.
         if (priv.pane_sidebar) |s| {
             s.destroy();
@@ -1405,7 +1392,6 @@ pub const Window = extern struct {
 
     fn finalize(self: *Self) callconv(.c) void {
         const priv = self.private();
-        priv.tab_bindings.unref();
         priv.winproto.deinit();
         const alloc = Application.default().allocator();
         if (priv.ipc_name) |v| alloc.free(v);
@@ -1678,22 +1664,15 @@ pub const Window = extern struct {
     ) callconv(.c) void {
         const priv = self.private();
 
-        // Always reset our binding source in case we have no pages.
-        priv.tab_bindings.setSource(null);
-
         // Get our current page which MUST be a Tab object.
         const page = priv.tab_view.getSelectedPage() orelse return;
         const child = page.getChild();
         assert(gobject.ext.isA(child, Tab));
 
-        // Setup our binding group. This ensures things like the title
-        // are synced from the active tab - unless a script pinned the
-        // window's title (T3370), which wins until it is cleared.
-        if (priv.title_override) |t| {
-            self.as(gtk.Window).setTitle(t);
-        } else {
-            priv.tab_bindings.setSource(child.as(gobject.Object));
-        }
+        // The title follows the selected tab - unless a script pinned the
+        // window's title (T3370), which wins until it is cleared - with the
+        // activity suffix (T3561).
+        self.syncTitle();
 
         // If the tab was previously marked as needing attention
         // (e.g. due to a bell character), we now unmark that
@@ -1748,7 +1727,74 @@ pub const Window = extern struct {
         // The focused pane is the sidebar's selected row (T3557).
         // Disconnected with the tab's other handlers on detach (by data).
         _ = gobject.Object.signals.notify.connect(tab, *Self, sidebarTabNotify, self, .{ .detail = "active-surface" });
+        // The window's title is the selected tab's plus the activity suffix
+        // (T3561), recomposed whenever that title moves.
+        _ = gobject.Object.signals.notify.connect(tab, *Self, tabTitleNotify, self, .{ .detail = "title" });
         self.queueSidebarRefresh();
+        // The tab brings its panes' states (a tab moved in from another
+        // window keeps them).
+        self.syncActivity();
+    }
+
+    fn tabTitleNotify(tab: *Tab, _: *gobject.ParamSpec, self: *Self) callconv(.c) void {
+        const page = self.private().tab_view.getSelectedPage() orelse return;
+        if (page.getChild() != tab.as(gtk.Widget)) return;
+        self.syncTitle();
+    }
+
+    // ---- Activity state (T3561) --------------------------------------------
+
+    /// The most urgent activity state across every pane in every tab
+    /// (`needs_input` > `busy` > `idle`), as Mac and win32 aggregate it.
+    pub fn activityAggregate(self: *Self) window_activity.State {
+        var agg: window_activity.State = .idle;
+        const view = self.private().tab_view;
+        const n: c_int = view.getNPages();
+        var i: c_int = 0;
+        while (i < n) : (i += 1) {
+            const tab = gobject.ext.cast(Tab, view.getNthPage(i).getChild()) orelse continue;
+            agg = window_activity.worse(agg, tab.activityAggregate());
+        }
+        return agg;
+    }
+
+    /// A pane's activity state moved, or the panes did (a split closed, a
+    /// tab came or went): mark each tab on the tab bar and recompose the
+    /// window title. Cheap - a walk of this window's panes.
+    pub fn syncActivity(self: *Self) void {
+        const view = self.private().tab_view;
+        const n: c_int = view.getNPages();
+        var i: c_int = 0;
+        while (i < n) : (i += 1) {
+            const page = view.getNthPage(i);
+            const tab = gobject.ext.cast(Tab, page.getChild()) orelse continue;
+            const now = tab.activityAggregate();
+            const old = tab.swapActivity(now);
+            const marks = window_activity.tabMarks(old, now);
+            page.setLoading(@intFromBool(marks.loading));
+            if (marks.attention) |a| page.setNeedsAttention(@intFromBool(a));
+            if (old != now) log.info("activity: tab={d} state={s} loading={} attention={?}", .{
+                i, @tagName(now), marks.loading, marks.attention,
+            });
+        }
+        self.syncTitle();
+    }
+
+    /// Set the window title: the pinned title (T3370), else the selected
+    /// tab's, then the activity suffix (" (busy)", " (question)").
+    pub fn syncTitle(self: *Self) void {
+        const priv = self.private();
+        const base: ?[]const u8 = priv.title_override orelse blk: {
+            const page = priv.tab_view.getSelectedPage() orelse break :blk null;
+            const tab = gobject.ext.cast(Tab, page.getChild()) orelse break :blk null;
+            break :blk tab.getTitle();
+        };
+        const alloc = Application.default().allocator();
+        const title = (window_activity.composeTitle(alloc, base, self.activityAggregate()) catch return) orelse return;
+        defer alloc.free(title);
+        const current: ?[*:0]const u8 = self.as(gtk.Window).getTitle();
+        if (current) |c| if (std.mem.eql(u8, std.mem.span(c), title)) return;
+        self.as(gtk.Window).setTitle(title);
     }
 
     fn tabViewPageDetached(
@@ -1774,6 +1820,9 @@ pub const Window = extern struct {
         if (tab.getSurfaceTree()) |tree| {
             self.disconnectSurfaceHandlers(tree);
         }
+
+        // Its panes' states leave with it (T3561).
+        self.syncActivity();
     }
 
     fn tabViewCreateWindow(
@@ -1975,6 +2024,8 @@ pub const Window = extern struct {
             self.connectSurfaceHandlers(tree);
         }
         self.queueSidebarRefresh();
+        // A closed busy pane takes its state with it (T3561).
+        self.syncActivity();
     }
 
     fn actionAbout(

@@ -16,6 +16,7 @@ const Application = @import("application.zig").Application;
 const SplitTree = @import("split_tree.zig").SplitTree;
 const Surface = @import("surface.zig").Surface;
 const TitleDialog = @import("title_dialog.zig").TitleDialog;
+const window_activity = @import("../window_activity.zig");
 
 const log = std.log.scoped(.gtk_ghostty_window);
 
@@ -168,6 +169,10 @@ pub const Tab = extern struct {
         /// The tooltip of this tab. This is usually bound to the active surface.
         tooltip: ?[:0]const u8 = null,
 
+        /// The most urgent activity state of this tab's panes, as its
+        /// window last marked it on the tab bar (T3561).
+        activity: window_activity.State = .idle,
+
         // Template bindings
         split_tree: *SplitTree,
 
@@ -297,6 +302,29 @@ pub const Tab = extern struct {
     /// This does not ref the value.
     pub fn getActiveSurface(self: *Self) ?*Surface {
         return self.getSplitTree().getActiveSurface();
+    }
+
+    /// The tab's title (its "title" property), or null before it has one.
+    pub fn getTitle(self: *Self) ?[:0]const u8 {
+        return self.private().title;
+    }
+
+    /// The most urgent activity state of this tab's panes (T3561):
+    /// `needs_input` > `busy` > `idle`. A viewer pane is always idle.
+    pub fn activityAggregate(self: *Self) window_activity.State {
+        var agg: window_activity.State = .idle;
+        const tree = self.getSurfaceTree() orelse return agg;
+        var it = tree.iterator();
+        while (it.next()) |entry| agg = window_activity.worse(agg, entry.view.getActivityState());
+        return agg;
+    }
+
+    /// The state the window last marked this tab with, and the new one.
+    pub fn swapActivity(self: *Self, new: window_activity.State) window_activity.State {
+        const priv = self.private();
+        const old = priv.activity;
+        priv.activity = new;
+        return old;
     }
 
     /// Get the surface tree of this tab.

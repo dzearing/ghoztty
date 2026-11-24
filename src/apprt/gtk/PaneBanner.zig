@@ -20,7 +20,11 @@
 //! (docs/design/linux-port.md).
 //!
 //! A click on a link goes to `on_link` with the modifiers held at the press,
-//! so the surface can apply the click table (`banner_link.clickAction`).
+//! so the surface can apply the click table (`banner_link.clickAction`). A
+//! right-click on a link goes to `on_link_menu` (T3561) with the press's
+//! position in the card, and the surface pops the same link menu a viewer
+//! pane's links have (`banner_link.build`) - in place of GtkLabel's own
+//! Copy Link menu, whose press it claims.
 //!
 //! **Collapse (T3559).** A click anywhere else on the card, or on its
 //! chevron, collapses a multi-line banner to its title row and back
@@ -53,6 +57,12 @@ const gdk_control_mask: c_uint = 1 << 2;
 const max_cell_lines: c_int = 3;
 
 pub const LinkCallback = *const fn (owner: *anyopaque, target: []const u8, ctrl: bool, shift: bool) void;
+/// A right-click on a link: its target, and where the press landed in the
+/// card's (`box`'s) coordinates, for the menu to point at.
+pub const LinkMenuCallback = *const fn (owner: *anyopaque, target: []const u8, x: f64, y: f64) void;
+
+const gdk_button_secondary: c_uint = 3;
+const gtk_event_sequence_claimed: c_int = 1;
 
 alloc: Allocator,
 /// The card: a horizontal box, styled `.pane-banner`, hidden while there is
@@ -84,6 +94,7 @@ mods: c_uint = 0,
 /// seam names it by.
 owner: ?*anyopaque = null,
 on_link: ?LinkCallback = null,
+on_link_menu: ?LinkMenuCallback = null,
 pane_id: []const u8 = "",
 
 pub fn create(alloc: Allocator) Allocator.Error!*PaneBanner {
@@ -136,6 +147,7 @@ pub fn destroy(self: *PaneBanner) void {
     if (self.pending_toggle) {
         self.owner = null;
         self.on_link = null;
+        self.on_link_menu = null;
         self.destroyed = true;
         return;
     }
@@ -333,6 +345,13 @@ fn label(self: *PaneBanner, m: [:0]const u8, xalign: f32) *wk.GtkWidget {
     wk.gtk_widget_set_focusable(l, 0);
     wk.gtk_widget_set_focus_on_click(l, 0);
     _ = wk.g_signal_connect_data(l, "activate-link", @ptrCast(&onActivateLink), self, null, 0);
+    // A right-click on a link is ours (T3561): captured before the label's
+    // own gesture, which would pop GtkLabel's Copy Link menu.
+    const menu_click = wk.gtk_gesture_click_new();
+    wk.gtk_gesture_single_set_button(menu_click, gdk_button_secondary);
+    wk.gtk_event_controller_set_propagation_phase(menu_click, phase_capture);
+    _ = wk.g_signal_connect_data(menu_click, "pressed", @ptrCast(&onSecondaryPressed), self, null, 0);
+    wk.gtk_widget_add_controller(l, menu_click);
     return l;
 }
 
@@ -395,6 +414,30 @@ fn onActivateLink(_: *wk.GtkWidget, uri: [*:0]const u8, self: *PaneBanner) callc
     // Handled: never GTK's default, which would hand a bare path to the
     // desktop as a URI.
     return 1;
+}
+
+/// A right-click on a label. Over a link (the label's current link is the
+/// one under the pointer), the press is claimed - GtkLabel's own menu never
+/// opens - and the link menu is owed. Anywhere else the label keeps it.
+fn onSecondaryPressed(gesture: *wk.GtkEventController, _: c_int, x: f64, y: f64, self: *PaneBanner) callconv(.c) void {
+    const l = wk.gtk_event_controller_get_widget(gesture);
+    const uri = wk.gtk_label_get_current_uri(l) orelse return;
+    _ = wk.gtk_gesture_set_state(gesture, gtk_event_sequence_claimed);
+    var cx: f64 = x;
+    var cy: f64 = y;
+    if (wk.gtk_widget_translate_coordinates(l, self.box, x, y, &cx, &cy) == 0) {
+        cx = 0;
+        cy = 0;
+    }
+    self.linkMenu(std.mem.span(uri), cx, cy);
+}
+
+/// A link menu is owed for `target` at (`x`, `y`) in the card. What a
+/// right-click on a link runs, and what the test seam calls.
+pub fn linkMenu(self: *PaneBanner, target: []const u8, x: f64, y: f64) void {
+    log.info("banner: link menu pane={s} target={s}", .{ self.pane_id, target });
+    const cb = self.on_link_menu orelse return;
+    cb(self.owner orelse return, target, x, y);
 }
 
 // ---- The test seam -----------------------------------------------------------

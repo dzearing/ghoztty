@@ -59,6 +59,7 @@ const Window = @import("class/window.zig").Window;
 const PaneSidebar = @import("PaneSidebar.zig");
 const BannerEditor = @import("BannerEditor.zig");
 const pane_banner_rules = @import("pane_banner_rules.zig");
+const viewer_links = @import("viewer_links.zig");
 const Tab = @import("class/tab.zig").Tab;
 const Surface = @import("class/surface.zig").Surface;
 const CloseUndo = @import("CloseUndo.zig");
@@ -220,12 +221,24 @@ fn paneSidebar(app: Context, request: Request) Allocator.Error![]u8 {
 /// `pass` in the reply means the key was left to the text view (Return: a
 /// newline). Reply: the card (`shown`, `collapsible`, `collapsed`) and the
 /// editor (`open`, its `pane`, its `text`), after the clicks and keys.
+///
+/// The link menu (T3561): `--link-menu=<target>` is a right-click on a banner
+/// link to `<target>` (the label's own gesture finds the link under a real
+/// pointer; there is none here), and `--menu-pick=<row>` runs a row of the
+/// last one (`open_browser`, `reveal`, `side_pane`, `new_window`,
+/// `open_default_app`, `copy`, `focus`). Under `GHOZTTY_TEST_VIEWER_LINKS`
+/// the menu is recorded, not popped (`menu <kind> <target> rows=...`), and
+/// the rows' hand-offs are recorded the way the viewer's are.
 fn paneBanner(app: Context, request: Request) Allocator.Error![]u8 {
     var target_arg: ?[]const u8 = null;
     var click_arg: ?[]const u8 = null;
     var text_arg: ?[]const u8 = null;
     var key_arg: ?[]const u8 = null;
+    var menu_arg: ?[]const u8 = null;
+    var pick_arg: ?[]const u8 = null;
     for (request.arguments orelse &.{}) |arg| {
+        if (std.mem.startsWith(u8, arg, "--link-menu=")) menu_arg = arg["--link-menu=".len..];
+        if (std.mem.startsWith(u8, arg, "--menu-pick=")) pick_arg = arg["--menu-pick=".len..];
         if (std.mem.startsWith(u8, arg, "--target=")) target_arg = arg["--target=".len..];
         if (std.mem.startsWith(u8, arg, "--click=")) click_arg = arg["--click=".len..];
         if (std.mem.startsWith(u8, arg, "--editor-text=")) text_arg = arg["--editor-text=".len..];
@@ -254,6 +267,17 @@ fn paneBanner(app: Context, request: Request) Allocator.Error![]u8 {
         } else if (std.mem.eql(u8, click, "chevron")) {
             c.chevronClicked();
         } else return server.errorResponse(c_alloc, "--click must be card or chevron", .{});
+    }
+
+    if (menu_arg) |m| {
+        const c = card orelse return server.errorResponse(c_alloc, "pane '{s}' has no banner", .{target_name});
+        c.linkMenu(m, 0, 0);
+    }
+    if (pick_arg) |p| {
+        const id = viewer_links.idFromActionName(p) orelse
+            return server.errorResponse(c_alloc, "--menu-pick: no menu row '{s}'", .{p});
+        if (!surface.pickBannerMenuRow(id))
+            return server.errorResponse(c_alloc, "no banner link menu was opened on '{s}'", .{target_name});
     }
 
     var effect: ?pane_banner_rules.EditorKey = null;
