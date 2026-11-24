@@ -151,6 +151,7 @@ pub fn handleSeam(app: Context, request: Request) Allocator.Error!server.SeamRep
     if (std.mem.eql(u8, request.action, "pane-stack")) return .{ .reply = try paneStack(app, request) };
     if (std.mem.eql(u8, request.action, "read-clipboard")) return .{ .reply = try readClipboard(app, request) };
     if (std.mem.eql(u8, request.action, "settings")) return .{ .reply = try settingsSeam(app, request) };
+    if (std.mem.eql(u8, request.action, "shortcut-guide")) return .{ .reply = try shortcutGuideSeam(app, request) };
     if (!std.mem.eql(u8, request.action, "capture-pane")) return .unhandled;
     return .{ .reply = try capturePane(app, request) };
 }
@@ -804,6 +805,163 @@ fn writeSettingsState(jws: *std.json.Stringify, arena: Allocator, w_opt: anytype
         }
     }
     try jws.endObject();
+}
+
+/// `shortcut-guide --op=<op>` (T3570): the keyboard shortcut guide, by the op
+/// names and reply shape of win32's `ipc_shortcut_guide.zig`, so the two
+/// acceptance scripts read alike. Every op calls what the window's own
+/// signal handlers call.
+///
+///   --op=action      perform `show_keyboard_shortcuts` (the app action)
+///   --op=open        open the guide directly
+///   --op=state       the model it shows
+///   --op=select --down=<n>   Up/Down
+///   --op=run         Return
+///   --op=escape      Escape
+///   --op=cheat-sheet write the cheat sheet (never opens it); reply names it
+///   --op=close       the title bar's close button
+///   filters on any op: --query=<q> --category=<all|name> --unbound=<0|1>
+fn shortcutGuideSeam(app: Context, request: Request) Allocator.Error![]u8 {
+    const Guide = @import("ShortcutGuideWindow.zig");
+    var op: []const u8 = "state";
+    var q: ?[]const u8 = null;
+    var cat: ?[]const u8 = null;
+    var unbound: ?bool = null;
+    var down: i32 = 1;
+    for (request.arguments orelse &.{}) |arg| {
+        if (std.mem.startsWith(u8, arg, "--op=")) op = arg["--op=".len..];
+        if (std.mem.startsWith(u8, arg, "--query=")) q = arg["--query=".len..];
+        if (std.mem.startsWith(u8, arg, "--category=")) cat = arg["--category=".len..];
+        if (std.mem.startsWith(u8, arg, "--unbound=")) unbound = std.mem.eql(u8, arg["--unbound=".len..], "1");
+        if (std.mem.startsWith(u8, arg, "--down=")) down = std.fmt.parseInt(i32, arg["--down=".len..], 10) catch
+            return server.errorResponse(c_alloc, "--down must be an integer", .{});
+    }
+    const category: ?Guide.Category = if (cat) |c|
+        (if (std.mem.eql(u8, c, "all")) null else std.meta.stringToEnum(Guide.Category, c) orelse
+            return server.errorResponse(c_alloc, "--category must be all or a category name", .{}))
+    else
+        null;
+
+    if (std.mem.eql(u8, op, "action")) {
+        _ = app.performAction(.app, .show_keyboard_shortcuts, {}) catch |err|
+            return server.errorResponse(c_alloc, "show_keyboard_shortcuts failed: {}", .{err});
+    } else if (std.mem.eql(u8, op, "open")) {
+        Guide.open(app);
+    } else if (std.mem.eql(u8, op, "close")) {
+        if (Guide.current()) |w| w.close();
+        return writeGuideState(null, null, null);
+    }
+    const w = Guide.current() orelse
+        return server.errorResponse(c_alloc, "the keyboard shortcut guide is not open", .{});
+
+    // Filters apply in win32's fixed order: the toggle, the category, the
+    // query (a query clears the category, so it goes last - as typing does).
+    if (unbound) |u| w.setIncludeUnbound(u);
+    if (cat != null) w.setCategory(category);
+    if (q) |text| w.setQuery(text);
+
+    var ran: ?bool = null;
+    var sheet: ?[]u8 = null;
+    defer if (sheet) |s| c_alloc.free(s);
+    if (std.mem.eql(u8, op, "select")) {
+        w.moveSelection(down);
+    } else if (std.mem.eql(u8, op, "run")) {
+        ran = w.runSelection();
+    } else if (std.mem.eql(u8, op, "escape")) {
+        w.escape();
+    } else if (std.mem.eql(u8, op, "cheat-sheet")) {
+        sheet = w.writeCheatSheet(c_alloc) catch |err|
+            return server.errorResponse(c_alloc, "cheat sheet failed ({s})", .{@errorName(err)});
+    } else if (!std.mem.eql(u8, op, "state") and !std.mem.eql(u8, op, "open") and !std.mem.eql(u8, op, "action")) {
+        return server.errorResponse(c_alloc, "unknown --op '{s}'", .{op});
+    }
+    return writeGuideState(Guide.current(), ran, sheet);
+}
+
+fn writeGuideState(w_opt: ?*const @import("ShortcutGuideWindow.zig"), ran: ?bool, sheet: ?[]const u8) Allocator.Error![]u8 {
+    const catalog_mod = @import("../win32/shortcut_catalog.zig");
+    var arena_state = std.heap.ArenaAllocator.init(c_alloc);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var out: std.Io.Writer.Allocating = .init(c_alloc);
+    errdefer out.deinit();
+    var jws: std.json.Stringify = .{ .writer = &out.writer };
+    (struct {
+        fn write(j: *std.json.Stringify, a: Allocator, wo: anytype, r: ?bool, s: ?[]const u8) !void {
+            try j.beginObject();
+            try j.objectField("success");
+            try j.write(true);
+            try j.objectField("data");
+            try j.beginObject();
+            try j.objectField("open");
+            try j.write(wo != null);
+            if (r) |v| {
+                try j.objectField("ran");
+                try j.write(v);
+            }
+            if (s) |v| {
+                try j.objectField("cheat_sheet");
+                try j.write(v);
+            }
+            if (wo) |w| {
+                try j.objectField("query");
+                try j.write(w.query());
+                try j.objectField("category");
+                try j.write(if (w.category) |c| @tagName(c) else null);
+                try j.objectField("include_unbound");
+                try j.write(w.include_unbound);
+                try j.objectField("bound");
+                try j.write(w.bound_total);
+                try j.objectField("customized");
+                try j.write(w.customized_total);
+                try j.objectField("all_count");
+                try j.write(w.all_count);
+                try j.objectField("selected");
+                try j.write(if (w.selectedRow()) |row| row.id else null);
+                try j.objectField("last_run");
+                try j.write(w.lastRun());
+                try j.objectField("counts");
+                try j.beginObject();
+                for (std.enums.values(catalog_mod.Category)) |c| {
+                    try j.objectField(@tagName(c));
+                    try j.write(w.counts[@intFromEnum(c)]);
+                }
+                try j.endObject();
+                try j.objectField("rows");
+                try j.beginArray();
+                for (w.rows) |row| {
+                    try j.beginObject();
+                    try j.objectField("id");
+                    try j.write(row.id);
+                    try j.objectField("kind");
+                    try j.write(@tagName(row.kind));
+                    try j.objectField("title");
+                    try j.write(row.title);
+                    try j.objectField("category");
+                    try j.write(@tagName(row.category));
+                    try j.objectField("keys");
+                    try j.beginArray();
+                    for (row.bindings) |b| try j.write(try catalog_mod.bindingText(a, b));
+                    try j.endArray();
+                    try j.objectField("customized");
+                    try j.write(row.customized);
+                    try j.objectField("unbound_by_user");
+                    try j.write(row.unbound_by_user);
+                    try j.objectField("global");
+                    try j.write(row.isGlobal());
+                    try j.objectField("table");
+                    try j.write(row.table());
+                    try j.objectField("runnable");
+                    try j.write(row.runnable);
+                    try j.endObject();
+                }
+                try j.endArray();
+            }
+            try j.endObject();
+            try j.endObject();
+        }
+    }).write(&jws, arena, w_opt, ran, sheet) catch return error.OutOfMemory;
+    return out.toOwnedSlice();
 }
 
 fn readClipboardDone(source: ?*gobject.Object, res: *gio.AsyncResult, ud: ?*anyopaque) callconv(.c) void {

@@ -7488,6 +7488,14 @@ pub const Keybinds = struct {
                 .{ .key = .{ .unicode = 's' }, .mods = .{ .ctrl = true, .shift = true } },
                 .{ .toggle_pane_sidebar = {} },
             );
+            // The keyboard shortcut guide (T3570; mac: cmd+/): Windows'
+            // Ctrl+Shift+/ (T2591), which is also GTK's own Ctrl+? for a
+            // shortcuts window. Plain Ctrl+/ stays the shell's ^_ undo.
+            try self.set.put(
+                alloc,
+                .{ .key = .{ .unicode = '/' }, .mods = .{ .ctrl = true, .shift = true } },
+                .{ .show_keyboard_shortcuts = {} },
+            );
             // The Set Pane Banner editor (T3559; mac: cmd+r): Windows'
             // Ctrl+Shift+B, for Windows' reason: plain ctrl+r is the shell's
             // reverse history search.

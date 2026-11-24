@@ -20,11 +20,21 @@
 //! are the Windows ones (docs/claude/viewers.md), and descriptors whose Mac
 //! text says "Linux only" or "points" say what is true here.
 //!
+//! The GTK frontend reads the same catalog (T3570, Linux L11h): where Linux
+//! differs from Windows it is a comptime `linux` branch in place - the
+//! Super key is "Super", Quit is "Quit", and the GTK-only inspector and
+//! on-screen keyboard are real actions there.
+//!
 //! No OS imports, so the unit tests run in every app-runtime lane.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const Allocator = std.mem.Allocator;
 const input = @import("../../input.zig");
+
+/// The GTK build (T3570) draws chords the way Windows does, Ctrl first,
+/// with Linux's own words where they differ.
+const linux = builtin.os.tag == .linux;
 const keybind_list = @import("../../config/keybind_list.zig");
 
 pub const Entry = keybind_list.Entry;
@@ -246,17 +256,31 @@ pub fn describe(arena: Allocator, key: Key, arg: []const u8) Allocator.Error!Des
         .toggle_command_palette => d(.app, "Command Palette", "Search for and run any command.", true, "toggle_command_palette"),
         .open_config => d(.app, "Open Settings", "Open your Ghoztty settings.", true, "open_config"),
         .reload_config => d(.app, "Reload Config", "Re-read your config without restarting.", true, "reload_config"),
-        // The terminal inspector is not built on win32 (`commands.unsupported_actions`).
-        .inspector => d(.app, "Terminal Inspector", "Show or hide the inspector for debugging terminal state (not on Windows yet).", false, null),
+        // The terminal inspector is not built on win32 (`commands.unsupported_actions`);
+        // GTK has it.
+        .inspector => if (linux)
+            d(.app, "Terminal Inspector", "Show or hide the inspector for debugging terminal state.", true, "inspector:toggle")
+        else
+            d(.app, "Terminal Inspector", "Show or hide the inspector for debugging terminal state (not on Windows yet).", false, null),
         .toggle_quick_terminal => d(.app, "Quick Terminal", "Slide the quick terminal in or out.", true, "toggle_quick_terminal"),
         .toggle_visibility => d(.app, "Show/Hide Ghoztty", "Hide or reveal every Ghoztty window.", false, "toggle_visibility"),
         .toggle_secure_input => d(.app, "Secure Keyboard Entry", "Stop other apps from observing what you type (macOS only).", false, null),
         .toggle_mouse_reporting => d(.app, "Toggle Mouse Reporting", "Let (or stop) terminal programs see the mouse.", true, "toggle_mouse_reporting"),
-        .check_for_updates => d(.app, "Check for Updates\u{2026}", "Look for a newer version of Ghoztty.", true, "check_for_updates"),
-        // Windows' word for it (File > Exit); Mac says Quit.
-        .quit => d(.app, "Exit Ghoztty", "Close every window and exit the app.", false, "quit"),
-        .show_gtk_inspector => d(.app, "GTK Inspector", "Open the GTK inspector (Linux only).", false, null),
-        .show_on_screen_keyboard => d(.app, "On-Screen Keyboard", "Show the on-screen keyboard (Linux only).", false, null),
+        // GTK has no updater yet (its `performAction` declines it).
+        .check_for_updates => if (linux)
+            d(.app, "Check for Updates\u{2026}", "Look for a newer version of Ghoztty (not on Linux yet).", false, null)
+        else
+            d(.app, "Check for Updates\u{2026}", "Look for a newer version of Ghoztty.", true, "check_for_updates"),
+        // Windows' word for it (File > Exit); Mac and GTK say Quit.
+        .quit => d(.app, if (linux) "Quit Ghoztty" else "Exit Ghoztty", "Close every window and exit the app.", false, "quit"),
+        .show_gtk_inspector => if (linux)
+            d(.app, "GTK Inspector", "Open the GTK inspector.", true, "show_gtk_inspector")
+        else
+            d(.app, "GTK Inspector", "Open the GTK inspector (Linux only).", false, null),
+        .show_on_screen_keyboard => if (linux)
+            d(.app, "On-Screen Keyboard", "Show the on-screen keyboard.", false, "show_on_screen_keyboard")
+        else
+            d(.app, "On-Screen Keyboard", "Show the on-screen keyboard (Linux only).", false, null),
 
         // Key tables & advanced
         .activate_key_table => d(.advanced, try p(arena, "Enter \u{201C}{s}\u{201D} Key Table", .{arg}), "Switch to a key table until it's deactivated.", false, null),
@@ -441,11 +465,12 @@ pub const Mods = packed struct(u4) {
     }
 
     /// Windows' own order (Win, Ctrl, Alt, Shift) - `menu_label.formatTrigger`
-    /// prints the same, and it is also config's canonical order.
+    /// prints the same, and it is also config's canonical order. Linux calls
+    /// the Windows key Super (GTK's accelerator labels do too).
     pub fn labels(self: Mods, out: *[4][]const u8) []const []const u8 {
         var n: usize = 0;
         if (self.super) {
-            out[n] = "Win";
+            out[n] = if (linux) "Super" else "Win";
             n += 1;
         }
         if (self.ctrl) {
@@ -1264,7 +1289,10 @@ test "triggers parse every spelling to one canonical form" {
     const seq = (try Trigger.parse(arena, "ctrl+a>n")).?;
     try testing.expectEqual(@as(usize, 2), seq.steps.len);
     try testing.expectEqualStrings("Ctrl+A then N", try seq.display(arena));
-    try testing.expectEqualStrings("Win+Ctrl+Alt+Shift+\u{2190}", try (try Trigger.parse(arena, "shift+alt+ctrl+super+left")).?.display(arena));
+    try testing.expectEqualStrings(
+        if (linux) "Super+Ctrl+Alt+Shift+\u{2190}" else "Win+Ctrl+Alt+Shift+\u{2190}",
+        try (try Trigger.parse(arena, "shift+alt+ctrl+super+left")).?.display(arena),
+    );
     try testing.expectEqualStrings("Ctrl+>", try (try Trigger.parse(arena, "ctrl+>")).?.display(arena));
 }
 

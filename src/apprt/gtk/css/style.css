@@ -301,3 +301,24 @@ label.resize-overlay {
 .pane-sidebar .pane-sidebar-row.pane-sidebar-selected {
   background-color: alpha(@accent_bg_color, 0.35);
 }
+
+/*
+ * The keyboard shortcut guide (T3570): keycaps and row badges.
+ */
+.ghoztty-shortcut-guide label.ghoztty-keycap {
+  font-family: monospace;
+  font-size: 0.85em;
+  padding: 1px 6px;
+  border-radius: 5px;
+  border: 1px solid alpha(currentColor, 0.25);
+  border-bottom-width: 2px;
+  background-color: alpha(currentColor, 0.06);
+}
+
+.ghoztty-shortcut-guide label.ghoztty-badge {
+  font-size: 0.7em;
+  font-weight: bold;
+  padding: 0 5px;
+  border-radius: 4px;
+  background-color: alpha(@accent_bg_color, 0.2);
+}

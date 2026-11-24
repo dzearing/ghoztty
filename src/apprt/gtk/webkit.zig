@@ -651,6 +651,15 @@ pub extern fn gtk_widget_queue_allocate(widget: *GtkWidget) void;
 pub extern fn gtk_window_destroy(window: *GtkWidget) void;
 pub extern fn gtk_button_new_with_label(label: [*:0]const u8) *GtkWidget;
 pub extern fn gtk_list_box_set_selection_mode(box: *GtkWidget, mode: c_int) void;
+// The keyboard shortcut guide (T3570).
+pub extern fn gtk_check_button_new_with_label(label: [*:0]const u8) *GtkWidget;
+pub extern fn gtk_check_button_get_active(button: *GtkWidget) c_int;
+pub extern fn gtk_list_box_row_new() *GtkWidget;
+pub extern fn gtk_list_box_row_set_child(row: *GtkWidget, child: ?*GtkWidget) void;
+pub extern fn gtk_list_box_unselect_all(box: *GtkWidget) void;
+pub extern fn gtk_widget_set_halign(widget: *GtkWidget, align_: c_int) void;
+pub extern fn gtk_widget_set_valign(widget: *GtkWidget, align_: c_int) void;
+pub extern fn gtk_widget_compute_point(widget: *GtkWidget, target: *GtkWidget, point: *const GraphenePoint, out_point: *GraphenePoint) c_int;
 
 /// `GtkEventSequenceState`.
 pub const sequence_claimed: c_int = 1;

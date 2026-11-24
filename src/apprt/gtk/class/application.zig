@@ -832,6 +832,11 @@ pub const Application = extern struct {
             ),
 
             .open_config => return Action.openConfig(self),
+            .show_keyboard_shortcuts => {
+                // The keyboard shortcut guide (T3570).
+                @import("../ShortcutGuideWindow.zig").open(self);
+                return true;
+            },
 
             .open_url => Action.openUrl(self, value),
 
@@ -897,7 +902,6 @@ pub const Application = extern struct {
             .color_change,
             .reset_window_size,
             .check_for_updates,
-            .show_keyboard_shortcuts,
             => {
                 log.warn("unimplemented action={}", .{action});
                 return false;
@@ -1482,6 +1486,7 @@ pub const Application = extern struct {
         self.syncActionAccelerator("app.quit", .{ .quit = {} });
         self.syncActionAccelerator("app.open-config", .{ .open_config = {} });
         self.syncActionAccelerator("app.reload-config", .{ .reload_config = {} });
+        self.syncActionAccelerator("app.show-keyboard-shortcuts", .{ .show_keyboard_shortcuts = {} });
         self.syncActionAccelerator("win.toggle-inspector", .{ .inspector = .toggle });
         self.syncActionAccelerator("app.show-gtk-inspector", .show_gtk_inspector);
         self.syncActionAccelerator("win.toggle-command-palette", .toggle_command_palette);
@@ -1831,6 +1836,7 @@ pub const Application = extern struct {
             .init("present-surface", actionPresentSurface, t_variant_type),
             .init("quit", actionQuit, null),
             .init("reload-config", actionReloadConfig, null),
+            .init("show-keyboard-shortcuts", actionShowKeyboardShortcuts, null),
         };
 
         ext.actions.add(Self, self, &actions);
@@ -2100,6 +2106,18 @@ pub const Application = extern struct {
         };
     }
 
+    /// The main menu's "Keyboard Shortcuts" (T3570).
+    fn actionShowKeyboardShortcuts(
+        _: *gio.SimpleAction,
+        _: ?*glib.Variant,
+        self: *Self,
+    ) callconv(.c) void {
+        const priv = self.private();
+        priv.core_app.performAction(self.rt(), .show_keyboard_shortcuts) catch |err| {
+            log.warn("error showing keyboard shortcuts err={}", .{err});
+        };
+    }
+
     fn actionQuit(
         _: *gio.SimpleAction,
         _: ?*glib.Variant,
@@ -2326,6 +2344,12 @@ pub const Application = extern struct {
     pub fn openConfigFile(self: *Application) void {
         _ = Action.openConfigFile(self);
     }
+
+    /// The shortcut guide's cheat sheet (T3570): an HTML file in the
+    /// desktop's browser, whose Print does the rest.
+    pub fn openHtmlFile(self: *Application, path: []const u8) void {
+        Action.openUrl(self, .{ .kind = .html, .url = path });
+    }
 };
 
 /// All apprt action handlers
@@ -2373,7 +2397,11 @@ const Action = struct {
 
         switch (target) {
             .surface => |core| core.rt_surface.surface.setConfig(config_obj),
-            .app => self.setConfig(config_obj),
+            .app => {
+                self.setConfig(config_obj);
+                // A reloaded rebind shows up in an open shortcut guide (T3570).
+                @import("../ShortcutGuideWindow.zig").configChanged();
+            },
         }
     }
 
