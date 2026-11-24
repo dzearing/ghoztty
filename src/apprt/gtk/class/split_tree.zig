@@ -501,7 +501,7 @@ pub const SplitTree = extern struct {
         wk.gtk_widget_add_controller(stage, motion);
 
         priv.stage = stage;
-        return @ptrCast(stage);
+        return @ptrCast(@alignCast(stage));
     }
 
     fn stageMeasure(_: *wk.GtkWidget, _: c_int, _: c_int, minimum: *c_int, natural: *c_int, min_base: *c_int, nat_base: *c_int) callconv(.c) void {
