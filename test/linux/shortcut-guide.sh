@@ -106,6 +106,11 @@ o=$(sg --op=select --down=1)
 r2=$(jget "$o" '[r["id"] for r in d["rows"]].index(d["selected"]) if d["selected"] else -1')
 [ "$s1" != null ] && [ "$r2" = $((r1 + 1)) ]
 hl_check "G15 Down moves the selection one row" $? "first=$s1@$r1 then @$r2"
+o=$(sg --op=select --down=3 --query=split)
+sleep 1 # the search field reports its change after the fact
+o2=$(sg --op=state)
+[ "$(jget "$o" 'd["selected"]')" != null ] && [ "$(jget "$o2" 'd["selected"]')" = "$(jget "$o" 'd["selected"]')" ] && [ "$(jget "$o2" '[r["id"] for r in d["rows"]].index(d["selected"])')" = 3 ]
+hl_check "G15b a selection made under a query stays put (the field's late change does not reset it)" $? "after=$(jget "$o" 'd["selected"]') later=$(jget "$o2" 'd["selected"]')"
 o=$(sg --op=escape --query=new)
 o=$(sg --op=state)
 [ "$(jget "$o" 'd["query"]')" = "" ] && [ "$(jget "$o" 'd["open"]')" = true ]
