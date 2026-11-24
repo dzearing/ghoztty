@@ -806,3 +806,13 @@ as the digest that showed them.
 - Updated hook scripts say what changed (when Ghoztty refreshes agent hook scripts on start, a note names them and offers the difference)
 - Carry Ghoztty on a USB stick (a portable copy keeps settings and saved sessions in its own folder and leaves the host PC untouched)
 - Signing in never opens a window twice (relay windows replayed on sign-in focus any that are already open instead of duplicating them)
+
+## 2026-11-24
+
+- A link a program broke across lines still opens whole (a URL a TUI hard-wrapped with real line breaks opens as one link from any part)
+- Keys you type never land in a pane a script just focused (typing in flight when a script moves focus keeps going to the pane you were typing in)
+- A font picker that shows your own screen (Settings previews each font on the pane's real last lines, box drawing and ligatures included)
+- Paste it again from a short list (a chord lists the last twenty things pasted into any pane, secrets left out)
+- Settings follows your own edits (a hand edit of the config file while Settings is open updates the window and points at the changed line)
+- Choose what a dropped file becomes (new angle on drag-and-drop: Shift+drop offers path, an @path agent mention, or the file's text)
+- Opening and closing panes all day leaves the session service light (new angle on "stays light after days open": the background service, measured per release over a thousand open/close cycles)
