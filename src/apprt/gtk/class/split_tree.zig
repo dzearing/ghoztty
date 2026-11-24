@@ -19,6 +19,11 @@ const CloseUndo = @import("../CloseUndo.zig");
 const Surface = @import("surface.zig").Surface;
 const SurfaceScrolledWindow = @import("surface_scrolled_window.zig").SurfaceScrolledWindow;
 const color_math = @import("../../win32/color_math.zig");
+const Window = @import("window.zig").Window;
+const PaneDrag = @import("../PaneDrag.zig");
+const pane_drop = @import("../../win32/pane_drop.zig");
+const pane_drop_apply = @import("../pane_drop_apply.zig");
+const wk = @import("../webkit.zig");
 
 const log = std.log.scoped(.gtk_ghostty_split_tree);
 
@@ -176,6 +181,119 @@ pub const SplitTree = extern struct {
         // Initialize some basic state
         const priv = self.private();
         priv.pending_close = null;
+
+        // Pane drags land here (T3564): the whole split area answers, in
+        // its own coordinates.
+        PaneDrag.installDropTarget(@ptrCast(priv.tree_bin), self, &dropFromTarget);
+    }
+
+    // ---- Pane rearrange mode and drops (T3564) -------------------------------
+
+    /// Show or hide every pane's rearrange header.
+    pub fn syncRearrangeHeaders(self: *Self, on: bool) void {
+        const tree = self.private().tree orelse return;
+        var it = tree.iterator();
+        while (it.next()) |entry| entry.view.setRearrangeHeader(on);
+    }
+
+    fn dropFromTarget(owner: *anyopaque, dragged_id: []const u8, x: f64, y: f64) PaneDrag.DropResult {
+        const self: *Self = @ptrCast(@alignCast(owner));
+        return self.dropPaneAt(dragged_id, x, y);
+    }
+
+    /// Drop the pane `dragged_id` at (x, y) in the split area's coordinates:
+    /// resolve the point against this tab's panes and dividers, then make the
+    /// move. A drag's release and the `pane-drag` seam both come here.
+    pub fn dropPaneAt(self: *Self, dragged_id: []const u8, x: f64, y: f64) PaneDrag.DropResult {
+        const priv = self.private();
+        const tree = priv.tree orelse return .{};
+        const space: *wk.GtkWidget = @ptrCast(priv.tree_bin);
+
+        var rects_buf: [pane_drop_apply.max_leaves]pane_drop.PaneRect = undefined;
+        var n: usize = 0;
+        var it = tree.iterator();
+        while (it.next()) |entry| {
+            if (n == rects_buf.len) break;
+            const leaf: *gtk.Widget = if (ext.getAncestor(SurfaceScrolledWindow, entry.view.as(gtk.Widget))) |w|
+                w.as(gtk.Widget)
+            else
+                entry.view.as(gtk.Widget);
+            const r = PaneDrag.rectOf(@ptrCast(leaf), space) orelse continue;
+            rects_buf[n] = .{ .id = entry.view.paneId(), .rect = r };
+            n += 1;
+        }
+        const rects = rects_buf[0..n];
+        const metrics = pane_drop.Metrics.forScale(1.0);
+        var ids: [pane_drop_apply.max_leaves][]const u8 = undefined;
+        var divs: [pane_drop_apply.max_leaves]pane_drop.Divider = undefined;
+        const candidate: pane_drop.Candidate = .{
+            .window = @intFromPtr(self),
+            .z_order = 0,
+            .content_rect = .{ .left = 0, .top = 0, .right = wk.gtk_widget_get_width(space), .bottom = wk.gtk_widget_get_height(space) },
+            .pane_rects = rects,
+            .dividers = pane_drop_apply.dividers(Surface.Tree, tree, surfaceId, rects, metrics, &ids, &divs),
+        };
+        const point: pane_drop.Point = .{ .x = @intFromFloat(@round(x)), .y = @intFromFloat(@round(y)) };
+        const target = pane_drop.resolve(point, &.{candidate}, dragged_id, metrics) orelse return .{};
+
+        var result: PaneDrag.DropResult = .{ .target = @tagName(target) };
+        switch (target) {
+            .split => |s| {
+                result.side = @tagName(s.side);
+                result.pane = s.pane;
+            },
+            .swap => |s| result.pane = s.pane,
+            .top_level => |s| result.side = @tagName(s.side),
+            else => {},
+        }
+
+        const alloc = Application.default().allocator();
+        const outcome = pane_drop_apply.apply(Surface.Tree, alloc, tree, surfaceId, dragged_id, target) catch |err| {
+            log.warn("pane drop failed err={}", .{err});
+            result.outcome = "not_here";
+            return result;
+        };
+        switch (outcome) {
+            .moved => |moved| {
+                var t = moved;
+                defer t.deinit();
+                // The pane that moved is the one the user is holding: it
+                // takes focus where it lands.
+                const dragged_surface: ?*Surface = dragged: {
+                    const h = pane_drop_apply.handleOf(Surface.Tree, &t, surfaceId, dragged_id) orelse break :dragged null;
+                    break :dragged t.nodes[h.idx()].leaf;
+                };
+                self.rearrange(&t);
+                if (dragged_surface) |s| {
+                    priv.last_focused.set(s);
+                    self.as(gobject.Object).notifyByPspec(properties.@"active-surface".impl.param_spec);
+                }
+                result.outcome = "moved";
+            },
+            .in_place => result.outcome = "in_place",
+            .not_here => result.outcome = "not_here",
+        }
+        return result;
+    }
+
+    fn surfaceId(s: *Surface) []const u8 {
+        return s.paneId();
+    }
+
+    /// `surface`'s pane as drawn (header and banner included), in the split
+    /// area's coordinates - the space `dropPaneAt` takes its point in.
+    pub fn paneRect(self: *Self, surface: *Surface) ?pane_drop.Rect {
+        const leaf: *gtk.Widget = if (ext.getAncestor(SurfaceScrolledWindow, surface.as(gtk.Widget))) |w|
+            w.as(gtk.Widget)
+        else
+            surface.as(gtk.Widget);
+        return PaneDrag.rectOf(@ptrCast(leaf), @ptrCast(self.private().tree_bin));
+    }
+
+    /// The split area's size, for a point named relative to it.
+    pub fn areaSize(self: *Self) struct { w: c_int, h: c_int } {
+        const space: *wk.GtkWidget = @ptrCast(self.private().tree_bin);
+        return .{ .w = wk.gtk_widget_get_width(space), .h = wk.gtk_widget_get_height(space) };
     }
 
     fn initActionMap(self: *Self) void {
@@ -1014,6 +1132,12 @@ pub const SplitTree = extern struct {
             );
             defer built.deinit();
             priv.tree_bin.setChild(built.widget);
+        }
+
+        // A pane that arrived while its window is in rearrange mode - a new
+        // split, a drop - grows its header like the rest (T3564).
+        if (ext.getAncestor(Window, self.as(gtk.Widget))) |window| {
+            if (window.rearrangeMode()) self.syncRearrangeHeaders(true);
         }
 
         // Replacing our tree widget hierarchy can reset focus state.

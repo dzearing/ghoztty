@@ -62,6 +62,8 @@ const pane_banner_rules = @import("pane_banner_rules.zig");
 const viewer_links = @import("viewer_links.zig");
 const Tab = @import("class/tab.zig").Tab;
 const Surface = @import("class/surface.zig").Surface;
+const SplitTree = @import("class/split_tree.zig").SplitTree;
+const ext = @import("ext.zig");
 const CloseUndo = @import("CloseUndo.zig");
 
 const log = std.log.scoped(.gtk_ipc);
@@ -139,6 +141,7 @@ pub fn handleSeam(app: Context, request: Request) Allocator.Error!server.SeamRep
     if (std.mem.eql(u8, request.action, "press-key")) return .{ .reply = try pressKey(app, request) };
     if (std.mem.eql(u8, request.action, "pane-sidebar")) return .{ .reply = try paneSidebar(app, request) };
     if (std.mem.eql(u8, request.action, "pane-banner")) return .{ .reply = try paneBanner(app, request) };
+    if (std.mem.eql(u8, request.action, "pane-drag")) return .{ .reply = try paneDrag(app, request) };
     if (!std.mem.eql(u8, request.action, "capture-pane")) return .unhandled;
     return .{ .reply = try capturePane(app, request) };
 }
@@ -317,6 +320,128 @@ fn paneBanner(app: Context, request: Request) Allocator.Error![]u8 {
         .key_effect = if (effect) |e| @tagName(e) else null,
     };
     var out: std.Io.Writer.Allocating = .init(arena);
+    std.json.Stringify.value(rep, .{}, &out.writer) catch return error.OutOfMemory;
+    return c_alloc.dupe(u8, out.written());
+}
+
+/// `pane-drag --target=<pane> [--key=escape]
+/// [--drop-on=<pane> --fx=<0..1> --fy=<0..1> | --drop-at=<x>,<y>]` (T3564):
+/// the target window's rearrange mode as drawn - the mode, the tab bar's
+/// visible/autohide, and every pane's header (shown, laid-out height, title,
+/// and the pane's content height under it) - after an optional Escape through
+/// the window's own key handler and an optional drop of the TARGET pane,
+/// through the same `SplitTree.dropPaneAt` a real release calls. The headless
+/// harness has no seat, so no pointer drag can start; this is the drop half
+/// of one. `--drop-on` names a point as a fraction of a pane's drawn rect,
+/// `--drop-at` one in the split area's coordinates. Reply `drop`: the
+/// resolved `target` kind, its `side`/`pane`, and `outcome`
+/// (`moved|in_place|not_here|none`).
+fn paneDrag(app: Context, request: Request) Allocator.Error![]u8 {
+    var target_arg: ?[]const u8 = null;
+    var key_arg: ?[]const u8 = null;
+    var on_arg: ?[]const u8 = null;
+    var at_arg: ?[]const u8 = null;
+    var fx: f64 = 0.5;
+    var fy: f64 = 0.5;
+    for (request.arguments orelse &.{}) |arg| {
+        if (std.mem.startsWith(u8, arg, "--target=")) target_arg = arg["--target=".len..];
+        if (std.mem.startsWith(u8, arg, "--key=")) key_arg = arg["--key=".len..];
+        if (std.mem.startsWith(u8, arg, "--drop-on=")) on_arg = arg["--drop-on=".len..];
+        if (std.mem.startsWith(u8, arg, "--drop-at=")) at_arg = arg["--drop-at=".len..];
+        if (std.mem.startsWith(u8, arg, "--fx=")) fx = std.fmt.parseFloat(f64, arg["--fx=".len..]) catch fx;
+        if (std.mem.startsWith(u8, arg, "--fy=")) fy = std.fmt.parseFloat(f64, arg["--fy=".len..]) catch fy;
+    }
+    const target_name = target_arg orelse return server.errorResponse(c_alloc, "--target is required for pane-drag", .{});
+
+    var arena_state = std.heap.ArenaAllocator.init(c_alloc);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const target = switch (try resolve(arena, app, target_name)) {
+        .found => |t| t,
+        .ambiguous => |windows| return server.errorResponse(c_alloc, "{s}", .{
+            try target_lookup.ambiguityError(arena, target_name, windows),
+        }),
+        .not_found => return server.errorResponse(c_alloc, "pane '{s}' not found in registry", .{target_name}),
+    };
+    const window = target.window_();
+    const surface = target.surface() orelse
+        return server.errorResponse(c_alloc, "pane '{s}' is no longer alive", .{target_name});
+
+    var key_effect: ?[]const u8 = null;
+    if (key_arg) |k| {
+        if (!std.mem.eql(u8, k, "escape")) return server.errorResponse(c_alloc, "--key must be escape", .{});
+        key_effect = if (window.rearrangeKey(0xff1b, 0)) "consumed" else "passed";
+    }
+
+    const Drop = struct { target: []const u8, outcome: []const u8, side: ?[]const u8, pane: ?[]const u8, x: f64, y: f64 };
+    var drop: ?Drop = null;
+    if (on_arg != null or at_arg != null) {
+        const tree = ext.getAncestor(SplitTree, surface.as(gtk.Widget)) orelse
+            return server.errorResponse(c_alloc, "pane '{s}' is not in a split tree", .{target_name});
+        var x: f64 = 0;
+        var y: f64 = 0;
+        if (on_arg) |on| {
+            const other = switch (try resolve(arena, app, on)) {
+                .found => |t| t.surface() orelse return server.errorResponse(c_alloc, "pane '{s}' is no longer alive", .{on}),
+                else => return server.errorResponse(c_alloc, "--drop-on: pane '{s}' not found", .{on}),
+            };
+            const r = tree.paneRect(other) orelse
+                return server.errorResponse(c_alloc, "--drop-on: pane '{s}' is not on screen in this tab", .{on});
+            x = @as(f64, @floatFromInt(r.left)) + fx * @as(f64, @floatFromInt(r.width()));
+            y = @as(f64, @floatFromInt(r.top)) + fy * @as(f64, @floatFromInt(r.height()));
+        } else if (at_arg) |at| {
+            var parts = std.mem.splitScalar(u8, at, ',');
+            x = std.fmt.parseFloat(f64, parts.next() orelse "") catch
+                return server.errorResponse(c_alloc, "--drop-at must be <x>,<y>", .{});
+            y = std.fmt.parseFloat(f64, parts.next() orelse "") catch
+                return server.errorResponse(c_alloc, "--drop-at must be <x>,<y>", .{});
+        }
+        // The id is the pane's own buffer; copy it, the drop rebuilds the tree.
+        const id = try arena.dupe(u8, surface.paneId());
+        const r = tree.dropPaneAt(id, x, y);
+        drop = .{
+            .target = r.target,
+            .outcome = r.outcome,
+            .side = r.side,
+            .pane = if (r.pane) |p| try arena.dupe(u8, p) else null,
+            .x = x,
+            .y = y,
+        };
+    }
+
+    const HeaderRep = struct { pane: []const u8, shown: bool, height: c_int, title: []const u8, content_height: c_int };
+    var headers: std.ArrayList(HeaderRep) = .empty;
+    var panes = paneIterator(app);
+    while (panes.next()) |p| {
+        if (p.window != window) continue;
+        const h = p.surface.rearrangeHeader();
+        try headers.append(arena, .{
+            .pane = p.surface.paneId(),
+            .shown = if (h) |v| v.isShown() else false,
+            .height = if (h) |v| v.height() else 0,
+            .title = if (h) |v| try arena.dupe(u8, v.title()) else "",
+            .content_height = p.surface.contentHeight(),
+        });
+    }
+    const Rep = struct {
+        success: bool = true,
+        mode: bool,
+        tabs_visible: bool,
+        tabs_autohide: bool,
+        key_effect: ?[]const u8,
+        headers: []const HeaderRep,
+        drop: ?Drop,
+    };
+    const rep: Rep = .{
+        .mode = window.rearrangeMode(),
+        .tabs_visible = window.getTabsVisible(),
+        .tabs_autohide = window.getTabsAutohide(),
+        .key_effect = key_effect,
+        .headers = headers.items,
+        .drop = drop,
+    };
+    var out: std.Io.Writer.Allocating = .init(c_alloc);
+    defer out.deinit();
     std.json.Stringify.value(rep, .{}, &out.writer) catch return error.OutOfMemory;
     return c_alloc.dupe(u8, out.written());
 }

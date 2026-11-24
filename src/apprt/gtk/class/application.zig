@@ -908,9 +908,9 @@ pub const Application = extern struct {
             // and owners are in docs/design/windows-parity-tasks/T3330.md.
             .toggle_pane_sidebar => return Action.togglePaneSidebar(self),
             .prompt_banner => return Action.promptBanner(self, target),
+            .toggle_rearrange_mode => return Action.toggleRearrangeMode(target),
 
             .toggle_hero_mode,
-            .toggle_rearrange_mode,
             .stash_pane,
             .restore_stashed_pane,
             => {
@@ -3268,6 +3268,22 @@ const Action = struct {
                 };
 
                 window.toggleWindowDecorations();
+                return true;
+            },
+        }
+    }
+
+    /// Pane rearrange mode for the surface's window (T3564).
+    pub fn toggleRearrangeMode(target: apprt.Target) bool {
+        switch (target) {
+            .app => return false,
+            .surface => |core| {
+                const surface = core.rt_surface.surface;
+                const window = ext.getAncestor(Window, surface.as(gtk.Widget)) orelse {
+                    log.warn("surface is not in a window, ignoring toggle_rearrange_mode", .{});
+                    return false;
+                };
+                window.toggleRearrangeMode();
                 return true;
             },
         }

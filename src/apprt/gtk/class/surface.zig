@@ -43,6 +43,7 @@ const Viewer = @import("../Viewer.zig");
 const viewer_chrome = @import("../viewer_chrome.zig");
 const IpcHandlers = @import("../IpcHandlers.zig");
 const PaneBanner = @import("../PaneBanner.zig");
+const PaneDrag = @import("../PaneDrag.zig");
 const wk = @import("../webkit.zig");
 const banner_link = @import("../../win32/banner_link.zig");
 const banner_markup = @import("../banner_markup.zig");
@@ -807,6 +808,11 @@ pub const Surface = extern struct {
         /// freed in finalize.
         banner: ?*PaneBanner = null,
 
+        /// The rearrange-mode header (T3564), created the first time this
+        /// pane's window enters the mode. Its box lives in the widget tree,
+        /// above the banner; the struct is freed with the banner's.
+        rearrange_header: ?*PaneDrag.Header = null,
+
         /// Set when a restore put this pane's banner back (T3560): the
         /// backend is told its banner slot is taken, so the
         /// session-interrupted notice keeps to the scrollback instead of
@@ -977,7 +983,11 @@ pub const Surface = extern struct {
         web.setHexpand(1);
         web.setVexpand(1);
         if (gl.getParent()) |parent| {
-            if (gobject.ext.cast(gtk.Box, parent)) |box| box.prepend(web);
+            if (gobject.ext.cast(gtk.Box, parent)) |box| {
+                box.prepend(web);
+                // A rearrange header stays on top (T3564).
+                if (priv.rearrange_header) |h| wk.gtk_box_reorder_child_after(@ptrCast(box), h.box, null);
+            }
         }
 
         viewer.owner = self;
@@ -1232,6 +1242,9 @@ pub const Surface = extern struct {
         const box_w: *wk.GtkWidget = @ptrCast(box);
         wk.gtk_orientable_set_orientation(box_w, 1); // GTK_ORIENTATION_VERTICAL
         wk.gtk_box_prepend(box_w, banner.box);
+        // A rearrange header stays on top: the banner is pushed below it
+        // (pane-rearrange.md, T3564).
+        if (priv.rearrange_header) |h| wk.gtk_box_reorder_child_after(box_w, h.box, null);
         // The terminal keeps at least one pixel under the card (T3560). A
         // pane's terminal starts on its GL area's first resize; a banner put
         // back by a restore before the pane is laid out, in a pane too short
@@ -1245,6 +1258,62 @@ pub const Surface = extern struct {
         banner.pane_id = self.paneId();
         priv.banner = banner;
         return banner;
+    }
+
+    // ---- Rearrange mode (T3564) --------------------------------------------
+
+    /// Show or hide this pane's rearrange-mode header. The first show makes
+    /// it: at the top of the pane's content box, which turns vertical as it
+    /// does for a banner, so the header pushes the banner and the content
+    /// down instead of covering them.
+    pub fn setRearrangeHeader(self: *Self, shown: bool) void {
+        const priv = self.private();
+        const header = priv.rearrange_header orelse blk: {
+            if (!shown) return;
+            break :blk self.createRearrangeHeader() orelse return;
+        };
+        if (header.isShown() == shown) return;
+        header.setShown(shown);
+        self.syncHeaderTitle();
+    }
+
+    /// The laid-out height of the pane's content - the terminal, or a
+    /// viewer's page - under any header and banner (`pane-drag` seam).
+    pub fn contentHeight(self: *Self) c_int {
+        const priv = self.private();
+        if (priv.viewer) |v| return wk.gtk_widget_get_height(@ptrCast(@alignCast(v.widget())));
+        return priv.gl_area.as(gtk.Widget).getHeight();
+    }
+
+    /// The header, or null when this pane never showed one (`pane-drag`
+    /// seam).
+    pub fn rearrangeHeader(self: *Self) ?*PaneDrag.Header {
+        return self.private().rearrange_header;
+    }
+
+    fn createRearrangeHeader(self: *Self) ?*PaneDrag.Header {
+        const priv = self.private();
+        const gl = priv.gl_area.as(gtk.Widget);
+        const parent = gl.getParent() orelse return null;
+        const box = gobject.ext.cast(gtk.Box, parent) orelse return null;
+        const header = PaneDrag.Header.create(std.heap.c_allocator, self.paneId()) catch return null;
+        const box_w: *wk.GtkWidget = @ptrCast(box);
+        wk.gtk_orientable_set_orientation(box_w, 1); // GTK_ORIENTATION_VERTICAL
+        wk.gtk_box_prepend(box_w, header.box);
+        header.setShown(false);
+        // As for a banner: the terminal keeps a pixel under the header, so
+        // a pane too short for it still starts its shell (T3560).
+        gl.setSizeRequest(-1, 1);
+        priv.rearrange_header = header;
+        return header;
+    }
+
+    /// The header names the pane the way its tab does: the user's title,
+    /// else the program's, else the pane's id.
+    fn syncHeaderTitle(self: *Self) void {
+        const header = self.private().rearrange_header orelse return;
+        const t: []const u8 = if (self.getEffectiveTitle()) |v| v else self.paneId();
+        header.setTitle(t);
     }
 
     /// What a banner's relative links resolve against: this pane's working
@@ -2609,6 +2678,10 @@ pub const Surface = extern struct {
             b.destroy();
             priv.banner = null;
         }
+        if (priv.rearrange_header) |h| {
+            std.heap.c_allocator.destroy(h);
+            priv.rearrange_header = null;
+        }
         if (priv.banner_menu_target) |t| {
             std.heap.c_allocator.free(t);
             priv.banner_menu_target = null;
@@ -2711,6 +2784,7 @@ pub const Surface = extern struct {
         priv.title = null;
         if (title) |v| priv.title = glib.ext.dupeZ(u8, v);
         self.as(gobject.Object).notifyByPspec(properties.title.impl.param_spec);
+        self.syncHeaderTitle();
     }
 
     /// Overridden title. This will be generally be shown over the title
@@ -2721,6 +2795,7 @@ pub const Surface = extern struct {
         priv.title_override = null;
         if (title) |v| priv.title_override = glib.ext.dupeZ(u8, v);
         self.as(gobject.Object).notifyByPspec(properties.@"title-override".impl.param_spec);
+        self.syncHeaderTitle();
     }
 
     /// Ghoztty's stable pane id (T3335), minted once per surface.

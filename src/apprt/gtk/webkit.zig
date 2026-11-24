@@ -605,3 +605,19 @@ pub extern fn adw_alert_dialog_set_extra_child(dialog: *GtkWidget, child: ?*GtkW
 pub const adw_response_suggested: c_int = 1;
 pub extern fn adw_dialog_present(dialog: *GtkWidget, parent: ?*GtkWidget) void;
 pub extern fn adw_dialog_force_close(dialog: *GtkWidget) void;
+
+// --- Pane rearrange mode and pane drag-and-drop (T3564) ----------------------
+
+pub const GdkDrop = opaque {};
+pub const GdkDrag = opaque {};
+/// `GdkDragAction` `GDK_ACTION_MOVE`.
+pub const gdk_action_move: c_int = 1 << 1;
+pub extern fn gtk_drag_source_new() *GtkEventController;
+pub extern fn gtk_drag_source_set_content(source: *GtkEventController, content: ?*GdkContentProvider) void;
+pub extern fn gtk_drag_source_set_actions(source: *GtkEventController, actions: c_int) void;
+pub extern fn gtk_drop_target_async_new(formats: ?*GdkContentFormats, actions: c_int) *GtkEventController;
+pub extern fn gdk_content_formats_new(mime_types: ?[*]const [*:0]const u8, n_mime_types: c_uint) *GdkContentFormats;
+pub extern fn gdk_drop_finish(drop: *GdkDrop, action: c_int) void;
+pub extern fn gtk_box_reorder_child_after(box: *GtkWidget, child: *GtkWidget, sibling: ?*GtkWidget) void;
+pub extern fn gtk_box_insert_child_after(box: *GtkWidget, child: *GtkWidget, sibling: ?*GtkWidget) void;
+pub extern fn gtk_widget_get_parent(widget: *GtkWidget) ?*GtkWidget;

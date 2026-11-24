@@ -665,6 +665,10 @@ test {
     // autostart entry it falls back to, their quoting, names and gates
     // (T3398). No GTK imports.
     _ = @import("gtk/agent_autostart.zig");
+    // What a pane drop does to a tab's split tree - split, swap, top-level
+    // and divider inserts, and the in-place drop that does nothing (T3564).
+    // No GTK imports.
+    _ = @import("gtk/pane_drop_apply.zig");
     // ... and the POSIX half of win32's git runner it spawns git through:
     // the deadline and the cancel end the whole process group (T3417).
     // Off Windows only, whose win32 lane covers the job object - importing it

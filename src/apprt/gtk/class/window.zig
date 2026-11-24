@@ -31,6 +31,7 @@ const CommandPalette = @import("command_palette.zig").CommandPalette;
 const WeakRef = @import("../weak_ref.zig").WeakRef;
 const CloseUndo = @import("../CloseUndo.zig");
 const PaneSidebar = @import("../PaneSidebar.zig");
+const wk = @import("../webkit.zig");
 const window_activity = @import("../window_activity.zig");
 
 const log = std.log.scoped(.gtk_ghostty_window);
@@ -241,6 +242,10 @@ pub const Window = extern struct {
         /// the active tab's panes. Owned; its widgets belong to the tree.
         pane_sidebar: ?*PaneSidebar = null,
 
+        /// Pane rearrange mode (T3564): every pane shows its drag header
+        /// and the tab bar is forced visible. Per window, like the Mac's.
+        rearrange_mode: bool = false,
+
         /// The configuration that this surface is using.
         config: ?*Config = null,
 
@@ -354,6 +359,16 @@ pub const Window = extern struct {
         // the first window draws one, so a restored window starts as
         // `macos-pane-sidebar` says too.
         self.initPaneSidebar(config);
+
+        // Escape leaves rearrange mode (T3564). Capture phase, so it is seen
+        // before the focused pane's terminal would send it to the shell -
+        // but only taken while the mode is on.
+        {
+            const keys = wk.gtk_event_controller_key_new();
+            wk.gtk_event_controller_set_propagation_phase(keys, 1); // GTK_PHASE_CAPTURE
+            _ = wk.g_signal_connect_data(keys, "key-pressed", @ptrCast(&rearrangeKeyPressed), self, null, 0);
+            wk.gtk_widget_add_controller(@ptrCast(self), keys);
+        }
 
         // We always sync our appearance at the end because loading our
         // config and such can affect our bindings which are setup initially
@@ -1073,6 +1088,51 @@ pub const Window = extern struct {
         }
     }
 
+    // ---- Pane rearrange mode (T3564) -----------------------------------------
+
+    pub fn rearrangeMode(self: *Self) bool {
+        return self.private().rearrange_mode;
+    }
+
+    /// `toggle_rearrange_mode` (Ctrl+Shift+., the command palette).
+    pub fn toggleRearrangeMode(self: *Self) void {
+        self.setRearrangeMode(!self.private().rearrange_mode);
+    }
+
+    /// Enter or leave rearrange mode: every pane of every tab shows or hides
+    /// its header, and the tab bar is forced visible while it is on - it is a
+    /// drop target (pane-rearrange.md).
+    pub fn setRearrangeMode(self: *Self, on: bool) void {
+        const priv = self.private();
+        if (priv.rearrange_mode == on) return;
+        priv.rearrange_mode = on;
+        log.info("rearrange mode {s}", .{if (on) "on" else "off"});
+        const n = priv.tab_view.getNPages();
+        for (0..@intCast(n)) |i| {
+            const tab = gobject.ext.cast(Tab, priv.tab_view.getNthPage(@intCast(i)).getChild()) orelse continue;
+            tab.getSplitTree().syncRearrangeHeaders(on);
+        }
+        inline for (&.{ "tabs-autohide", "tabs-visible" }) |key| {
+            self.as(gobject.Object).notifyByPspec(@field(properties, key).impl.param_spec);
+        }
+    }
+
+    /// The window's key handler for the mode: Escape, with no modifier,
+    /// leaves it. Anything else, or Escape with the mode off, goes on to the
+    /// pane. Also the `pane-drag` seam's way to press it.
+    pub fn rearrangeKey(self: *Self, keyval: c_uint, state: c_uint) bool {
+        const escape: c_uint = 0xff1b; // GDK_KEY_Escape
+        const mods: c_uint = (1 << 0) | (1 << 2) | (1 << 3) | (1 << 26) | (1 << 27) | (1 << 28);
+        if (!self.private().rearrange_mode) return false;
+        if (keyval != escape or (state & mods) != 0) return false;
+        self.setRearrangeMode(false);
+        return true;
+    }
+
+    fn rearrangeKeyPressed(_: *wk.GtkEventController, keyval: c_uint, _: c_uint, state: c_uint, self: *Self) callconv(.c) c_int {
+        return @intFromBool(self.rearrangeKey(keyval, state));
+    }
+
     /// Returns true if this window needs confirmation before quitting.
     fn getNeedsConfirmQuit(self: *Self) bool {
         const priv = self.private();
@@ -1133,9 +1193,12 @@ pub const Window = extern struct {
         };
     }
 
-    fn getTabsAutohide(self: *Self) bool {
+    pub fn getTabsAutohide(self: *Self) bool {
         const priv = self.private();
         const config = if (priv.config) |v| v.get() else return true;
+
+        // Rearrange mode keeps the tab bar up: it is a drop target (T3564).
+        if (priv.rearrange_mode) return false;
 
         return switch (config.@"gtk-titlebar-style") {
             // If the titlebar style is tabs we cannot autohide.
@@ -1155,9 +1218,12 @@ pub const Window = extern struct {
         };
     }
 
-    fn getTabsVisible(self: *Self) bool {
+    pub fn getTabsVisible(self: *Self) bool {
         const priv = self.private();
         const config = if (priv.config) |v| v.get() else return true;
+
+        // Rearrange mode forces the tab bar visible (T3564).
+        if (priv.rearrange_mode) return true;
 
         switch (config.@"gtk-titlebar-style") {
             .tabs => {
