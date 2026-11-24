@@ -125,7 +125,9 @@ hl_check "G19 the show_keyboard_shortcuts app action opens it again" $? "open=$(
 
 # ---- the window draws (its own render; SHOT_OUT=<dir> keeps the PNGs) -------
 shot="$HL_RUNTIME/guide.png"
-o=$(sg --op=shot --path="$shot")
+# A window just presented has no size until its first frame: retry.
+shot_ok() { o=$(sg --op=shot --path="$shot"); printf '%s' "$o" | grep -q '"success":true'; }
+hl_wait_for 5 shot_ok
 dims=$(python3 -I -c 'import struct,sys; b=open(sys.argv[1],"rb").read(24); print(*struct.unpack(">II", b[16:24])) if b[:8]==b"\x89PNG\r\n\x1a\n" else print(0, 0)' "$shot" 2>/dev/null)
 set -- $dims
 [ "${1:-0}" -ge 600 ] && [ "${2:-0}" -ge 400 ]
@@ -133,10 +135,11 @@ hl_check "G19b the guide window renders (a PNG of at least 600x400)" $? "dims=$d
 if [ -n "${SHOT_OUT:-}" ]; then
     mkdir -p "$SHOT_OUT" && cp "$shot" "$SHOT_OUT/guide-all.png"
     sg --op=select --down=3 --query=split > /dev/null
+    sleep 1 # the rebuilt rows lay out on the next frame
     sg --op=shot --path="$SHOT_OUT/guide-search.png" > /dev/null
     sg --op=state --query= > /dev/null
 fi
-n0=$(jget "$o" 'len(d["rows"])')
+n0=$(jget "$(sg --op=state)" 'len(d["rows"])')
 o=$(sg --op=state --unbound=1)
 n1=$(jget "$o" 'len(d["rows"])')
 [ "$(jget "$o" 'd["include_unbound"]')" = true ] && [ "$n1" -gt "$n0" ] && [ "$(cat "$pref" 2>/dev/null)" = 1 ]

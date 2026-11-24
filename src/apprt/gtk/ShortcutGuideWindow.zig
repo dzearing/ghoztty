@@ -69,6 +69,8 @@ list: *wk.GtkWidget,
 scroller: *wk.GtkWidget,
 footer: *wk.GtkWidget,
 unbound_check: *wk.GtkWidget,
+/// The window's child: what `shot` renders (no CSD shadow around it).
+content: ?*wk.GtkWidget = null,
 
 /// Owns the catalog (rebuilt on config change).
 catalog_arena: std.heap.ArenaAllocator,
@@ -448,6 +450,7 @@ fn buildChrome(self: *ShortcutGuideWindow) void {
 
     wk.gtk_box_append(outer, column);
     wk.gtk_window_set_child(w, outer);
+    self.content = outer;
 }
 
 fn fillSidebar(self: *ShortcutGuideWindow) void {
