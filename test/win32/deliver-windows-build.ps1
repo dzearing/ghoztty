@@ -185,6 +185,14 @@ AssertEq "B6 the expectation is per-binary" '2/3/0' `
 "== C: end to end into a sandbox seeded with a DEBUG build"
 # ============================================================================
 
+# T2043: every delivery from here on targets the sandbox, never a real install
+# location, so it is not a delivery in the T1984 sense. Without this pin the
+# lane-a gate refuses each one (exit 6) from any other lane and C-H go red by
+# design - the same seam upgrade-no-fork/upgrade-staleness use (T1254).
+# Restored around the one child that reads loop state (G22) and at the end.
+$savedLane = $env:GHOZTTY_LOOP_LANE
+$env:GHOZTTY_LOOP_LANE = 'a'
+
 Remove-Item -Recurse -Force $root -ErrorAction SilentlyContinue
 $p1 = Join-Path $root 'desktop\Ghoztty'
 $p2 = Join-Path $root 'share-portable\Ghoztty'
@@ -467,8 +475,10 @@ AssertEq "G21 the watermark says wrong, for the health line to read" 'wrong' ([s
 Copy-Item -LiteralPath $stash $goodExe -Force
 
 # The health line is where a reader who is not a turn sees it (T727).
+$env:GHOZTTY_LOOP_LANE = $savedLane
 $hOut = & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $Repo 'scripts\go-loop-health.ps1') `
     -Repo $Repo -DeliverWatermark $wm -NoPaneProbe *>&1 | ForEach-Object { "$_" }
+$env:GHOZTTY_LOOP_LANE = 'a'
 Assert "G22 go-loop-health reports deliver=wrong from that watermark" (($hOut -join "`n") -match 'deliver=wrong\(\d+\)')
 
 # ============================================================================
@@ -692,6 +702,7 @@ if (-not $ghOk) {
 }
 
 # ============================================================================
+$env:GHOZTTY_LOOP_LANE = $savedLane
 if (-not $Keep) { Remove-Item -Recurse -Force $root -ErrorAction SilentlyContinue }
 
 # A clean green FULL run stamps the covered files (T783) so scripts\guard-due.ps1

@@ -1,10 +1,10 @@
 {
     "guard":  "radius-table",
     "script":  "test/win32/radius-table-audit.ps1",
-    "generated":  "2026-11-23T19:52:13-08:00",
-    "commit":  "338dc4c9e",
+    "generated":  "2026-11-23T22:58:22-08:00",
+    "commit":  "70a0645f1",
     "uncommitted":  [
-                        "src/apprt/win32/BannerOverlay.zig"
+
                     ],
     "files":  {
                   "docs/design/win32-design-system.md":  "ff5826f3e901a90a74a95687b2dbd700d59f1fc4704b1ae31334adf615f38d86",
@@ -101,7 +101,7 @@
                   "src/apprt/win32/comp_surface.zig":  "7a70e26915d4ba245093c1b6df5796977220ab7d4c20b87ce02c4294cc20ea3a",
                   "src/apprt/win32/CompDragThread.zig":  "63542ff8c391807a533c2c70c158f5e36f6bf94a144622782a531bf025e26a33",
                   "src/apprt/win32/compose_gap.zig":  "daea88944d3c9f4a5ef2cb39b1a25da62efee2f7792d4cb138220de2b3291788",
-                  "src/apprt/win32/ConfigFileStore.zig":  "f951b29a252dc69920bc7195dc5f50473caa82a967b58ae967b0dc9fcfad8286",
+                  "src/apprt/win32/ConfigFileStore.zig":  "6404ddf2d1ea60ce3e32ad7504eba16b295835c81739a4b6a7abcbeb38382c6d",
                   "src/apprt/win32/ConfigFileText.zig":  "5f9765c4c2f053e814911fd09ce5f4f5371a5a37939f1b78c749d83f35032544",
                   "src/apprt/win32/ConfigValidator.zig":  "5311968517c0ec8f1eb8b6a2647ecab81d6b3ba106c2138e5900bf7b15d29f6f",
                   "src/apprt/win32/confirm_dialog_layout.zig":  "cf61d58e920b246a7e0f70ce0036a62263e583e7acbe61769eac9afcf657ba99",
