@@ -1836,6 +1836,49 @@ $r = CG @('commit', '-Paths', 'crlf.txt', '-Message', 'a file that makes git war
 Assert 'W17 a git warning on stderr is not a failure' ($r.Code -eq 0 -and $r.Out -match 'COMMITTED')
 git -C $wRepo config --unset core.autocrlf 2>$null
 
+# T2073: a staged exec bit on a NEW file. core.filemode is false on Windows, so
+# `update-index --chmod=+x` is the only way to record one, and a pathspec commit
+# builds its tree from the working tree and ignores the index's mode: 651ab1bde
+# shipped a +x script as 100644 under "all requested". The control proves the
+# fixture really has the defect - a bare pathspec commit drops the bit.
+function WTreeMode([string]$p) {
+    $l = (& git -C $wRepo ls-tree HEAD -- $p 2>$null | Select-Object -First 1)
+    if ($l) { ($l -split ' ')[0] } else { '' }
+}
+Set-Content -Path (Join-Path $wRepo 'ctl-exec.sh') -Value 'echo control'
+git -C $wRepo add ctl-exec.sh 2>$null
+git -C $wRepo update-index --chmod=+x ctl-exec.sh 2>$null
+& git -C $wRepo commit -q -m 'control: a bare pathspec commit' -- ctl-exec.sh 2>$null | Out-Null
+Assert 'W17f control: a bare pathspec commit records a staged +x new file as 100644 (the T2073 loss)' `
+    ((WTreeMode 'ctl-exec.sh') -eq '100644')
+git -C $wRepo update-index --chmod=-x ctl-exec.sh 2>$null   # leave no staged mode behind
+
+Set-Content -Path (Join-Path $wRepo 'new-exec.sh') -Value 'echo hi'
+Set-Content -Path (Join-Path $wRepo 'beside-exec.txt') -Value 'plain'
+git -C $wRepo add new-exec.sh 2>$null
+git -C $wRepo update-index --chmod=+x new-exec.sh 2>$null
+$r = CG @('commit', '-Paths', 'new-exec.sh,beside-exec.txt', '-Message', 'a new executable script')
+$committed = @(& git -C $wRepo show --pretty=format: --name-only HEAD 2>$null | Where-Object { $_ })
+Assert 'W17g the guard carries a staged +x on a new file: HEAD holds 100755, and says it carried it' `
+    ($r.Code -eq 0 -and $r.Out -match 'COMMITTED' -and (WTreeMode 'new-exec.sh') -eq '100755' -and
+     $r.Out -match 'carried the staged mode of new-exec\.sh')
+Assert 'W17h the carried commit is still exactly the requested paths, the plain file still 100644' `
+    ($committed.Count -eq 2 -and ($committed -contains 'new-exec.sh') -and ($committed -contains 'beside-exec.txt') -and
+     (WTreeMode 'beside-exec.txt') -eq '100644')
+# Scoped to the committed paths: W10's foreign theirs.txt is still staged here.
+$staleMode = @(& git -C $wRepo diff --cached --name-only -- new-exec.sh beside-exec.txt 2>$null | Where-Object { $_ })
+Assert 'W17i and no staged mode is left behind to block the next pull --rebase' ($staleMode.Count -eq 0)
+
+# A change that is ONLY a mode leaves a pathspec commit nothing to commit; the
+# failure must name the mode and the way that works, not just "nothing to commit".
+git -C $wRepo update-index --chmod=+x beside-exec.txt 2>$null
+$headBefore = WHead
+$r = CG @('commit', '-Paths', 'beside-exec.txt', '-Message', 'mode only')
+Assert 'W17j a mode-only change fails naming MODE-ONLY CHANGE and the hold recipe (HEAD unmoved)' `
+    ($r.Code -eq 6 -and $r.Out -match 'MODE-ONLY CHANGE' -and $r.Out -match 'beside-exec\.txt: HEAD 100644, index 100755' -and
+     $r.Out -match 'hold' -and (WHead) -eq $headBefore)
+git -C $wRepo update-index --chmod=-x beside-exec.txt 2>$null
+
 # A git that died mid-write leaves an empty index.lock that wedges every commit
 # after it (lane b 2026-11-01 15:09, lane a 2026-11-02 01:51). An old empty lock
 # with no git from its time still running is debris and is cleared; a lock

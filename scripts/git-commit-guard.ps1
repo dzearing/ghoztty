@@ -36,12 +36,17 @@
 # ignores whatever else is sitting in the shared index. That is what keeps the
 # theft from running in the other direction as well.
 #
-# One thing `commit` deliberately cannot carry: an INDEX-ONLY change, such as a
-# mode bit set with `git update-index --chmod=+x` (core.filemode is false on
-# Windows, so that is the only way to record one). A pathspec commit takes the
-# WORKING TREE content of its paths and ignores the index, which is exactly what
-# makes it immune to the other window - and equally blind to a staged mode. For
-# those, hold the lock and commit the index yourself:
+# A pathspec commit takes the WORKING TREE content of its paths and ignores the
+# index, which is exactly what makes it immune to the other window - and equally
+# blind to an INDEX-ONLY change, such as a mode bit set with
+# `git update-index --chmod=+x` (core.filemode is false on Windows, so that is
+# the only way to record one). Since T2073 `commit` reads each requested path's
+# index mode before committing and, when the commit recorded another, amends it
+# from a private index inside the lock - so a new +x file lands 100755 (it used
+# to land 100644 under "all requested", 651ab1bde), and a carry that fails is
+# MODE LOST, exit 6, with nothing pushed. What it still cannot do is commit a
+# change that is ONLY a mode (git says "nothing to commit"); it names that as
+# MODE-ONLY CHANGE. For that one, hold the lock and commit the index yourself:
 #
 #   $k = 'modebit'
 #   scripts\git-commit-guard.ps1 hold -Key $k
@@ -678,6 +683,43 @@ function Test-PathCovered([string]$file, [string[]]$requested) {
     return $false
 }
 
+# T2073: the file mode of every requested path, as @{ path = '100755' }, read
+# either from the index (`-Tree` omitted) or from a commit's tree. Only regular
+# files count (100644/100755): a symlink or a submodule never changes mode by
+# `--chmod`, so it is no part of the comparison below.
+function Get-PathModes([string[]]$paths, [string]$Tree) {
+    $modes = @{}
+    if (-not $paths -or $paths.Count -eq 0) { return $modes }
+    $lines = if ($Tree) {
+        @(& git -C $Repo -c core.quotepath=off ls-tree -r $Tree -- @paths 2>$null)
+    } else {
+        @(& git -C $Repo -c core.quotepath=off ls-files -s -- @paths 2>$null)
+    }
+    foreach ($l in $lines) {
+        if (-not $l) { continue }
+        $tab = $l.IndexOf("`t")
+        if ($tab -lt 0) { continue }
+        $mode = ($l.Substring(0, $tab) -split ' ')[0]
+        if ($mode -ne '100644' -and $mode -ne '100755') { continue }
+        $modes[$l.Substring($tab + 1)] = $mode
+    }
+    return $modes
+}
+
+# T2073: requested paths whose committed mode is not the mode the index holds
+# for them - the exec bit a pathspec commit cannot carry. Each row is
+# @{ Path; Index; Head }.
+function Get-ModeLoss([hashtable]$indexModes, [string[]]$paths) {
+    $head = Get-PathModes $paths -Tree 'HEAD'
+    $rows = @()
+    foreach ($p in ($indexModes.Keys | Sort-Object)) {
+        if ($head.ContainsKey($p) -and $head[$p] -ne $indexModes[$p]) {
+            $rows += @{ Path = $p; Index = $indexModes[$p]; Head = $head[$p] }
+        }
+    }
+    return ,$rows
+}
+
 switch ($Action) {
 
     # ---------------------------------------------------------------- install
@@ -918,6 +960,7 @@ switch ($Action) {
         }
 
         $prev = & git -C $Repo rev-parse HEAD 2>$null
+        $indexModes = $null
         $env:GHOZTTY_COMMIT_LOCK_KEY = $k
         try {
             Clear-StaleIndexLock
@@ -952,10 +995,66 @@ switch ($Action) {
                     "note: $($foreignStaged.Count) path(s) staged by another session are EXCLUDED by the pathspec:"
                     foreach ($f in ($foreignStaged | Select-Object -First 5)) { "  $f" }
                 }
+                # T2073: what mode the index holds for each requested path,
+                # read now, because the pathspec commit below builds its tree
+                # from HEAD plus the working tree and ignores the index's mode.
+                $indexModes = Get-PathModes $want
                 $commit = Git-Run (@('commit', '-F', $msgFile, '--cleanup=whitespace', '--') + $want)
             }
             if ($commit.Code -ne 0) {
-                "ERROR git commit failed:"; $commit.Out; Show-IndexLockDiagnosis; exit 6
+                "ERROR git commit failed:"; $commit.Out; Show-IndexLockDiagnosis
+                # A change that is ONLY a staged mode bit leaves the pathspec
+                # commit nothing to commit. Say so, with the way that works.
+                if (-not $merging -and $indexModes) {
+                    $modeOnly = Get-ModeLoss $indexModes $want
+                    if ($modeOnly.Count -gt 0) {
+                        "MODE-ONLY CHANGE: the index holds a mode the pathspec commit cannot see (T2073):"
+                        foreach ($m in $modeOnly) { "  $($m.Path): HEAD $($m.Head), index $($m.Index)" }
+                        "  Commit the index under the lock instead - see the header of scripts\git-commit-guard.ps1 (hold / git commit / release)."
+                    }
+                }
+                exit 6
+            }
+
+            # T2073: carry a staged mode the pathspec commit dropped. The commit
+            # is amended from a PRIVATE index (HEAD's tree plus the --chmod), so
+            # the shared index is never committed whole, and it happens inside
+            # the lock, before anything is read back or pushed. 651ab1bde
+            # shipped a new +x script as 100644 under "all requested".
+            if (-not $merging -and $indexModes -and $indexModes.Count -gt 0) {
+                $lost = Get-ModeLoss $indexModes $want
+                if ($lost.Count -gt 0) {
+                    $tmpIndex = Join-Path ([System.IO.Path]::GetTempPath()) "ghoztty-commit-index-$PID"
+                    $prevIndexEnv = $env:GIT_INDEX_FILE
+                    $env:GIT_INDEX_FILE = $tmpIndex
+                    try {
+                        $carry = Git-Run @('read-tree', 'HEAD')
+                        foreach ($m in $lost) {
+                            if ($carry.Code -ne 0) { break }
+                            $flag = if ($m.Index -eq '100755') { '--chmod=+x' } else { '--chmod=-x' }
+                            $carry = Git-Run @('update-index', $flag, '--', $m.Path)
+                        }
+                        if ($carry.Code -eq 0) {
+                            $carry = Git-Run @('commit', '--amend', '--no-edit', '--allow-empty', '--cleanup=verbatim')
+                        }
+                    } finally {
+                        if ($null -ne $prevIndexEnv) { $env:GIT_INDEX_FILE = $prevIndexEnv }
+                        else { Remove-Item Env:GIT_INDEX_FILE -ErrorAction SilentlyContinue }
+                        Remove-Item -LiteralPath $tmpIndex -Force -ErrorAction SilentlyContinue
+                    }
+                    $still = Get-ModeLoss $indexModes $want
+                    if ($carry.Code -ne 0 -or $still.Count -gt 0) {
+                        $bad = if ($still.Count -gt 0) { $still } else { $lost }
+                        "MODE LOST: the commit recorded a different file mode than the index holds, and carrying it failed (T2073):"
+                        foreach ($m in $bad) { "  $($m.Path): committed $($m.Head), index $($m.Index)" }
+                        if ($carry.Code -ne 0 -and $carry.Out) { $carry.Out }
+                        "Nothing has been pushed. Amend it under the lock - see the header of scripts\git-commit-guard.ps1 (hold / git commit / release)."
+                        exit 6
+                    }
+                    if (-not $Quiet) {
+                        foreach ($m in $lost) { "note: carried the staged mode of $($m.Path) ($($m.Head) -> $($m.Index)); a pathspec commit drops it (T2073)" }
+                    }
+                }
             }
         } finally {
             Remove-Item Env:GHOZTTY_COMMIT_LOCK_KEY -ErrorAction SilentlyContinue
