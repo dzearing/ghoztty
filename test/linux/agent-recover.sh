@@ -106,6 +106,7 @@ idV=$(leaf_field pv id)
 # free for the session-interrupted notice.
 banA='## pa goal\n- [x] survive the agent'
 cli +set-banner --target=pa "$banA" > /dev/null 2>&1
+banA_nl=$(printf '%b' "$banA")   # +set-banner stores each \n as a newline
 hl_wait_for 5 sh -c "[ \"\$(env -u GHOZTTY_IPC_SOCKET -u GHOZTTY_PANE_ID '$app' +list --json 2>/dev/null | grep -c 'survive the agent')\" -ge 1 ]"
 
 # ---- 2. the agent dies: the panes come back in place on a new agent --------
@@ -134,7 +135,7 @@ hl_check "A9 the rebuilt pa shell starts in pa's directory" $? "cwd=$wdA"
 hl_check "A10 no give-up line" $?
 # T3560: the rebuilt pa keeps its own banner - the notice did not take its
 # slot - while bannerless pb's slot carries the notice.
-banner_kept() { [ "$(leaf_field pa banner)" = "$banA" ]; }
+banner_kept() { [ "$(leaf_field pa banner)" = "$banA_nl" ]; }
 hl_wait_for 5 banner_kept
 sleep 1
 banner_kept
