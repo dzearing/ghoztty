@@ -40,6 +40,8 @@ $script:GUIPM_REPO = (Split-Path -Parent (Split-Path -Parent (Split-Path -Parent
 # of the dump Windows already wrote since T460; the GUI half of the harness
 # named the same file and never opened it. Same library, same three calls.
 . (Join-Path $script:GUIPM_REPO 'scripts\lib\CrashDump.ps1')
+# T2054: the kill-suspect list reads command lines from the kernel table, never WMI.
+. (Join-Path $PSScriptRoot 'ProcessTable.ps1')
 
 # Full NTSTATUS -> name, for the codes a Windows GUI process actually dies
 # from. CrashDiag's table is keyed by LOW BYTE because that is all `zig build`
@@ -118,7 +120,35 @@ function ConvertTo-GuiExitVerdict {
     }
     $name = $script:GUIPM_STATUS_NAME[$hex]
     if (-not $name) { $name = 'unnamed NTSTATUS' }
-    return [pscustomobject]@{ IsCrash = $true; Hex = $hex; Name = $name }
+    # T2054: 0xFFFFFFFF is the one high-bit code that is not an exception at
+    # all. It is still an abnormal death (IsCrash stays true, so it is reported
+    # and section K's teeth hold), but OutsideKill lets the verdict say what it
+    # almost always is instead of sending the reader on a crash hunt.
+    return [pscustomobject]@{ IsCrash = $true; Hex = $hex; Name = $name; OutsideKill = ($hex -eq '0xFFFFFFFF') }
+}
+
+<#
+T2054: who could have killed it. Every PowerShell running a repo script right
+now, other than this one - the shape of T2053, where lane A's agent-upgrade.ps1
+teardown killed lane B's app by name and the card went hunting for a crash.
+It is a snapshot taken at teardown, so a killer that already finished is not in
+it; the line says so rather than implying an empty list clears everyone.
+Never throws.
+#>
+function Get-GuiKillSuspects {
+    $out = @()
+    try {
+        $rows = @(Get-OsProcess -Name @('powershell.exe', 'pwsh.exe') -CommandLine)
+        foreach ($r in $rows) {
+            if ($r.ProcessId -eq $PID) { continue }
+            $cl = [string]$r.CommandLine
+            $m = [regex]::Match($cl, '(?i)((?:test[\\/]win32|scripts)[\\/][\w\\/.-]+\.ps1)')
+            if (-not $m.Success) { continue }
+            $out += ('pid {0} {1}' -f $r.ProcessId, $m.Groups[1].Value)
+        }
+    } catch { $out = @() }
+    # Unrolls: every call site wraps it in @(), so empty counts as zero.
+    return $out
 }
 
 <#
@@ -247,6 +277,8 @@ function Get-GuiPostmortem {
 
     $verdictLine = ''
     $crashed = $false
+    $outside = $false
+    $suspects = @()
     $hex = ''
     $status = ''
     if ($alive) {
@@ -258,7 +290,13 @@ function Get-GuiPostmortem {
         $hex = $v.Hex
         $status = $v.Name
         $crashed = $v.IsCrash
-        if ($crashed) {
+        $outside = [bool]$v.OutsideKill
+        if ($outside) {
+            # T2054: not CRASHED. Nothing in the app raised; something outside
+            # called TerminateProcess. Say where to look instead.
+            $verdictLine = "KILLED FROM OUTSIDE - $hex $status - look for a script that kills by name or command line, not for a crash in the app"
+            $suspects = @(Get-GuiKillSuspects)
+        } elseif ($crashed) {
             $verdictLine = "CRASHED - $hex $status"
         } elseif ($exit -eq 0) {
             $verdictLine = 'exited cleanly (0)'
@@ -270,7 +308,9 @@ function Get-GuiPostmortem {
     $evt = $null
     $dump = $null
     $analysis = $null
-    if ($crashed) {
+    # An outside kill raises nothing, so WER writes no record and no dump: the
+    # 20-second wait for one would only delay the verdict (T2054).
+    if ($crashed -and -not $outside) {
         $since = $Since
         if ($since -eq [datetime]::MinValue) { $since = (Get-Date).AddMinutes(-30) }
         $like = ''
@@ -304,6 +344,8 @@ function Get-GuiPostmortem {
         ExitCodeHex   = $hex
         Status        = $status
         Crashed       = $crashed
+        KilledOutside = $outside
+        KillSuspects  = $suspects
         Verdict       = $verdictLine
         CrashEvent    = $evt
         DumpPath      = $dump
@@ -331,7 +373,15 @@ function Write-GuiPostmortem {
     if (-not $who) { $who = 'process' }
     $lines += "GUI POSTMORTEM $who pid $($Report.ProcessId)"
     $lines += "  verdict : $($Report.Verdict)"
-    if ($Report.CrashEvent) {
+    if ($Report.KilledOutside) {
+        $sus = @($Report.KillSuspects)
+        if ($sus.Count -gt 0) {
+            $lines += '  suspects: repo scripts running at teardown (any of them may have stopped it):'
+            foreach ($s in $sus) { $lines += "    | $s" }
+        } else {
+            $lines += '  suspects: no other repo script is running now (a killer that already finished leaves no trace here)'
+        }
+    } elseif ($Report.CrashEvent) {
         $e = $Report.CrashEvent
         $lines += "  WER     : $($e.App) $($e.ExceptionCode) $($e.ExceptionName) in $($e.Module) +$($e.FaultOffset) at $($e.Time)"
     } elseif ($Report.Crashed) {
@@ -351,7 +401,7 @@ function Write-GuiPostmortem {
         } elseif ($Report.DumpWhy) {
             $lines += "  stack   : $($Report.DumpWhy)"
         }
-    } elseif ($Report.Crashed) {
+    } elseif ($Report.Crashed -and -not $Report.KilledOutside) {
         $lines += '  dump    : none (WER LocalDumps is not armed on this box - see docs/claude/build.md)'
     }
     if ($Report.StdErrFound) {

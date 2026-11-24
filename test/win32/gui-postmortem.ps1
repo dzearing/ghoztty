@@ -346,7 +346,7 @@ try {
 # the value: a child that exits -1 ON ITS OWN has to keep the CRASHED verdict.
 # Without this section, widening ConvertTo-GuiExitVerdict's "not a crash" range
 # would pass every other check here.
-Write-Host 'K an unkilled 0xFFFFFFFF exit is still reported as CRASHED'
+Write-Host 'K an unkilled 0xFFFFFFFF exit is still reported (as KILLED FROM OUTSIDE, T2054)'
 $td5 = New-TestDesktop
 $kDie = Start-OnTestDesktop -Exe $env:ComSpec -Arguments @('/c', 'ping -n 2 127.0.0.1 >nul & exit -1')
 $kGone = Wait-Gone -ProcessId $kDie.Pid -TimeoutSec 60
@@ -356,7 +356,9 @@ $kCount = Write-TestDesktopPostmortems -WaitSeconds 1
 $kBlock = (@(Get-LastGuiPostmortem) -join "`n")
 Assert "K2 the unkilled -1 exit is reported (blocks: $kCount, want 1)" `
     ($kCount -eq 1 -and $kBlock -like "*pid $($kDie.Pid)*")
-Assert 'K3 its verdict is CRASHED - 0xFFFFFFFF' ($kBlock -like '*verdict : CRASHED - 0xFFFFFFFF*')
+# T2054: reported, but as what it is - an outside TerminateProcess - so the
+# reader goes looking for the script that killed it, not for a crash.
+Assert 'K3 its verdict is KILLED FROM OUTSIDE - 0xFFFFFFFF' ($kBlock -like '*verdict : KILLED FROM OUTSIDE - 0xFFFFFFFF*')
 $kRec = @(Get-TestLaunchRecords | Where-Object { $_.Pid -eq $kDie.Pid })
 Assert 'K4 the launch is not on the record as killed' ($kRec.Count -eq 1 -and -not $kRec[0].Killed)
 # T1685: the verdict names what the code almost always means - an outside
@@ -364,7 +366,36 @@ Assert 'K4 the launch is not on the record as killed' ($kRec.Count -eq 1 -and -n
 # "unnamed NTSTATUS", which sent that card hunting for an in-app crash.
 Assert 'K5 the 0xFFFFFFFF verdict names the outside-kill signature' `
     ($kBlock -like '*0xFFFFFFFF exit -1*Stop-Process*' -and $kBlock -notlike '*0xFFFFFFFF unnamed NTSTATUS*')
+# T2054: the block never says CRASHED for it, carries the suspects line, and does
+# not send the reader to WER or a dump an outside kill can never have written.
+Assert 'K6 the -1 block says neither CRASHED nor WER/dump, and names suspects' `
+    ($kBlock -notlike '*CRASHED*' -and $kBlock -like '*suspects:*' -and
+     $kBlock -notlike '*WER     :*' -and $kBlock -notlike '*dump    : none*')
 Remove-TestDesktop
+
+# K7 (T2054): the suspect list actually finds a repo script that is running. A
+# planted PowerShell runs a sleeper from a `scripts\` path; it must be listed,
+# and this script's own pid must not be (it is never its own suspect).
+$kSusDir = Join-Path $tmp 'scripts'
+New-Item -ItemType Directory -Path $kSusDir -Force | Out-Null
+$kSusPs1 = Join-Path $kSusDir 'gpm-suspect.ps1'
+Set-Content -LiteralPath $kSusPs1 -Value 'Start-Sleep -Seconds 60' -Encoding ASCII
+$kSus = Start-Process -FilePath 'powershell.exe' -ArgumentList @('-NoProfile', '-File', "`"$kSusPs1`"") -WindowStyle Hidden -PassThru
+try {
+    $kFound = @()
+    $kDeadline = (Get-Date).AddSeconds(15)
+    do {
+        $kFound = @(Get-GuiKillSuspects)
+        if (@($kFound | Where-Object { $_ -like "pid $($kSus.Id) *gpm-suspect.ps1" }).Count -gt 0) { break }
+        Start-Sleep -Milliseconds 300
+    } while ((Get-Date) -lt $kDeadline)
+    Assert "K7 a running repo script is named as a suspect (got: $($kFound -join '; '))" `
+        (@($kFound | Where-Object { $_ -like "pid $($kSus.Id) *gpm-suspect.ps1" }).Count -eq 1)
+    Assert 'K8 this script is never its own suspect' `
+        (@($kFound | Where-Object { $_ -like "pid $PID *" }).Count -eq 0)
+} finally {
+    Stop-Process -Id $kSus.Id -Force -ErrorAction SilentlyContinue
+}
 
 # ------------- L. a bare Stop-Process on a harness launch is not a crash (T1550)
 
@@ -396,8 +427,8 @@ Clear-LastGuiPostmortem
 $lCount = Write-TestDesktopPostmortems -WaitSeconds 1
 $lBlock = (@(Get-LastGuiPostmortem) -join "`n")
 Assert "L3 the three stopped children are not reported (blocks: $lCount, want 1)" ($lCount -eq 1)
-Assert 'L4 the child that died on its own is still reported as CRASHED - 0xFFFFFFFF' `
-    ($lBlock -like "*pid $($lDie.Pid)*" -and $lBlock -like '*verdict : CRASHED - 0xFFFFFFFF*')
+Assert 'L4 the child that died on its own is still reported (KILLED FROM OUTSIDE - 0xFFFFFFFF since T2054)' `
+    ($lBlock -like "*pid $($lDie.Pid)*" -and $lBlock -like '*verdict : KILLED FROM OUTSIDE - 0xFFFFFFFF*')
 $lMarked = @(Get-TestLaunchRecords | Where-Object {
         $_.Killed -and @($lById.Pid, $lByPipe.Pid, $lPositional.Pid) -contains $_.Pid })
 Assert "L5 all three stopped launches are on the record as killed (got $($lMarked.Count))" ($lMarked.Count -eq 3)

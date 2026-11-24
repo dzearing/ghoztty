@@ -1,10 +1,11 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-11-24T02:45:50-08:00",
-    "commit":  "8ac5e3254",
+    "generated":  "2026-11-24T02:56:09-08:00",
+    "commit":  "503867a87",
     "uncommitted":  [
-
+                        "test/win32/gui-postmortem.ps1",
+                        "test/win32/lib/GuiPostmortem.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "e3d359fb624aa2c8abf555bea66b63a798c01ec9dce023416631191e2c943050",
@@ -67,7 +68,7 @@
                   "test/win32/build-cache.ps1":  "c72878df10c33c065ebc87b66eaaf8fb3ecf9da1d1a43171dcc6ccf989dc1782",
                   "test/win32/build-fresh-guard.ps1":  "5215065abfc02691db5643057d1d897acac947d64c18649b4ec9105dee1b9d32",
                   "test/win32/build-locked-artifact.ps1":  "92e89275b3d3344394334033f8690665a9cfea67cf52b54ae00823ef5d17e71e",
-                  "test/win32/build-mode-guard.ps1":  "6225bc63303cdb33b02587a5f9f0311c59ae1f427e01687bce7412818a952377",
+                  "test/win32/build-mode-guard.ps1":  "b02ec54ed86da5bc1926714a91e022b30212d243b7b75b8bab9beaf90ad102a3",
                   "test/win32/caller-anchor.ps1":  "6c5ce12b4624feb742eba828395db41c9959e3875db60a481e5ce4c92584a299",
                   "test/win32/caption-bar.ps1":  "f3e4c65358f5a31ee2b830b5d8db87ffe56ed6fb6f32d89bc0175d56c1a4beb9",
                   "test/win32/caption-click-modal.ps1":  "e66ad48137be5cf233ca5e8b2087bb47d6a40782556b2d5bbda642e62f70da3c",
@@ -207,7 +208,7 @@
                   "test/win32/goto-window.ps1":  "46d315222e373a99e41e10787bf31cbd847e3cd8c383da93e902008f549627a1",
                   "test/win32/guard-due.ps1":  "f32bba80075ab29f3f54a393efa8bce66ebff065c30d52d03cbc4c40338d7d1e",
                   "test/win32/gui-launch-command.ps1":  "cfb6969d2fb9ed206a283ef53a92b01faa83dccafb07e343ec1db374cd35adc9",
-                  "test/win32/gui-postmortem.ps1":  "b621c58624501914bb14d520cfe6aab2ec5a94cc5ce7d7ae509965fb22d84ac0",
+                  "test/win32/gui-postmortem.ps1":  "b9cce844222cd55e667a85aedba38109eeacdc8576524998be403b558b782ba4",
                   "test/win32/hard-delete-sites.ps1":  "f0e6c5b18f1e786cab6acf996e3bcb9d8b1da46d99c9bfbc7f5664a12dacd71c",
                   "test/win32/harness-exitcode-audit.ps1":  "9568a9718f2cfba7d2bc2b8f9813a74ba8767a062a20dea8f236fc56fa3ee4e5",
                   "test/win32/harness-floor.ps1":  "1db054250529b447363a296512d10e0b44eef62f4ac94b957ddd29ef11c922c5",
@@ -278,7 +279,7 @@
                   "test/win32/lib/BodyCompleteAudit.ps1":  "d769e0c53cae44b303b136563e8f5e095da2f94d7f726668eebb0a9ba7fb5e40",
                   "test/win32/lib/BrowserLeak.ps1":  "ae41845c0869dc0a37c9104ff6189f07d1e4ede98445bdecbeb3e222f5224826",
                   "test/win32/lib/BuildFresh.ps1":  "8ef3d35b374882e3e7538823ec18773a0a84ddf63de421bf7d291a7f8a08f23a",
-                  "test/win32/lib/BuildMode.ps1":  "cc8a5e8d13f911edb486cc4948a499ca5b87411bf2defd65499d0cf0a47ccd48",
+                  "test/win32/lib/BuildMode.ps1":  "2e420213f445ed93f56d853ebdb2cea5652bccaa852f2dc01e5a5f29a794b67e",
                   "test/win32/lib/ChainFoldOracle.ps1":  "6e774b2679c3acb1172991c393b17d36b1524fa4cd843863eacc1848c8fa3423",
                   "test/win32/lib/CheckoutGuard.ps1":  "9536259de2474ff6834dc9112a864b6c40579ae6dcf12cdc123efd4e08089216",
                   "test/win32/lib/ChooserControls.ps1":  "a89ca8550ef8143250eb27df76bfa9e11b5c1af46f086ea23e07defd5d8eaec0",
@@ -316,7 +317,7 @@
                   "test/win32/lib/FrameLabTrigger.ps1":  "e34b9a8562bf5e4266c62f7fa51d2b41b25976908a39f5310d250eedb78d2078",
                   "test/win32/lib/FrameScore.ps1":  "bbae7d0196076712df01ca2625a8eac5af348c03f31b9589fafc48f0dc43aae7",
                   "test/win32/lib/FreePort.ps1":  "1f6d3230171a1f76c1f1327e8ad01ddd9c65aba78cbe70f7b7716b9a1a2109c7",
-                  "test/win32/lib/GuiPostmortem.ps1":  "a34e45c859264ba7a9db56b7800815d904d0269b99b7de8ddeac67ae763aa026",
+                  "test/win32/lib/GuiPostmortem.ps1":  "ec3402f5749dd3fb0446bcc09004a7dd191100c96809816e45416d45688bfc56",
                   "test/win32/lib/HarnessLeak.ps1":  "68a65ded02a866891bb0e9c0745a6996bca0b99c5805f4a3206ada6f4e9d1ccd",
                   "test/win32/lib/HarnessScope.ps1":  "d3fde09c67a200a4d66feef4d1f2a58a691fb46b740781b320574625c6e230bf",
                   "test/win32/lib/HoverCapture.ps1":  "7790fa1746250a596f8bc1df3f928246f7145bc736579ae0ebc792834692219d",
