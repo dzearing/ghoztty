@@ -1,10 +1,10 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-11-24T05:48:31-08:00",
+    "generated":  "2026-11-24T05:52:10-08:00",
     "commit":  "4e130a464",
     "uncommitted":  [
-
+                        "test/win32/activity-help-tooltips.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "e3d359fb624aa2c8abf555bea66b63a798c01ec9dce023416631191e2c943050",
@@ -12,7 +12,7 @@
                   "scripts/vt-escape-scan.ps1":  "a23758e33821d194e040b24ac5e9811b705f53c5fc0313633aa1478f11567ced",
                   "test/win32/about-links.ps1":  "cb6ba712f258265f9a5d03dc219567a0025a1f081a2b7d2029586140247906eb",
                   "test/win32/acceptance-parallel.ps1":  "2673dccb32a1a23a91372cea2ed37ca934158fae369c8fbbe0c6976b7ed2657a",
-                  "test/win32/activity-help-tooltips.ps1":  "0023622d51e2dce579e45f7f46ffeed4195fc995570bd6cdffde961b229ed1b6",
+                  "test/win32/activity-help-tooltips.ps1":  "ead9d97c42517396c6a6a16de0885e5636f09c677582f2b830ed859f6f933b59",
                   "test/win32/activity-monitor.ps1":  "085720eade12d3fda926f05f7a1f5e9bc8475e206327066555d2036974b5d3f0",
                   "test/win32/activity-monitor-dialed.ps1":  "e8d248a8d5507c68b3a67fd0f15692a98868d2542cbc6f0cdb714c9ee98ade99",
                   "test/win32/activity-monitor-probe-fail.ps1":  "9f7eb6448779410b4d596c3dbdd62c94c9e8255dd922ae5fb97b2d5a51541296",

@@ -69,7 +69,10 @@
 #
 # Only touches ghoztty processes running from this repo's zig-out.
 param(
-    [string]$Exe = 'D:\git\ghoztty\zig-out\bin\ghoztty.exe'
+    [string]$Exe = 'D:\git\ghoztty\zig-out\bin\ghoztty.exe',
+    # T2074 negative control: plant a probe that DOES derive a tip into E, which
+    # must then go red. Never stamps (the run is red by construction).
+    [switch]$PlantTooltip
 )
 
 # T351: the shared reset/kill helpers. Dot-sourced HERE, ahead of any isolation
@@ -261,25 +264,76 @@ try {
     Assert ($null -ne $kill) 'A the Kill button exists (hidden until a row is selected)'
     if (-not ($showAll -and $newProc -and $kill)) { Write-TestAssertedNothing -Reason 'control bar incomplete' -Skipped $script:skipped }
 
-    $client = Get-TestWindowRect -Window $panel -Client
-    $sa = Get-TestWindowRect -Window ([IntPtr]$showAll.Hwnd)
-    $np = Get-TestWindowRect -Window ([IntPtr]$newProc.Hwnd)
+    # T2074: SETTLE before E. E is the script's first hover, so nothing this
+    # script did can still be in flight when it starts (the 2026-10-18 red was
+    # first blamed on a late line from an earlier hover; there is none). What
+    # CAN still move is the panel itself: its layout settling after the palette
+    # closes (a probe placed from a stale rect lands on the count or a row), and
+    # a move Windows synthesizes as the panel appears. Under a four-wide sweep
+    # both arrive late. So: re-read the geometry until two reads 500 ms apart
+    # agree, then wait for the tooltip log to go quiet, and only then probe.
+    $geoKey = ''
+    $geoWaited = 0
+    while ($true) {
+        $client = Get-TestWindowRect -Window $panel -Client
+        $sa = Get-TestWindowRect -Window ([IntPtr]$showAll.Hwnd)
+        $np = Get-TestWindowRect -Window ([IntPtr]$newProc.Hwnd)
+        $key = "$($client.Left),$($client.Top),$($client.Width),$($client.Height)|$($sa.Left),$($sa.Top),$($sa.Right),$($sa.Bottom)|$($np.Left),$($np.Top)"
+        if ($key -eq $geoKey -or $geoWaited -ge 8000) { break }
+        $geoKey = $key
+        Start-Sleep -Milliseconds 500
+        $geoWaited += 500
+    }
     $rowY = [int](($sa.Top + $sa.Bottom) / 2) - $client.Top
     $saRight = $sa.Right - $client.Left
     $npLeft = $np.Left - $client.Left
 
+    # Quiet: no tooltip line of any kind for a full second (capped at 8 s).
+    $quietWaited = 0
+    $lastSeen = Get-LastLineNo 'activity help tooltip'
+    $quietFor = 0
+    while ($quietFor -lt 1000 -and $quietWaited -lt 8000) {
+        Start-Sleep -Milliseconds 250
+        $quietWaited += 250
+        $now = Get-LastLineNo 'activity help tooltip'
+        if ($now -ne $lastSeen) { $lastSeen = $now; $quietFor = 0 } else { $quietFor += 250 }
+    }
+
     # --- E: the empty badge slot and the table say nothing -----------------
     Write-Host ''
     Write-Host '2. points with no help derive nothing'
-    $before = Get-LastLineNo 'activity help tooltip target='
+    # Each probe is scored on its OWN window, and a red names the probe, the
+    # point and the target the app derived - so a future red says what it saw
+    # instead of a bare count (the 2026-10-18 red could not be diagnosed).
+    $strays = New-Object System.Collections.Generic.List[string]
+    function Test-NoHelpAt([string]$probe, [int]$x, [int]$y, [int]$settleMs = 300) {
+        $b = Get-LastLineNo 'activity help tooltip target='
+        Move-Pointer $panel $x $y $settleMs
+        @(Select-String -Path $errlog -Pattern 'activity help tooltip target=(\S+)' -ErrorAction SilentlyContinue) |
+            Where-Object { $_.LineNumber -gt $b } |
+            ForEach-Object { $strays.Add("$probe at ($x,$y): $($_.Line -replace '^.*activity help tooltip ','')") }
+    }
     # Just right of the checkbox is the badge slot, empty on a local table.
-    Move-Pointer $panel ($saRight + 6) $rowY
-    Move-Pointer $panel ($saRight + 20) $rowY
-    # The table, well below the control bar.
-    Move-Pointer $panel ([int]($client.Width / 2)) ([int]($client.Height * 3 / 4))
-    Start-Sleep -Milliseconds 500
-    Assert ((Get-LastLineNo 'activity help tooltip target=') -eq $before) `
-        'E the empty badge slot and the table derive no tooltip'
+    Test-NoHelpAt 'badge slot' ($saRight + 6) $rowY
+    Test-NoHelpAt 'badge slot' ($saRight + 20) $rowY
+    if ($PlantTooltip) {
+        # Negative control: a probe that DOES derive a tip (the count's words,
+        # found by walking left from New Process as B does) must turn E red.
+        for ($x = $npLeft - 2; $x -gt $saRight + 20; $x -= 3) {
+            $n = $strays.Count
+            Test-NoHelpAt 'PLANTED count' $x $rowY 60
+            if ($strays.Count -gt $n) { break }
+        }
+    }
+    # The table, well below the control bar, in the empty band under its rows.
+    Test-NoHelpAt 'empty table band' ([int]($client.Width / 2)) ([int]($client.Height * 3 / 4)) 800
+    foreach ($s in $strays) { Write-Host "    (E derived: $s)" }
+    Assert ($strays.Count -eq 0) `
+        "E the empty badge slot and the table derive no tooltip (client=$($client.Width)x$($client.Height) rowY=$rowY saRight=$saRight; settle $geoWaited ms, quiet after $quietWaited ms)"
+    if ($PlantTooltip) {
+        Write-Host ''
+        Write-Host "PLANT: E scored $($strays.Count) derived line(s) with a real tooltip planted - it must be red"
+    }
 
     # --- F: the process table's cells (T1548) ------------------------------
     Write-Host ''
