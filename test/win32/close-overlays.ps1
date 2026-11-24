@@ -32,10 +32,16 @@
 #      windows that carry them by the time +close answers. Sections 1-5 pin
 #      GHOZTTY_COMP_PRESENT=0: they are the popup path, which still serves
 #      viewer panes, the opt-out and machines with no GL/D3D interop.
+#   7. Move to another window (T2029, T2012 criterion 3), popup path: c2's
+#      header pop-out button takes it into a window of its own, and by the
+#      time the GUI thread has handled the click (an IPC round-trip is the
+#      barrier) every visible c2 popup sits over c2 in the NEW window, banner
+#      and scrollbar included, and none is left over its old slot in cw.
 #
 # -NegativeControl runs the section-2 oracle BEFORE the close, when c2's banner
 # is legitimately visible, so it MUST fail: the proof that the oracle can see a
-# visible popup at all.
+# visible popup at all. It does the same for section 7's old-slot oracle,
+# asked before the move.
 #
 # Runs on a BACKGROUND desktop (lib\TestDesktop.ps1) and never takes the
 # user's foreground - asserted by the foreground watcher, not assumed.
@@ -58,6 +64,7 @@ $env:GHOZTTY_PIPE_SUFFIX = "-t2012test$PID"
 
 . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
 . (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
+. (Join-Path $PSScriptRoot 'lib\ChromeGeometry.ps1')
 
 $script:pass = 0
 $script:fail = 0
@@ -326,6 +333,138 @@ try {
         Assert (-not ($app.Process -and $app.Process.HasExited)) 'comp: GUI process alive'
         Remove-Item $log6 -ErrorAction SilentlyContinue
     }
+
+    # --- 7. move to another window: the popups go WITH the pane (T2029) -------
+    # The pop-out button takes c2 into a window of its own (Window.popOutPane ->
+    # commitPopOutDrop -> adoptPane: SetParent, then reownPopups, then the new
+    # window's first layout re-glues). The banner, dim wash and scrollbar are
+    # top-level popups that SetParent does not move, so what is asserted is that
+    # by the time the GUI thread has finished the click, every c2 popup on
+    # screen sits over c2's NEW rect and none is left over its old slot.
+    #
+    # The barrier is an IPC round-trip, not a sleep: IPC requests run on the GUI
+    # thread (IpcServer, WM_APP_IPC) and that thread's posted messages are taken
+    # in order, so `+list` answering after the posted release means the release
+    # - the whole move - has been handled. A glue deferred to a later timer or
+    # message would still be pending then, and fails here.
+    #
+    # Popup path (GHOZTTY_COMP_PRESENT=0), like sections 1-5: on the composition
+    # path the overlays are the pane's own visuals and ride the SetParent
+    # (section 6; rearrange-window-drop.ps1 D covers the move there).
+    Stop-RepoInstances
+    $env:GHOZTTY_COMP_PRESENT = '0'
+    try { $app = Start-OnTestDesktop -Exe $exe -Arguments @('--session-persistence=false', '--undo-timeout=20s', '--macos-pane-glass=false', '--keybind=ctrl+shift+f9=toggle_rearrange_mode') }
+    finally { Remove-Item env:GHOZTTY_COMP_PRESENT -ErrorAction SilentlyContinue }
+    Start-Sleep -Seconds 3
+    $appPid = $app.Pid
+    if ((Wait-TestWindow -ProcessId $appPid -Class 'GhozttyWindow') -eq [IntPtr]::Zero) { throw 'move setup: no GhozttyWindow' }
+    & $exe +new-window --target=cw | Out-Null
+    $cw = $null
+    for ($t = 0; $t -lt 25 -and -not $cw; $t++) { $cw = Get-Win 'cw'; if (-not $cw) { Start-Sleep -Milliseconds 200 } }
+    if (-not $cw) { throw 'move setup: cw window not registered' }
+    $cwTop = [IntPtr][int64]$cw.id
+    [void](Set-TestWindowPos -Window $cwTop -X 40 -Y 40 -Width 1100 -Height 700)
+    & $exe +split --target=cw --direction=right --name=c2 | Out-Null
+    & $exe +set-banner --target=cw 'left pane' | Out-Null
+    & $exe +set-banner --target=c2 "c2 pane\nsecond line\nthird line" | Out-Null
+    $okB = Wait-Until { @(Get-VisibleBanners $appPid).Count -eq 2 }
+    Assert $okB "move: setup: two banner popups on screen (saw $(@(Get-VisibleBanners $appPid).Count))"
+    Assert (Set-TestActiveWindow -Window $cwTop) 'move: setup: cw is the active window'
+    Start-Sleep -Milliseconds 400
+    $focused = [IntPtr](Get-TestFocusedWindow -Window $cwTop)
+    Assert (Send-TestKeys -Window $cwTop -Target $focused -Modifiers ctrl, shift -Key F9) 'move: setup: ctrl+shift+f9 (toggle_rearrange_mode) delivered'
+    Start-Sleep -Milliseconds 1200
+    $kids = @(Get-TestChildWindows -Window $cwTop -Class 'GhozttyTerminal' | Where-Object Visible | Sort-Object Left)
+    $script:leafNames = @()
+    function Add-MoveLeaves($node) {
+        if ($null -eq $node) { return }
+        if ($node.type -eq 'leaf') { $script:leafNames += [string]$node.terminal.name; return }
+        Add-MoveLeaves $node.left; Add-MoveLeaves $node.right
+    }
+    $cwNow = Get-Win 'cw'
+    if ($cwNow) { Add-MoveLeaves $cwNow.tabs[0].splits }
+    $setupOk = ($kids.Count -eq 2 -and $script:leafNames.Count -eq 2 -and $script:leafNames[1] -eq 'c2')
+    Assert $setupOk "move: setup: cw shows two panes side by side, c2 on the right (panes $($kids.Count); leaves: $($script:leafNames -join ','))"
+    if ($setupOk) {
+        $c2 = $kids[1]
+        $c2h = [int64]$c2.Hwnd
+        # c2's popups, by HWND, before the move: everything centred in its column
+        # at or below its banner's top. The three-line banner is the taller one.
+        $c2Banner = @(Get-VisibleBanners $appPid | Sort-Object Height)[-1]
+        $c2Popups = @(Get-PopupsInColumn $appPid $c2.Left ($c2.Left + $c2.Width) $c2Banner.Top)
+        $c2Classes = @($c2Popups | ForEach-Object { $_.Class } | Sort-Object -Unique)
+        $missing = @(@('GhozttyBannerOverlay', 'GhozttyDimOverlay', 'GhozttyScrollbar') | Where-Object { $c2Classes -notcontains $_ })
+        Assert ($missing.Count -eq 0) "move: setup: c2 has a banner, a dim wash and a scrollbar on screen ($($c2Classes -join ','); missing: $($missing -join ','))"
+        $oldL = $c2.Left; $oldR = $c2.Left + $c2.Width; $oldTop = $c2Banner.Top
+        $c2Hwnds = @($c2Popups | ForEach-Object { [int64]$_.Hwnd })
+        $winsBefore = @(Get-TestWindows -ProcessId $appPid -Class 'GhozttyWindow' | ForEach-Object { [int64]$_.Hwnd })
+
+        if ($NegativeControl) {
+            # The source-slot oracle, asked BEFORE the move: c2's popups are
+            # legitimately still there, so this MUST fail.
+            $script:negReached = $true
+            $left = @(Get-PopupsInColumn $appPid $oldL $oldR $oldTop | Where-Object { $c2Hwnds -contains [int64]$_.Hwnd })
+            Assert ($left.Count -eq 0) "NEGATIVE CONTROL: no c2 popup is left over its old slot before the move ($($left.Count) visible)"
+        } else {
+            # The pop-out button: right end of the header band above the pane,
+            # 20dip box one 8dip pad in (rearrange_header.layout) - the same
+            # derivation rearrange-window-drop.ps1 D uses.
+            $dpi = Get-TestWindowDpi -Window $cwTop
+            $scale = if ($dpi -gt 0) { $dpi / 96.0 } else { 1.0 }
+            $band = Get-TestChromeDip -Dip 24 -Scale $scale
+            $c2Now = @(Get-TestChildWindows -Window $cwTop -Class 'GhozttyTerminal' | Where-Object { [int64]$_.Hwnd -eq $c2h })[0]
+            $btnX = $c2Now.Left + $c2Now.Width - (Get-TestChromeDip -Dip 18 -Scale $scale)
+            # The header band sits above the CARD, and on this path the card's
+            # top is the banner popup glued above the terminal child.
+            $bNow = @(Get-OverlayPopups $appPid | Where-Object { [int64]$_.Hwnd -eq [int64]$c2Banner.Hwnd })[0]
+            $cardTop = if ($bNow -and $bNow.Visible) { [math]::Min($c2Now.Top, $bNow.Top) } else { $c2Now.Top }
+            $btnY = $cardTop - [int]($band / 2)
+            Write-Host "      c2 pane $($c2Now.Left),$($c2Now.Top)-$($c2Now.Right),$($c2Now.Bottom); banner $($bNow.Left),$($bNow.Top)-$($bNow.Right),$($bNow.Bottom); button at $btnX,$btnY (band $band px)"
+            Assert (Send-TestMouse -Window $cwTop -Target $cwTop -X $btnX -Y $btnY -Action 'down' -Client) 'move: press on c2''s pop-out button delivered'
+            Assert (Send-TestMouse -Window $cwTop -Target $cwTop -X $btnX -Y $btnY -Action 'up' -Client) 'move: release delivered'
+            # The barrier: the GUI thread has handled the release once this answers.
+            & $exe +list --json 2>$null | Out-Null
+            $snap = @(Get-OverlayPopups $appPid)
+            $newWins = @(Get-TestWindows -ProcessId $appPid -Class 'GhozttyWindow' | Where-Object { $winsBefore -notcontains [int64]$_.Hwnd })
+            Assert ($newWins.Count -eq 1) "move: the pop-out opened one new window (saw $($newWins.Count))"
+            if ($newWins.Count -eq 1) {
+                $newTop = [IntPtr][int64]$newWins[0].Hwnd
+                $moved = @(Get-TestChildWindows -Window $newTop -Class 'GhozttyTerminal' | Where-Object { [int64]$_.Hwnd -eq $c2h })[0]
+                Assert ($null -ne $moved) 'move: the new window holds c2 - the same pane HWND, so its shell came with it'
+                if ($moved) {
+                    $nL = $moved.Left; $nR = $moved.Left + $moved.Width
+                    $nWin = $newWins[0]
+                    # Every c2 popup that is on screen sits over c2's new column,
+                    # inside the new window.
+                    $mine = @($snap | Where-Object { $c2Hwnds -contains [int64]$_.Hwnd -and $_.Visible })
+                    $astray = @($mine | Where-Object {
+                        $cx = ($_.Left + $_.Right) / 2
+                        -not (($cx -ge $nL) -and ($cx -lt $nR) -and ($_.Top -ge $nWin.Top) -and ($_.Bottom -le $nWin.Bottom))
+                    })
+                    $desc = ($mine | ForEach-Object { "$($_.Class)@$($_.Left),$($_.Top)" }) -join ' '
+                    Write-Host "      c2 new column [$nL,$nR) in window $($nWin.Left),$($nWin.Top)-$($nWin.Right),$($nWin.Bottom); visible c2 popups: $desc"
+                    Assert ($astray.Count -eq 0) "move: by the time the move was handled, every visible c2 popup sits over c2 in the new window (astray: $(($astray | ForEach-Object { "$($_.Class)@$($_.Left),$($_.Top)" }) -join ' '))"
+                    $mineClasses = @($mine | ForEach-Object { $_.Class })
+                    Assert ($mineClasses -contains 'GhozttyBannerOverlay') "move: c2's banner is on screen in the new window in that same pass ($($mineClasses -join ','))"
+                    Assert ($mineClasses -contains 'GhozttyScrollbar') "move: c2's scrollbar is on screen in the new window in that same pass ($($mineClasses -join ','))"
+                    $leftOver = @($snap | Where-Object {
+                        $c2Hwnds -contains [int64]$_.Hwnd -and $_.Visible -and ((($_.Left + $_.Right) / 2) -ge $oldL) -and ((($_.Left + $_.Right) / 2) -lt $oldR) -and ($_.Top -ge $oldTop) -and -not ((($_.Left + $_.Right) / 2) -ge $nL -and (($_.Left + $_.Right) / 2) -lt $nR)
+                    })
+                    Assert ($leftOver.Count -eq 0) "move: no c2 popup is left over its old slot in cw ($(($leftOver | ForEach-Object { $_.Class }) -join ','))"
+                    Start-Sleep -Milliseconds 1000
+                    $moved = @(Get-TestChildWindows -Window $newTop -Class 'GhozttyTerminal' | Where-Object { [int64]$_.Hwnd -eq $c2h })[0]
+                    $late = @(@(Get-OverlayPopups $appPid) | Where-Object { $c2Hwnds -contains [int64]$_.Hwnd -and $_.Visible } | Where-Object {
+                        $cx = ($_.Left + $_.Right) / 2
+                        -not ($moved -and ($cx -ge $moved.Left) -and ($cx -lt $moved.Left + $moved.Width))
+                    })
+                    Assert ($late.Count -eq 0) "move: and 1 s later they are still with it ($($late.Count) astray)"
+                    $cwBanners = @(Get-VisibleBanners $appPid | Where-Object { $c2Hwnds -notcontains [int64]$_.Hwnd })
+                    Assert ($cwBanners.Count -eq 1) "move: cw's own banner stays on screen (saw $($cwBanners.Count))"
+                }
+            }
+        }
+    }
+    Assert (-not ($app.Process -and $app.Process.HasExited)) 'move: GUI process alive'
 } catch {
     $script:fail++
     Write-Host "FAIL  the run terminated: $($_.Exception.Message)" -ForegroundColor Red
