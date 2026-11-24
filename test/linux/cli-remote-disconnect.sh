@@ -162,7 +162,12 @@ sleep 3
 hl_check "T3 Disconnect closes the tab and its remote shell keeps running" $? "out=$out tabs=$(win ntabs rdp) pid=$pt"
 
 # --- a window: the window's x --------------------------------------------------
-echo "probe before W1: $(dialog rdp)"
+# An answered dialog animates out; until it has, libadwaita spends the
+# window's next close request on dismissing it (`+close --force` loops for the
+# same reason). So the tab's dialog must be GONE before the window's x.
+no_dialog() { [ "$(field "$(dialog "$1")" open)" = false ]; }
+hl_wait_for 15 no_dialog rdp
+hl_check "W0 the answered tab dialog has left the window" $? "$(dialog rdp)"
 mark=$(wc -l < "$APP_LOG")
 out=$(dialog rdp --op=window --answer=cancel)
 [ "$(field "$out" disconnect)" = true ] && [ "$(field "$out" answered)" = cancel ] &&
