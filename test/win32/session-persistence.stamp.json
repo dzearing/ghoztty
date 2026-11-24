@@ -1,8 +1,8 @@
 {
     "guard":  "session-persistence",
     "script":  "test/win32/session-persistence.ps1",
-    "generated":  "2026-11-23T17:18:28-08:00",
-    "commit":  "e9054665f",
+    "generated":  "2026-11-23T20:25:26-08:00",
+    "commit":  "4f8d6a3de",
     "uncommitted":  [
                         "test/win32/session-persistence.ps1"
                     ],
@@ -10,9 +10,9 @@
                   "src/apprt/win32/session_layout.zig":  "23de7c84c9bda3017a52911fb9743e5f963978426160938e66f3aa079aa70e2b",
                   "src/remote/agent/session.zig":  "cc987315e33593e6efb528499f62b2a391b74336f1d4b6710a46402d0e9b3adc",
                   "src/termio/Remote.zig":  "161d0bdcc1bd8719c5e08ee43cf5840fe97d3f133800cb5bc66b75da7e866a68",
-                  "test/win32/session-persistence.ps1":  "9a47dee9db23fe7f358d7ca3c1f14964bdd20282567f834c2f5855bf08ecd997"
+                  "test/win32/session-persistence.ps1":  "51a7c24d49223245e258d954a5095445d320c668c9977d80430312346405fbb5"
               },
     "code":  {
-                 "test/win32/session-persistence.ps1":  "code1:7a6b6e01b97df86206581d5c899e81ae9ae0bebc3054b516fd79f5423a00698b"
+                 "test/win32/session-persistence.ps1":  "code1:415df165b80403650159ce1c19edfbbdf98a9ffb1ddc514d7fb07563754a51b3"
              }
 }

@@ -1,3 +1,6 @@
+# @parallel-unsafe - C3 ("the pane draws") read red beside three other workers
+# and green alone on 2026-11-23 (T2032's run): its draw probe is starved by box
+# load, so it runs one at a time.
 # Window-chrome composition host acceptance (tracker T2508, T2360 step 4a).
 #
 # THE CHANGE: a top-level window can carry a DirectComposition target
@@ -248,7 +251,7 @@ try {
     Assert "E3 the top-level really carries WS_EX_NOREDIRECTIONBITMAP" `
         ($e.Top -ne [IntPtr]::Zero -and [CcStyle]::NoRedir($e.Top))
     & $Exe +split "--target=$($e.Target)" '--direction=right' '--name=chrome2' 2>$null | Out-Null
-    & $Exe +split "--target=chrome2" '--direction=down' "--view=$PSCommandPath" '--name=chromev' 2>$null | Out-Null
+    & $Exe +split "--pane=chrome2" '--direction=down' "--view=$PSCommandPath" '--name=chromev' 2>$null | Out-Null
     for ($i = 0; $i -lt 3; $i++) {
         & $Exe +send-keys "--target=chrome2" "echo comp-noredir-t2548-$i" Enter 2>$null | Out-Null
         Start-Sleep -Milliseconds 250

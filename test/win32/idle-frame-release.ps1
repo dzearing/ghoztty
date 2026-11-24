@@ -164,7 +164,7 @@ try {
     if ($r.Code -ne 0) { throw "+split 2 failed: $($r.Text)" }
     $r = Invoke-Verb @('+split', "--target=$($panes[0])", "--name=$($panes[2])", '--direction=down')
     if ($r.Code -ne 0) { throw "+split 3 failed: $($r.Text)" }
-    $r = Invoke-Verb @('+split', "--target=$($panes[1])", "--name=$($panes[3])", '--direction=down')
+    $r = Invoke-Verb @('+split', "--pane=$($panes[1])", "--name=$($panes[3])", '--direction=down')
     if ($r.Code -ne 0) { throw "+split 4 failed: $($r.Text)" }
     foreach ($p in $panes) {
         [void](Invoke-Verb @('+send-keys', "--target=$p", "echo idle-frame-release $p`r"))

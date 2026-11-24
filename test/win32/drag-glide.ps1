@@ -221,8 +221,8 @@ try {
         [IO.File]::WriteAllText($page, "# Glide`n`nA page for the viewer pane in the folding row (T2451).`n`n## Section`n`nText.`n")
         $steps = @(
             @('+split', "--target=$p1", '--direction=right', '--name=p3'),
-            @('+split', '--target=p3', '--direction=right', '--name=p4'),
-            @('+split', '--target=p4', '--direction=right', '--name=p5'),
+            @('+split', '--pane=p3', '--direction=right', '--name=p4'),
+            @('+split', '--pane=p4', '--direction=right', '--name=p5'),
             @('+split', "--target=$p1", '--direction=right', '--name=view', "--view=$page")
         )
         foreach ($argv in $steps) {

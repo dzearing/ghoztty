@@ -131,7 +131,7 @@ function Test-Alive($arm) { return ($arm.App.Process -and -not $arm.App.Process.
 function Invoke-Moves($arm) {
     & $Exe +split "--target=$($arm.Target)" '--direction=right' "--name=$($arm.Target)b" 2>$null | Out-Null
     Start-Sleep -Milliseconds 900
-    & $Exe +split "--target=$($arm.Target)b" '--direction=down' "--name=$($arm.Target)c" 2>$null | Out-Null
+    & $Exe +split "--pane=$($arm.Target)b" '--direction=down' "--name=$($arm.Target)c" 2>$null | Out-Null
     Start-Sleep -Milliseconds 900
     foreach ($n in 'c', 'b', 'c') {
         # The debug build's scheme (url-scheme.ps1): the activation is a

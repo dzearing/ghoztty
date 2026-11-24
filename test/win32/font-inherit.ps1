@@ -135,7 +135,7 @@ function Run-Case([string]$label, [string[]]$extraArgs, [bool]$expectInherit) {
 
     # New SPLIT from the zoomed pane: same full width, so inherit on
     # means identical columns; inherit off means the default columns.
-    & $exe +split --target=t76a --name=t76b --direction=down --shell=cmd "--command=echo ready-b" 2>$null | Out-Null
+    & $exe +split --pane=t76a --name=t76b --direction=down --shell=cmd "--command=echo ready-b" 2>$null | Out-Null
     Start-Sleep -Milliseconds 1200
     $colsB = Get-Cols 't76b'
     Assert ($colsB -gt 0) "$label t76b columns readable ($colsB)"

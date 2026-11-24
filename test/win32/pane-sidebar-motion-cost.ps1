@@ -140,11 +140,11 @@ try {
 
     Assert "setup: +split s1 exit 0 ($(Get-CliErr))" ((Invoke-Cli "+split --direction=right --name=s1") -eq 0)
     Start-Sleep -Milliseconds 800
-    Assert "setup: +split s2 exit 0 ($(Get-CliErr))" ((Invoke-Cli "+split --target=s1 --direction=down --name=s2") -eq 0)
+    Assert "setup: +split s2 exit 0 ($(Get-CliErr))" ((Invoke-Cli "+split --pane=s1 --direction=down --name=s2") -eq 0)
     Start-Sleep -Milliseconds 800
-    Assert "setup: +split s3 exit 0 ($(Get-CliErr))" ((Invoke-Cli "+split --target=s2 --direction=down --name=s3") -eq 0)
+    Assert "setup: +split s3 exit 0 ($(Get-CliErr))" ((Invoke-Cli "+split --pane=s2 --direction=down --name=s3") -eq 0)
     Start-Sleep -Milliseconds 800
-    Assert "setup: +split s4 exit 0 ($(Get-CliErr))" ((Invoke-Cli "+split --target=s1 --direction=right --name=s4") -eq 0)
+    Assert "setup: +split s4 exit 0 ($(Get-CliErr))" ((Invoke-Cli "+split --pane=s1 --direction=right --name=s4") -eq 0)
     Start-Sleep -Milliseconds 1500
     $panes = @(Get-Panes $top | Where-Object Visible).Count
     Assert "setup: five visible panes ($panes)" ($panes -eq 5)

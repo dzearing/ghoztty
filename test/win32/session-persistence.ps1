@@ -453,7 +453,7 @@ Assert "A4 blank startup window closed (winA remains)" ($n -eq 1)
 
 # winA splits: P0 | (spA / spB)
 Run-Cli '+split --target=winA --direction=right --name=spA' "$($script:tmp)\sp-a.txt" 15 | Out-Null
-Run-Cli '+split --target=spA --direction=down --name=spB' "$($script:tmp)\sp-b.txt" 15 | Out-Null
+Run-Cli '+split --pane=spA --direction=down --name=spB' "$($script:tmp)\sp-b.txt" 15 | Out-Null
 # winB: P3 | spC
 Run-Cli '+new-window --target=winB' "$($script:tmp)\nw-b.txt" 15 | Out-Null
 Run-Cli '+split --target=winB --direction=right --name=spC' "$($script:tmp)\sp-c.txt" 15 | Out-Null

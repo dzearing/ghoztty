@@ -260,8 +260,8 @@ function Build-Layout([string]$prefix, [string]$tag) {
     $first = $null
     foreach ($lf in (All-Leaves (Get-Tree "$tag-boot"))) { if (-not $first) { $first = $lf.id } }
     if ($first) { Run-Cli "+split --pane=$first --name=${prefix}1 --direction=right" "$tmp\$tag-s1.txt" 25 | Out-Null }
-    Run-Cli "+split --target=${prefix}1 --name=${prefix}2 --direction=down" "$tmp\$tag-s2.txt" 25 | Out-Null
-    Run-Cli "+split --target=${prefix}2 --name=${prefix}3 --direction=right" "$tmp\$tag-s3.txt" 25 | Out-Null
+    Run-Cli "+split --pane=${prefix}1 --name=${prefix}2 --direction=down" "$tmp\$tag-s2.txt" 25 | Out-Null
+    Run-Cli "+split --pane=${prefix}2 --name=${prefix}3 --direction=right" "$tmp\$tag-s3.txt" 25 | Out-Null
     Run-Cli "+new-window --target=${prefix}w --name=${prefix}4" "$tmp\$tag-w2.txt" 25 | Out-Null
     Run-Cli "+split --target=${prefix}4 --name=${prefix}5 --direction=right" "$tmp\$tag-s5.txt" 25 | Out-Null
 }

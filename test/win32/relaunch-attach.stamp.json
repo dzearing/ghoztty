@@ -1,19 +1,19 @@
 {
     "guard":  "relaunch-attach",
     "script":  "test/win32/relaunch-attach.ps1",
-    "generated":  "2026-11-23T16:03:27-08:00",
-    "commit":  "66ab78781",
+    "generated":  "2026-11-23T20:22:50-08:00",
+    "commit":  "4f8d6a3de",
     "uncommitted":  [
-
+                        "test/win32/relaunch-attach.ps1"
                     ],
     "files":  {
                   "src/remote/connection.zig":  "c7dba346238de4440f183969ebe967d2085809d2b03298f2a80055ce5da79bd2",
                   "src/termio/attach_failed_notice.zig":  "b55be52efe949b44482b1354eae9395d6ebb5dcc046f8a1c95e0f639ebc0c199",
                   "src/termio/open_failed_notice.zig":  "709aba3d06eb0a956a167b00dde2231439d7f7dd43535bad8d2eb36811019d8e",
                   "src/termio/Remote.zig":  "161d0bdcc1bd8719c5e08ee43cf5840fe97d3f133800cb5bc66b75da7e866a68",
-                  "test/win32/relaunch-attach.ps1":  "05ada0bfc8a535f6961e7ef57cc4d0ff54e0a1666442d666739662d3561023d0"
+                  "test/win32/relaunch-attach.ps1":  "e6f23303055b2df7a122944d41b28dbeff0dea002914521574dd85be05264c5d"
               },
     "code":  {
-                 "test/win32/relaunch-attach.ps1":  "code1:771c93944db54a04e05e6ac4a3da89b908b799a30d3323013cb0c2b0ee4e681e"
+                 "test/win32/relaunch-attach.ps1":  "code1:0f8915b2ccbf3616a4d6305292fd92eeeac9df8a3e7710d9939999f915f7a706"
              }
 }

@@ -123,7 +123,7 @@ try {
     Assert ($base.Count -eq 1) "A0 the window starts with one pane (saw $($base.Count))"
     & $exe +split --target=window-1 --name=t681b --direction=right 2>&1 | Out-Null
     [void](Wait-PaneCount ([int64]$top) 2)
-    & $exe +split --target=t681b --name=t681c --direction=down 2>&1 | Out-Null
+    & $exe +split --pane=t681b --name=t681c --direction=down 2>&1 | Out-Null
     $panes = Wait-PaneCount ([int64]$top) 3
     Assert ($panes.Count -eq 3) "A1 three panes are three child windows (saw $($panes.Count))"
     if ($panes.Count -ne 3) { throw 'splits did not land' }
