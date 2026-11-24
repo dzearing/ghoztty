@@ -490,7 +490,7 @@ fn gather(self: *PaneSidebar, arena: Allocator) Allocator.Error!Gathered {
                 .name = try arena.dupe(u8, all.name(
                     win.titleOverride(),
                     if (tab.titleOverride()) |t| t else null,
-                    if (page_title) |t| std.mem.span(t) else null,
+                    std.mem.span(page_title),
                     active_pwd,
                 )),
                 .key = key,
