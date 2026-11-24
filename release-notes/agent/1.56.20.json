@@ -1,0 +1,9 @@
+{
+  "version": "1.56.20",
+  "sections": [
+    { "title": "Fixes",
+      "items": [
+        { "text": "A ReleaseSafe build's session agent now uses the same endpoints as its app." }
+      ] }
+  ]
+}

@@ -1,0 +1,19 @@
+{
+  "version": "1.56.20",
+  "sections": [
+    { "title": "New",
+      "items": [
+        { "text": "On Linux, Open Config opens a Settings window that changes one line of the config per edit." },
+        { "text": "On Linux, Ctrl+Shift+/ opens a Keyboard Shortcuts guide built from the live keybinds." }
+      ] },
+    { "title": "Fixes",
+      "items": [
+        { "text": "A restored pane's banner check now says whether the banner was saved before the restart." }
+      ] },
+    { "title": "Improvements",
+      "items": [
+        { "text": "On Linux, a pane nobody can see stops drawing and catches up when shown." },
+        { "text": "On Linux, closing a pane, tab or window is measured to give back everything it held." }
+      ] }
+  ]
+}
