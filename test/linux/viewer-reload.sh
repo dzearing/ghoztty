@@ -83,6 +83,8 @@ steps="$HL_RUNTIME/steps"
 out="$HL_RUNTIME/steps.out"
 cat > "$steps" <<EOF
 probe window.scrollTo(0, 600); Math.round(window.scrollY)
+sleep 300
+probe Math.round(window.scrollY)
 mark inplace
 wait
 sleep 400
@@ -225,60 +227,60 @@ wt() { nth wait "$1"; }
 has() { case "$1" in *"$2"*) return 0 ;; *) return 1 ;; esac; }
 scroll_of() { echo "${1##*|}"; }
 
-[ "$(pr 1)" = "probe OK 600" ]
-hl_check "R7 the document scrolls (the baseline for the scroll checks)" $? "$(pr 1)"
+[ "$(pr 1)" = "probe OK 600" ] && [ "$(pr 2)" = "probe OK 600" ]
+hl_check "R7 the document scrolls, and the first render's scroll restore does not undo it (T3587)" $? "$(pr 1) / $(pr 2)"
 
-p=$(pr 2)
+p=$(pr 3)
 has "$p" "probe OK Live One|" && [ "$(scroll_of "$p")" -ge 500 ] 2>/dev/null && [ "$(wt 1)" = "wait ok=true" ]
 hl_check "R8 a save in place re-renders the file, keeping the scroll" $? "$(wt 1) / $p"
 
-p=$(pr 3)
+p=$(pr 4)
 has "$p" "probe OK Live Two|" && [ "$(scroll_of "$p")" -ge 500 ] 2>/dev/null
 hl_check "R9 an atomic save (temp file renamed over it) re-renders too, keeping the scroll" $? "$p"
 
-p=$(pr 5)
-has "$p" "probe OK Live Four|" && [ "$(scroll_of "$p")" -ge 500 ] 2>/dev/null && [ "$(pr 4)" = "probe OK 600" ] \
+p=$(pr 6)
+has "$p" "probe OK Live Four|" && [ "$(scroll_of "$p")" -ge 500 ] 2>/dev/null && [ "$(pr 5)" = "probe OK 600" ] \
     && [ "$(wt 3)" = "wait ok=true" ] && [ "$(wt 4)" = "wait ok=true" ]
-hl_check "R9b a save landing in two pieces (a short first render) still keeps the scroll (T3587)" $? "$(pr 4) / $(wt 3) / $(wt 4) / $p"
+hl_check "R9b a save landing in two pieces (a short first render) still keeps the scroll (T3587)" $? "$(pr 5) / $(wt 3) / $(wt 4) / $p"
 
-[ "$(pr 6)" = "probe OK true" ]
-hl_check "R10 a deleted file shows the unreadable card, not a stale copy" $? "$(pr 6)"
+[ "$(pr 7)" = "probe OK true" ]
+hl_check "R10 a deleted file shows the unreadable card, not a stale copy" $? "$(pr 7)"
 
-[ "$(pr 7)" = "probe OK Live Three" ]
-hl_check "R11 re-creating the file brings the document back" $? "$(pr 7)"
+[ "$(pr 8)" = "probe OK Live Three" ]
+hl_check "R11 re-creating the file brings the document back" $? "$(pr 8)"
 
-[ $reload_rc = 0 ] && [ "$(pr 8)" = "probe OK Live Three" ] && [ "$(wt 7)" = "wait ok=true" ]
-hl_check "R12 +reload --target=<viewer> succeeds and re-renders" $? "rc=$reload_rc out=$reload_out / $(wt 7) / $(pr 8)"
+[ $reload_rc = 0 ] && [ "$(pr 9)" = "probe OK Live Three" ] && [ "$(wt 7)" = "wait ok=true" ]
+hl_check "R12 +reload --target=<viewer> succeeds and re-renders" $? "rc=$reload_rc out=$reload_out / $(wt 7) / $(pr 9)"
 
-[ -n "$victims" ] && [ "$(pr 9)" = "probe OK Live Three" ] && has "$(st 1)" "reloads=1 card=none"
-hl_check "R13 a web process killed with SIGKILL is restarted and the file re-rendered" $? "victims=[$victims] $(pr 9) / $(st 1)"
+[ -n "$victims" ] && [ "$(pr 10)" = "probe OK Live Three" ] && has "$(st 1)" "reloads=1 card=none"
+hl_check "R13 a web process killed with SIGKILL is restarted and the file re-rendered" $? "victims=[$victims] $(pr 10) / $(st 1)"
 grep -q 'viewer: web process terminated reason=0 -> reload' "$APP_LOG"
 hl_check "R14 the kill reads as a crash (reason 0) and spends a restart" $? "$(grep -m3 'web process terminated' "$APP_LOG" | tr '\n' ' ')"
 
 has "$(st 2)" "reloads=3 card=none"
 hl_check "R15 WebKit's own termination reloads too, up to the cap (3 in a minute)" $? "$(st 2)"
 
-p=$(pr 10)
+p=$(pr 11)
 has "$p" "probe OK This page keeps crashing|" && has "$p" "reloaded 3 times in a minute" && has "$(st 3)" "reloads=3 card=shown"
 hl_check "R16 the 4th death inside the minute shows 'This page keeps crashing' instead of a blank pane" $? "$p / $(st 3)"
 grep -q 'web process terminated reason=2 -> capped' "$APP_LOG"
 hl_check "R17 the capped death is logged as capped, not reloaded" $? "$(grep 'web process terminated' "$APP_LOG" | tr '\n' ' ')"
 
-[ "$(pr 11)" = "probe OK Live Three" ] && has "$(st 4)" "card=none"
-hl_check "R18 Ctrl+R behind the crash card loads the page again" $? "$(pr 11) / $(st 4)"
+[ "$(pr 12)" = "probe OK Live Three" ] && has "$(st 4)" "card=none"
+hl_check "R18 Ctrl+R behind the crash card loads the page again" $? "$(pr 12) / $(st 4)"
 
-p=$(pr 13)
-has "$p" "probe OK Page One|" && [ "$(scroll_of "$p")" -ge 400 ] 2>/dev/null && [ "$(pr 12)" = "probe OK 500" ]
-hl_check "R19 a saved .html page reloads in place, keeping the scroll" $? "$(pr 12) / $p"
+p=$(pr 14)
+has "$p" "probe OK Page One|" && [ "$(scroll_of "$p")" -ge 400 ] 2>/dev/null && [ "$(pr 13)" = "probe OK 500" ]
+hl_check "R19 a saved .html page reloads in place, keeping the scroll" $? "$(pr 13) / $p"
 
-[ "$(pr 14)" = "probe OK rgb(255, 0, 0)" ] && [ "$(pr 15)" = "probe OK rgb(255, 0, 0)" ]
-hl_check "R20 editing a sibling stylesheet does not reload the page (only the viewed file is watched)" $? "$(pr 14) / $(pr 15)"
+[ "$(pr 15)" = "probe OK rgb(255, 0, 0)" ] && [ "$(pr 16)" = "probe OK rgb(255, 0, 0)" ]
+hl_check "R20 editing a sibling stylesheet does not reload the page (only the viewed file is watched)" $? "$(pr 15) / $(pr 16)"
 
-[ $page_reload_rc = 0 ] && [ "$(pr 16)" = "probe OK rgb(0, 128, 0)" ]
-hl_check "R21 +reload picks the edited stylesheet up" $? "rc=$page_reload_rc out=$page_reload_out / $(pr 16)"
+[ $page_reload_rc = 0 ] && [ "$(pr 17)" = "probe OK rgb(0, 128, 0)" ]
+hl_check "R21 +reload picks the edited stylesheet up" $? "rc=$page_reload_rc out=$page_reload_out / $(pr 17)"
 
-[ "$(pr 17)" = "probe OK Site Zero" ] && [ "$(pr 18)" = "probe OK Site Zero" ] && [ "$(pr 19)" = "probe OK Site One" ]
-hl_check "R22 a website is not watched; Ctrl+R re-fetches it" $? "$(pr 17) / $(pr 18) / $(pr 19)"
+[ "$(pr 18)" = "probe OK Site Zero" ] && [ "$(pr 19)" = "probe OK Site Zero" ] && [ "$(pr 20)" = "probe OK Site One" ]
+hl_check "R22 a website is not watched; Ctrl+R re-fetches it" $? "$(pr 18) / $(pr 19) / $(pr 20)"
 
 # ---- +reload's refusals ------------------------------------------------------
 o=$(cli +new-window --target=termwin 2>&1)

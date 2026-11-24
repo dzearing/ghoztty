@@ -41,10 +41,41 @@
 
   const content = document.getElementById("content");
 
+  // The scroll a re-render puts back (T3587). It used to be lost two ways.
+  // The restore ran only on the next animation frame, so it overwrote any
+  // scroll made in between, and in a pane that is not being drawn that frame
+  // can be a long way off. And a save that lands in pieces renders a short
+  // document first: the scroll is clamped, the full render that follows kept
+  // the clamped value, and the document jumped to the top on save.
+  let scrollWanted = null; // {want, got}: a restore the document was too short for
+  let scrollGen = 0;
+
+  /* The scroll a render should keep: where the page is, unless the last
+   * restore was clamped and nothing has scrolled since. */
+  function scrollToKeep() {
+    const y = window.scrollY;
+    if (scrollWanted && y === scrollWanted.got) return scrollWanted.want;
+    return y;
+  }
+
+  function cancelScrollRestore() {
+    scrollGen++;
+    scrollWanted = null;
+  }
+
   function restoreScroll(y) {
-    // Clamp happens naturally; restore after layout.
+    const gen = ++scrollGen;
+    function put() {
+      window.scrollTo(0, y); // scrollTo lays the new content out first
+      const got = window.scrollY;
+      scrollWanted = got < y ? { want: y, got: got } : null;
+      return got;
+    }
+    const left = put();
+    // Again after the next frame's layout (late-sizing content), unless
+    // another render or a scroll has moved the page since.
     requestAnimationFrame(function () {
-      window.scrollTo(0, y);
+      if (gen === scrollGen && window.scrollY === left) put();
       reportActiveHeading();
     });
   }
@@ -52,7 +83,7 @@
   /* Render markdown source. Preserves the current scroll position when
    * re-rendering (live reload). */
   function setMarkdown(source) {
-    const y = window.scrollY;
+    const y = scrollToKeep();
     leaveImageMode();
     content.className = "markdown-body";
     // md.render emits raw HTML (html: true); sanitize before inserting so an
@@ -71,7 +102,7 @@
   /* Render a plain text / code file, colorized by language id (from the
    * file extension) when highlight.js knows it. */
   function setCode(source, lang) {
-    const y = window.scrollY;
+    const y = scrollToKeep();
     leaveImageMode();
     content.className = "markdown-body";
     const pre = document.createElement("pre");
@@ -95,6 +126,7 @@
 
   /* Show an error card (missing/unreadable file). */
   function setError(title, detail) {
+    cancelScrollRestore();
     leaveImageMode();
     content.className = "markdown-body";
     content.replaceChildren();
