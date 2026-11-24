@@ -1768,14 +1768,16 @@ $GuardTable = @(
     # ADVISORY: an @input-desktop-exception script (injection timing is the
     # measurement), so an unattended turn cannot run it. The latency it scores
     # comes from the whole input and render path, so the row holds the harness
-    # alone (the font-inherit precedent).
+    # alone (the font-inherit precedent) plus the roster library it closes the
+    # auto-launch's startup window with (T2172; soak.ps1 shares it).
     [pscustomobject]@{
         Name     = 'profile-latency'
         Script   = 'test\win32\profile-latency.ps1'
         Stamp    = 'test\win32\profile-latency.stamp.json'
         Advisory = $true
         Covers   = @(
-            'test\win32\profile-latency.ps1'
+            'test\win32\profile-latency.ps1',
+            'test\win32\lib\WindowRoster.ps1'
         )
     },
     # The spike that measured what works on a background desktop (T207/T1115):

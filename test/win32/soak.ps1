@@ -175,35 +175,11 @@ function Test-LoadedPaneFps {
 # `+new-window --target=soak` lands, so the instance holds two windows and the
 # soak used only one. The extra window's idle pane then ran for the whole soak:
 # 1486 of 7924 samples on 2026-08-31, listed in the report as `other`, while the
-# layout assertion walked only the soak window and said 4. These two answer
-# "what is in this instance that this run did not mean to open", from one
-# `+list --json` roster, so setup can close it and the assertions can see it.
-function Get-StrayWindows {
-    param($ListJson, [string]$Target)
-    # `$null -ne $_`: an absent `windows` pipes one $null, which is not a window.
-    return @($ListJson.data.windows | Where-Object { ($null -ne $_) -and ($_.target -ne $Target) })
-}
-
-# Every pane leaf in one roster window, across its tabs.
-function Get-WindowLeaves {
-    param($Window)
-    $out = New-Object System.Collections.ArrayList
-    $stack = New-Object System.Collections.Stack
-    foreach ($t in @($Window.tabs)) { if ($null -ne $t.splits) { $stack.Push($t.splits) } }
-    while ($stack.Count -gt 0) {
-        $n = $stack.Pop()
-        if ($null -ne $n.terminal) { [void]$out.Add($n.terminal) }
-        if ($null -ne $n.left) { $stack.Push($n.left) }
-        if ($null -ne $n.right) { $stack.Push($n.right) }
-    }
-    return @($out)
-}
-
-# One line naming each stray window and how many panes it holds.
-function Format-StrayWindows {
-    param([object[]]$Strays)
-    return (@($Strays | ForEach-Object { "$($_.target) ($(@(Get-WindowLeaves $_).Count) pane)" }) -join ', ')
-}
+# layout assertion walked only the soak window and said 4. Get-StrayWindows /
+# Get-WindowLeaves / Format-StrayWindows / Close-StartupStrays answer "what is
+# in this instance that this run did not mean to open"; they live in a shared
+# library since T2172, because profile-latency.ps1 has the same launch shape.
+. (Join-Path $PSScriptRoot 'lib\WindowRoster.ps1')
 
 # --- Scrollback-growth generator (T1215) ----------------------------------------
 # `soak-grow` used to print ONE run of 150k lines. By 2026-08-31 the box printed
@@ -305,6 +281,30 @@ if ($SelfTest) {
     Assert ($es.Count -eq 1 -and $es[0].target -eq 'window-1') 'selftest: an injected extra window turns the roster check RED and is named'
     Assert ((Format-StrayWindows $es) -eq 'window-1 (1 pane)') 'selftest: the stray is reported with its pane count'
     Assert (@(Get-WindowLeaves $soakWin).Count -eq 3) 'selftest: leaves are counted across nested splits'
+
+    # T2172: Close-StartupStrays (lib\WindowRoster.ps1, shared with
+    # profile-latency.ps1) against a scripted roster sequence. The `+close` it
+    # issues goes to a stub that exits 0, and Get-GhozttyListRaw is replaced by
+    # one that hands out the next roster, so the read-back is what is graded.
+    $stubExe = Join-Path $env:TEMP "soak-selftest-close-$PID.cmd"
+    Set-Content -Path $stubExe -Value '@exit /b 0' -Encoding ascii
+    $script:rosterQueue = New-Object System.Collections.Queue
+    function Get-GhozttyListRaw { param([string]$Exe) return [string]$script:rosterQueue.Dequeue() }
+    $cleanRaw = 'Waiting for Ghoztty to answer' + "`n" + ($clean | ConvertTo-Json -Depth 12 -Compress)
+    $extraRaw = $extra | ConvertTo-Json -Depth 12 -Compress
+    $script:rosterQueue.Enqueue($extraRaw); $script:rosterQueue.Enqueue($cleanRaw)
+    $cs = Close-StartupStrays -Exe $stubExe -Target 'soak' -SettleMs 0
+    Assert ((-not $cs.Error) -and @($cs.Closed).Count -eq 1 -and $cs.Closed[0].target -eq 'window-1') "selftest: a startup window that closes is named and the run goes on (error: $($cs.Error))"
+    $script:rosterQueue.Enqueue($extraRaw); $script:rosterQueue.Enqueue($extraRaw)
+    $cs = Close-StartupStrays -Exe $stubExe -Target 'soak' -SettleMs 0
+    Assert ($cs.Error -like '*would not close: window-1 (1 pane)*') "selftest: a startup window still in the read-back is an error (negative control: $($cs.Error))"
+    $script:rosterQueue.Enqueue($cleanRaw)
+    $cs = Close-StartupStrays -Exe $stubExe -Target 'soak' -SettleMs 0
+    Assert ((-not $cs.Error) -and @($cs.Closed).Count -eq 0) 'selftest: a roster holding only the target closes nothing'
+    $script:rosterQueue.Enqueue('no json here')
+    $cs = Close-StartupStrays -Exe $stubExe -Target 'soak' -SettleMs 0
+    Assert ($cs.Error -like '*no JSON*') "selftest: a roster with no JSON is an error, not an empty instance ($($cs.Error))"
+    Remove-Item $stubExe -ErrorAction SilentlyContinue
 
     Rep ""
     Rep "=== selftest: $($script:pass) passed, $($script:fail) failed"
@@ -481,22 +481,15 @@ Rep "gui pid: $($proc.Id)"
 # nothing measured and nothing closed - `+close --target=soak` never reached it
 # and it went only because the teardown killed the process. Done now, before
 # any load starts, so its pane never reaches the telemetry; and proved by
-# reading the roster back, not by trusting the close.
-$startRaw = Get-GhozttyListRaw -Exe $exe
-$startBrace = $startRaw.IndexOf('{')
-if ($startBrace -lt 0) { Abort-Soak "+list --json produced no JSON at startup: $startRaw" }
-$startStrays = @(Get-StrayWindows ($startRaw.Substring($startBrace) | ConvertFrom-Json) 'soak')
-if ($startStrays.Count -eq 0) {
+# reading the roster back, not by trusting the close (lib\WindowRoster.ps1).
+$startup = Close-StartupStrays -Exe $exe -Target 'soak'
+if ($startup.Closed.Count -gt 0) {
+    Rep "startup roster: closing what the auto-launch opened beside the soak window: $(Format-StrayWindows $startup.Closed)"
+}
+if ($startup.Error) { Abort-Soak $startup.Error }
+if ($startup.Closed.Count -eq 0) {
     Rep 'startup roster: only the soak window (no startup window to close)'
 } else {
-    Rep "startup roster: closing what the auto-launch opened beside the soak window: $(Format-StrayWindows $startStrays)"
-    foreach ($s in $startStrays) { Invoke-Tolerant { & $exe +close "--target=$($s.target)" 2>$null | Out-Null } }
-    Start-Sleep -Seconds 1
-    $afterRaw = Get-GhozttyListRaw -Exe $exe
-    $afterBrace = $afterRaw.IndexOf('{')
-    if ($afterBrace -lt 0) { Abort-Soak "+list --json produced no JSON after closing the startup window: $afterRaw" }
-    $left = @(Get-StrayWindows ($afterRaw.Substring($afterBrace) | ConvertFrom-Json) 'soak')
-    if ($left.Count -gt 0) { Abort-Soak "the startup window would not close: $(Format-StrayWindows $left)" }
     Rep 'startup roster: closed; the instance now holds only the soak window'
 }
 

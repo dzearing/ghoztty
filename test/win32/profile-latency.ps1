@@ -34,7 +34,11 @@
 param(
     [string]$ExePath = 'D:\git\ghoztty\zig-out-release\bin\ghoztty.exe',
     [int]$SeekKeys = 60,
-    [int]$LatencyProbes = 8
+    [int]$LatencyProbes = 8,
+    # T2172: grade the perf-log parse against a fabricated log and exit. Needs
+    # no build and no desktop, so it is the part of this harness a loop turn
+    # can run.
+    [switch]$SelfTest
 )
 $ErrorActionPreference = 'Stop'
 
@@ -260,9 +264,13 @@ function MedianOf($arr) {
 }
 
 # Parse 'perf [pane=] fps= max_gap_ms=' lines appended to the isolated log since
-# byte offset $from. Returns @{Fps=..; Gaps=..; NewLen=..}.
+# byte offset $from. Returns @{Fps=..; Gaps=..; NewLen=..; Other=..; Anon=..}.
+# T2172: only the timed pane's samples are pooled. A sample naming another pane
+# (the auto-launch's startup window, before it is closed) is counted in Other
+# and never reaches a median; a sample with no `pane=` (a pre-T1147 exe) is
+# pooled and counted in Anon, since it cannot be told apart.
 function PerfSlice([long]$from) {
-    $fps = @(); $gaps = @(); $len = $from
+    $fps = @(); $gaps = @(); $len = $from; $other = 0; $anon = 0
     if (Test-Path $profLog) {
         $fs = [System.IO.FileStream]::new($profLog, 'Open', 'Read', 'ReadWrite')
         try {
@@ -273,17 +281,18 @@ function PerfSlice([long]$from) {
                 while ($null -ne ($line = $sr.ReadLine())) {
                     # `pane=` is optional: T1147 added it to every sample, and
                     # keeping the group optional means this profile still reads
-                    # an older exe. It is not used here - this harness runs one
-                    # pane, so the population and the pane are the same thing.
-                    if ($line -match 'perf (?:pane=\S+ )?fps=(\d+) max_gap_ms=(\d+)') {
-                        $fps += [int]$Matches[1]
-                        $gaps += [int]$Matches[2]
+                    # an older exe.
+                    if ($line -match 'perf (?:pane=(\S+) )?fps=(\d+) max_gap_ms=(\d+)') {
+                        if (-not $Matches[1]) { $anon++ }
+                        elseif ($Matches[1] -ne $script:paneId) { $other++; continue }
+                        $fps += [int]$Matches[2]
+                        $gaps += [int]$Matches[3]
                     }
                 }
             }
         } finally { $fs.Close() }
     }
-    return @{ Fps = $fps; Gaps = $gaps; NewLen = $len }
+    return @{ Fps = $fps; Gaps = $gaps; NewLen = $len; Other = $other; Anon = $anon }
 }
 
 # Poll +read (last 5 lines) until $token shows up; returns elapsed ms or -1.
@@ -308,6 +317,35 @@ function LatencyProbe([string]$pane, [string]$token, [int]$budgetMs) {
     return @{ Ms = $ms; Why = 'ok' }
 }
 
+# T2172 negative control for the pane filter: a log holding the prof pane's
+# samples, a stray pane's samples and one pre-T1147 unnamed sample. Only the
+# prof pane and the unnamed one may reach the medians.
+if ($SelfTest) {
+    $profLog = Join-Path $outDir 'selftest.log'
+    $script:paneId = 'aaaa-prof'
+    @(
+        'info(renderer): perf pane=aaaa-prof fps=60 max_gap_ms=20 swap_max_ms=1 swap_avg_us=100'
+        'info(renderer): perf pane=bbbb-startup fps=1 max_gap_ms=1000 swap_max_ms=1 swap_avg_us=100'
+        'info(renderer): perf pane=aaaa-prof fps=58 max_gap_ms=25 swap_max_ms=1 swap_avg_us=100'
+        'info(renderer): perf pane=bbbb-startup fps=1 max_gap_ms=1000 swap_max_ms=1 swap_avg_us=100'
+        'info(renderer): perf fps=59 max_gap_ms=22'
+        'info(renderer): unrelated line'
+    ) | Set-Content -Path $profLog -Encoding ascii
+    $st = PerfSlice 0
+    Assert ($st.Fps.Count -eq 3) "selftest: only the prof pane's and unnamed samples are pooled ($($st.Fps.Count) of 5)"
+    Assert ((@($st.Fps | Where-Object { $_ -lt 58 })).Count -eq 0) "selftest: the stray pane's fps=1 never reaches the pool (median $(MedianOf $st.Fps))"
+    Assert ($st.Other -eq 2) "selftest: the stray pane's samples are counted as other ($($st.Other))"
+    Assert ($st.Anon -eq 1) "selftest: an unnamed sample is pooled and counted ($($st.Anon))"
+    Assert ((@($st.Gaps | Where-Object { $_ -ge 1000 })).Count -eq 0) 'selftest: the stray pane max_gap never reaches the worst gap'
+    $script:paneId = 'bbbb-startup'
+    $neg = PerfSlice 0
+    Assert ((@($neg.Fps | Where-Object { $_ -eq 1 })).Count -eq 2) 'selftest: negative control - filtering on the stray pane pools its fps=1 samples'
+    Rep "=== selftest: $($script:pass) passed, $($script:fail) failed"
+    if ($script:fail -gt 0 -or $script:pass -eq 0) { Write-Host 'T53b PROFILE LATENCY SELFTEST: FAIL'; exit 1 }
+    Write-Host "T53b PROFILE LATENCY SELFTEST: ALL PASS ($($script:pass) assertions)"
+    exit 0
+}
+
 # T1126: no subject build is a box that cannot answer the question, not a
 # regression - a declared SKIP that names the command which builds it.
 if (-not (Test-Path $ExePath)) {
@@ -321,6 +359,7 @@ $realLocalAppData = $env:LOCALAPPDATA
 # T1126: all three knobs - the pipe suffix, a private agent lineage, and this
 # run's own LOCALAPPDATA ($fakeLocal, so $profLog is unchanged).
 . (Join-Path $PSScriptRoot 'lib\Isolation.ps1')
+. (Join-Path $PSScriptRoot 'lib\WindowRoster.ps1')   # T2172: close the auto-launch's startup window
 . (Join-Path $PSScriptRoot 'lib\TestScore.ps1')   # T271/T1768: arms the run, so the stamp below is refused for a body that unwound or asserted nothing
 [void](Set-GhozttyTestIsolation -Tag 'prof' -ReleaseSandbox -SandboxRoot $fakeLocal)
 $profLog = Get-GhozttyAppLogPath -Exe $exe -LocalAppData $fakeLocal
@@ -358,6 +397,21 @@ if ($gui.Count -ne 1) { Rep "ABORT: expected 1 prof GUI, got $($gui.Count)"; exi
 $proc = Get-Process -Id $gui[0].ProcessId
 Rep "gui pid: $($proc.Id)"
 
+# T2172: the auto-launch opens the app's own STARTUP window before it takes the
+# `+new-window`, so the instance holds `prof` AND an idle `window-1`. Left open,
+# its pane's samples pooled into the fps medians and FindTop-by-pid below could
+# pick it, sending the typed probes to a pane nothing measures. Closed before
+# any timing starts, and proved by reading the roster back (the T1214 shape).
+$startup = Close-StartupStrays -Exe $exe -Target 'prof'
+if ($startup.Closed.Count -gt 0) {
+    Rep "startup roster: closing what the auto-launch opened beside the prof window: $(Format-StrayWindows $startup.Closed)"
+}
+if ($startup.Error) { Rep "ABORT: $($startup.Error)"; exit 1 }
+$rosterNow = ConvertFrom-RosterRaw (Get-GhozttyListRaw -Exe $exe)
+$rosterStrays = @(Get-StrayWindows $rosterNow 'prof')
+Assert ($rosterStrays.Count -eq 0) "startup roster: the instance holds only the prof window (closed: $(if ($startup.Closed.Count) { Format-StrayWindows $startup.Closed } else { 'none' }); left: $(if ($rosterStrays.Count) { Format-StrayWindows $rosterStrays } else { 'none' }))"
+if ($rosterStrays.Count -gt 0) { Rep 'ABORT: a stray window would pollute every number below'; exit 1 }
+
 $top = [ProfDrv]::FindTop([uint32]$proc.Id)
 $surface = [ProfDrv]::FindWindowExW($top, [IntPtr]::Zero, 'GhozttyTerminal', $null)
 if ($top -eq [IntPtr]::Zero -or $surface -eq [IntPtr]::Zero) { Rep 'ABORT: HWNDs not found'; exit 1 }
@@ -366,7 +420,10 @@ $listJson = & $exe +list --json | ConvertFrom-Json
 $win = $listJson.data.windows | Where-Object { $_.target -eq 'prof' }
 $pane = $win.tabs[0].splits.terminal.name
 if (-not $pane) { Rep 'ABORT: pane name not found in +list'; exit 1 }
-Rep "pane: $pane"
+# T2172: the perf telemetry names its pane by id; PerfSlice keeps only this one.
+$script:paneId = [string]$win.tabs[0].splits.terminal.id
+if (-not $script:paneId) { Rep 'ABORT: pane id not found in +list'; exit 1 }
+Rep "pane: $pane (id $($script:paneId))"
 
 $f = [ProfDrv]::Focus($top, $surface)
 if ($f -ne 'OK') {
@@ -443,6 +500,11 @@ $logMark = $sliceIdle.NewLen
 if ($sliceIdle.Fps.Count -gt 0) {
     Rep "idle seek renderer: fps median $(MedianOf $sliceIdle.Fps) worst gap $(($sliceIdle.Gaps | Measure-Object -Maximum).Maximum)ms ($($sliceIdle.Fps.Count) windows)"
 }
+# T2172: the stray window is closed above, so nothing but the prof pane may
+# have rendered. A sample from any other pane means the medians were (and
+# would again be) diluted by a window this run never measured.
+Assert ($sliceIdle.Other -eq 0) "idle seek renderer: every perf sample is the prof pane's ($($sliceIdle.Other) from other panes, $($sliceIdle.Anon) unnamed)"
+
 
 # --- 4. Scrollback-seek under same-pane storm -------------------------------------
 & $exe +send-keys --target=$pane 'for /l %i in (1,0,2) do @echo STORM %i xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx' Enter | Out-Null
@@ -475,6 +537,7 @@ else {
     if ($sliceStorm.Fps.Count -gt 0) {
         Rep "storm seek renderer: fps median $(MedianOf $sliceStorm.Fps) worst gap $(($sliceStorm.Gaps | Measure-Object -Maximum).Maximum)ms ($($sliceStorm.Fps.Count) windows)"
     }
+    Assert ($sliceStorm.Other -eq 0) "storm seek renderer: every perf sample is the prof pane's ($($sliceStorm.Other) from other panes, $($sliceStorm.Anon) unnamed)"
 }
 
 Assert (-not $proc.HasExited) 'gui alive at end'
