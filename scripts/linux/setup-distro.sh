@@ -14,12 +14,15 @@
 #   - blueprint-compiler 0.16.0 (src/apprt/gtk/build/blueprint.zig requires
 #     0.16; Ubuntu 24.04 ships 0.12), a source checkout under
 #     ~/.local/blueprint-compiler-<ver>.
+#   - go at relay/go.mod's `go` version, under ~/.local/go-<ver>: the Linux
+#     relay acceptance builds the local rendezvous relay (T3670).
 #   - ~/.local/ghoztty-tools/bin holds a link to each, and wsl-run.ps1 puts that
 #     dir on PATH. Nothing else in ~ is touched: the user runs other work here.
 set -euo pipefail
 
 ZIG_VER=0.15.2
 BLP_VER=0.16.0
+GO_VER=1.26.0   # relay/go.mod says `go 1.26`; the Windows box resolves that to 1.26.0 too
 TOOLS="$HOME/.local/ghoztty-tools/bin"
 
 APT_PKGS=(
@@ -63,6 +66,18 @@ if [ ! -x "$zdir/zig" ]; then
 fi
 ln -sfn "$zdir/zig" "$TOOLS/zig"
 
+gdir="$HOME/.local/go-$GO_VER"
+if [ ! -x "$gdir/bin/go" ]; then
+    echo "SETUP go $GO_VER -> $gdir"
+    tmp=$(mktemp -d)
+    curl -fsSL -o "$tmp/go.tar.gz" "https://go.dev/dl/go$GO_VER.linux-amd64.tar.gz"
+    tar -xzf "$tmp/go.tar.gz" -C "$tmp"
+    mv "$tmp/go" "$gdir"
+    rm -rf "$tmp"
+fi
+# cmd/go follows its own symlink to find GOROOT, so a link is enough.
+ln -sfn "$gdir/bin/go" "$TOOLS/go"
+
 bdir="$HOME/.local/blueprint-compiler-$BLP_VER"
 if [ ! -f "$bdir/blueprint-compiler.py" ]; then
     echo "SETUP blueprint-compiler $BLP_VER -> $bdir"
@@ -84,5 +99,6 @@ chmod +x "$TOOLS/blueprint-compiler"
 
 echo "SETUP zig: $("$TOOLS/zig" version)"
 echo "SETUP blueprint-compiler: $("$TOOLS/blueprint-compiler" --version)"
+echo "SETUP go: $(GOTOOLCHAIN=local "$TOOLS/go" version)"
 echo "SETUP gtk4: $(pkg-config --modversion gtk4)  libadwaita: $(pkg-config --modversion libadwaita-1)  webkitgtk-6.0: $(pkg-config --modversion webkitgtk-6.0)"
 echo "SETUP OK"
