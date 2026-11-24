@@ -557,14 +557,29 @@ for ($cycle = 1; $cycle -le $Cycles; $cycle++) {
 $preCols = Probe-Cols 'spC' 'pre'
 Assert "C1 pre-resize geometry probe answered (cols=$preCols)" ($preCols -gt 0)
 
-$moved = Resize-AllWindows 1000 640
+# T2021: the resize target must differ in WIDTH from the size the app opens
+# at. A new window opens 1000 px wide, and this section used to resize to
+# 1000x640 - a height-only change, which cannot move the column count, so C3
+# read 'cols 42 -> 42' for five weeks over a resize path that works (C8, the
+# one resize that changed the width, passed throughout). C6/C7 were vacuous
+# for the same reason: a restore that fell back to the default size also read
+# 1000 wide. C0 fails loudly if the default ever moves onto the target again.
+$cW = 1200; $cH = 640
+function Get-WinWidths {
+    $pids = @(App-Pids | ForEach-Object { [uint32]$_ })
+    return @(@(Top-Windows $pids) | ForEach-Object { (Win-Rect $_)[2] })
+}
+$preWidths = @(Get-WinWidths)
+Assert "C0 resize target width $cW differs from every pre-resize width ($($preWidths -join ','))" (
+    $preWidths.Count -eq 2 -and @($preWidths | Where-Object { [math]::Abs($_ - $cW) -lt 100 }).Count -eq 0)
+$moved = Resize-AllWindows $cW $cH
 Assert "C2 resized both app windows programmatically" ($moved -eq 2)
 $refCols = Wait-Cols 'spC' 'ref' { param($c) $c -ne $preCols } 15
 Assert "C3 live resize reached the ConPTY (cols $preCols -> $refCols)" ($refCols -gt 0 -and $refCols -ne $preCols)
 
 # Programmatic resizes skip WM_EXITSIZEMOVE, so arm a manifest capture with a
 # benign title mutation -- captureFrame reads the LIVE window rect at capture
-# time, persisting the 1000x640 frames.
+# time, persisting the $cW x $cH frames.
 Run-Cli '+rename --target=winB --title=wsPin' "$($script:tmp)\ws-pin.txt" 12 | Out-Null
 $manifest = Get-GhozttySessionLayoutPath -Root $script:tmp
 $frameOk = $false
@@ -574,19 +589,19 @@ while ((Get-Date) -lt $deadline) {
     try { $m = Get-Content $manifest -Raw | ConvertFrom-Json } catch {}
     if ($null -ne $m) {
         $hit = @($m.windows | Where-Object {
-            $null -ne $_.frame -and [math]::Abs($_.frame.w - 1000) -le 4 -and [math]::Abs($_.frame.h - 640) -le 4 })
+            $null -ne $_.frame -and [math]::Abs($_.frame.w - $cW) -le 4 -and [math]::Abs($_.frame.h - $cH) -le 4 })
         if ($hit.Count -eq 2) { $frameOk = $true; break }
     }
     Start-Sleep -Milliseconds 400
 }
-Assert "C4 manifest captured both 1000x640 frames" $frameOk
+Assert "C4 manifest captured both $($cW)x$($cH) frames" $frameOk
 
 Crash-App
 Relaunch-App
 $n = Wait-Windows 'c-w' 2 40
 Assert "C5 relaunch restored both windows" ($n -eq 2)
 
-# Restored outer frames are the captured 1000x640 (geometry-faithful restore).
+# Restored outer frames are the captured $cW x $cH (geometry-faithful restore).
 $framesBack = $false
 $deadline = (Get-Date).AddSeconds(15)
 while ((Get-Date) -lt $deadline) {
@@ -596,13 +611,13 @@ while ((Get-Date) -lt $deadline) {
         $good = 0
         foreach ($hw in $wins) {
             $r = Win-Rect $hw
-            if ([math]::Abs($r[2] - 1000) -le 10 -and [math]::Abs($r[3] - 640) -le 10) { $good++ }
+            if ([math]::Abs($r[2] - $cW) -le 10 -and [math]::Abs($r[3] - $cH) -le 10) { $good++ }
         }
         if ($good -eq 2) { $framesBack = $true; break }
     }
     Start-Sleep -Milliseconds 500
 }
-Assert "C6 restored window frames are 1000x640" $framesBack
+Assert "C6 restored window frames are $($cW)x$($cH)" $framesBack
 
 # The core --winsize assertion: the re-attached ConPTY agrees with the restored
 # geometry (a stale/transient attach size would read different columns).

@@ -1,8 +1,8 @@
 {
     "guard":  "unwired-hook",
     "script":  "test/win32/unwired-hook-audit.ps1",
-    "generated":  "2026-11-23T17:22:56-08:00",
-    "commit":  "15e278a7c",
+    "generated":  "2026-11-23T17:44:20-08:00",
+    "commit":  "e9054665f",
     "uncommitted":  [
 
                     ],
@@ -1470,7 +1470,7 @@
                   "test/win32/machine-lock.ps1":  "358594b1e23bf925310236d55d4a314c20b3cefb7cf5be1e116e5376c9896cca",
                   "test/win32/main-intake.ps1":  "1902f11d0ba7222f21da46d202725c544777bbfa0604c8a17bf4d1c5fb49098b",
                   "test/win32/maximize-restore-memory.ps1":  "b1b9968c5225dffc03c465532507ee6e64f65df9bfd5f326de5c29aea14622e2",
-                  "test/win32/menu-bar.ps1":  "2496c06a711a0902a81232b7eaa2487a2cd8dc3de0552fb2f0feb3a0069949c1",
+                  "test/win32/menu-bar.ps1":  "23c416facfb7bd2facbdf629d5cd5c3f0e8a935605487cb80c80cbecb1a38813",
                   "test/win32/menu-f10-binding.ps1":  "2a0f0edd446c99a0ed1ffb5d1b0ce8e3e1a8ae8df140fd70fa5f6b5df37b8e22",
                   "test/win32/merge-terminology.ps1":  "7d155ca2da0de4866e7afab82df19ab046be33aa3c34655481192c1e158b5d25",
                   "test/win32/mouse-nc-routing.ps1":  "3db56b4cbf515ec3000fc54f8bc6b3536f7ec26b6146528a112b9567890319eb",
@@ -1606,7 +1606,7 @@
                   "test/win32/session-layout-geometry-race.ps1":  "14240d5625c2b3e5f37d688605389a9889bc11af06c6a34c4772ccab1034d6f8",
                   "test/win32/session-layout-preserve.ps1":  "3ea74234321fd0a2f5bcb47483c976aaa7b7d53dcc1281dd3e37412bb404dc0f",
                   "test/win32/session-open.ps1":  "a8676a1822dccea06051cf7afe281c2c2315e2332c941b6baedd67136bb7cab3",
-                  "test/win32/session-persistence.ps1":  "28f6ebc84c6dbe31b7d68180986225a65e346adeed2366d93e1c64f92df1db42",
+                  "test/win32/session-persistence.ps1":  "9a47dee9db23fe7f358d7ca3c1f14964bdd20282567f834c2f5855bf08ecd997",
                   "test/win32/session-reattach.ps1":  "309ce4ebb81422fea8fdfcedae50ce2a7c4ac0548ea8c9b0a75cc499b69f85f7",
                   "test/win32/session-reattach-zombie.ps1":  "5c138604f0566d659fe5ce841b372cbf1393c1f1d9dfafcfaf5835f043ef1f7e",
                   "test/win32/session-reboot-tui.ps1":  "7b44e424cb750a2b4eb01d41046dd4967c477d345507d72bc8ad02cd0a064ef5",
