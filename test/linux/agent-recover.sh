@@ -4,7 +4,11 @@
 # fresh agent - same window, same split, same pane ids and names - instead of
 # leaving them frozen until a relaunch. A viewer pane is never touched, the
 # rebuilt panes are drivable, a pane opened afterwards rides the new agent,
-# and a second agent death (raced against a new pane) recovers too.
+# and a second agent death (raced against a new pane) recovers too. A pane's
+# banner rides across the rebuild and keeps the session-interrupted notice out
+# of its slot; a bannerless pane shows the notice (T3560). That notice is long
+# and pb's column narrow, so A13 is also the check that a banner too tall for
+# its pane cannot stop the rebuilt pane's shell from starting.
 #
 # Run it ONLY through the wrapper, from this box:
 #

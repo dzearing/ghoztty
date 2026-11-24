@@ -10,7 +10,9 @@
 //! Wayland gives no position), maximized state and selected tab; per tab its
 //! pinned title (T3549) and its split tree with exact directions and
 //! ratios; per terminal pane its agent session id, pane id, target name,
-//! pinned title and the directory its shell is in; per viewer pane its pane
+//! pinned title, the directory its shell is in and its banner (T3560, the
+//! markdown source; it comes back whether the pane re-attaches or opens
+//! fresh, and keeps the session-interrupted notice out of its slot); per viewer pane its pane
 //! id and name, where it is, where it was opened (Home) and the directory it
 //! was opened from (T3420) - re-opening there IS a viewer's restore, so an
 //! image comes back at best fit, a diff re-runs in that directory and a file

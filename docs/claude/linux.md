@@ -289,7 +289,8 @@ private runtime dir, so a test app can never meet the user's.
   `$GHOZTTY_TEST_BANNER_DUMP` (`BANNER <pane-id> shown|cleared`, one line per
   widget, `END`). Acceptance: `wsl-run.ps1 -CommandFile
   test\linux\cli-banner.sh`, ends `CLI BANNER: ALL PASS` (32 checks). Not
-  yet: restore (T3560), the link menu (T3561). A banner's title names its
+  yet: the link menu (T3561). A banner survives a relaunch and an agent
+  recovery (T3560, under Session persistence). A banner's title names its
   pane's sidebar row (below).
 - **Banner collapse and the editor (T3559)**: the card is a horizontal box -
   the blocks, then a flat chevron (`pan-up`/`pan-down-symbolic`) shown only
@@ -1272,7 +1273,8 @@ it used to carry (a `-Dtest-filter=firstLeaf` run matched no tests).
   size while maximized; x/y are 0, T3549), maximized state and selected tab;
   per tab its pinned title (T3549) and the split tree with exact directions
   and ratios; per
-  terminal pane its session id, pane id, name, pinned title and pwd; per
+  terminal pane its session id, pane id, name, pinned title, pwd and
+  banner (its markdown source, T3560); per
   viewer pane its pane id, name, location, Home and origin directory (T3420,
   below). The quit's
   write adds each pane's screen snapshot (base64, the WP-D3 pair).
@@ -1296,8 +1298,18 @@ it used to carry (a `-Dtest-filter=firstLeaf` run matched no tests).
   presented; a size under 100 or over 16384 px is ignored) and each tab
   re-pins its recorded title.
 - **Not restored:** window position - Wayland gives a client none, so where a
-  window lands is the compositor's call. **Not yet:** banners and stash
-  (T3339, T3596).
+  window lands is the compositor's call. **Not yet:** stash (T3596).
+- **Banners (T3560)** come back with their pane whether it re-attaches or
+  opens a fresh shell (`session_layout_rules.bannerToRecord` /
+  `bannerToRestore`, none-lane tested; win32's T422). The restored pane tells
+  its backend (`pane_banner_restored`), so the session-interrupted notice
+  stays in the scrollback instead of taking the pane's own banner; a
+  bannerless pane's slot still shows it. In-place agent recovery carries the
+  banner across the same way. Once a pane has a banner its GL area keeps a
+  1 px minimum height: a terminal starts on its first resize, and a restored
+  banner too tall for a small pane used to leave it at zero height, so the
+  shell never started. As on the Mac, a tall banner squeezes the terminal; it
+  never stops it.
 
 Acceptance:
 
@@ -1311,7 +1323,9 @@ window comes back at its recorded size (measured from the window's own render)
 with its tab's pinned title, and the running app records both again;
 SIGTERM detaches and snapshots; a session that died while the app was down
 comes back as a fresh shell; after an agent restart the panes come back as
-relaunched shells under the new agent; a second instance neither restores nor
+relaunched shells under the new agent; banners are recorded and come back on
+every one of those paths, and the session-interrupted notice takes only a
+bannerless pane's slot (RB1-RB5, T3560); a second instance neither restores nor
 writes; a closed window stays closed.
 
 ### The agent dies under a running app: panes recover in place (T3400)
@@ -1349,9 +1363,10 @@ decision is win32's pure `apprt/win32/agent_recovery.zig`, shared.
 powershell -NoProfile -File scripts\linux\wsl-run.ps1 -CommandFile test\linux\agent-recover.sh
 ```
 
-Ends `AGENT RECOVER: ALL PASS` (16 checks): kill the agent tree under a running
+Ends `AGENT RECOVER: ALL PASS` (18 checks): kill the agent tree under a running
 app with two terminal panes and a viewer; the panes come back on a new agent
-with the same tree, ids, names and directory and are drivable, the viewer is
+with the same tree, ids, names and directory and are drivable, a pane's banner
+rides across while a bannerless pane shows the notice (T3560), the viewer is
 untouched, a new pane rides the new agent, a second death raced against a new
 pane recovers everything onto a third agent, and a user close still ends a
 shell.
