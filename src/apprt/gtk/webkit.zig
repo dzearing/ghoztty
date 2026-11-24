@@ -657,8 +657,6 @@ pub extern fn gtk_check_button_get_active(button: *GtkWidget) c_int;
 pub extern fn gtk_list_box_row_new() *GtkWidget;
 pub extern fn gtk_list_box_row_set_child(row: *GtkWidget, child: ?*GtkWidget) void;
 pub extern fn gtk_list_box_unselect_all(box: *GtkWidget) void;
-pub extern fn gtk_widget_set_halign(widget: *GtkWidget, align_: c_int) void;
-pub extern fn gtk_widget_set_valign(widget: *GtkWidget, align_: c_int) void;
 pub extern fn gtk_widget_compute_point(widget: *GtkWidget, target: *GtkWidget, point: *const GraphenePoint, out_point: *GraphenePoint) c_int;
 
 /// `GtkEventSequenceState`.
