@@ -12,7 +12,10 @@
   because a Ghoztty viewer renders .md and treats every other extension as
   CODE - a local .html would display its own source. The page re-reads the
   task files on every poll, so adding or editing a task shows up on its own
-  within a few seconds; nothing needs restarting.
+  within a few seconds; nothing needs restarting. The server also watches
+  task-dashboard.js itself and re-execs onto the new code a few seconds after
+  an edit (or a pull) that parses (T2166), so -Stop is never needed to pick
+  up a server change.
 
   ASCII-only by design (PS 5.1 on this box mangles non-ASCII on rewrite).
 

@@ -687,6 +687,93 @@ if ($portOld -eq $portI) {
     }
 }
 
+# --- section J: the server picks up its own code changes (T2166) -----------
+# Before T2166 the page reloaded itself when task-dashboard.js changed (the
+# pageVersion() stamp), but the node process answering it was still the old
+# one, so an endpoint the new page called 404'd until a manual -Stop. Here a
+# fixture copy of the server runs with a short poll; editing that copy must
+# hand the port to a new process running the NEW code (J2/J3), an edit that
+# does not parse must leave the old one serving (J4 - the replacement would
+# otherwise be nothing at all), and the next good save must still land (J5).
+# J0 runs the watcher's branch table (--selftest R1-R8) for the logic the
+# timing here cannot reach. J1 is the control: the fixture is serving.
+function Get-ServerId([int]$port) {
+    $r = Get-Http "http://127.0.0.1:$port/api/server" 5
+    if ($r.Status -ne 200) { return $null }
+    try { return ($r.Body | ConvertFrom-Json) } catch { return $null }
+}
+function Wait-ServerId([int]$port, [scriptblock]$until, [int]$sec) {
+    $deadline = (Get-Date).AddSeconds($sec)
+    while ((Get-Date) -lt $deadline) {
+        $id = Get-ServerId $port
+        if ($id -and (& $until $id)) { return $id }
+        Start-Sleep -Milliseconds 250
+    }
+    return (Get-ServerId $port)
+}
+# The selftest's R5/R6 legs log to stderr on purpose; under Stop, PS 5.1 turns
+# a native stderr line into a terminating error, so lower it for this call.
+$eapJ = $ErrorActionPreference
+$ErrorActionPreference = 'Continue'
+try {
+    $selfOut = (& node $dash --selftest 2>&1 | ForEach-Object { $_.ToString() }) -join "`n"
+} finally { $ErrorActionPreference = $eapJ }
+$rPass = ([regex]::Matches($selfOut, '(?m)^\s+PASS R\d')).Count
+$rFail = ([regex]::Matches($selfOut, '(?m)^\s+FAIL R\d')).Count
+Assert 'J0 the code-reload branch table passes (--selftest R1-R8)' ($rPass -ge 8 -and $rFail -eq 0) "pass=$rPass fail=$rFail"
+
+$fixJ = Join-Path $env:TEMP "t2166-reload-$PID"
+$portJ = Resolve-TestPort -Name 'reload'
+$fjs = Join-Path $fixJ 'scripts\task-dashboard.js'
+try {
+    New-Item -ItemType Directory -Force (Join-Path $fixJ 'scripts') | Out-Null
+    Copy-Item $dash, $page -Destination (Join-Path $fixJ 'scripts')
+    $env:GHOZTTY_DASHBOARD_CODE_POLL_MS = '300'
+    try {
+        # stderr: n/a - this starts node (the dashboard server), not ghoztty.
+        $srvJ = Start-Process -FilePath $node.Source -ArgumentList @("`"$fjs`"", '--port', $portJ) `
+            -WorkingDirectory $fixJ -WindowStyle Hidden -PassThru
+    } finally {
+        Remove-Item Env:\GHOZTTY_DASHBOARD_CODE_POLL_MS -ErrorAction SilentlyContinue
+    }
+    $id1 = Wait-ServerId $portJ { param($x) $true } 20
+    Assert 'J1 the fixture server answers /api/server with its pid and code stamp' `
+        ($id1 -and $id1.pid -eq $srvJ.Id -and $id1.code) "id=$($id1 | ConvertTo-Json -Compress)"
+    if ($id1) {
+        # A real behaviour change, not just a touch: the new code answers a
+        # route the old one 404s - the T1182 shape this task was filed on.
+        $orig = [IO.File]::ReadAllText($fjs)
+        $marker = "      if (url === '/api/server') {"
+        $newText = $orig.Replace($marker,
+            "      if (url === '/api/t2166') { return send(res, 200, 'text/plain', 'new-code'); }`n" + $marker)
+        $before = Get-Http "http://127.0.0.1:$portJ/api/t2166" 5
+        [IO.File]::WriteAllText($fjs, $newText)
+        $id2 = Wait-ServerId $portJ { param($x) $x.pid -ne $id1.pid } 20
+        Assert 'J2 an edit to the server file hands the port to a new process' `
+            ($before.Status -eq 404 -and $id2 -and $id2.pid -ne $id1.pid -and $id2.code -eq $id2.onDisk) `
+            "before=$($before.Status) id2=$($id2 | ConvertTo-Json -Compress)"
+        $after = Get-Http "http://127.0.0.1:$portJ/api/t2166" 5
+        Assert 'J3 the new process serves the NEW code (a route the old one 404d)' `
+            ($after.Status -eq 200 -and $after.Body -eq 'new-code') "status=$($after.Status) body=$($after.Body)"
+
+        # J4: a save that does not parse. Wait well past settle + check.
+        [IO.File]::WriteAllText($fjs, $newText + "`n}}} not javascript (((`n")
+        Start-Sleep -Seconds 4
+        $id3 = Get-ServerId $portJ
+        Assert 'J4 an edit that does not parse leaves the old server serving' `
+            ($id3 -and $id3.pid -eq $id2.pid -and $id3.code -ne $id3.onDisk) "id3=$($id3 | ConvertTo-Json -Compress)"
+
+        [IO.File]::WriteAllText($fjs, $newText + "`n// fixed (T2166 J5)`n")
+        $id4 = Wait-ServerId $portJ { param($x) $x.pid -ne $id2.pid } 20
+        Assert 'J5 the next save that parses is picked up' `
+            ($id4 -and $id4.pid -ne $id2.pid -and $id4.code -eq $id4.onDisk) "id4=$($id4 | ConvertTo-Json -Compress)"
+    }
+} finally {
+    Stop-FixtureServer $fixJ
+    Start-Sleep -Milliseconds 500
+    Remove-Item $fixJ -Recurse -Force -ErrorAction SilentlyContinue
+}
+
 # --- stamp (T783) -----------------------------------------------------------
 # A clean green run records the covered files so scripts\guard-due.ps1 can
 # answer "has anyone run this harness against the code as it now stands?".

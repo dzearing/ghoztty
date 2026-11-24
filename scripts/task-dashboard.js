@@ -1725,10 +1725,93 @@ function handlePost(url, body) {
   throw new Error('unknown endpoint');
 }
 
+// ---------------------------------------------------------------------------
+// Code reload (T2166)
+// ---------------------------------------------------------------------------
+//
+// pageVersion() makes the PAGE reload when this file changes, but the page is
+// then talking to the node process that loaded the OLD file: an endpoint the
+// new page calls (T1182's /api/prs) 404s until someone runs -Stop and relaunches
+// by hand. So the server watches its own file and, once an edit has settled and
+// the new text at least parses, hands the port to a fresh copy of itself.
+//
+// Why re-exec rather than exit and let the keep-alive task restart it: that
+// tick is every five minutes, and five minutes of a dead tracker after every
+// edit is worse than the 404 this fixes. The keep-alive stays the backstop for
+// a replacement that fails to come up.
+//
+// Why `node --check` first: a save lands mid-edit, a `git pull` can bring a
+// conflict marker, and a replacement that cannot parse leaves NOTHING serving.
+// An old server that keeps answering is the better failure, so an unparseable
+// file is logged once and the restart waits for the next change.
+
+/** Identity of this file on disk, or null when it cannot be read. */
+function codeStamp() {
+  try {
+    const s = fs.statSync(__filename);
+    return Math.round(s.mtimeMs) + ':' + s.size;
+  } catch {
+    return null;
+  }
+}
+
+// What this process loaded. Taken at module load, so an edit made while the
+// first payload is building still counts as a change.
+const BOOT_CODE = codeStamp();
+const STARTED_AT = new Date().toISOString();
+
+/**
+ * Poll this file; when it has changed AND held still for one poll AND parses,
+ * call `restart`. `opts.check(file, cb)` is the parse check (injectable so the
+ * selftest can drive every branch without a child process).
+ */
+function watchOwnCode(restart, opts) {
+  const pollMs = opts.pollMs;
+  const check = opts.check;
+  let pending = null;   // a changed stamp seen once, waiting to settle
+  let refused = null;   // the stamp a failed check was run against
+  let busy = false;
+  const tick = () => {
+    if (busy) return;
+    const now = opts.stamp();
+    if (now === null || now === opts.boot) { pending = null; return; }
+    if (now !== pending) { pending = now; return; } // still moving: wait a poll
+    if (now === refused) return;                     // already said why
+    busy = true;
+    check(__filename, (err) => {
+      busy = false;
+      if (opts.stamp() !== now) { pending = null; return; } // changed under us
+      if (err) {
+        refused = now;
+        warn('code changed but does not parse; still serving the old code: ' +
+          String(err.message || err).split('\n').slice(0, 3).join(' | '));
+        return;
+      }
+      restart(now);
+    });
+  };
+  const t = setInterval(tick, pollMs);
+  if (t.unref) t.unref();
+  return { tick, stop: () => clearInterval(t) };
+}
+
+function nodeCheck(file, cb) {
+  execFile(process.execPath, ['--check', file], { windowsHide: true, timeout: 30000 },
+    (err, _out, stderr) => cb(err ? new Error((stderr || err.message || '').trim()) : null));
+}
+
 function serve(port) {
   const server = http.createServer((req, res) => {
     const url = (req.url || '/').split('?')[0];
     try {
+      // Which process is answering, and which code it loaded (T2166). Cheap
+      // on purpose: it never builds the payload, so it answers while a slow
+      // first build is still running.
+      if (url === '/api/server') {
+        return send(res, 200, 'application/json; charset=utf-8', JSON.stringify({
+          pid: process.pid, startedAt: STARTED_AT, code: BOOT_CODE, onDisk: codeStamp(),
+        }));
+      }
       if (req.method === 'POST') {
         return readBody(req)
           .then((body) => handlePost(url, body))
@@ -1838,7 +1921,17 @@ function serve(port) {
     }
   });
 
+  // A replacement started by a code reload (below) is racing the old process
+  // for the port it is giving up; that one EADDRINUSE is a wait, not "already
+  // serving". Bounded, so a port somebody else really holds still ends in the
+  // normal branch.
+  let bindRetries = process.argv.includes('--reload') ? 40 : 0;
   server.on('error', (e) => {
+    if (e.code === 'EADDRINUSE' && bindRetries > 0) {
+      bindRetries--;
+      setTimeout(() => server.listen(port, '127.0.0.1'), 250);
+      return;
+    }
     if (e.code === 'EADDRINUSE') {
       // Idempotent by design: re-running the launcher must not spawn a second
       // server or kill the one the pane is already pointed at.
@@ -1865,8 +1958,40 @@ function serve(port) {
 
   server.listen(port, '127.0.0.1', () => {
     process.stdout.write(
-      '[' + new Date().toISOString() + '] http://localhost:' + port + '/\n');
+      '[' + new Date().toISOString() + '] http://localhost:' + port + '/' +
+      (process.argv.includes('--reload') ? ' (reloaded, pid ' + process.pid + ')' : '') + '\n');
   });
+
+  const pollMs = Number(process.env.GHOZTTY_DASHBOARD_CODE_POLL_MS) || 3000;
+  let restarting = false;
+  watchOwnCode((stamp) => {
+    if (restarting) return;
+    restarting = true;
+    warn('code changed (' + BOOT_CODE + ' -> ' + stamp + '); restarting on the new code');
+    // Stop listening first so the replacement can bind; close keep-alive
+    // sockets too, or a page holding one keeps talking to this process.
+    server.close();
+    if (server.closeAllConnections) server.closeAllConnections();
+    const args = process.argv.slice(1).filter((a) => a !== '--reload');
+    args.push('--reload');
+    // stdio inherited: the replacement writes into the same log files the
+    // launcher's cmd opened. detached + windowsHide: no console, and it
+    // outlives this process (which is the whole point).
+    const { spawn } = require('child_process');
+    const child = spawn(process.execPath, args, {
+      cwd: process.cwd(), env: process.env, stdio: 'inherit', detached: true, windowsHide: true,
+    });
+    child.on('error', (e) => {
+      // Could not even start one: keep serving the old code rather than none.
+      warn('restart failed, still serving the old code: ' + e.message);
+      restarting = false;
+      server.listen(port, '127.0.0.1');
+    });
+    child.on('spawn', () => {
+      child.unref();
+      process.exit(0);
+    });
+  }, { pollMs, check: nodeCheck, stamp: codeStamp, boot: BOOT_CODE });
 }
 
 function send(res, code, type, body) {
@@ -1952,6 +2077,47 @@ function selfTest() {
     pr = parseProgress(Array.from({ length: 10 }, (_, i) => '- 2026-08-05 09:0' + (i % 10) + ': step ' + i).join('\n'));
     check('P5 only the newest few ship in the payload', pr.length === 6 && /step 9/.test(pr[5].text));
     check('P6 an absent section is an empty log', parseProgress('').length === 0);
+
+    // Code reload (T2166): the watcher's decisions, driven tick by tick with
+    // a fake stamp and a fake parse check so every branch is reachable.
+    const rig = (checkErr) => {
+      const r = { disk: 'A', restarts: [], checks: 0 };
+      r.w = watchOwnCode((s) => r.restarts.push(s), {
+        pollMs: 3600e3, boot: 'A', stamp: () => r.disk,
+        check: (_f, cb) => { r.checks++; cb(checkErr ? checkErr(r) : null); },
+      });
+      return r;
+    };
+    let r = rig();
+    r.w.tick(); r.w.tick();
+    check('R1 unchanged code never restarts', r.restarts.length === 0 && r.checks === 0);
+    r.disk = 'B'; r.w.tick();
+    check('R2 a change seen once waits for the edit to settle', r.restarts.length === 0);
+    r.w.tick();
+    check('R3 a settled change that parses restarts on that code', r.restarts.length === 1 && r.restarts[0] === 'B');
+    r.w.stop();
+    r = rig();
+    r.disk = 'B'; r.w.tick(); r.disk = 'C'; r.w.tick();
+    check('R4 a file still being written does not restart mid-edit', r.restarts.length === 0 && r.checks === 0);
+    r.w.stop();
+    r = rig(() => new Error('SyntaxError: Unexpected token'));
+    r.disk = 'B'; r.w.tick(); r.w.tick(); r.w.tick(); r.w.tick();
+    check('R5 code that does not parse keeps the old server, checked once', r.restarts.length === 0 && r.checks === 1);
+    r.w.stop();
+    let fixed = false;
+    r = rig(() => (fixed ? null : new Error('SyntaxError')));
+    r.disk = 'B'; r.w.tick(); r.w.tick();
+    fixed = true; r.disk = 'C'; r.w.tick(); r.w.tick();
+    check('R6 the next save that parses does restart', r.restarts.length === 1 && r.restarts[0] === 'C');
+    r.w.stop();
+    r = rig((x) => { x.disk = 'D'; return null; });
+    r.disk = 'B'; r.w.tick(); r.w.tick();
+    check('R7 a file that changed during the check is re-examined, not restarted on', r.restarts.length === 0);
+    r.w.stop();
+    r = rig();
+    r.disk = 'B'; r.w.tick(); r.disk = 'A'; r.w.tick(); r.w.tick();
+    check('R8 an edit reverted before it settled is no change', r.restarts.length === 0 && r.checks === 0);
+    r.w.stop();
   } finally {
     fs.rmSync(tmp, { force: true });
   }
