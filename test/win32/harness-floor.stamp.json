@@ -1,13 +1,13 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-11-24T10:03:53-08:00",
-    "commit":  "6d72e868c",
+    "generated":  "2026-11-24T10:27:36-08:00",
+    "commit":  "8218b0165",
     "uncommitted":  [
-                        "test/win32/agent-instance-lineage.ps1"
+
                     ],
     "files":  {
-                  "scripts/harness-floor.ps1":  "e3d359fb624aa2c8abf555bea66b63a798c01ec9dce023416631191e2c943050",
+                  "scripts/harness-floor.ps1":  "cfa23792d110d499fa4086697daa516d218d0d110e594a7452167a81220ee15e",
                   "scripts/lib/HarnessFloor.ps1":  "59f84f6fce589bd82ac182c09d3adef0f47f9cfa6f060bd3bbba33a04e99e21b",
                   "scripts/vt-escape-scan.ps1":  "a23758e33821d194e040b24ac5e9811b705f53c5fc0313633aa1478f11567ced",
                   "test/win32/about-links.ps1":  "cb6ba712f258265f9a5d03dc219567a0025a1f081a2b7d2029586140247906eb",
@@ -285,7 +285,7 @@
                   "test/win32/lib/ChooserControls.ps1":  "a89ca8550ef8143250eb27df76bfa9e11b5c1af46f086ea23e07defd5d8eaec0",
                   "test/win32/lib/ChooserCursor.ps1":  "899edb2b38d63abcb8af6734687abf41a0f9e5906e1cd3d9508cc2b1e7cb1023",
                   "test/win32/lib/ChromeGeometry.ps1":  "11e3f40112d2fa342a6715d8bf78f3f4eaf9ac9bc8f7714f2bc91feb5555ff9f",
-                  "test/win32/lib/CleanSlate.ps1":  "5f9025bdf8ca35d4b3270f9885732b034afd95a64e3b86ab6ea7ea6ed4571b79",
+                  "test/win32/lib/CleanSlate.ps1":  "f7bfe9a4e3d0fb4f8e1c66b980a38230f18357cb0672a602b5cfd10de53b0aa4",
                   "test/win32/lib/CleanSlateAudit.ps1":  "e70b73f92c5a1102cdf0ce47a5fade709030b1cb4dda438e0a64155668f5b445",
                   "test/win32/lib/ClickCoordAudit.ps1":  "3f404a1cd9e3ff05c0daec8735a9d5c163d02b3a1beae8161ee2885d5026e36f",
                   "test/win32/lib/ColorMath.ps1":  "e0b7cb256aa2322eed4d2d75d88c3557598eacf8ffcc825f659a071f36b3c0f7",
@@ -382,7 +382,7 @@
                   "test/win32/loop-lanes.ps1":  "75a378c905ac606ee4a7431a6c8b7118b34574c5f19ecc646eba1719fd2d1756",
                   "test/win32/low-power-render.ps1":  "10db8574daf099b5f8e966c81847aff932d261d0daf70c46131037fc764a0c63",
                   "test/win32/machine-chooser.ps1":  "c69e331b19e83e300b5f0c22860220ea1d2de144d587db1ee4ae4e797ce6b79e",
-                  "test/win32/machine-lock.ps1":  "358594b1e23bf925310236d55d4a314c20b3cefb7cf5be1e116e5376c9896cca",
+                  "test/win32/machine-lock.ps1":  "9602e2bd3bc08b206a5cc8b6eff0c2f872de8f2c7a65b858d7a83d7e7aa2c444",
                   "test/win32/main-intake.ps1":  "1902f11d0ba7222f21da46d202725c544777bbfa0604c8a17bf4d1c5fb49098b",
                   "test/win32/maximize-restore-memory.ps1":  "b1b9968c5225dffc03c465532507ee6e64f65df9bfd5f326de5c29aea14622e2",
                   "test/win32/menu-bar.ps1":  "2496c06a711a0902a81232b7eaa2487a2cd8dc3de0552fb2f0feb3a0069949c1",

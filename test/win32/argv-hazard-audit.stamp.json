@@ -1,11 +1,10 @@
 {
     "guard":  "argv-hazard",
     "script":  "test/win32/argv-hazard-audit.ps1",
-    "generated":  "2026-11-24T09:32:33-08:00",
-    "commit":  "b38691826",
+    "generated":  "2026-11-24T10:23:14-08:00",
+    "commit":  "8218b0165",
     "uncommitted":  [
-                        "scripts/acceptance-parallel.ps1",
-                        "scripts/lib/AcceptanceParallel.ps1"
+
                     ],
     "files":  {
                   "scripts/acceptance-parallel.ps1":  "1106b67ef623a664e020325f9c491716c9300a405c899a1e9d77bd349d53143f",
@@ -54,7 +53,7 @@
                   "scripts/go-loop-pane-probe.ps1":  "e491be3477c3236c4e10af70db2f40e9d632c45f83bf860f4b09fe6eeda5e2b7",
                   "scripts/go-loop-watchdog.ps1":  "37f19f9ce08a701645b7267fea8411125b9112d83ef5ff0cbddb8e380f058d67",
                   "scripts/guard-due.ps1":  "9c3fb3c5e6d740e0beca1c758c7d262b159a98f0d1568174f2bf016dc84d2bce",
-                  "scripts/harness-floor.ps1":  "e3d359fb624aa2c8abf555bea66b63a798c01ec9dce023416631191e2c943050",
+                  "scripts/harness-floor.ps1":  "cfa23792d110d499fa4086697daa516d218d0d110e594a7452167a81220ee15e",
                   "scripts/hero-glide-onscreen.ps1":  "46d211f7ec7843d13506f4e3bd13933630339adb8aff13b5c97d69ae3fd248a7",
                   "scripts/hidden-windows-cpu.ps1":  "61551ac8760570d16a46ab2ef235c9792a2e29fb9e9d116ebbc23a5ce9051876",
                   "scripts/hw-integrity-stress.ps1":  "c95abd5e0a5137b7daf7292333f3cd661e14b3f9fef83efbdc3cf73dae0bed4e",
@@ -87,7 +86,7 @@
                   "scripts/lib/LoopLedger.ps1":  "009cc831d7dd98144a973784e1c12aa4a8ba0138baafe24b258e70e5ddb46bb7",
                   "scripts/lib/LoopMark.ps1":  "c43ed69bcfaec131c5f59aa0f570f9ecdf7cecc7b21027686ae86ff68843d71e",
                   "scripts/lib/LoopPaneSession.ps1":  "90a19ef1a37b5b5990c1f1f53ff2d69115ed61e125cddd9e04e3ac8646e4964b",
-                  "scripts/lib/MachineLock.ps1":  "0392f179e69ab3c1271a2ba65e49838e3dea02517923d7084c76525d04b0ec1d",
+                  "scripts/lib/MachineLock.ps1":  "95a48b26099406da1083558f70f530019226def0d5a64d61ab59d914e18286ba",
                   "scripts/lib/ManualChecks.ps1":  "c13b824504fd874e258e5042e3eb33ed0ebdcdfb56e2671aa911160d2aeabfd4",
                   "scripts/lib/NativeArgv.ps1":  "49faad6cbe0907079281ac45a3e96f140fd6162f4c1729e82b145105137933b5",
                   "scripts/lib/ProcessFamily.ps1":  "63beb65412f8da3f6cbc32d025be1adde445e46327e5ec2c5361bc0a6972cfac",
