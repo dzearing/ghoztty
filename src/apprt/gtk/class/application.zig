@@ -2839,7 +2839,7 @@ const Action = struct {
             pub const none: @This() = .{};
         },
     ) void {
-        self.relatchWindowModeIfIdle(win);
+        relatchWindowModeIfIdle(self, win);
 
         // Setup a binding so that whenever our config changes so does the
         // window. There's never a time when the window config should be out
