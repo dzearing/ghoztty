@@ -1,17 +1,17 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-11-24T09:46:58-08:00",
-    "commit":  "e2622f0ab",
+    "generated":  "2026-11-24T10:03:53-08:00",
+    "commit":  "6d72e868c",
     "uncommitted":  [
-
+                        "test/win32/agent-instance-lineage.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "e3d359fb624aa2c8abf555bea66b63a798c01ec9dce023416631191e2c943050",
                   "scripts/lib/HarnessFloor.ps1":  "59f84f6fce589bd82ac182c09d3adef0f47f9cfa6f060bd3bbba33a04e99e21b",
                   "scripts/vt-escape-scan.ps1":  "a23758e33821d194e040b24ac5e9811b705f53c5fc0313633aa1478f11567ced",
                   "test/win32/about-links.ps1":  "cb6ba712f258265f9a5d03dc219567a0025a1f081a2b7d2029586140247906eb",
-                  "test/win32/acceptance-parallel.ps1":  "2673dccb32a1a23a91372cea2ed37ca934158fae369c8fbbe0c6976b7ed2657a",
+                  "test/win32/acceptance-parallel.ps1":  "168b64fe36c79ceb90cb24c2edbd2a9dd7a0977cd174423927f31fc9f34306cd",
                   "test/win32/activity-help-tooltips.ps1":  "42d9242fc8112d637b503eaa181a24a02d767e33fec7fe0fba1d9fe6d765df1c",
                   "test/win32/activity-monitor.ps1":  "085720eade12d3fda926f05f7a1f5e9bc8475e206327066555d2036974b5d3f0",
                   "test/win32/activity-monitor-dialed.ps1":  "e8d248a8d5507c68b3a67fd0f15692a98868d2542cbc6f0cdb714c9ee98ade99",
@@ -28,7 +28,7 @@
                   "test/win32/agent-first-answer.ps1":  "9c9f092829b9334f23e2bbd700cd98339d2946cce8757548fa9a32b5191e9a3d",
                   "test/win32/agent-handoff.ps1":  "b87f82453b874a22cf45ad0ae579af5a2a3522ec0ca77010af2d7d448a10a079",
                   "test/win32/agent-handoff-rename.ps1":  "e92bac83fcbde3a3ae3a134ee6227ebfabe1ecfe84b69027c9ed2439ade6d06e",
-                  "test/win32/agent-instance-lineage.ps1":  "736aac2a6d69d7f790745f7f107506325a1f746c55d2afec4b1e22bd005db5f6",
+                  "test/win32/agent-instance-lineage.ps1":  "97c4b128791a30ffd7be840ba0e016a3e488ca08ba58163171ea72db463d5053",
                   "test/win32/agent-integrations.ps1":  "2b8083f671e2e50fc51f87896710960a8bfb61a737f256676a43f6c191fa83bd",
                   "test/win32/agent-job-escape.ps1":  "4d26258d906c382189cdec60ee350959b478c0bdf5e7ada9be277696c914ae39",
                   "test/win32/agent-job-report.ps1":  "944358e04c91ee0e6427fc03336e2139e8f08ba210e23724cf8bdf1fd19ae296",

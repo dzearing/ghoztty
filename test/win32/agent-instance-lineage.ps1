@@ -240,11 +240,46 @@ $stateRelease = -not (Test-GhozttyIsolatedBuildMode -Mode $buildMode)
 # BYSTANDERS (T269). Everything on the box that this run must leave exactly as it
 # found it: the agents it did not start (in release mode that is the user's own,
 # holding their live panes) and the autostart Run values it did not write.
+# T2154: only the long-lived DAEMONS that are not a dev or test build - the same
+# scoping agent-upgrade.ps1 uses (T1069). With two loop lanes on one box, the
+# other lane's acceptance run starts and ends its own agents in the middle of
+# ours; they run from a `zig-out*` tree (a worker root's zig-out is a junction,
+# so the path still says so) or from a copy under %TEMP%, and their exit is not
+# this script touching anything. A `--pty-host` child ends whenever its pane
+# does. The user's agent runs from an installed or portable copy and stays in
+# the set; an agent whose image path cannot be read stays in it too, so the
+# filter can only ever narrow the set by what it can positively name.
+function Test-BystanderAgent {
+    param($Proc)
+    $cmd = [string]$Proc.CommandLine
+    $img = [string]$Proc.ExecutablePath
+    if ($cmd -match '--pty-host') { return $false }
+    if ($img -match '\\zig-out') { return $false }
+    $tempRoot = [IO.Path]::GetFullPath($env:TEMP).TrimEnd('\') + '\'
+    if ($img -and $img.StartsWith($tempRoot, [StringComparison]::OrdinalIgnoreCase)) { return $false }
+    return $true
+}
 function Get-BystanderAgentPids {
-    return , @(Get-CimInstance Win32_Process -Filter "Name='ghoztty-agent.exe'" |
+    return , @(Get-CimInstance Win32_Process -Filter "Name LIKE 'ghoztty-agent%'" |
         Where-Object { $script:mine -notcontains [int]$_.ProcessId } |
+        Where-Object { Test-BystanderAgent $_ } |
         ForEach-Object { [int]$_.ProcessId })
 }
+# The filter, both directions, on synthetic records: it must keep the user's
+# installed/portable agent and one whose path is unreadable, and drop the other
+# lane's test agents. A filter that dropped everything would make the bystander
+# assertion below vacuous, so the keep side is the one that matters most.
+$bsUser = [pscustomobject]@{ CommandLine = '"C:\Users\x\AppData\Local\Programs\Ghoztty\ghoztty-agent.exe" --daemon'; ExecutablePath = 'C:\Users\x\AppData\Local\Programs\Ghoztty\ghoztty-agent.exe' }
+$bsPortable = [pscustomobject]@{ CommandLine = 'ghoztty-agent.exe'; ExecutablePath = 'D:\Users\x\Desktop\Ghoztty-portable-x64\Ghoztty\ghoztty-agent.exe' }
+$bsHidden = [pscustomobject]@{ CommandLine = $null; ExecutablePath = $null }
+$bsLane = [pscustomobject]@{ CommandLine = 'ghoztty-agent.exe'; ExecutablePath = 'D:\git\ghoztty-b\zig-out\bin\ghoztty-agent.exe' }
+$bsWorker = [pscustomobject]@{ CommandLine = 'ghoztty-agent.exe'; ExecutablePath = 'D:\git\.ghoztty-par\w2\zig-out-release\bin\ghoztty-agent.exe' }
+$bsTemp = [pscustomobject]@{ CommandLine = 'ghoztty-agent.exe'; ExecutablePath = (Join-Path $env:TEMP 'ghoztty-t999-1\bin\ghoztty-agent.exe') }
+$bsHolder = [pscustomobject]@{ CommandLine = '"C:\Users\x\AppData\Local\Programs\Ghoztty\ghoztty-agent.exe" --pty-host abc'; ExecutablePath = 'C:\Users\x\AppData\Local\Programs\Ghoztty\ghoztty-agent.exe' }
+Assert "setup: bystander filter keeps the user's installed, portable and unreadable agents (T2154)" `
+    ((Test-BystanderAgent $bsUser) -and (Test-BystanderAgent $bsPortable) -and (Test-BystanderAgent $bsHidden))
+Assert "setup: bystander filter drops another lane's zig-out, worker-root, %TEMP% and --pty-host agents (T2154)" `
+    (-not ((Test-BystanderAgent $bsLane) -or (Test-BystanderAgent $bsWorker) -or (Test-BystanderAgent $bsTemp) -or (Test-BystanderAgent $bsHolder)))
 # T2917: every binary this run launches writes its autostart to a private test
 # key (GHOZTTY_RUN_KEY), so the REAL key below should come out unchanged AND
 # with nothing added - Defender quarantines a test that plants real startup

@@ -1,17 +1,17 @@
 {
     "guard":  "agent-instance-lineage",
     "script":  "test/win32/agent-instance-lineage.ps1",
-    "generated":  "2026-11-21T22:20:23-08:00",
-    "commit":  "f81eb427a",
+    "generated":  "2026-11-24T09:43:47-08:00",
+    "commit":  "6d72e868c",
     "uncommitted":  [
                         "test/win32/agent-instance-lineage.ps1"
                     ],
     "files":  {
                   "src/remote/agent/single_instance.zig":  "4a6ff886d1b8516b8b0e32b68c8865d07774319571be5130785c4346bb7041e4",
                   "src/remote/agent_lineage.zig":  "277bca4d33eb667f06fc7676e7c933d74b7a50911fadf6266fae5f8cc69f40d7",
-                  "test/win32/agent-instance-lineage.ps1":  "736aac2a6d69d7f790745f7f107506325a1f746c55d2afec4b1e22bd005db5f6"
+                  "test/win32/agent-instance-lineage.ps1":  "97c4b128791a30ffd7be840ba0e016a3e488ca08ba58163171ea72db463d5053"
               },
     "code":  {
-                 "test/win32/agent-instance-lineage.ps1":  "code1:12dde2153facf9fa8d89105d595236568584ceb7721f6d691b61b7cbc65cc831"
+                 "test/win32/agent-instance-lineage.ps1":  "code1:ec094c3f429149d5dc5c6f6e64da61686e31c8c6677173ea83eb1876ee88d875"
              }
 }
