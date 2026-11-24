@@ -1907,12 +1907,17 @@ refusal is made before any dial, and the relay wins when both are given.
   `+new-window --from-focused` on a remote front window re-dials its machine
   on the GTK thread, inheriting the active pane's command and remote cwd
   (win32 `openRemoteWindowFrom`).
+- **A new tab** (keybind, menu, tab-bar button) in a remote window opens on
+  the same link (T3668, win32 `addTab`'s T68 inheritance):
+  `Window.newTabPage` hands the pressed (else active) pane's link, its remote
+  cwd (the same 1.5 s query) and its command to the tab's first pane through
+  `RemoteLink.pending_open`. A tab in a local window stays local.
 - **`+list`** gives a remote window `machine` (the host, or the relay name /
   device) and `connection.state`; a local window has neither field.
 - **Not in the layout file**: `SessionLayout` skips remote windows, and a
   remote pane moved into a local window records no session id. Relay windows
-  coming back at relaunch, a new TAB on the same machine, and per-host
-  defaults are T3668; the chooser, pill and reconnect ladder are T3563.
+  coming back at relaunch are T3671, per-host defaults T3669, a real relay
+  dial in the test T3670; the chooser, pill and reconnect ladder are T3563.
 
 Acceptance, against a loopback agent started with `--listen 127.0.0.1:<port>
 --headless` (the Linux half of `test/win32/ipc-remote.ps1`):
@@ -1921,9 +1926,10 @@ Acceptance, against a loopback agent started with `--listen 127.0.0.1:<port>
 powershell -NoProfile -File scripts\linux\wsl-run.ps1 -CommandFile test\linux\cli-remote-window.sh
 ```
 
-Ends `CLI REMOTE WINDOW: ALL PASS` (26 checks: the four refusals, the panes
+Ends `CLI REMOTE WINDOW: ALL PASS` (32 checks: the four refusals, the panes
 descend from the TCP agent and not the app, keys and `--command` round-trip,
-splits and `--from-focused` stay on the machine, `+close` ends the remote
+splits, a new tab (in the pressed pane's cwd; a local window's new tab stays
+local) and `--from-focused` stay on the machine, `+close` ends the remote
 shells and closes the link). `NEGATIVE=1` dials a dead port for the main
 window and must fail R1.
 

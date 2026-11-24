@@ -1,8 +1,8 @@
 {
     "guard":  "self-spawn",
     "script":  "test/win32/self-spawn-audit.ps1",
-    "generated":  "2026-11-24T10:22:59-08:00",
-    "commit":  "8218b0165",
+    "generated":  "2026-11-24T10:55:19-08:00",
+    "commit":  "dc9d51f48",
     "uncommitted":  [
 
                     ],
@@ -47,7 +47,7 @@
                   "src/apprt/gtk/class/surface_scrolled_window.zig":  "88e36e9a7318aa492360697ec08c6914cd3c672f16d320c79f12ba3c85297d3c",
                   "src/apprt/gtk/class/tab.zig":  "b6b1c77cd00cac666ddc8fc5cb1bde60b4b750adbd71ef8500277928cfbbd067",
                   "src/apprt/gtk/class/title_dialog.zig":  "28947e881776cdb2c3dde08f346dbc15b5505237f2ebf4be20dcc3dcd0eef165",
-                  "src/apprt/gtk/class/window.zig":  "4975eac041c74973314dcef03dc9bd24525c7506d960720f6db9bc507743b302",
+                  "src/apprt/gtk/class/window.zig":  "7f5af8d24e7d4496325cbd5a2c05da89503642b19b920cdfa2b0e5451ea48906",
                   "src/apprt/gtk/CloseUndo.zig":  "12733d5d15b7f4673799b9fc5cf5f02d8b0d586ef6a5ded9607b24319c48bf10",
                   "src/apprt/gtk/composer_palette.zig":  "0267f6a94544c047979704ec74126fe01fc858db08689c53422d7680c3d2dfe2",
                   "src/apprt/gtk/ext.zig":  "c6024f614f6ac5246f9f596c1dbc1610d509a34e071c911cca3a484419833920",
