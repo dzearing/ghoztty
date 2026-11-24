@@ -1,0 +1,27 @@
+{
+  "version": "1.56.21",
+  "sections": [
+    { "title": "New",
+      "items": [
+        { "text": "On Linux, the \"all in one window\" setting is read once at launch, as on the Mac." },
+        { "text": "Linux release packages install and run from anywhere, and a .deb is built from the same tree." },
+        { "text": "Pasting a file copied in Explorer pastes its path, as the Mac does." },
+        { "text": "Linux panes keep their background tint across a relaunch and an agent recovery." },
+        { "text": "The stack-slide test now checks that a strip which stays folded slides with the run." },
+        { "text": "On Linux a closed tab comes back with Ctrl+Shift+Z." },
+        { "text": "A screen reader finds each tucked pane's strip as a button that brings the pane forward." }
+      ] },
+    { "title": "Fixes",
+      "items": [
+        { "text": "The commit guard keeps a staged exec bit instead of silently dropping it." },
+        { "text": "On Linux, an in-app ghoztty:// link to a window that is gone shows the Can't focus dialog." },
+        { "text": "The cleanup-screen test's \"a kept item makes the box clean\" check now says what it still counted when it fails." },
+        { "text": "A viewer pane keeps its scroll when its file is saved, even right after it opens or when the save lands in pieces." },
+        { "text": "A restored Linux launch runs its own -e command." }
+      ] },
+    { "title": "Improvements",
+      "items": [
+        { "text": "The Windows installer no longer carries ghoztty.com: it writes it from ghoztty.exe while installing." }
+      ] }
+  ]
+}
