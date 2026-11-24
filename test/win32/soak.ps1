@@ -142,6 +142,13 @@ function Measure-PaneFps {
 # iteration - it is paced by its own load, not by the renderer, and grading it
 # at 30 puts the bar exactly on its ceiling. Each floor is set where a real
 # renderer regression shows up and this run's own margin does not.
+#
+# soak-altscr's 15 was confirmed by T2164 from two full 30-minute ReleaseFast
+# runs on 2026-11-24 (the first that kept that pane on show, after T2163):
+# 1634 samples min 19 / median 22 / p90 24 / max 26, and 1635 samples min 18 /
+# median 22 / p90 23 / max 27, no idle samples in either. The grade is on p90,
+# so 15 sits about a third under the observed p90 and still fails a renderer
+# that halves this pane's rate. stream/grow now run at the 120 cap (p90 120).
 function Test-LoadedPaneFps {
     param(
         [object[]]$Rows,
