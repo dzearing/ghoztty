@@ -475,14 +475,22 @@ private runtime dir, so a test app can never meet the user's.
   an undo in one window never reaches another, and a window that closes ends
   its entries. Expiry, a window close and a quit end a parked pane as a CLOSE
   (its agent session ends, never detaches). `+close --force` is never parked.
-  Not yet: a tab's last pane, a tab, a window (T3590).
+  **A closed tab parks too (T3590)**: `Window.finishTabClose` takes one
+  reference on the Tab before the tab view detaches it, so its tree and every
+  shell wait; undo re-inserts it at its old position through
+  `Window.attachTabPage` (the same wiring a new tab gets). A tab's only pane
+  closing (`+close`, its close key) closes the TAB, tree intact
+  (`CloseUndo.closeTabInstead`), so it parks whole. Close Other Tabs and
+  Close Tabs to the Right are ONE undo and one redo (win32's group ids,
+  begun in `Tab.actionClose`). A tab whose shells have all exited, and a
+  window's last tab, are not parked. Not yet: a window (T3665).
   **Pressing keys headless**: Wayland has no input injection and the harness
   has no seat, so a debug build serves the `press-key` IPC seam - `hl_ipc
   press-key --target=<pane> --key=ctrl+shift+z` - which feeds one press and
   release through the pane's core `keyCallback`, so the configured binding
   table decides what it does; the reply's `effect` is `consumed`, `ignored`
   or `closed`. Acceptance: `wsl-run.ps1 -CommandFile test\linux\cli-undo.sh`,
-  ends `CLI UNDO: ALL PASS` (31 checks); `NEGATIVE=1` runs it with undo off
+  ends `CLI UNDO: ALL PASS` (47 checks, T1-T16 the tabs); `NEGATIVE=1` runs it with undo off
   and must fail.
 - **Pane rearrange mode and pane drops (T3564)**: `toggle_rearrange_mode`
   (**Ctrl+Shift+.**, the shared default; the command palette's "Toggle
