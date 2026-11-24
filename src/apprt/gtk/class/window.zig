@@ -2046,8 +2046,11 @@ pub const Window = extern struct {
             .{},
         );
 
-        // Show it
-        dialog.present(child);
+        // Show it over the WINDOW, not the tab (T3563): an answer removes the
+        // tab while the dialog is still animating out, and a dialog whose
+        // parent left mid-close stayed in the window's dialog stack for good -
+        // where it swallowed the window's next close request.
+        dialog.present(self.as(gtk.Widget));
         return @intFromBool(true);
     }
 
