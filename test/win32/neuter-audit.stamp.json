@@ -1,10 +1,10 @@
 {
     "guard":  "neuter-audit",
     "script":  "test/win32/neuter-audit.ps1",
-    "generated":  "2026-11-23T18:15:29-08:00",
-    "commit":  "cca44468e",
+    "generated":  "2026-11-23T19:27:21-08:00",
+    "commit":  "338dc4c9e",
     "uncommitted":  [
-                        "src/apprt/win32/win32.zig"
+                        "src/apprt/win32/BannerOverlay.zig"
                     ],
     "files":  {
                   "src/apprt/win32/about_links.zig":  "9bb9ec60b7b6099fda1350ec165c06d9404a32c4f53de1bb2fd0ce697a52683a",
@@ -50,7 +50,7 @@
                   "src/apprt/win32/banner_markdown.zig":  "0c30c9bc6353310c3e8c7cf4940e010df8a818e106630daf38710f946329f51c",
                   "src/apprt/win32/BannerDialog.zig":  "4bd17f175a1edac2f80752b525f38044cdb579755c7f23a296962e966a8ef1c0",
                   "src/apprt/win32/BannerFreeze.zig":  "04ce51c3a27e36fb8ddf4a0bbb0e7a2df64df6c3d2e68686ee7b3fd42fc73dd9",
-                  "src/apprt/win32/BannerOverlay.zig":  "d682de170002f0d8d61762966c2c345a0ec6dcbf422c99a2935f389850776199",
+                  "src/apprt/win32/BannerOverlay.zig":  "2da952dfc0099dcd58f72d5df810098c43830664f52947a4724dc34ad3568bfd",
                   "src/apprt/win32/BannerScriptInstaller.zig":  "1f5d96b07db71eebd8320b78c7671d7fd3eaa623d604719387b8b34087a8a522",
                   "src/apprt/win32/bell_audio.zig":  "62fac1f75e392cebde66811ad0f7824931292e5ea76bac307847a6a854f40512",
                   "src/apprt/win32/bell_math.zig":  "035c306b1101152db30370b806871a5f9b7fa88ccfced31ae900c03192f9de0b",

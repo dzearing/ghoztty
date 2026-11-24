@@ -934,6 +934,10 @@ pub const BannerOverlay = struct {
             return;
         }
         self.visual_dirty = false;
+        // Debug-build oracle for banner-resize-repaint.ps1 section D (T2028):
+        // every re-render names the width it was cut to, so a sampled divider
+        // drag can check the card took its pane's new width in the same pass.
+        log.debug("banner visual render w={d} h={d}", .{ w, h });
         if (!self.layer.attached) {
             self.layer.setVisible(true);
             // Debug-build oracle for comp-present.ps1's T2559 section.

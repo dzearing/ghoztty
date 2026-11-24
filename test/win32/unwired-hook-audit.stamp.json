@@ -1,8 +1,8 @@
 {
     "guard":  "unwired-hook",
     "script":  "test/win32/unwired-hook-audit.ps1",
-    "generated":  "2026-11-23T19:36:16-08:00",
-    "commit":  "31c2333e8",
+    "generated":  "2026-11-23T19:43:04-08:00",
+    "commit":  "338dc4c9e",
     "uncommitted":  [
 
                     ],
@@ -171,7 +171,7 @@
                   "src/apprt/win32/banner_markdown.zig":  "0c30c9bc6353310c3e8c7cf4940e010df8a818e106630daf38710f946329f51c",
                   "src/apprt/win32/BannerDialog.zig":  "4bd17f175a1edac2f80752b525f38044cdb579755c7f23a296962e966a8ef1c0",
                   "src/apprt/win32/BannerFreeze.zig":  "04ce51c3a27e36fb8ddf4a0bbb0e7a2df64df6c3d2e68686ee7b3fd42fc73dd9",
-                  "src/apprt/win32/BannerOverlay.zig":  "d682de170002f0d8d61762966c2c345a0ec6dcbf422c99a2935f389850776199",
+                  "src/apprt/win32/BannerOverlay.zig":  "2da952dfc0099dcd58f72d5df810098c43830664f52947a4724dc34ad3568bfd",
                   "src/apprt/win32/BannerScriptInstaller.zig":  "1f5d96b07db71eebd8320b78c7671d7fd3eaa623d604719387b8b34087a8a522",
                   "src/apprt/win32/bell_audio.zig":  "62fac1f75e392cebde66811ad0f7824931292e5ea76bac307847a6a854f40512",
                   "src/apprt/win32/bell_math.zig":  "035c306b1101152db30370b806871a5f9b7fa88ccfced31ae900c03192f9de0b",
@@ -1248,7 +1248,7 @@
                   "test/win32/auto-launch-cwd.ps1":  "91a9c1d183bc0000ca79541b7d0afa38e812932b140306784b1279d6c37a8630",
                   "test/win32/background-blur.ps1":  "dffab046e7560e606416751d4441733b0b9acd8630dcf61d3da36389b04edc9a",
                   "test/win32/background-window-frame.ps1":  "558f33f7cd12663f4fba03479038e7cc924b5fb119da50efc006958b278f7791",
-                  "test/win32/banner-resize-repaint.ps1":  "5cce357bd7213416740bf99d4ff518be2a871c5acb44a470bd353be959a35e5f",
+                  "test/win32/banner-resize-repaint.ps1":  "98cd5883d482b80f74733ccb24ff1a80cf72d7e561b1c8c70f057c607e9c55ca",
                   "test/win32/bell-border.ps1":  "9fd6e642cbecf863a82c0488e78c162f4c54f232139c7974920da095d24e765e",
                   "test/win32/bell-features.ps1":  "8e4282148bae932f6cf792520c381559de087a3527901e48111a334e2fae7990",
                   "test/win32/blade-click-neighbour.ps1":  "c08e9f99aeab1b37a262d84d85e6730a5c33c77eab34c6f0b7f8f4ca18d312c0",

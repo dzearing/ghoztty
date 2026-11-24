@@ -38,6 +38,10 @@
 #      skipped the pane-chrome pass every other layout path gets for free from
 #      `layoutSplits`. The banner kept its pre-drag geometry for the length of
 #      the drag and healed on button-up, so the sampling has to be MID-drag.
+#   D. The DEFAULT path (composition present, T2028): the card is a visual in
+#      its pane's own tree, so at every step of a posted divider drag no
+#      banner popup is on show and the card has already been re-rendered at
+#      the pane's new width. A-C pin the popup fallback; D runs knob on.
 # The "repaint landed in the same pass, not one WM_PAINT later" half is a unit
 # test - `banner overlay: a size-changing updatePosition repaints in the same
 # pass` in BannerOverlay.zig, run at 1.0/1.25/1.5/2.0.
@@ -335,6 +339,76 @@ try {
     }
 
     Assert (-not (Test-TestDesktopLeak -ProcessId $appPid)) 'GUI never became visible on the interactive desktop'
+
+    # ---- D. the DEFAULT path: the card moves with its pane (T2028) ---------
+    # Sections A-C pin the popup (the fallback with no GL/D3D interop). On the
+    # composition present - the default since T2514 - the card is a visual in
+    # the pane's OWN tree (T2559), so the pane's move carries it and nothing
+    # re-glues it after the layout batch. T2028 asked for that to be proved
+    # with a sampled drag rather than argued: at every posted step no banner
+    # popup is on show, and the card was re-rendered at the owner pane's NEW
+    # width within the same pass (`banner visual render w=` is logged per
+    # render, debug builds).
+    Kill-RepoInstances
+    $env:GHOZTTY_COMP_PRESENT = '1'
+    $errD = Join-Path $env:TEMP "ghoztty-banner-repaint-comp-$PID.log"
+    Remove-Item $errD -ErrorAction SilentlyContinue
+    $appD = Start-OnTestDesktop -Exe $exe -StdErr $errD -Arguments @(
+        '--config-default-files=false', '--background=#101014', '--session-persistence=false')
+    $launched += $script:GhozttyTestDesktopPids
+    $topD = Wait-TestWindow -ProcessId $appD.Pid -Class 'GhozttyWindow' -TimeoutMs 20000
+    Assert ($topD -ne [IntPtr]::Zero) 'D: composition arm window appeared'
+    if ($topD -ne [IntPtr]::Zero) {
+        [void](Set-TestWindowPos -Window ([IntPtr]$topD) -X 40 -Y 40 -Width 1200 -Height 820)
+        Start-Sleep -Milliseconds 800
+        # Banner FIRST, on the lone pane, then split right: the owner is the
+        # left pane without guessing.
+        & $exe +set-banner --target=window-1 $banner 2>&1 | Out-Null
+        Start-Sleep -Seconds 2
+        & $exe +split --direction=right 2>&1 | Out-Null
+        Start-Sleep -Seconds 3
+        $logD = { if (Test-Path $errD) { [string](Get-Content $errD -Raw -ErrorAction SilentlyContinue) } else { '' } }
+        $shownVisual = (& $logD) -match 'banner shown as visual w=\d+'
+        Assert $shownVisual 'D: the card is a visual of its pane (composition path is live on this box)'
+        $pd = @(Get-TestChildWindows -Window ([IntPtr]$topD) -Class 'GhozttyTerminal' | Where-Object Visible | Sort-Object Left)
+        Assert ($pd.Count -eq 2) "D: split produced 2 panes (saw $($pd.Count))"
+        if ($shownVisual -and $pd.Count -eq 2) {
+            $ownerD = $pd[0]
+            $sx = [int](($pd[0].Right + $pd[1].Left) / 2)
+            $sy = [int](($pd[0].Top + $pd[0].Bottom) / 2)
+            $w0 = $ownerD.Width
+            $popupSeen = 0
+            $mismatch = @()
+            $steps = 0
+            $maxDeltaD = 0
+            foreach ($dir in @(-1, 1)) {
+                [void](Send-TestMouse -Window ([IntPtr]$topD) -Target ([IntPtr]$topD) -X $sx -Y $sy -Action down -HoldMs 0)
+                Start-Sleep -Milliseconds 150
+                for ($i = 1; $i -le 12; $i++) {
+                    [void](Send-TestMouse -Window ([IntPtr]$topD) -Target ([IntPtr]$topD) -X ($sx + $dir * $i * 20) -Y $sy -Action move)
+                    Start-Sleep -Milliseconds 60
+                    $steps++
+                    $popupSeen += @(Get-TestWindows -ProcessId $appD.Pid -Class 'GhozttyBannerOverlay' | Where-Object Visible).Count
+                    $pw = (Get-Rect $ownerD.Hwnd).Width
+                    $maxDeltaD = [math]::Max($maxDeltaD, [math]::Abs($pw - $w0))
+                    $renders = [regex]::Matches((& $logD), 'banner visual render w=(\d+) h=(\d+)')
+                    $lastW = if ($renders.Count) { [int]$renders[$renders.Count - 1].Groups[1].Value } else { -1 }
+                    if ($lastW -ne $pw) { $mismatch += "step $steps pane=$pw card=$lastW" }
+                }
+                [void](Send-TestMouse -Window ([IntPtr]$topD) -Target ([IntPtr]$topD) -X ($sx + $dir * 240) -Y $sy -Action up)
+                Start-Sleep -Milliseconds 400
+                $pd = @(Get-TestChildWindows -Window ([IntPtr]$topD) -Class 'GhozttyTerminal' | Where-Object Visible | Sort-Object Left)
+                if ($pd.Count -ge 2) { $sx = [int](($pd[0].Right + $pd[1].Left) / 2) }
+            }
+            Assert ($maxDeltaD -ge 100) "D: the posted drag actually moved the divider (owner width changed by up to $maxDeltaD px, from $w0)"
+            Assert ($popupSeen -eq 0) "D: no banner popup was on show at any of $steps drag steps (saw $popupSeen)"
+            $cardOk = ($mismatch.Count -eq 0)
+            if ($NegativeControl) { $cardOk = -not $cardOk }
+            Assert $cardOk ("D: at every drag step the card was already re-rendered at its pane's new width" +
+                $(if ($mismatch.Count) { ' -- ' + (($mismatch | Select-Object -First 4) -join '; ') } else { '' }))
+        }
+        Assert (-not (Test-TestDesktopLeak -ProcessId $appD.Pid)) 'D: GUI never became visible on the interactive desktop'
+    }
     # The try's last statement (body-complete-audit D1): an unwind above skips
     # it, so the verdict reads DID NOT FINISH instead of green.
     Complete-TestBody
