@@ -1,0 +1,23 @@
+{
+  "version": "1.56.19",
+  "sections": [
+    { "title": "New",
+      "items": [
+        { "text": "Linux panes can be rearranged by hand: rearrange mode, pane headers and drops inside a tab." },
+        { "text": "On Linux, panes are raised rounded cards on a gradient desk, and the focused one is backlit." },
+        { "text": "test/linux/pane-style.sh is executable like its siblings." },
+        { "text": "test/linux/stacked-panes.sh is executable like its siblings." },
+        { "text": "On Linux, a row of panes that cannot fit stacks into strips instead of squeezing them." }
+      ] },
+    { "title": "Fixes",
+      "items": [
+        { "text": "Copying out of a TUI on Linux pastes clean prose, and a URL it wrapped opens as one link." },
+        { "text": "Mark test/linux/copy-reflow.sh executable like its siblings." },
+        { "text": "A lane that has not pulled is no longer handed a task the other lane already closed and pushed." }
+      ] },
+    { "title": "Improvements",
+      "items": [
+        { "text": "On Linux, a divider drag reaches a running program as a few paced resizes, now proven by a test." }
+      ] }
+  ]
+}
