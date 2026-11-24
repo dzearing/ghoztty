@@ -358,10 +358,23 @@ hl_stop_agent() {
 # hl_stop: kill everything hl_launch started (children too), then the agent
 # the app spawned, then Weston, then remove the runtime dir. Idempotent; it is
 # also the EXIT trap.
+#
+# A process gets HL_STOP_GRACE seconds (default 10) after SIGTERM and is then
+# SIGKILLed, with a line on stderr naming it. A bare `wait` here hung the run
+# forever when the GTK app stalled in its own SIGTERM quit (T3563: a window
+# holding a cancelled close dialog, T3677) - the test had already printed its
+# verdict, but wsl-run never returned and every such run leaked an app.
 hl_stop() {
-    local p
+    local p i
     for p in $HL_PIDS; do pkill -TERM -P "$p" 2>/dev/null; kill "$p" 2>/dev/null; done
-    for p in $HL_PIDS; do wait "$p" 2>/dev/null; done
+    for p in $HL_PIDS; do
+        for i in $(seq 1 $(( ${HL_STOP_GRACE:-10} * 10 ))); do kill -0 "$p" 2>/dev/null || break; sleep 0.1; done
+        if kill -0 "$p" 2>/dev/null; then
+            echo "hl_stop: pid $p ($(tr '\0' ' ' < /proc/$p/cmdline 2>/dev/null | cut -c1-80)) ignored SIGTERM for ${HL_STOP_GRACE:-10}s - SIGKILL" >&2
+            pkill -KILL -P "$p" 2>/dev/null; kill -KILL "$p" 2>/dev/null
+        fi
+        wait "$p" 2>/dev/null
+    done
     HL_PIDS=""
     hl_stop_agent
     if [ -n "${HL_WESTON_PID:-}" ]; then kill "$HL_WESTON_PID" 2>/dev/null; wait "$HL_WESTON_PID" 2>/dev/null; HL_WESTON_PID=""; fi
