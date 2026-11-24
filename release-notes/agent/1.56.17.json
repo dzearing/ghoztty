@@ -1,0 +1,9 @@
+{
+  "version": "1.56.17",
+  "sections": [
+    { "title": "Fixes",
+      "items": [
+        { "text": "A busy remote pane's resume bookmark no longer slips a frame behind and snaps back." }
+      ] }
+  ]
+}

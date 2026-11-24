@@ -1,0 +1,19 @@
+{
+  "version": "1.56.17",
+  "sections": [
+    { "title": "New",
+      "items": [
+        { "text": "The Linux feedback composer links its draft folder, and files dropped in ride along." },
+        { "text": "A GTK window lists its panes in a sidebar: rail and panel on one button, Ctrl+Shift+S, shared and remembered." }
+      ] },
+    { "title": "Fixes",
+      "items": [
+        { "text": "A GTK viewer page's iframe can no longer file a quote, set the contents or open a file." },
+        { "text": "The chooser Kill-hover check measures the Kill button again, not the Show button beside it." }
+      ] },
+    { "title": "Improvements",
+      "items": [
+        { "text": "The Linux feedback composer follows the light/dark style." }
+      ] }
+  ]
+}
