@@ -1,8 +1,8 @@
 {
     "guard":  "unwired-hook",
     "script":  "test/win32/unwired-hook-audit.ps1",
-    "generated":  "2026-11-24T00:38:30-08:00",
-    "commit":  "32129764b",
+    "generated":  "2026-11-24T00:42:06-08:00",
+    "commit":  "de60c4e56",
     "uncommitted":  [
 
                     ],
@@ -1398,7 +1398,7 @@
                   "test/win32/ghoztty-cleanup.ps1":  "a1b46736eb6a96c57f7598e2a1088afaf501c62be03ec8bfc45d91bc15107629",
                   "test/win32/glass-frame-origin.ps1":  "0a0dfeed8dff3e6ba20ec9402905ac5490ab37b43d85d9316be106de72e26b56",
                   "test/win32/gl-device-lost.ps1":  "3a87a2acf4ebca9c19323687ecd65919747f3691aa09eb9eb245f19246d30711",
-                  "test/win32/go-loop-guard.ps1":  "b62236e4983f069f0094c16068a6914c8e2b3ea5d8daf0a994e7f007635b0860",
+                  "test/win32/go-loop-guard.ps1":  "b045fcc3c77e54e7df64cc2400dd2011cf39f7c5ce3c2ae39d89288ef91f4568",
                   "test/win32/go-loop-resume.ps1":  "6295cd2d72a24a6150d414e1c831c6a9581868d66ae6e17fa821a27d08696b78",
                   "test/win32/go-loop-uptime.ps1":  "7c2ceea601e716ffba45f0054228e1925a0932a14a100dd7f0a34f4765e12a20",
                   "test/win32/goto-window.ps1":  "46d315222e373a99e41e10787bf31cbd847e3cd8c383da93e902008f549627a1",
@@ -1679,7 +1679,7 @@
                   "test/win32/test-desktop-harness.ps1":  "77eba27ffdbca2b9f422df3f0e3d32b1db9b753dafdc9b00ab532cde26b862ae",
                   "test/win32/test-desktop-spike.ps1":  "4327aaa3c3e713559517d2597c9638ca5bdc6ae7106f057485803aeb4b722af7",
                   "test/win32/test-filter-guard.ps1":  "8804ee177e925a2cdfbc14a75f80ec01b217378a80025b55c80d7831c2beec00",
-                  "test/win32/test-reach-audit.ps1":  "6f750b133310449a3709ff815f2212fbb29b9b1498b49e8cc890a5f695ae66d2",
+                  "test/win32/test-reach-audit.ps1":  "cf2b3df37006b34c609ee4b93f061a7ac9c82ec8d465c123c92cae0b1bd23ed2",
                   "test/win32/test-wait-oracle.ps1":  "63ccef37878450ba45a00998c1d19974c42da08ece7b4160305becb11549ec3d",
                   "test/win32/thread-join-audit.ps1":  "e46a6d22e67ac938984fa9ebcf60bb9dcdecb96efeedd55a553bc7f3b18c945b",
                   "test/win32/title-churn-redraw.ps1":  "e76dd03723ce484c7b6fa8cfa96272bac7cdf8048bc900b9360624cc87855369",
