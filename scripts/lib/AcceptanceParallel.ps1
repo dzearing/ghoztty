@@ -753,6 +753,40 @@ function Start-ApJob {
     return [pscustomobject]@{ Process = $p; Out = $out; Err = $err; Started = Get-Date }
 }
 
+function Get-ApRedDetail {
+    <#
+    .SYNOPSIS
+    The lines a RED row prints under itself: where its logs are, and the
+    assertions that failed (T2146).
+
+    .DESCRIPTION
+    A script's stderr goes to the sibling `.err.log`, and an Assert helper
+    that writes FAIL with $host.UI.WriteErrorLine lands there, not in the
+    `.log` - so a row that named only the `.log` showed eleven PASS lines and a
+    bare '1 FAILURE(S)' with the failing check nowhere in sight (drag-perf,
+    T2134). The `.err.log` is named whenever it holds anything, and up to -Max
+    FAIL lines from each file are quoted inline, so the cause is on screen
+    without opening either. 'FAILURE(S)' verdicts are not FAIL lines.
+    #>
+    param([string]$Log, [string]$ErrLog, [int]$Max = 3)
+    $out = @()
+    if ($Log) { $out += "      log: $Log" }
+    $errHas = $false
+    if ($ErrLog -and (Test-Path -LiteralPath $ErrLog)) {
+        try { $errHas = ((Get-Item -LiteralPath $ErrLog).Length -gt 0) -and ([IO.File]::ReadAllText($ErrLog).Trim().Length -gt 0) } catch {}
+    }
+    if ($errHas) { $out += "      err log: $ErrLog" }
+    foreach ($f in @(@($Log, $(if ($errHas) { $ErrLog })) | Where-Object { $_ -and (Test-Path -LiteralPath $_) })) {
+        $lines = @()
+        try { $lines = @([IO.File]::ReadAllLines($f)) } catch {}
+        # Case-SENSITIVE: an evidence path like 'ghoztty-t1825-fail-<stamp>.log'
+        # in the verdict line is not a failing assertion.
+        $fails = @($lines | Where-Object { $_ -cmatch '\bFAIL\b' } | Select-Object -First $Max)
+        foreach ($l in $fails) { $out += "      > $($l.Trim())" }
+    }
+    return , $out
+}
+
 function Split-ApArgs {
     param([string]$Text)
     if (-not $Text) { return @() }
@@ -940,7 +974,7 @@ function Invoke-AcceptanceRun {
             Seq = $job.Item.Seq; Name = $job.Item.Name; Script = $job.Item.Script; Args = $job.Item.Args
             Class = $job.Item.Class; Slot = $job.Slot; Phase = $job.Phase
             Kind = $v.Kind; Line = $vLine; ExitCode = $code
-            Started = $job.Started; Ended = (Get-Date); Log = $job.Out
+            Started = $job.Started; Ended = (Get-Date); Log = $job.Out; ErrLog = $job.Err
         }
         & $OnResult $row | Out-Host
         return $row

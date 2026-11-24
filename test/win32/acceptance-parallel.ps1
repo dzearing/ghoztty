@@ -436,6 +436,19 @@ function Save-Record([string]$verdictKind, [int]$others) {
         ("exit=$($r.Code) :: $($r.Text)")
     Check 'F12 a red row names its log file, and the file is there' `
         ($r.Text -match '(?m)^\s+log: (.+red[^\r\n]*)$' -and (Test-Path -LiteralPath $Matches[1].Trim())) ("text=$($r.Text)")
+    # T2146: an Assert that writes FAIL to stderr leaves the .log holding a bare
+    # verdict; the red row must name the .err.log and quote the FAIL inline.
+    # Control: red.ps1 writes nothing to stderr, so its row names no err log.
+    Write-Fixture (Join-Path $fake 'test\win32\errred.ps1') "'  PASS: a check that passed'`n`$host.UI.WriteErrorLine('  FAIL: planted stderr assertion T2146')`n'1 FAILURE(S) - evidence: C:\x\t2146-fail-20261124.log'`nexit 1`n"
+    $r = Invoke-Runner "run -Scripts errred.ps1 -Width 1"
+    Check 'F14 a red row whose FAIL went to stderr names the .err.log and quotes the failing assertion' `
+        ($r.Code -eq 1 -and $r.Text -match '(?m)^\s+err log: (.+errred[^\r\n]*\.err\.log)$' -and (Test-Path -LiteralPath $Matches[1].Trim()) -and
+        $r.Text -match '(?m)^\s+> FAIL: planted stderr assertion T2146$' -and
+        # a lowercase '-fail-' in an evidence path is not an assertion (seen live on close-undo)
+        $r.Text -notmatch '(?m)^\s+> .*t2146-fail-') ("exit=$($r.Code) :: $($r.Text)")
+    $r = Invoke-Runner "run -Scripts red.ps1 -Width 1"
+    Check 'F15 control: a red row with an empty stderr names no err log and quotes no FAIL line' `
+        ($r.Code -eq 1 -and $r.Text -match '(?m)^\s+log: ' -and $r.Text -notmatch 'err log:' -and $r.Text -notmatch '(?m)^\s+> ') ("exit=$($r.Code) :: $($r.Text)")
 
     # T1086: -List is the queue and nothing else. Planted stale build: a list
     # that checked the build would refuse (exit 4); one that ran would make the

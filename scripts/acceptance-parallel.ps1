@@ -203,7 +203,7 @@ $summary = [pscustomobject]@{
     wallSeconds = [int]$clock.Elapsed.TotalSeconds; scriptSeconds = [int]$busy
     build = $fresh.State; notRun = $notRun
     final = $final; runs = @($results | Select-Object Seq, Name, Class, Slot, Phase, Kind, Line, ExitCode,
-            @{ n = 'Started'; e = { $_.Started.ToString('o') } }, @{ n = 'Ended'; e = { $_.Ended.ToString('o') } }, Log)
+            @{ n = 'Started'; e = { $_.Started.ToString('o') } }, @{ n = 'Ended'; e = { $_.Ended.ToString('o') } }, Log, ErrLog)
     scheduleViolations = $overlap
     stateCheck = $(if ($NoStateCheck) { 'skipped' } else { 'ran' })
     stateChanges = @($stateChanges | ForEach-Object { Format-PersistentStateChange $_ })
@@ -226,8 +226,10 @@ if ($stateChanges.Count -gt 0) { $counts += " state-changes=$($stateChanges.Coun
 foreach ($r in $red) {
     "  RED {0} ({1}): {2}" -f $r.Name, $r.Kind, $r.Line
     # T1086: a stall's last line is rarely the story; name where the rest is.
+    # T2146: and the .err.log beside it, with the FAIL lines quoted - an Assert
+    # that writes to stderr leaves the .log holding only a bare verdict.
     $log = @($results | Where-Object { $_.Seq -eq $r.Seq -and $_.Log } | Select-Object -Last 1)
-    if ($log.Count) { "      log: {0}" -f $log[0].Log }
+    if ($log.Count) { Get-ApRedDetail -Log $log[0].Log -ErrLog $log[0].ErrLog }
 }
 if ($notRun.Count -gt 0) { "  NOT RUN (-FailFast stopped at the first red): {0}" -f ($notRun -join ', ') }
 if ($overlap.Count -gt 0) { exit 3 }
