@@ -1816,7 +1816,9 @@ pub const Window = extern struct {
         // T3563: a window on a remote machine asks even when idle, and
         // offers Disconnect.
         const offer = self.disconnectOffer();
-        switch (disconnect_offer.step(self.getNeedsConfirmQuit(), offer)) {
+        const step = disconnect_offer.step(self.getNeedsConfirmQuit(), offer);
+        log.info("window close request: {s} ({d} remote session(s) to spare)", .{ @tagName(step), offer.count });
+        switch (step) {
             .close => {},
             .ask_running => {
                 self.askToClose(null);
