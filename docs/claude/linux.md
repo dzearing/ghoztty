@@ -311,13 +311,38 @@ private runtime dir, so a test app can never meet the user's.
   over the user's own flags (`pane_sidebar_prefs.StartState`). Redraws are
   queued (one idle) from the window's tree, tab, active-surface, title,
   pwd, title-override, size and banner changes. Debug seam: `hl_ipc
-  pane-sidebar --target=<pane|window> [--click=toggle|<pane-id>]` replies
-  with the drawn state (`mode`, `expanded`, `hidden`, `can_expand`,
-  `visible`, `width`, `window_width`, `rows[]`). Acceptance: `wsl-run.ps1
-  -CommandFile test\linux\cli-sidebar.sh`, ends `CLI SIDEBAR: ALL PASS` (27
-  checks); `NEGATIVE=1` presses the wrong chord and must fail S12. Not yet:
-  all windows, search, drag and the stash tray (T3558); row tools, hover
-  tint, busy sheen and the width drag (T3606).
+  pane-sidebar --target=<pane|window> [--search=<text>]
+  [--search-key=enter|escape] [--click=toggle|scope|<row id>|fold:<row id>]`
+  replies with the drawn state (`mode`, `expanded`, `hidden`, `can_expand`,
+  `visible`, `width`, `window_width`, `all_windows`, `search`,
+  `search_field`, `window_count`, `title`, `rows[]` - a row's `pane` is a
+  pane id, or a header's `window:<key>` / `project:<name>` / `ungrouped`).
+  Acceptance: `wsl-run.ps1 -CommandFile test\linux\cli-sidebar.sh`, ends
+  `CLI SIDEBAR: ALL PASS` (29 checks; it switches to the per-window scope
+  first); `NEGATIVE=1` presses the wrong chord and must fail S12.
+  **All windows (T3558)**: the panel's scope button (trailing edge of the
+  header) lists every window - each TAB of each GTK window, as on win32 -
+  as an outline (`pane_sidebar_all.zig`, over win32's pure
+  `pane_sidebar_outline` / `pane_sidebar_shared`): lone windows first, then
+  `<project>: <worktree>` windows under a project header labeled by
+  worktree in Finder order, with an "Ungrouped" header over the lone ones
+  whenever there is a group; namesakes in the order they opened. A first
+  launch opens in it (the persisted 4th field of the flags file); every
+  window starts folded to its row (name + pane count; a chevron unfolds,
+  the name raises it), and the folds, the scope and the search are ONE
+  state for every window, so every list redraws when any window's panes
+  change while it is on. The search (`GtkSearchEntry`, panel only) keeps
+  the panes every term matches - window name, label, own title, banner
+  line, directory and `~` form, ignoring case - and the windows holding
+  one, unfolded; Return focuses the first hit, Escape clears (on an empty
+  field the caret goes back to the terminal). A pane row of another window
+  focuses it there through the surface's present request. Collapsed, the
+  rail is one tile per window. Acceptance: `wsl-run.ps1 -CommandFile
+  test\linux\cli-sidebar-all.sh`, ends `CLI SIDEBAR ALL: ALL PASS` (30
+  checks); `NEGATIVE=1` searches for nothing and must fail A12. Not yet:
+  drag and the stash tray (T3607), group editing - the window-row menu and
+  the headers' tools (T3608); row tools, hover tint, busy sheen and the
+  width drag (T3606).
   `--view` on `+new-window`/`+split` opens a viewer pane (T3411, below).
 - **Names (T3370)** follow win32's rules exactly (`apprt/ipc/target_lookup.zig`,
   T2250): a window name is global (`+new-window --target`, else a minted
