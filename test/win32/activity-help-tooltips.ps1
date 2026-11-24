@@ -107,6 +107,10 @@ function Assert($cond, $name) {
     if ($cond) { Write-Host "  PASS $name"; $script:pass++ }
     else { Write-Host "  FAIL $name" -ForegroundColor Red; $script:fail++ }
 }
+function Skip($name) {
+    Write-Host "  SKIP $name" -ForegroundColor Yellow
+    $script:skipped++
+}
 
 $tmp = Join-Path $env:TEMP "ghoztty-t1634-$PID"
 New-Item -ItemType Directory -Force $tmp | Out-Null
@@ -327,6 +331,21 @@ try {
     }
     # The table, well below the control bar, in the empty band under its rows.
     Test-NoHelpAt 'empty table band' ([int]($client.Width / 2)) ([int]($client.Height * 3 / 4)) 800
+    # T2078: the badge slot is empty only while the table FITS. Beside other
+    # workers the box's process count can cross the 512-row cap between the
+    # panel's refreshes, and then the badge is really there and its tip is
+    # correct. Decide from the panel's own state lines (one per refresh, so they
+    # cover the probes): a badge tip while any of them said truncated=true is
+    # the premise failing, not the control, and is SKIPPED loudly. Every other
+    # stray - and every badge tip on a table that never truncated - still fails.
+    $truncatedSeen = [bool](Select-String -Path $errlog -Pattern 'activity monitor: source=Local .*truncated=true' -Quiet -ErrorAction SilentlyContinue)
+    if ($truncatedSeen) {
+        $badgeStrays = @($strays | Where-Object { $_ -match ': target=badge ' })
+        foreach ($s in $badgeStrays) { [void]$strays.Remove($s); Write-Host "    (E excused, table truncated for real: $s)" }
+        if ($badgeStrays.Count -gt 0) {
+            Skip 'E the badge slot: this box crossed the 512-process cap during the probes, so the badge was really shown - no negative control for the slot here'
+        }
+    }
     foreach ($s in $strays) { Write-Host "    (E derived: $s)" }
     Assert ($strays.Count -eq 0) `
         "E the empty badge slot and the table derive no tooltip (client=$($client.Width)x$($client.Height) rowY=$rowY saRight=$saRight; settle $geoWaited ms, quiet after $quietWaited ms)"

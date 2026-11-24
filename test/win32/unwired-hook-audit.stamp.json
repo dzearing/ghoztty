@@ -1,8 +1,8 @@
 {
     "guard":  "unwired-hook",
     "script":  "test/win32/unwired-hook-audit.ps1",
-    "generated":  "2026-11-24T06:17:35-08:00",
-    "commit":  "6b8b60392",
+    "generated":  "2026-11-24T06:31:49-08:00",
+    "commit":  "93a5c8839",
     "uncommitted":  [
 
                     ],
@@ -1211,7 +1211,7 @@
                   "src/unicode/symbols_uucode.zig":  "cb6ae86fe8549c435e11a2e038960aa9cae907aa89aa14598f8b6416c51b61ce",
                   "test/win32/about-links.ps1":  "cb6ba712f258265f9a5d03dc219567a0025a1f081a2b7d2029586140247906eb",
                   "test/win32/acceptance-parallel.ps1":  "2673dccb32a1a23a91372cea2ed37ca934158fae369c8fbbe0c6976b7ed2657a",
-                  "test/win32/activity-help-tooltips.ps1":  "ead9d97c42517396c6a6a16de0885e5636f09c677582f2b830ed859f6f933b59",
+                  "test/win32/activity-help-tooltips.ps1":  "42d9242fc8112d637b503eaa181a24a02d767e33fec7fe0fba1d9fe6d765df1c",
                   "test/win32/activity-monitor.ps1":  "085720eade12d3fda926f05f7a1f5e9bc8475e206327066555d2036974b5d3f0",
                   "test/win32/activity-monitor-dialed.ps1":  "e8d248a8d5507c68b3a67fd0f15692a98868d2542cbc6f0cdb714c9ee98ade99",
                   "test/win32/activity-monitor-probe-fail.ps1":  "9f7eb6448779410b4d596c3dbdd62c94c9e8255dd922ae5fb97b2d5a51541296",
@@ -1220,7 +1220,7 @@
                   "test/win32/activity-selection.ps1":  "3dca460d2ea1a02fbcf0dab5311b99345e6e02b7afcfe1a2b5801d7148c33759",
                   "test/win32/activity-show-all-disabled.ps1":  "358b03418a949cddb116a5af988f1d5461497a536f5e64d7ce85dd985c99432e",
                   "test/win32/activity-state.ps1":  "0b3669240e2083d6e3b8ba56b430a2f85c9e7ee52f6822650dd4243aefa36155",
-                  "test/win32/activity-truncated.ps1":  "c8cd7bf4650037d2e2d4369d4b89d9faf0ab8e85c9e03a7ccc7fe26d7028098c",
+                  "test/win32/activity-truncated.ps1":  "e2e76aedf3bae91663bd9e45f63374be2381014c842d5b25b13323e7add09039",
                   "test/win32/agent-adopt.ps1":  "ad4c265f486a204233a6a3ae02d75b63429b1e22f5d61a654189ee77185ce643",
                   "test/win32/agent-attach-refused.ps1":  "df7bced757ce78049ddb43322c52f39435d4acc35cc2acd43516faa7ba1e94dd",
                   "test/win32/agent-autostart.ps1":  "b8a48f7105cfb62727fca90f7405a45d6e25341087a4bfe9d8eea07cb7aa4254",

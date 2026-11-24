@@ -118,6 +118,16 @@ function Get-PanelState($log) {
     return [pscustomobject]@{ Total = [int]$g[1].Value; Truncated = ($g[3].Value -eq 'true') }
 }
 
+# Every Local state line, oldest first (one per panel refresh).
+function Get-PanelStates($log) {
+    if (-not (Test-Path $log)) { return @() }
+    $pat = 'activity monitor: source=Local total=(\d+) shown=(\d+) .* truncated=(\w+)'
+    return @(Select-String -Path $log -Pattern $pat | ForEach-Object {
+        $g = $_.Matches[0].Groups
+        [pscustomobject]@{ Total = [int]$g[1].Value; Truncated = ($g[3].Value -eq 'true') }
+    })
+}
+
 # Launch the app, open a Local Activity Monitor, and return what the run needs.
 # $null when the fixture could not be built (the caller reports it).
 function Open-Panel($log) {
@@ -226,7 +236,17 @@ try {
         Assert ($st -and $st.Total -gt $SEAM_CAP) "C the uncapped table is the whole machine (total=$(if ($st) { $st.Total } else { '?' }))"
         Assert ($st -and -not $st.Truncated) 'C the state line says the table fit'
         $tip = Find-Badge $log2 $fx
-        Assert ($null -eq $tip) "C the same walk finds no badge (got '$tip')"
+        # T2078: the panel re-samples while the walk runs and logs a state line
+        # per refresh, so the premise "the table fit" is re-read from EVERY
+        # refresh the walk spanned, not only the one before it. Beside other
+        # workers the box can cross the 512-process cap mid-walk; the badge is
+        # then really there, and finding it is the panel being right.
+        $crossed = @(Get-PanelStates $log2 | Where-Object { $_.Truncated -or $_.Total -ge $MAX_ROWS })
+        if ($crossed.Count -gt 0) {
+            Skip "C this box crossed the $MAX_ROWS-process cap during the walk (total=$($crossed[-1].Total) truncated=$($crossed[-1].Truncated); badge '$tip') - no negative control here"
+        } else {
+            Assert ($null -eq $tip) "C the same walk finds no badge (got '$tip')"
+        }
     }
     Assert (-not ($fx.App.Process -and $fx.App.Process.HasExited)) 'C the app survived the uncapped run'
     Assert (-not (Select-String -Path $log2 -Pattern 'panic:' -Quiet)) 'C no panic reached the uncapped run''s log'
