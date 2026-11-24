@@ -1213,6 +1213,45 @@ powershell -NoProfile -File scripts\linux\wsl-run.ps1 -CommandFile test\linux\co
 Ends `COPY REFLOW: ALL PASS`. Not covered here: a rectangle selection (left
 exactly as selected), which needs the seam to grow the rectangle modifier (T3621).
 
+## The pane style: gradient desk, elevated cards, focus glow (T3566)
+
+`docs/reference/pane-style.md` on GTK. Three pieces:
+
+- **The desk** is drawn by the split tree itself: `SplitTree` overrides the
+  widget `snapshot` vfunc (`snapshotDesk`) and appends a small texture of the
+  window's gradient, stretched over the tree, before its children. The colours
+  are win32's `desk_palette.zig` (Mac's `PaneDeskPalette`/`PaneDeskVariant`,
+  draw for draw through the same SplitMix64), rendered at win32's downscale and
+  cached per size/seed/theme (`pane_style.DeskKey`). Light vs dark follows the
+  configured terminal background's luminance, as on win32.
+- **The cards** are CSS (`style.css`, `.pane-elevated`): every pane's
+  `SurfaceScrolledWindow` gets `pane-card` (11px radius, hairline rim, two-layer
+  shadow) and `gtk_widget_set_overflow(HIDDEN)` so the terminal is clipped to
+  the corners; the tree's 5px padding plus each card's 5px margin is the one
+  10px gutter. The focused card of several gets `pane-focused` (outset glow +
+  34% rim). `SplitTree.syncPaneStyle` sets the classes after every rebuild and
+  focus move, and `Window.syncAppearance` re-runs it on a config reload, so
+  `macos-pane-style` applies to every window at once.
+- **The window's gradient** lives on `Window` (`deskVariant`): a hand-opened
+  window follows `macos-window-gradient` (random by default); `+new-window`
+  sets it from `--color` (`random` in the elevated style = its own gradient and
+  NO terminal tint; `#hex` or none = the ocean, and `#hex` tints as before).
+
+**Trap: `style-dark.css` beats `style.css`.** libadwaita loads them as two
+providers, and between providers order wins, not specificity - a rule in
+`style.css` that the dark sheet also sets (the paned separator) must be
+repeated there, or it silently loses in a dark theme.
+
+Not yet: glass panes (T3622), the seed in the session layout and the desk under
+the sidebar/header bar (T3623), the flat style's 6px gutter (T3624).
+
+```powershell
+powershell -NoProfile -File scripts\linux\wsl-run.ps1 -CommandFile test\linux\pane-style.sh
+```
+
+Ends `PANE STYLE: ALL PASS` (16 checks; geometry and pixels from the window's
+own render via `capture-pane --window`, probed with `hl_png_pixel`).
+
 ## The interop PATH trap
 
 Inside WSL the Windows `PATH` is appended by default, so a bare `ghoztty` can

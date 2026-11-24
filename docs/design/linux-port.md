@@ -107,7 +107,7 @@ first commit on `main`), so `next` takes them in that order within the P2 band:
 | remote-machines | L11a T3563 (chooser, Close vs Disconnect, pill); verbs T3597 (+stash/+restore T3596, handoff-quit T3595 done), relay account store L12 T3341 (done: keyring, else a 0600 file), the account row's sign-in L12b T3575 |
 | pane-rearrange | L11b T3564 (done: mode, headers, in-window drops; + tab bar T3615, cross-window T3616, ghost/preview/hover handle T3617, new window/pop-out T3618) |
 | copy-reflow | L11c T3565 (done: every GTK copy path reaches the shared cleanup; + seat for a cross-app paste T3620, rectangle T3621) |
-| pane-style | L11d T3566 |
+| pane-style | L11d T3566 (done: desk, elevated cards, focus glow, flat, `--color=random` gradient; + glass T3622, seed persistence and desk under sidebar/header T3623, flat gutter T3624) |
 | stacked-panes | L11e T3567 |
 | terminal-resize | L11f T3568 |
 | settings | L11g T3569 |
