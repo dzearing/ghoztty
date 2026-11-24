@@ -51,6 +51,7 @@ const viewer_links = @import("../viewer_links.zig");
 // The pure tint math win32 uses (T67): hex parsing, the contrast scheme.
 const color_math = @import("../../win32/color_math.zig");
 const Tab = @import("tab.zig").Tab;
+const window_seen = @import("../window_seen.zig");
 
 const log = std.log.scoped(.gtk_ghostty_surface);
 
@@ -614,6 +615,11 @@ pub const Surface = extern struct {
         /// `$GHOZTTY_PANE_ID` and reported as the `+list` leaf `id`, the
         /// contract docs/claude/cli.md names for every platform.
         pane_id: pane_id_mod.Buf = undefined,
+
+        /// Whether the core was last told this pane can be seen (T3571): a
+        /// pane nobody can see skips building its frames and catches up
+        /// once when it shows. The core starts out assuming it is seen.
+        seen: bool = true,
 
         /// The default size for a window that embeds this surface.
         default_size: ?*Size = null,
@@ -1449,6 +1455,42 @@ pub const Surface = extern struct {
     pub fn core(self: *Self) ?*CoreSurface {
         const priv = self.private();
         return priv.core_surface;
+    }
+
+    /// Whether this pane can be seen now (T3571): its widget is mapped and
+    /// its window is seen (`window_seen.paneSeen`).
+    pub fn computeSeen(self: *Self) bool {
+        const mapped = self.as(gtk.Widget).getMapped() != 0;
+        const window_seen_now = if (ext.getAncestor(Window, self.as(gtk.Widget))) |w| w.isSeen() else false;
+        return window_seen.paneSeen(mapped, window_seen_now);
+    }
+
+    /// Whether the core was last told this pane can be seen.
+    pub fn isSeen(self: *Self) bool {
+        return self.private().seen;
+    }
+
+    /// Recompute whether this pane can be seen and tell the core when that
+    /// changed (T3571; docs/reference/background-windows.md "Terminal
+    /// frames"). Only drawing stops: the terminal, its activity state and
+    /// its notifications go on exactly as before.
+    pub fn syncSeen(self: *Self) void {
+        const priv = self.private();
+        // A viewer pane has no terminal to pause; its own polls and watches
+        // already gate on being mapped (Viewer.zig, ViewerDiff.zig).
+        if (priv.viewer != null) return;
+        const surface = priv.core_surface orelse return;
+        const now = self.computeSeen();
+        const told = window_seen.change(priv.seen, now) orelse return;
+        priv.seen = told;
+        log.info("seen: pane={s} seen={}", .{ self.paneId(), told });
+        surface.occlusionCallback(told) catch |err| {
+            log.warn("occlusion callback failed err={}", .{err});
+        };
+    }
+
+    fn surfaceMapChanged(_: *gtk.Widget, self: *Self) callconv(.c) void {
+        self.syncSeen();
     }
 
     pub fn rt(self: *Self) *ApprtSurface {
@@ -2544,6 +2586,11 @@ pub const Surface = extern struct {
         priv.size = .{ .width = 0, .height = 0 };
         priv.vadj_signal_group = null;
         _ = pane_id_mod.generate(&priv.pane_id);
+
+        // T3571: a background tab, a pane behind a stacked row's strip and a
+        // window put away unmap the pane; showing it maps it again.
+        _ = gtk.Widget.signals.map.connect(self.as(gtk.Widget), *Self, surfaceMapChanged, self, .{});
+        _ = gtk.Widget.signals.unmap.connect(self.as(gtk.Widget), *Self, surfaceMapChanged, self, .{});
 
         // If our configuration is null then we get the configuration
         // from the application.
@@ -4324,6 +4371,11 @@ pub const Surface = extern struct {
         // A tint asked for before the terminal existed (T3382): an IPC
         // `--color` on a new window or split, or a split's inherited tint.
         if (priv.background_tint) |rgb| applyTintToCore(surface, rgb);
+
+        // T3571: a terminal made in a window nobody can see (or a tab that
+        // is not selected) starts hidden rather than building its first
+        // frames for nobody.
+        self.syncSeen();
 
         // Emit the signal that we initialized the surface.
         Surface.signals.init.impl.emit(

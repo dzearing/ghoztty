@@ -112,7 +112,7 @@ first commit on `main`), so `next` takes them in that order within the P2 band:
 | terminal-resize | L11f T3568 |
 | settings | L11g T3569 |
 | keyboard-shortcuts | L11h T3570 (done: Ctrl+Shift+/, menu, palette, live catalog, search, Run, cheat sheet; + Run on hover T3639, menu/palette check T3640) |
-| background-windows | L11i T3571 |
+| background-windows | L11i T3571 (done: hidden panes stop building frames and catch up on show, held window title; + viewer polls/animations in a minimized window T3643) |
 | memory | L11j T3572 |
 | window-modes | L11k T3573 |
 

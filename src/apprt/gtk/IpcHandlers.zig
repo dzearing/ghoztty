@@ -152,6 +152,7 @@ pub fn handleSeam(app: Context, request: Request) Allocator.Error!server.SeamRep
     if (std.mem.eql(u8, request.action, "read-clipboard")) return .{ .reply = try readClipboard(app, request) };
     if (std.mem.eql(u8, request.action, "settings")) return .{ .reply = try settingsSeam(app, request) };
     if (std.mem.eql(u8, request.action, "shortcut-guide")) return .{ .reply = try shortcutGuideSeam(app, request) };
+    if (std.mem.eql(u8, request.action, "pane-seen")) return .{ .reply = try paneSeenSeam(app, request) };
     if (!std.mem.eql(u8, request.action, "capture-pane")) return .unhandled;
     return .{ .reply = try capturePane(app, request) };
 }
@@ -822,6 +823,104 @@ fn writeSettingsState(jws: *std.json.Stringify, arena: Allocator, w_opt: anytype
 ///   --op=shot --path=<file.png>   the window from its own render
 ///   --op=close       the title bar's close button
 ///   filters on any op: --query=<q> --category=<all|name> --unbound=<0|1>
+/// `pane-seen --target=<pane|window> [--toplevel=minimized|suspended|shown|real]`
+/// (T3571, docs/reference/background-windows.md): whether the target's
+/// window and each of its panes can be seen, and the window's title as set
+/// on the window beside the one it is holding. `--toplevel` stands in for
+/// the compositor's toplevel state (`real` reads it again): the headless
+/// Weston the harness runs in never minimizes or suspends a window, and the
+/// reply's `reported` says what the compositor itself reports.
+fn paneSeenSeam(app: Context, request: Request) Allocator.Error![]u8 {
+    const window_seen = @import("window_seen.zig");
+    var target_arg: ?[]const u8 = null;
+    var toplevel_arg: ?[]const u8 = null;
+    for (request.arguments orelse &.{}) |arg| {
+        if (std.mem.startsWith(u8, arg, "--target=")) target_arg = arg["--target=".len..];
+        if (std.mem.startsWith(u8, arg, "--toplevel=")) toplevel_arg = arg["--toplevel=".len..];
+    }
+    const target_name = target_arg orelse return server.errorResponse(c_alloc, "--target is required for pane-seen", .{});
+
+    var arena_state = std.heap.ArenaAllocator.init(c_alloc);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const target = switch (try resolve(arena, app, target_name)) {
+        .found => |t| t,
+        .ambiguous => |windows| return server.errorResponse(c_alloc, "{s}", .{
+            try target_lookup.ambiguityError(arena, target_name, windows),
+        }),
+        .not_found => return server.errorResponse(c_alloc, "pane '{s}' not found in registry", .{target_name}),
+    };
+    const window = target.window_();
+
+    if (toplevel_arg) |t| {
+        const state: ?window_seen.Toplevel = if (std.mem.eql(u8, t, "minimized"))
+            .{ .minimized = true }
+        else if (std.mem.eql(u8, t, "suspended"))
+            .{ .suspended = true }
+        else if (std.mem.eql(u8, t, "shown"))
+            .{}
+        else if (std.mem.eql(u8, t, "real"))
+            null
+        else
+            return server.errorResponse(c_alloc, "--toplevel must be minimized, suspended, shown or real", .{});
+        window.setToplevelOverride(state);
+    }
+
+    // What the compositor reports, with any stand-in set aside.
+    const reported = window.reportedToplevelState();
+
+    var out: std.Io.Writer.Allocating = .init(c_alloc);
+    defer out.deinit();
+    var jws: std.json.Stringify = .{ .writer = &out.writer };
+    (struct {
+        fn write(j: *std.json.Stringify, a: Context, w: *Window, rep: window_seen.Toplevel) !void {
+            try j.beginObject();
+            try j.objectField("success");
+            try j.write(true);
+            try j.objectField("data");
+            try j.beginObject();
+            try j.objectField("window");
+            try j.beginObject();
+            try j.objectField("seen");
+            try j.write(w.isSeen());
+            try j.objectField("mapped");
+            try j.write(w.as(gtk.Widget).getMapped() != 0);
+            try j.objectField("override");
+            try j.write(w.hasToplevelOverride());
+            try j.objectField("reported");
+            try j.beginObject();
+            try j.objectField("minimized");
+            try j.write(rep.minimized);
+            try j.objectField("suspended");
+            try j.write(rep.suspended);
+            try j.endObject();
+            try j.objectField("title");
+            try j.write(cstr(w.as(gtk.Window).getTitle()));
+            try j.objectField("held_title");
+            try j.write(w.heldTitle());
+            try j.endObject();
+            try j.objectField("panes");
+            try j.beginArray();
+            var it = paneIterator(a);
+            while (it.next()) |p| {
+                if (p.window != w) continue;
+                try j.beginObject();
+                try j.objectField("pane");
+                try j.write(p.surface.paneId());
+                try j.objectField("seen");
+                try j.write(p.surface.isSeen());
+                try j.objectField("mapped");
+                try j.write(p.surface.as(gtk.Widget).getMapped() != 0);
+                try j.endObject();
+            }
+            try j.endArray();
+            try j.endObject();
+            try j.endObject();
+        }
+    }).write(&jws, app, window, reported) catch return error.OutOfMemory;
+    return c_alloc.dupe(u8, out.written());
+}
+
 fn shortcutGuideSeam(app: Context, request: Request) Allocator.Error![]u8 {
     const Guide = @import("ShortcutGuideWindow.zig");
     var op: []const u8 = "state";
@@ -2240,7 +2339,7 @@ fn buildWindow(arena: Allocator, app: Context, window: *Window) Allocator.Error!
         .id = try std.fmt.allocPrint(arena, "{d}", .{
             window.as(gtk.ApplicationWindow).getId(),
         }),
-        .title = try arena.dupe(u8, cstr(window.as(gtk.Window).getTitle())),
+        .title = try arena.dupe(u8, cstr(window.currentTitle())),
         .target = name,
         .focused = window.as(gtk.Window).isActive() != 0,
         .tabs = tabs,

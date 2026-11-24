@@ -621,6 +621,9 @@ test {
     // ... and the activity state a window shows: the title suffix, the most
     // urgent pane, its tabs' marks (T3561). No GTK imports.
     _ = @import("gtk/window_activity.zig");
+    // ... and whether a window or pane can be seen, and when a hidden
+    // window's title lands (T3571). No GTK imports.
+    _ = @import("gtk/window_seen.zig");
     // ... and the pane sidebar's: a row's text, the mode, where the shared
     // flags are kept (T3557). No GTK imports.
     _ = @import("gtk/pane_sidebar_rows.zig");

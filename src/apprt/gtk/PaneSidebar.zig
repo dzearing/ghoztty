@@ -378,7 +378,7 @@ pub fn refresh(self: *PaneSidebar) void {
     if (every) {
         wk.gtk_label_set_text(self.title, "All Windows");
     } else {
-        const wtitle = self.window.as(gtk.Window).getTitle();
+        const wtitle = self.window.currentTitle();
         wk.gtk_label_set_text(self.title, if (wtitle) |t| t else "");
     }
 

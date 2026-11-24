@@ -33,6 +33,7 @@ const CloseUndo = @import("../CloseUndo.zig");
 const PaneSidebar = @import("../PaneSidebar.zig");
 const wk = @import("../webkit.zig");
 const window_activity = @import("../window_activity.zig");
+const window_seen = @import("../window_seen.zig");
 const pane_style = @import("../pane_style.zig");
 
 const log = std.log.scoped(.gtk_ghostty_window);
@@ -239,6 +240,25 @@ pub const Window = extern struct {
         /// `titleOverride` does. Owned.
         title_override: ?[:0]u8 = null,
 
+        /// Whether the window can be seen (T3571, `window_seen.windowSeen`)
+        /// as last computed: mapped, not minimized, not suspended.
+        seen: bool = true,
+
+        /// A Debug-only stand-in for the compositor's toplevel state (the
+        /// `pane-seen` seam): the headless Weston the Linux tests run in
+        /// never minimizes or suspends a window.
+        toplevel_override: ?window_seen.Toplevel = null,
+
+        /// A title composed while the window was hidden and not yet set on
+        /// it (T3571): it lands when the window shows, or when
+        /// `held_title_timer` fires. Owned.
+        held_title: ?[:0]u8 = null,
+        held_title_timer: c_uint = 0,
+
+        /// When a title was last set on the window (monotonic ms), or null
+        /// before the first: a hidden window's first title always lands.
+        title_landed_ms: ?i64 = null,
+
         /// The pane sidebar (T3557): the column before the tabs that lists
         /// the active tab's panes. Owned; its widgets belong to the tree.
         pane_sidebar: ?*PaneSidebar = null,
@@ -350,6 +370,11 @@ pub const Window = extern struct {
 
         // Initialize our actions
         self.initActionMap();
+
+        // T3571: a window that is hidden (a quick terminal put away) or shown
+        // again recomputes whether its panes can be seen.
+        _ = gtk.Widget.signals.map.connect(self.as(gtk.Widget), *Self, windowMapChanged, self, .{});
+        _ = gtk.Widget.signals.unmap.connect(self.as(gtk.Widget), *Self, windowMapChanged, self, .{});
 
         // Start states based on config.
         if (config.maximize) self.as(gtk.Window).maximize();
@@ -1494,6 +1519,12 @@ pub const Window = extern struct {
 
         priv.command_palette.set(null);
 
+        // T3571: a held title's timer must not fire into a disposed window.
+        if (priv.held_title_timer != 0) {
+            _ = glib.Source.remove(priv.held_title_timer);
+            priv.held_title_timer = 0;
+        }
+
         if (priv.config) |v| {
             v.unref();
             priv.config = null;
@@ -1528,6 +1559,8 @@ pub const Window = extern struct {
         priv.ipc_name = null;
         if (priv.title_override) |v| alloc.free(v);
         priv.title_override = null;
+        if (priv.held_title) |v| alloc.free(v);
+        priv.held_title = null;
 
         gobject.Object.virtual_methods.finalize.call(
             Class.parent,
@@ -1569,6 +1602,15 @@ pub const Window = extern struct {
                 propGdkSurfaceDims,
                 self,
                 .{ .detail = "height" },
+            );
+            // T3571: minimized / suspended decide whether anyone can see
+            // this window's panes.
+            _ = gobject.Object.signals.notify.connect(
+                gdk_surface,
+                *Self,
+                propGdkToplevelState,
+                self,
+                .{ .detail = "state" },
             );
         }
 
@@ -1921,10 +1963,158 @@ pub const Window = extern struct {
         };
         const alloc = Application.default().allocator();
         const title = (window_activity.composeTitle(alloc, base, self.activityAggregate()) catch return) orelse return;
-        defer alloc.free(title);
         const current: ?[*:0]const u8 = self.as(gtk.Window).getTitle();
-        if (current) |c| if (std.mem.eql(u8, std.mem.span(c), title)) return;
+        if (current) |c| {
+            if (std.mem.eql(u8, std.mem.span(c), title)) {
+                // Back to what the window already shows: nothing is held.
+                alloc.free(title);
+                self.dropHeldTitle();
+                return;
+            }
+        }
+
+        // T3571: a hidden window holds a changing title (a spinner in a
+        // program's title would otherwise be a compositor round trip ten
+        // times a second for nobody) and lands it when it shows, or after
+        // `held_title_interval_ms` so the window list is never far behind.
+        switch (window_seen.titleAction(priv.seen, priv.title_landed_ms, nowMs())) {
+            .land => {
+                defer alloc.free(title);
+                self.landTitle(title);
+            },
+            .hold => |ms| {
+                if (priv.held_title) |v| alloc.free(v);
+                priv.held_title = title;
+                if (priv.held_title_timer == 0) {
+                    priv.held_title_timer = glib.timeoutAdd(@intCast(@max(ms, 1)), heldTitleTimer, self);
+                }
+            },
+        }
+    }
+
+    /// The window's title as it is now, held or landed: what `+list` and the
+    /// pane sidebar read, so a reader that does not look at the screen never
+    /// sees a held title late (T3571).
+    pub fn currentTitle(self: *Self) ?[*:0]const u8 {
+        if (self.private().held_title) |t| return t.ptr;
+        return self.as(gtk.Window).getTitle();
+    }
+
+    fn landTitle(self: *Self, title: [:0]const u8) void {
+        const priv = self.private();
+        self.dropHeldTitle();
         self.as(gtk.Window).setTitle(title);
+        priv.title_landed_ms = nowMs();
+    }
+
+    fn dropHeldTitle(self: *Self) void {
+        const priv = self.private();
+        if (priv.held_title_timer != 0) {
+            _ = glib.Source.remove(priv.held_title_timer);
+            priv.held_title_timer = 0;
+        }
+        if (priv.held_title) |v| Application.default().allocator().free(v);
+        priv.held_title = null;
+    }
+
+    /// Land a held title, if any (the window showed, or the interval ran).
+    fn landHeldTitle(self: *Self) void {
+        const priv = self.private();
+        const held = priv.held_title orelse return;
+        priv.held_title = null;
+        defer Application.default().allocator().free(held);
+        self.landTitle(held);
+    }
+
+    fn heldTitleTimer(ud: ?*anyopaque) callconv(.c) c_int {
+        const self: *Self = @ptrCast(@alignCast(ud orelse return 0));
+        // The source is finished once this returns 0; forget its id first so
+        // `landTitle` does not remove it a second time.
+        self.private().held_title_timer = 0;
+        self.landHeldTitle();
+        return 0;
+    }
+
+    fn nowMs() i64 {
+        return @divTrunc(glib.getMonotonicTime(), std.time.us_per_ms);
+    }
+
+    /// The compositor's toplevel state bits that decide whether this window
+    /// is seen, or the Debug seam's stand-in for them.
+    pub fn toplevelState(self: *Self) window_seen.Toplevel {
+        if (self.private().toplevel_override) |o| return o;
+        return self.reportedToplevelState();
+    }
+
+    /// What the compositor itself reports, whatever the Debug seam set.
+    pub fn reportedToplevelState(self: *Self) window_seen.Toplevel {
+        const surface = self.as(gtk.Native).getSurface() orelse return .{};
+        const toplevel = gobject.ext.cast(gdk.Toplevel, surface) orelse return .{};
+        const state = toplevel.getState();
+        return .{ .minimized = state.minimized, .suspended = state.suspended };
+    }
+
+    /// Whether this window can be seen (T3571), as last computed.
+    pub fn isSeen(self: *Self) bool {
+        return self.private().seen;
+    }
+
+    /// The title a hidden window is holding, or null (the Debug seam).
+    pub fn heldTitle(self: *Self) ?[]const u8 {
+        return self.private().held_title;
+    }
+
+    /// Whether the Debug seam stands in for the toplevel state.
+    pub fn hasToplevelOverride(self: *Self) bool {
+        return self.private().toplevel_override != null;
+    }
+
+    /// Debug seam: stand in for the compositor's toplevel state, or null to
+    /// read the real one again.
+    pub fn setToplevelOverride(self: *Self, state: ?window_seen.Toplevel) void {
+        self.private().toplevel_override = state;
+        self.syncSeen();
+    }
+
+    /// Recompute whether the window can be seen and, when that changed, tell
+    /// every pane in it and land any held title (T3571).
+    pub fn syncSeen(self: *Self) void {
+        const priv = self.private();
+        const mapped = self.as(gtk.Widget).getMapped() != 0;
+        const state = self.toplevelState();
+        const now = window_seen.windowSeen(mapped, state);
+        if (now == priv.seen) return;
+        priv.seen = now;
+        log.info("seen: window={s} seen={} mapped={} minimized={} suspended={}", .{
+            self.ipcName() orelse "?", now, mapped, state.minimized, state.suspended,
+        });
+        self.syncPanesSeen();
+        if (now) self.landHeldTitle();
+    }
+
+    /// Tell every pane in every tab whether it can be seen now.
+    fn syncPanesSeen(self: *Self) void {
+        const tab_view = self.private().tab_view;
+        const n: usize = @intCast(tab_view.getNPages());
+        for (0..n) |i| {
+            const page = tab_view.getNthPage(@intCast(i));
+            const tab = gobject.ext.cast(Tab, page.getChild()) orelse continue;
+            const tree = tab.getSurfaceTree() orelse continue;
+            var it = tree.iterator();
+            while (it.next()) |entry| entry.view.syncSeen();
+        }
+    }
+
+    fn propGdkToplevelState(
+        _: *gdk.Surface,
+        _: *gobject.ParamSpec,
+        self: *Self,
+    ) callconv(.c) void {
+        self.syncSeen();
+    }
+
+    fn windowMapChanged(_: *gtk.Widget, self: *Self) callconv(.c) void {
+        self.syncSeen();
     }
 
     fn tabViewPageDetached(

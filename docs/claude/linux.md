@@ -1387,6 +1387,44 @@ Ends `SHORTCUT GUIDE: ALL PASS` (28 checks); `NEGATIVE=1` presses Ctrl+/ and
 must go red; `SHOT_OUT=<dir>` keeps two PNGs. Still open: Run on hover T3639,
 a check through the menu item and the palette T3640.
 
+## Background windows: what stops when no one is looking (T3571)
+
+`docs/reference/background-windows.md`, GTK-translated. The pure rules are
+`src/apprt/gtk/window_seen.zig`; `class/window.zig` and `class/surface.zig`
+are the GTK half.
+
+- **A window is seen** while it is mapped and its `GdkToplevel` state is
+  neither MINIMIZED nor SUSPENDED (`notify::state` on its `GdkSurface`).
+  SUSPENDED is the compositor's "covered / other workspace" - the Mac's
+  `WindowCoverage` - and Wayland gives a client no window list to compute
+  coverage itself. **Weston (headless, and so WSLg) reports neither**, so a
+  covered window there keeps drawing: errs toward visible, like win32's
+  `occlusion.zig`.
+- **A pane is seen** while its widget is mapped (a background tab, a pane
+  behind a stacked row's strip and a put-away quick terminal are not) and its
+  window is seen. `Surface.syncSeen` tells the core on a change only
+  (`occlusionCallback`): the renderer skips building frames and catches up
+  once on show; the terminal, `+set-state`, notifications and `+list` never
+  pause. A viewer pane is not touched here (T3643 owes its polls the window
+  half).
+- **Titles**: a hidden window holds a new title (`Window.syncTitle`) and
+  lands it on show, or 5 s after the last landing; its first title always
+  lands. `+list` and the sidebar read `Window.currentTitle()`, held or not.
+- **Seam**: debug-only `hl_ipc pane-seen --target=<pane|window>
+  [--toplevel=minimized|suspended|shown|real]` - the window's `seen`,
+  `reported` toplevel bits, `title`/`held_title`, and each pane's
+  `seen`/`mapped`. `--toplevel` stands in for the compositor (headless Weston
+  never minimizes).
+
+```powershell
+powershell -NoProfile -File scripts\linux\wsl-run.ps1 -CommandFile test\linux\background-windows.sh
+```
+
+Ends `BACKGROUND WINDOWS: ALL PASS` (16 checks). Measured: a pane redrawing a
+full screen every 10 ms cost 9-10 CPU ticks over 4 s in a background tab
+against 209-242 on screen. `NEGATIVE=1` keeps that pane on screen for the
+"hidden" sample and must fail B4 alone.
+
 ## The interop PATH trap
 
 Inside WSL the Windows `PATH` is appended by default, so a bare `ghoztty` can
