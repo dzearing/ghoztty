@@ -193,6 +193,11 @@ $ranSeq = @($final | ForEach-Object { $_.Seq })
 $notRun = @(for ($i = 0; $i -lt $jobs.Count; $i++) { if ($ranSeq -notcontains $i) { Split-Path -Leaf $jobs[$i].Script } })
 $overlap = @(Test-AcceptanceOverlap -Results $results)
 $stateChanges = @(if ($stateBefore) { Invoke-PersistentStateCheck -Before $stateBefore -SettleSeconds $StateSettleSeconds })
+# T2188: the user taking a published update mid-run rewrites the install and
+# arp surfaces exactly the way a leak would. Attribute it before judging.
+$stateAttr = Resolve-PersistentStateAttribution -Changes $stateChanges
+$userUpdate = @($stateAttr.UserUpdate)
+$stateChanges = @($stateAttr.Unattributed)
 $busy = ($results | ForEach-Object { ($_.Ended - $_.Started).TotalSeconds } | Measure-Object -Sum).Sum
 
 $summary = [pscustomobject]@{
@@ -207,6 +212,7 @@ $summary = [pscustomobject]@{
     scheduleViolations = $overlap
     stateCheck = $(if ($NoStateCheck) { 'skipped' } else { 'ran' })
     stateChanges = @($stateChanges | ForEach-Object { Format-PersistentStateChange $_ })
+    userUpdate = $(if ($userUpdate.Count -gt 0) { [pscustomobject]@{ version = $stateAttr.Version; changes = @($userUpdate | ForEach-Object { Format-PersistentStateChange $_ }) } } else { $null })
 }
 $summary | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath (Join-Path $LogDir 'summary.json') -Encoding UTF8
 
@@ -215,6 +221,12 @@ foreach ($f in @($final | Where-Object { $_.ParallelSensitive })) {
 }
 foreach ($v in $overlap) { "SCHEDULE VIOLATION: $v" }
 if ($NoStateCheck) { "PERSISTENT STATE: not checked (-NoStateCheck)" }
+if ($userUpdate.Count -gt 0) {
+    "PERSISTENT STATE USER UPDATE (not a test, does not fail the run): $($stateAttr.Reason)"
+    foreach ($c in $userUpdate) { "  user update: $(Format-PersistentStateChange $c)" }
+} elseif ($stateChanges.Count -gt 0 -and $stateAttr.Reason) {
+    "PERSISTENT STATE: not attributed to a user update - $($stateAttr.Reason)"
+}
 foreach ($c in $stateChanges) { "PERSISTENT STATE CHANGED: $(Format-PersistentStateChange $c)" }
 
 $red = @($final | Where-Object { $_.Kind -notin @('pass', 'skip') })

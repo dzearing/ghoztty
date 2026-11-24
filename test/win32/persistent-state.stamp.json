@@ -1,19 +1,21 @@
 {
     "guard":  "persistent-state",
     "script":  "test/win32/persistent-state.ps1",
-    "generated":  "2026-11-24T08:49:35-08:00",
-    "commit":  "b38691826",
+    "generated":  "2026-11-24T15:23:12-08:00",
+    "commit":  "c6307f0d0",
     "uncommitted":  [
-                        "scripts/acceptance-parallel.ps1"
+                        "scripts/acceptance-parallel.ps1",
+                        "test/win32/lib/PersistentState.ps1",
+                        "test/win32/persistent-state.ps1"
                     ],
     "files":  {
-                  "scripts/acceptance-parallel.ps1":  "1106b67ef623a664e020325f9c491716c9300a405c899a1e9d77bd349d53143f",
-                  "test/win32/lib/PersistentState.ps1":  "f5256d10c2866031a73ccc1fc247f9f670836e2dfdab53ad2432dbd0189019e9",
-                  "test/win32/persistent-state.ps1":  "e8e10a48df6586dde45f0fef13d3343059bd89eb7c277f6f55805416ff5ec7ce"
+                  "scripts/acceptance-parallel.ps1":  "664d7cc264cd257377d66545ca9960556802361c0ad3c6fab635a67e755c6d96",
+                  "test/win32/lib/PersistentState.ps1":  "3e982b50285696ca1d52b2154be2b468d8f321552b597ba7158cbdce06d3d4ec",
+                  "test/win32/persistent-state.ps1":  "b7035c039bd0715c6f0b81bb58f8e076e84b318680e57b46dde46bce4c522935"
               },
     "code":  {
-                 "scripts/acceptance-parallel.ps1":  "code1:60df43b543759033a3039fd0ceeee9c3ef9ac3272663c3ff81721c98b662d587",
-                 "test/win32/lib/PersistentState.ps1":  "code1:3ce8c3552fc3c34bdaaedf46a4480e37d3677c86834198891f2c48decdc3e0e5",
-                 "test/win32/persistent-state.ps1":  "code1:50f27ca81da7394b4cea45e6a5a4220a60ef2770ac43083ef9bb6b8e8b5e5cfc"
+                 "scripts/acceptance-parallel.ps1":  "code1:23ba4ba9ebf4dbca88e10ca184f7778d1ae0db0ba49032487793ee118d7239ae",
+                 "test/win32/lib/PersistentState.ps1":  "code1:2e7f30ca71d3bf84b3e12ee3d7f774a0cadde3215ba559e9df90d61dcf3d6545",
+                 "test/win32/persistent-state.ps1":  "code1:c9efb1a1451cbc04ecbbfbd2c891ee0f697905c5d7b9ae9fb469765ba87f30f5"
              }
 }

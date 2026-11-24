@@ -23,6 +23,10 @@
      learn to skip.
   C  the settle re-check: a difference that has gone by the second look (a
      concurrent lane's transient) is forgiven; one that persists is not.
+  E  the user's own update (T2188): a published release the user's in-app
+     updater installs mid-run is attributed and does not fail the run; a leak
+     beside it, an unpublished version, a fixture install elsewhere, a
+     throwaway identity and a bare exe swap all still do.
   D  the runner is wired: acceptance-parallel.ps1 takes the snapshot before
      the run, checks after it, and the exit code and GREEN verdict both depend
      on the result. The live demonstration - a fixture script that really
@@ -234,6 +238,74 @@ try {
     $r = @(Invoke-PersistentStateCheck -Before $clean -SettleSeconds 0 -Snapshot { $script:calls++; $clean })
     Assert 'C3 a clean first look takes no second look (no settle delay on a green run)' ($r.Count -eq 0 -and $script:calls -eq 1) "calls=$($script:calls)"
 
+    # --- E. the user's own update is attributed, nothing else is (T2188) ---
+    ''
+    '-- E. a published update the user took mid-run is not a leak; look-alikes still are'
+    $arpSub = 'Software\Microsoft\Windows\CurrentVersion\Uninstall'
+    $userInst = Join-Path $localAppData 'Programs\Ghoztty'
+    New-Item -ItemType Directory -Force -Path $userInst | Out-Null
+    Set-Content -LiteralPath (Join-Path $userInst 'ghoztty.exe') -Value 'old' -Encoding ASCII
+    Set-Content -LiteralPath (Join-Path $userInst 'ghoztty.com') -Value 'old' -Encoding ASCII
+    Set-ScratchValue "$arpSub\{T2188-OLD}" 'DisplayName' 'Ghoztty'
+    Set-ScratchValue "$arpSub\{T2188-OLD}" 'DisplayVersion' '1.43.4'
+    Set-ScratchValue "$arpSub\{T2188-OLD}" 'InstallLocation' "$userInst\"
+    $u0 = Snap
+    # what the updater does: retire the old entry, add the new one, swap the files
+    [Microsoft.Win32.Registry]::CurrentUser.DeleteSubKeyTree("$prefix$arpSub\{T2188-OLD}", $false)
+    Set-ScratchValue "$arpSub\{T2188-NEW}" 'DisplayName' 'Ghoztty'
+    Set-ScratchValue "$arpSub\{T2188-NEW}" 'DisplayVersion' '1.43.5'
+    Set-ScratchValue "$arpSub\{T2188-NEW}" 'InstallLocation' "$userInst\"
+    Set-Content -LiteralPath (Join-Path $userInst 'ghoztty.exe') -Value 'new-bytes' -Encoding ASCII
+    Set-Content -LiteralPath (Join-Path $userInst 'ghoztty.com') -Value 'new-bytes' -Encoding ASCII
+    $u1 = Snap
+    $d = @(SnapDiff $u0 $u1)
+    $script:asked = @()
+    $published = { param($Tag) $script:asked += $Tag; $Tag -eq 'win-v1.43.5' }
+    $r = Resolve-PersistentStateAttribution -Changes $d -HkcuPrefix $prefix -LocalAppData $localAppData -ReleaseExists $published
+    Assert 'E1 the 2026-10-23 shape (old arp entry out, published version in, install files swapped) is ALL attributed to the user update' `
+        ($d.Count -eq 4 -and @($r.UserUpdate).Count -eq 4 -and @($r.Unattributed).Count -eq 0 -and $r.Version -eq '1.43.5') "diff=$($d.Count) $(Show $d) | user=$(@($r.UserUpdate).Count) left=$(Show $r.Unattributed)"
+    Assert 'E2 the release that was asked about is the arp version as a win-v tag' ($script:asked -contains 'win-v1.43.5') "asked: $($script:asked -join ',')"
+    Assert 'E3 the attribution names the release and the install it landed in' ($r.Reason -match 'win-v1\.43\.5' -and $r.Reason -match 'updater') $r.Reason
+
+    # a leak riding along with a real update is still a leak
+    Set-ScratchValue 'Software\Microsoft\Windows\CurrentVersion\Run' 'GhozttyAgent-t2188' 'x.exe'
+    $d = @(SnapDiff $u0 (Snap))
+    $r = Resolve-PersistentStateAttribution -Changes $d -HkcuPrefix $prefix -LocalAppData $localAppData -ReleaseExists $published
+    Assert 'E4 a Run value planted during the same run is NOT swallowed by the update attribution' `
+        (@($r.Unattributed).Count -eq 1 -and $r.Unattributed[0].Surface -eq 'run' -and @($r.UserUpdate).Count -eq 4) "left=$(Show $r.Unattributed)"
+    Remove-ScratchValue 'Software\Microsoft\Windows\CurrentVersion\Run' 'GhozttyAgent-t2188'
+
+    # a version that is not a published release: the installed files changed and nothing explains it
+    $r = Resolve-PersistentStateAttribution -Changes (SnapDiff $u0 $u1) -HkcuPrefix $prefix -LocalAppData $localAppData -ReleaseExists { param($Tag) $false }
+    Assert 'E5 an unpublished version (a repo build swapped into the install) stays RED, and says why' `
+        (@($r.Unattributed).Count -eq 4 -and @($r.UserUpdate).Count -eq 0 -and $r.Reason -match 'could not be confirmed') "left=$(@($r.Unattributed).Count) reason=$($r.Reason)"
+
+    # the right name and version, but installed somewhere else (a fixture install)
+    Set-ScratchValue "$arpSub\{T2188-NEW}" 'InstallLocation' (Join-Path $scratch 'elsewhere')
+    $r = Resolve-PersistentStateAttribution -Changes (SnapDiff $u0 (Snap)) -HkcuPrefix $prefix -LocalAppData $localAppData -ReleaseExists $published
+    Assert 'E6 a published version installed OUTSIDE the user''s install dir is not the user''s update' `
+        (@($r.UserUpdate).Count -eq 0 -and $r.Reason -match 'not the user''s install') "user=$(@($r.UserUpdate).Count) reason=$($r.Reason)"
+    Set-ScratchValue "$arpSub\{T2188-NEW}" 'InstallLocation' "$userInst\"
+
+    # install files changed with no arp move at all: nothing to attribute it to
+    $i0 = Snap
+    Set-Content -LiteralPath (Join-Path $userInst 'ghoztty.exe') -Value 'third-bytes-x' -Encoding ASCII
+    $r = Resolve-PersistentStateAttribution -Changes (SnapDiff $i0 (Snap)) -HkcuPrefix $prefix -LocalAppData $localAppData -ReleaseExists $published
+    Assert 'E7 a swapped installed exe with no new Ghoztty uninstall entry is still a leak' `
+        (@($r.Unattributed).Count -eq 1 -and @($r.UserUpdate).Count -eq 0) "left=$(Show $r.Unattributed)"
+
+    # a throwaway installer identity at a published version number
+    $t0 = Snap
+    Set-ScratchValue "$arpSub\{T2188-FIX}" 'DisplayName' 'Ghoztty Throwaway t2188'
+    Set-ScratchValue "$arpSub\{T2188-FIX}" 'DisplayVersion' '1.43.5'
+    Set-ScratchValue "$arpSub\{T2188-FIX}" 'InstallLocation' "$userInst\"
+    $script:asked = @()
+    $r = Resolve-PersistentStateAttribution -Changes (SnapDiff $t0 (Snap)) -HkcuPrefix $prefix -LocalAppData $localAppData -ReleaseExists $published
+    Assert 'E8 a test product whose name is not exactly Ghoztty is never attributed (and gh is not even asked)' `
+        (@($r.UserUpdate).Count -eq 0 -and @($r.Unattributed).Count -eq 1 -and $script:asked.Count -eq 0) "user=$(@($r.UserUpdate).Count) asked=$($script:asked -join ',')"
+    $r = Resolve-PersistentStateAttribution -Changes @() -LocalAppData $localAppData -ReleaseExists { throw 'must not be called' }
+    Assert 'E9 an empty diff attributes nothing and asks nobody' (@($r.Unattributed).Count -eq 0 -and @($r.UserUpdate).Count -eq 0)
+
     # --- D. the runner is wired -------------------------------------------
     ''
     '-- D. scripts\acceptance-parallel.ps1 carries the arm'
@@ -247,6 +319,11 @@ try {
     Assert 'D3 a state change blocks the GREEN verdict' ($runner -match '\$stateChanges\.Count -eq 0\) \{ ''GREEN'' \}')
     Assert 'D4 a state change fails the exit code' ($runner -match 'exit \(\[int\]\([^\r\n]*\$stateChanges\.Count -gt 0\)\)')
     Assert 'D5 the -NoStateCheck hatch says it was used' ($runner -match 'PERSISTENT STATE: not checked \(-NoStateCheck\)')
+    $iAttr = $runner.IndexOf('Resolve-PersistentStateAttribution -Changes $stateChanges')
+    $iVerdict = $runner.IndexOf("'GREEN'")
+    Assert 'D6 the user-update attribution runs after the check and before the verdict, and only its leftovers count (T2188)' `
+        ($iAttr -gt $iCheck -and $iVerdict -gt $iAttr -and $runner -match '\$stateChanges = @\(\$stateAttr\.Unattributed\)') "check=$iCheck attr=$iAttr verdict=$iVerdict"
+    Assert 'D7 an attributed update is printed, never silently dropped' ($runner -match 'PERSISTENT STATE USER UPDATE')
 
     Complete-TestBody
 }

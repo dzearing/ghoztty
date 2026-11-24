@@ -54,6 +54,9 @@
 #   install    %LOCALAPPDATA%\Programs\Ghoztty\ghoztty.exe / ghoztty-agent.exe /
 #              ghoztty.com, length + write time. The non-negotiable "never touch
 #              the user's installed Ghoztty", measured instead of trusted.
+#              The user may take a PUBLISHED update mid-run, which changes this
+#              surface and arp exactly like a leak would; the runner asks
+#              Resolve-PersistentStateAttribution before judging (T2188).
 #   account    %LOCALAPPDATA%\ghoztty\account-debug.dat, length + write time:
 #              the DEBUG lineage's DPAPI sign-in blob, which a debug test run
 #              could reach with the real LOCALAPPDATA.
@@ -295,6 +298,87 @@ function Format-PersistentStateChange {
         'removed' { "{0} REMOVED {1} (was {2})" -f $Change.Surface, $Change.Item, $Change.Before }
         default   { "{0} CHANGED {1}: {2} -> {3}" -f $Change.Surface, $Change.Item, $Change.Before, $Change.After }
     }
+}
+
+<#
+.SYNOPSIS
+  Split a diff into what the USER'S OWN IN-APP UPDATE did and what nothing
+  explains (T2188). Returns an object with Unattributed (the changes that still
+  fail the run), UserUpdate (the changes attributed to the update), Version and
+  Reason.
+
+.DESCRIPTION
+  The install and arp surfaces watch the user's installed Ghoztty, and the user
+  is free to take a published update while a run is going: on 2026-10-23 the
+  updater installed win-v1.43.5 mid-run and a green run ended RED with
+  state-changes=4. A snapshot diff alone cannot tell that from a test writing
+  into the install, so this asks for the evidence a real update leaves and a
+  test leak does not, ALL of it:
+
+    1. an arp entry was ADDED or CHANGED to exactly "Ghoztty <x.y.z>" - the
+       product's own name (throwaway installer identities carry other names);
+    2. that entry's InstallLocation is the user's install,
+       <LocalAppData>\Programs\Ghoztty - read live from the key;
+    3. win-v<x.y.z> is a PUBLISHED release on dzearing/ghoztty (not a draft,
+       not merely a tag) - -ReleaseExists is the seam, gh is the default.
+
+  Only then are these changes attributed to it: the install surface's three
+  files, that arp entry, and arp entries REMOVED that read "Ghoztty <ver>"
+  (a major upgrade retires the previous version's entry). Anything else in the
+  diff - a Run value, a start menu item, a second product - stays unattributed
+  and still turns the run red. A release that cannot be confirmed (no gh, no
+  network) attributes nothing: the check fails closed, never open.
+#>
+function Resolve-PersistentStateAttribution {
+    param(
+        $Changes,
+        [string]$HkcuPrefix = '',
+        [string]$LocalAppData = $env:LOCALAPPDATA,
+        [scriptblock]$ReleaseExists = {
+            param([string]$Tag)
+            $out = & { $ErrorActionPreference = 'Continue'; gh release view $Tag --repo dzearing/ghoztty --json tagName,isDraft 2>$null }
+            if ($LASTEXITCODE -ne 0 -or -not $out) { return $false }
+            try { $j = ($out -join "`n") | ConvertFrom-Json; return ($j.tagName -eq $Tag -and -not $j.isDraft) } catch { return $false }
+        }
+    )
+    $all = @($Changes | Where-Object { $_ })
+    $result = [pscustomobject]@{ Unattributed = $all; UserUpdate = @(); Version = $null; Reason = $null }
+    if ($all.Count -eq 0 -or -not $LocalAppData) { return $result }
+
+    $userInstall = (Join-Path $LocalAppData 'Programs\Ghoztty').TrimEnd('\')
+    $sub = "${HkcuPrefix}Software\Microsoft\Windows\CurrentVersion\Uninstall"
+    $candidate = $null
+    foreach ($c in @($all | Where-Object { $_.Surface -eq 'arp' -and $_.Change -in @('added', 'changed') })) {
+        if ([string]$c.After -notmatch '^Ghoztty (\d+\.\d+\.\d+)$') { continue }
+        $ver = $Matches[1]
+        $loc = $null
+        $k = Get-PsRegKey "$sub\$($c.Item)"
+        if ($k) { try { $loc = [string]$k.GetValue('InstallLocation', '') } finally { $k.Close() } }
+        if (-not $loc -or -not $loc.TrimEnd('\').Equals($userInstall, [StringComparison]::OrdinalIgnoreCase)) {
+            $result.Reason = "arp $($c.Item) reads Ghoztty $ver but its InstallLocation '$loc' is not the user's install"
+            continue
+        }
+        if (-not (& $ReleaseExists "win-v$ver")) {
+            $result.Reason = "arp $($c.Item) reads Ghoztty $ver, but win-v$ver could not be confirmed as a published release"
+            continue
+        }
+        $candidate = $c; $result.Version = $ver
+        break
+    }
+    if (-not $candidate) { return $result }
+
+    $installFiles = @('ghoztty.exe', 'ghoztty.com', 'ghoztty-agent.exe')
+    $mine = @(); $rest = @()
+    foreach ($c in $all) {
+        $isUpdate = ($c -eq $candidate) -or
+            ($c.Surface -eq 'install' -and $installFiles -contains $c.Item) -or
+            ($c.Surface -eq 'arp' -and $c.Change -eq 'removed' -and [string]$c.Before -match '^Ghoztty \d+\.\d+\.\d+$')
+        if ($isUpdate) { $mine += $c } else { $rest += $c }
+    }
+    $result.UserUpdate = $mine
+    $result.Unattributed = $rest
+    $result.Reason = "the user's in-app updater installed published release win-v$($result.Version) into $userInstall during the run"
+    return $result
 }
 
 <#

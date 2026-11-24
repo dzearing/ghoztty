@@ -1,10 +1,11 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-11-24T14:46:24-08:00",
-    "commit":  "c7f617d70",
+    "generated":  "2026-11-24T15:23:04-08:00",
+    "commit":  "c6307f0d0",
     "uncommitted":  [
-
+                        "test/win32/lib/PersistentState.ps1",
+                        "test/win32/persistent-state.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "cfa23792d110d499fa4086697daa516d218d0d110e594a7452167a81220ee15e",
@@ -337,7 +338,7 @@
                   "test/win32/lib/PaneIdle.ps1":  "a75357efe7aa0fb9b1068d218264770bcfad08813e597a7b438b7dcc5c724ecb",
                   "test/win32/lib/PaneLiveness.ps1":  "d6e189f9d6336ccf01f67a4c971f82c2ef65833f99250200e7f7655ac54f52fd",
                   "test/win32/lib/PersistenceSweep.ps1":  "913e1694b52e58aae0cfc4b449683b978a7ca1f7a2185ce64ac53d69142206f7",
-                  "test/win32/lib/PersistentState.ps1":  "f5256d10c2866031a73ccc1fc247f9f670836e2dfdab53ad2432dbd0189019e9",
+                  "test/win32/lib/PersistentState.ps1":  "3e982b50285696ca1d52b2154be2b468d8f321552b597ba7158cbdce06d3d4ec",
                   "test/win32/lib/PipeBridge.ps1":  "1838f4231104da465f6664b0241803812ad6fe5c08b91d4f98a93327f630834f",
                   "test/win32/lib/PixelOracleAudit.ps1":  "7b18849da492030e15f819601e3fbde28f4042cd6e9c3ab6b11063b22071937b",
                   "test/win32/lib/PixelScan.ps1":  "41c312f9a9db8bd3b6402118af61aa445e6f25f2dfa15f2bd45d1fe5731bb73d",
@@ -457,7 +458,7 @@
                   "test/win32/perf-baseline-reader.ps1":  "c0cecdd910918c63517af4321be7b780437527f91eb3a5aea846a7b6c82fd78e",
                   "test/win32/persistence-flag.ps1":  "5546742819ff4ac654a77cdeda8413c2490ae73292f969adeaa2278f49f8d90f",
                   "test/win32/persistence-restore.ps1":  "2e137e80ddda5e1e6a07cc2eaa33fee12db3bb237b423c531013fb07c8e93dd4",
-                  "test/win32/persistent-state.ps1":  "e8e10a48df6586dde45f0fef13d3343059bd89eb7c277f6f55805416ff5ec7ce",
+                  "test/win32/persistent-state.ps1":  "b7035c039bd0715c6f0b81bb58f8e076e84b318680e57b46dde46bce4c522935",
                   "test/win32/pixel-oracle-audit.ps1":  "1af4585a75c0eba82c2b7dcb88ab4a8c4f1cd1e75db5624afd0bbb2bb51ab163",
                   "test/win32/pixel-scan.ps1":  "ed2e640f16766b9a4cd8048505c14c050e5d9bbb8e0bb8b908e53783ab411846",
                   "test/win32/pr-health.ps1":  "90d12cddbdc5252db6def47f05eb54527c74c9da86af4528a6f687af5db1997f",

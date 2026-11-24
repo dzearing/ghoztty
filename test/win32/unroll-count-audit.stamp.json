@@ -1,13 +1,13 @@
 {
     "guard":  "unroll-count",
     "script":  "test/win32/unroll-count-audit.ps1",
-    "generated":  "2026-11-24T14:17:44-08:00",
-    "commit":  "c7f617d70",
+    "generated":  "2026-11-24T14:56:54-08:00",
+    "commit":  "c6307f0d0",
     "uncommitted":  [
-
+                        "scripts/acceptance-parallel.ps1"
                     ],
     "files":  {
-                  "scripts/acceptance-parallel.ps1":  "1106b67ef623a664e020325f9c491716c9300a405c899a1e9d77bd349d53143f",
+                  "scripts/acceptance-parallel.ps1":  "664d7cc264cd257377d66545ca9960556802361c0ad3c6fab635a67e755c6d96",
                   "scripts/agent-stamp-inputs.ps1":  "c124afe82a09be3273f4c9c09e5461fc91b2ea23d03fbe1f9575b5993e1243a5",
                   "scripts/arp-version-check.ps1":  "5b54ae7cb88d3517dc9c5d250e95c44d7a02a34fdc31ac57656d09b17d088615",
                   "scripts/bell-fade-onscreen.ps1":  "13b481236a845edaab2ae60a6d7ebcf08082c764cc3db6a687c6c60182075f3f",
