@@ -44,7 +44,7 @@ cli() { env -u GHOZTTY_IPC_SOCKET -u GHOZTTY_PANE_ID "$app" "$@"; }
 
 export SHELL=/bin/sh
 hl_launch APP "$app" --gtk-single-instance=false --session-persistence=false \
-    --undo-timeout=${timeout_s}s \
+    --undo-timeout=${timeout_s}s --confirm-close-surface=false \
     --keybind=ctrl+shift+t=new_tab --keybind=ctrl+shift+w=close_tab:this \
     --keybind=ctrl+alt+shift+o=close_tab:other -e /bin/sh -c 'PS1="hl$ " exec /bin/sh -i'
 hl_wait_for 30 test -S "$sock"
