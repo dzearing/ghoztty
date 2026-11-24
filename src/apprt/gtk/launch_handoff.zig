@@ -79,7 +79,7 @@ pub fn decide(config: *const configpkg.Config) Outcome {
     const prompt = (ipc_handoff.mismatchPrompt(alloc, id, running.id, running.offer) catch
         return .start) orelse return .start;
     const layout = rules.Layout.of(prompt.ok_label, prompt.cancel_label, prompt.switch_label);
-    log.warn("launch of a different build: launcher={s} running={s} pid={d} switch={t}; asking", .{
+    log.warn("launch of a different build: launcher={s} running={s} pid={d} switch={}; asking", .{
         id.version, running.id.version, running.pid, layout.hasSwitch(),
     });
 
