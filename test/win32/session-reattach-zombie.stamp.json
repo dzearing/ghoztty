@@ -1,14 +1,14 @@
 {
     "guard":  "session-reattach-zombie",
     "script":  "test/win32/session-reattach-zombie.ps1",
-    "generated":  "2026-11-23T14:08:49-08:00",
-    "commit":  "7c256c987",
+    "generated":  "2026-11-23T15:34:24-08:00",
+    "commit":  "1139b2074",
     "uncommitted":  [
-                        "src/remote/connection.zig"
+
                     ],
     "files":  {
                   "src/remote/agent/server.zig":  "dd0eb0c25df19ade4b1e4771822c3cd3c97c21ae0499d0266678ca94b940610f",
-                  "src/remote/connection.zig":  "2332f5ba17b74c105190de5fedcdd355fe0295d9b972411f76ed21e023f047da",
+                  "src/remote/connection.zig":  "c7dba346238de4440f183969ebe967d2085809d2b03298f2a80055ce5da79bd2",
                   "test/win32/session-reattach-zombie.ps1":  "5c138604f0566d659fe5ce841b372cbf1393c1f1d9dfafcfaf5835f043ef1f7e"
               },
     "code":  {
