@@ -9418,6 +9418,28 @@ $GuardTable = @(
         )
     },
 
+    # T2024 - the WMI-bound audit: the shared libraries look processes up in
+    # the kernel table (lib\ProcessTable.ps1), and anything left on WMI is
+    # bounded. Covers the table itself (section D runs it) and the libraries
+    # converted onto it; the corpus-wide net (a NEW library with a new WMI call)
+    # is the harness-floor row, as for every floor member.
+    [pscustomobject]@{
+        Name   = 'wmi-bound'
+        Script = 'test\win32\wmi-bound-audit.ps1'
+        Stamp  = 'test\win32\wmi-bound-audit.stamp.json'
+        Covers = @(
+            'test\win32\wmi-bound-audit.ps1',
+            'test\win32\lib\WmiBoundAudit.ps1',
+            'test\win32\lib\ProcessTable.ps1',
+            'test\win32\lib\CleanSlate.ps1',
+            'test\win32\lib\HarnessLeak.ps1',
+            'test\win32\lib\ModalSweep.ps1',
+            'test\win32\lib\PaneIdle.ps1',
+            'test\win32\lib\FloorFixture.ps1',
+            'test\win32\lib\ProcessMemory.ps1'
+        )
+    },
+
     # T1281 - the pixel-oracle audit: a whole-capture aggregate (a mean, a
     # count, a colour set over every pixel) has to say why the whole capture is
     # the right region, because chrome alone satisfied one for a month (T1115).

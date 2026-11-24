@@ -253,15 +253,21 @@ try {
         Assert "F4 the pane's own claude is still found" ((Find-ClaudeDescendant -ShellPid 5000 -Procs $own) -eq 5200)
     }
 
-    # The two that read CIM themselves are lifted into a scope where a function
-    # named Get-CimInstance (which outranks the cmdlet) serves synthetic rows.
+    # The two that read the process table themselves are lifted into a scope
+    # where a function serves synthetic rows: Get-CimInstance (which outranks the
+    # cmdlet) for loop-session, Get-OsProcess for PaneIdle, which reads the
+    # kernel table since T2024.
     $script:FakeRows = @()
     function Get-CimInstance {
-        param([string]$ClassName, [string]$Filter, $ErrorAction)
+        param([string]$ClassName, [string]$Filter, $ErrorAction, $OperationTimeoutSec)
         if ($Filter -match 'ProcessId=(\d+)') {
             $want = [int]$matches[1]
             return @($script:FakeRows | Where-Object { [int]$_.ProcessId -eq $want })
         }
+        return @($script:FakeRows)
+    }
+    function Get-OsProcess {
+        param([string[]]$Name, [switch]$CommandLine)
         return @($script:FakeRows)
     }
     $idle = Get-FnText (Join-Path $Repo 'test\win32\lib\PaneIdle.ps1') 'Get-DescendantPids'
@@ -299,6 +305,7 @@ try {
         }
     }
     Remove-Item Function:\Get-CimInstance -ErrorAction SilentlyContinue
+    Remove-Item Function:\Get-OsProcess -ErrorAction SilentlyContinue
 
     Complete-TestBody
 } finally {

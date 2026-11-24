@@ -1,0 +1,39 @@
+{
+    "guard":  "wmi-bound",
+    "script":  "test/win32/wmi-bound-audit.ps1",
+    "generated":  "2026-11-23T19:25:53-08:00",
+    "commit":  "d7c3c6cea",
+    "uncommitted":  [
+                        "test/win32/lib/CleanSlate.ps1",
+                        "test/win32/lib/FloorFixture.ps1",
+                        "test/win32/lib/HarnessLeak.ps1",
+                        "test/win32/lib/ModalSweep.ps1",
+                        "test/win32/lib/PaneIdle.ps1",
+                        "test/win32/lib/ProcessMemory.ps1",
+                        "test/win32/lib/ProcessTable.ps1",
+                        "test/win32/lib/WmiBoundAudit.ps1",
+                        "test/win32/wmi-bound-audit.ps1"
+                    ],
+    "files":  {
+                  "test/win32/lib/CleanSlate.ps1":  "5f9025bdf8ca35d4b3270f9885732b034afd95a64e3b86ab6ea7ea6ed4571b79",
+                  "test/win32/lib/FloorFixture.ps1":  "611e147e4952afa5dd6e8ce56bea31b86f2ae932ec656e7cd489a886b59783cc",
+                  "test/win32/lib/HarnessLeak.ps1":  "68a65ded02a866891bb0e9c0745a6996bca0b99c5805f4a3206ada6f4e9d1ccd",
+                  "test/win32/lib/ModalSweep.ps1":  "184e9a43cb648802d31d9915603162177988b9a525ce16c2b06166e600e3955b",
+                  "test/win32/lib/PaneIdle.ps1":  "a75357efe7aa0fb9b1068d218264770bcfad08813e597a7b438b7dcc5c724ecb",
+                  "test/win32/lib/ProcessMemory.ps1":  "50851e95a87f0ade1d2b60c89ec4bb94e145286ed765cb5fbe99f38513080ba7",
+                  "test/win32/lib/ProcessTable.ps1":  "a30b9b74f376d0ef65ae9939f15b71895336b252979d462adb2884f0f59f2476",
+                  "test/win32/lib/WmiBoundAudit.ps1":  "8eecc65a7cb350af3fb181694fd49ffc0f6b0b0cfcac99b56b090e45405cab2c",
+                  "test/win32/wmi-bound-audit.ps1":  "054555b6b278d56f99f41989e1b8aa7bac1b95b3eb460d0d59c6c03b8ab6220d"
+              },
+    "code":  {
+                 "test/win32/lib/CleanSlate.ps1":  "code1:925405f31ad11ea11d098cb782effb670f1aa5f9277970e5c6a6d7bf1adf7edd",
+                 "test/win32/lib/FloorFixture.ps1":  "code1:d496d888501fbdf608b45789aeecf7ff3d4a557672584a02c406e5186b00c34b",
+                 "test/win32/lib/HarnessLeak.ps1":  "code1:457db592be13414906b3d54c04b42e730347fd2a1f169196c9c09154b064a0d4",
+                 "test/win32/lib/ModalSweep.ps1":  "code1:71df8ff1afe46fc40580757464ad29c474fdf4cf7a4d9428cb32a096e2b29d6d",
+                 "test/win32/lib/PaneIdle.ps1":  "code1:9c238eac4d1bd51842417fe513f9b3c84f1b201c68950d8582eb72f6b232b492",
+                 "test/win32/lib/ProcessMemory.ps1":  "code1:063fcdd86db46c12388af64a6d92c7dbb18f762d4b2b5a6281419811a56854e8",
+                 "test/win32/lib/ProcessTable.ps1":  "code1:412c8fb344b226a8c8f1022c265ec88d0b6d6975a025f21134ba068d6de13a80",
+                 "test/win32/lib/WmiBoundAudit.ps1":  "code1:6c62e26cc25faaeecb40355496d1b7d37b29e872a423064c1e4336ac92a57fdb",
+                 "test/win32/wmi-bound-audit.ps1":  "code1:39ad7e7ec8cf541040a7bf1795d1e9f2bed7321ba07843b036297d9e85a97b91"
+             }
+}

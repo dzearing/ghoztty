@@ -48,6 +48,9 @@
 
 Set-StrictMode -Off
 
+# T2024: the app-state lookup below reads the kernel's process table, not WMI.
+. (Join-Path $PSScriptRoot 'ProcessTable.ps1')
+
 $script:FloorSetupFail = 'GHOZTTY-FLOOR-SETUP-FAIL'
 
 # The two sentences `src/os/ipc_timeout.zig` prints, and the reason they are
@@ -184,7 +187,7 @@ function Get-FloorAppSnapshot {
 
         $procs = @()
         try {
-            $procs = @(Get-CimInstance Win32_Process -ErrorAction Stop | Where-Object {
+            $procs = @(Get-OsProcess | Where-Object {
                     $_.ExecutablePath -and ($_.ExecutablePath -ieq $full) -and
                     ($ExcludePid -notcontains [int]$_.ProcessId) })
         } catch { $procs = @() }

@@ -96,6 +96,7 @@ $script:HARNESS_FLOOR_AUDITS = @(
     [pscustomobject]@{ Name = 'log-sink-audit.ps1'; Why = 'a harness reads the log sink its build writes, never a spelled name a Debug build leaves empty (T1679)' }
     [pscustomobject]@{ Name = 'vt-escape-scan.ps1'; Why = 'no script writes ``e for ESC, which under 5.1 is the letter e (T740)'; Owns = @('scripts\vt-escape-scan.ps1') }
     [pscustomobject]@{ Name = 'msiexec-sentinel-audit.ps1'; Why = 'a script that runs a real msiexec refuses a package that can reach the user''s Ghoztty and proves afterwards the install did not move (T3405)' }
+    [pscustomobject]@{ Name = 'wmi-bound-audit.ps1'; Why = 'a shared library looks a process up in the kernel table, or bounds its WMI query, so a stalled WMI host cannot hold every running script at once (T2024)' }
 )
 
 # name -> the task id that converts it. RED TODAY AND TRACKED, never a permanent

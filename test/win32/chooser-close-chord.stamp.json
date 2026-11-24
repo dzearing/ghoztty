@@ -1,13 +1,17 @@
 {
     "guard":  "chooser-close-chord",
     "script":  "test/win32/chooser-close-chord.ps1",
-    "generated":  "2026-11-19T21:49:37-08:00",
-    "commit":  "7c50eb57a",
+    "generated":  "2026-11-23T17:59:32-08:00",
+    "commit":  "d7c3c6cea",
     "uncommitted":  [
-                        "test/win32/chooser-close-chord.ps1"
+                        "test/win32/lib/PaneIdle.ps1"
                     ],
     "files":  {
                   "test/win32/chooser-close-chord.ps1":  "f71f2d5476086e22d6dbabc7f791f88f52748a44a6504f045b2e0903d6bd0057",
-                  "test/win32/lib/PaneIdle.ps1":  "d4f72b019a04fadbd308a08f89445ac1d009c9660842c5c079feeaeaae776697"
-              }
+                  "test/win32/lib/PaneIdle.ps1":  "a75357efe7aa0fb9b1068d218264770bcfad08813e597a7b438b7dcc5c724ecb"
+              },
+    "code":  {
+                 "test/win32/chooser-close-chord.ps1":  "code1:16231a6849ae7d09d6d5c6faea9ed3b4ad004d616326861ec44a7dcec2d4aeca",
+                 "test/win32/lib/PaneIdle.ps1":  "code1:9c238eac4d1bd51842417fe513f9b3c84f1b201c68950d8582eb72f6b232b492"
+             }
 }

@@ -78,6 +78,10 @@ Invoke-TimingLockForCaller
 # A crash is exactly when this leaks, so the next run's reset is the backstop.
 . (Join-Path $PSScriptRoot 'HarnessLeak.ps1')
 
+# T2024: the process table from the kernel, never WMI. HarnessLeak loads it too;
+# the type guard inside makes the second dot-source free.
+. (Join-Path $PSScriptRoot 'ProcessTable.ps1')
+
 # T691: and the lineage helpers, which are what let the kills below be scoped
 # to the agents THIS run owns instead of every agent running out of the repo.
 # A script opts in by minting a lineage (Set-GhozttyTestAgentLineage) and
@@ -110,12 +114,11 @@ function Test-UnderRepo {
 # Override it, call, restore; `Get-RepoGhozttyProcess` is the only caller.
 $script:CleanSlateProcQuery = {
     param([string[]]$Paths)
-    $found = @()
-    foreach ($path in $Paths) {
-        $leaf = Split-Path -Leaf $path
-        $found += @(Get-CimInstance Win32_Process -Filter "Name='$leaf'" |
-            Where-Object { $_.ExecutablePath -eq $path })
-    }
+    # T2024: one kernel snapshot of just these image names, command lines
+    # included (RebootShape scopes its kill on them) - no WMI host to wait on.
+    $leaves = @($Paths | ForEach-Object { Split-Path -Leaf $_ } | Select-Object -Unique)
+    $found = @(Get-OsProcess -Name $leaves -CommandLine |
+        Where-Object { $_.ExecutablePath -and ($Paths -contains $_.ExecutablePath) })
     return $found
 }
 
@@ -127,7 +130,8 @@ function Get-RepoGhozttyProcess {
     .DESCRIPTION
     Path-exact enumeration, never a match on process NAME alone - that would
     also see the user's installed release and its live sessions. Returns an
-    array (possibly empty) of Win32_Process instances.
+    array (possibly empty) of Get-OsProcess rows (ProcessId, ParentProcessId,
+    Name, ExecutablePath, CreationDate, CommandLine).
     #>
     # The `, @(...)` is load-bearing (PS 5.1): a one-element result unrolls on
     # return and its `.Count` is then $null, which reads as "nothing is running".

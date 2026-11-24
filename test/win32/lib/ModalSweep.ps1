@@ -29,6 +29,9 @@
 
 Set-StrictMode -Off
 
+# T2024: the pid -> image lookup below reads the kernel, never WMI.
+. (Join-Path $PSScriptRoot 'ProcessTable.ps1')
+
 if (-not ('Ghoztty.ModalSweepNative' -as [type])) {
     Add-Type -TypeDefinition @'
 using System;
@@ -156,7 +159,7 @@ function Get-StrayModalDialog {
 
     if ($prefix) {
         try {
-            foreach ($p in @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue)) {
+            foreach ($p in @(Get-OsProcess)) {
                 $pathByPid[[int]$p.ProcessId] = $p.ExecutablePath
                 $nameByPid[[int]$p.ProcessId] = $p.Name
             }

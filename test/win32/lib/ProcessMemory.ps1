@@ -9,7 +9,10 @@
 # and not in the app. Both meters share this so they cannot measure two
 # different things under one name.
 #
-# Dot-source it; it defines functions and one Add-Type, nothing else.
+# Dot-source it; it defines functions and one Add-Type, nothing else (plus
+# lib\ProcessTable.ps1, whose bounded WMI query Get-Descendants uses).
+
+. (Join-Path $PSScriptRoot 'ProcessTable.ps1')
 
 if (-not ('WcmDrv' -as [type])) {
     Add-Type -TypeDefinition @'
@@ -122,8 +125,12 @@ function Format-HandleDelta([hashtable]$Before, [hashtable]$After) {
 # the process it names as parent, and is skipped (T3235: one agent sample
 # counted a 2.6 GB stranger as a session's child, per_session_child_private_mb
 # 2671). A row with no creation time is kept, as before.
+#
+# T2024: PrivatePageCount is not in the kernel table (Get-OsProcess), so this
+# stays on WMI - bounded, and a stalled provider host throws 'WMI did not
+# answer' into the meter instead of a sample that silently counts no children.
 function Get-Descendants([int]$RootPid) {
-    $all = @(Get-CimInstance Win32_Process -Property ProcessId, ParentProcessId, Name, PrivatePageCount, CreationDate)
+    $all = @(Get-BoundedCimProcess -Property ProcessId, ParentProcessId, Name, PrivatePageCount, CreationDate)
     return , (Select-Descendants $all $RootPid)
 }
 # The walk, over rows carrying ProcessId / ParentProcessId / CreationDate (a

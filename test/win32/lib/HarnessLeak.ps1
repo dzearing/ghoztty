@@ -45,6 +45,10 @@ Set-StrictMode -Off
 
 $script:HarnessLeakRepo = (Resolve-Path (Join-Path $PSScriptRoot '..\..\..')).Path
 
+# T2024: process lookups go to the kernel (Get-OsProcess), never to WMI - a
+# stalled CIM provider host held every running script's leak sweep at once.
+. (Join-Path $PSScriptRoot 'ProcessTable.ps1')
+
 # Every image a harness can leave behind. `.com` is in the list because it is
 # the CLI entry point from PowerShell (T245) and a GUI launch through it
 # respawns `ghoztty.exe` detached - so a leak can wear either name.
@@ -125,7 +129,7 @@ function Get-HarnessGhozttyProcess {
     $norm = Assert-HarnessScratchRoot -Root $Root
     $found = @()
     foreach ($name in $script:HarnessLeakImages) {
-        $found += @(Get-CimInstance Win32_Process -Filter "Name='$name'" -ErrorAction SilentlyContinue |
+        $found += @(Get-OsProcess -Name $name |
             Where-Object { Test-HarnessLeakUnder $_.ExecutablePath $norm })
     }
     return @($found)
@@ -155,8 +159,8 @@ function Get-HarnessTeardownBlock {
        unhandled throw. (Same wall lib\TestDesktop.ps1 hit in T179, which it
        answered by calling a static method on a loaded type.)
     2. ONLY ALREADY-LOADED CMDLETS. Module auto-loading does not work at exit, so
-       `Get-CimInstance` - the process query every other helper here uses - is
-       unusable unless something happened to load CimCmdlets earlier in the run.
+       `Get-CimInstance` - the process query every helper here used until T2024 -
+       is unusable unless something happened to load CimCmdlets earlier in the run.
        Get-Process and Stop-Process are core and always there, and `.Path` is the
        same ExecutablePath comparison by another name.
     #>
@@ -317,7 +321,7 @@ function Get-LeakedGhozttyProcess {
     $now = Get-Date
     $found = @()
     foreach ($name in $script:HarnessLeakImages) {
-        $found += @(Get-CimInstance Win32_Process -Filter "Name='$name'" -ErrorAction SilentlyContinue |
+        $found += @(Get-OsProcess -Name $name |
             Where-Object { Test-HarnessLeakUnder $_.ExecutablePath $temp } |
             ForEach-Object {
                 $age = $null

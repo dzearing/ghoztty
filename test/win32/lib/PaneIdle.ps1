@@ -24,10 +24,14 @@
 #     Assert ($dlg -eq [IntPtr]::Zero) 'the close raised no confirmation dialog'
 #     [void](Clear-CloseConfirmDialog -ProcessId $g.Pid)
 
+# T2024: the walk reads the kernel's process table, never WMI - a stalled CIM
+# provider host used to hold this "is the shell idle?" poll past its own budget.
+. (Join-Path $PSScriptRoot 'ProcessTable.ps1')
+
 # Every live descendant pid of $Root, from the OS process table.
 function Get-DescendantPids([int]$Root) {
     if ($Root -le 0) { return @() }
-    $all = Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Select-Object ProcessId, ParentProcessId, Name, CreationDate
+    $all = @(Get-OsProcess)
     $byParent = @{}
     foreach ($p in $all) {
         $key = [int]$p.ParentProcessId
