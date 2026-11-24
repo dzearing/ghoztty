@@ -3,8 +3,8 @@
 # debug app (docs/reference/pane-style.md; Linux L11d): every pane is a raised
 # rounded card on the window's gradient desk, one gutter between the cards and
 # around the edge, the focused pane of several is backlit with a brighter rim,
-# `macos-pane-style = flat` (on a reload too) puts the panes back edge to
-# edge, and `+new-window --color=random` gives the window its own gradient
+# `macos-pane-style = flat` (on a reload too) puts the panes back square, one
+# 6px flat gutter apart (Mac flatGap), and `+new-window --color=random` gives the window its own gradient
 # instead of tinting the terminal. Read from the window's OWN render through
 # the debug-only capture-pane seam (T3359), so it is what the window draws.
 #
@@ -135,15 +135,15 @@ hl_check "S10 the desk beside the focused card is lit by its glow, and goes dark
 [ $(( lit_rim - dim_rim )) -ge 20 ]
 hl_check "S11 the focused card's rim is brighter than an unfocused one's" $? "lit=$lit_rim ($rr,$rg,$rb) dim=$dim_rim ($ir,$ig,$ib)"
 
-# ---- the flat style, on a reload: panes edge to edge, no desk ---------------
+# ---- the flat style, on a reload: a 6px gutter between panes, no desk ---------------
 printf "${base_cfg}macos-pane-style = flat\n" > "$cfg_dir/config.ghostty"
 o=$(cli +reload --config 2>&1); rc=$?
 sleep 1
 read -r fx fy fw fh <<< "$(geom "$a")"
 read -r gx2 gy2 gw2 gh2 <<< "$(geom "$b")"
 fgap=$(( ${gx2:-0} - ${fx:-0} - ${fw:-0} ))
-[ $rc = 0 ] && [ "$fgap" -le 3 ] && [ "${fx:-99}" -lt "$ax" ]
-hl_check "S12 macos-pane-style = flat on a reload: the panes go edge to edge" $? "rc=$rc a=$fx ${fw} b=$gx2 gap=$fgap (elevated a.x=$ax) $o"
+[ $rc = 0 ] && [ "$fgap" -ge 5 ] && [ "$fgap" -le 7 ] && [ "${fx:-99}" -lt "$ax" ]
+hl_check "S12 macos-pane-style = flat on a reload: the panes sit one 6px flat gutter apart (Mac flatGap; T3567 stage)" $? "rc=$rc a=$fx ${fw} b=$gx2 gap=$fgap (elevated a.x=$ax) $o"
 read -r fr fg fb <<< "$(px "$a" $(( fx + 1 )) $(( fy + 1 )))"
 near "$fr" "$fg" "$fb" 32 48 64
 hl_check "S13 flat: the pane's corner is square terminal again" $? "corner=$fr,$fg,$fb"
