@@ -446,6 +446,57 @@ $r = Invoke-Audit -Extra @{ ZipPath = $badZip }
 AssertEq "G12 a published zip shipping an excluded file FAILS" 1 $r.Code
 Assert "G13 naming the file" ($r.Text -match 'ghoztty\.pdb')
 
+# T2178: the .bak-* pile. 39 deliveries had stacked 6 GB beside the Desktop
+# portable and on the NAS and nothing said so anywhere a person reads. Seed
+# five fake generations (tiny files - the threshold is a parameter) and ask.
+$pileDir = Join-Path $root 'pile\Ghoztty'
+New-Item -ItemType Directory -Force -Path $pileDir | Out-Null
+# A whole install (so the audit's own verdict is OK) minus p1's real backups.
+Get-ChildItem -LiteralPath $p1 -File | Where-Object { $null -eq (Get-BackupGeneration $_.Name) } |
+    ForEach-Object { Copy-Item -LiteralPath $_.FullName (Join-Path $pileDir $_.Name) -Force }
+$auditScript = Join-Path $Repo 'scripts\deliver-audit.ps1'
+foreach ($g in 1..5) {
+    foreach ($n in @('ghoztty.exe', 'ghoztty-agent.exe')) {
+        Set-Content -LiteralPath (Join-Path $pileDir "$n.bak-2026010$g-000000") ('x' * 2048) -Encoding ascii
+    }
+}
+$pileBefore = Get-TreeShape $pileDir
+$out = & $deliver -VerifyOnly -Targets @($pileDir) -LooseAgentDir '' -NoZip -BackupPileMB 0 *>&1 | ForEach-Object { "$_" }
+$pileText = $out -join "`n"
+Assert "G13a the audit reports the pile per location" ($pileText -match '10 file\(s\) / 5 generation\(s\)')
+Assert "G13b with a BACKUP PILE line naming the one command that trims it" `
+    ($pileText -match 'BACKUP PILE: .* -PruneOnly -PruneBackups 3 -Targets ')
+Assert "G13c the pile is not a problem - the verdict is unchanged" (@($out)[-1] -like 'AUDIT OK:*')
+Assert "G13d and the audit deleted nothing" ((Compare-Object $pileBefore (Get-TreeShape $pileDir) -SyncWindow 4096).Count -eq 0)
+# Negative control: under the threshold there is no line to read.
+$out = & $deliver -VerifyOnly -Targets @($pileDir) -LooseAgentDir '' -NoZip *>&1 | ForEach-Object { "$_" }
+Assert "G13e under -BackupPileMB the BACKUP PILE line stays quiet" (-not (($out -join "`n") -match 'BACKUP PILE'))
+
+# The unattended reader relays it - on the run that measures it AND on the
+# cached path every later claim that day takes.
+$pileWm = Join-Path $root 'pile-audit.json'
+$out = & $auditScript -Repo $Repo -Watermark $pileWm -Targets @($pileDir) -LooseAgentDir '' -NoZip -BackupPileMB 0 *>&1 |
+    ForEach-Object { "$_" }
+Assert "G13f deliver-audit relays the BACKUP PILE line into the claim" (($out -join "`n") -match 'BACKUP PILE: ')
+$out = & $auditScript -Repo $Repo -Watermark $pileWm -Targets @($pileDir) -LooseAgentDir '' -NoZip -BackupPileMB 0 *>&1 |
+    ForEach-Object { "$_" }
+Assert "G13g and repeats it from the watermark on the already-run-today path" `
+    ((($out -join "`n") -match 'already run today') -and (($out -join "`n") -match 'BACKUP PILE: '))
+
+# The trim it offers: -PruneOnly keeps the newest N generations and touches
+# nothing else; without -PruneBackups it refuses rather than guess a number.
+$out = & $deliver -PruneOnly -Targets @($pileDir) -LooseAgentDir '' -NoZip *>&1 | ForEach-Object { "$_" }
+AssertEq "G13h -PruneOnly without -PruneBackups refuses" 2 $LASTEXITCODE
+$out = & $deliver -PruneOnly -PruneBackups 2 -DryRun -Targets @($pileDir) -LooseAgentDir '' -NoZip *>&1 | ForEach-Object { "$_" }
+Assert "G13i a -DryRun prune deletes nothing" ((Compare-Object $pileBefore (Get-TreeShape $pileDir) -SyncWindow 4096).Count -eq 0)
+$out = & $deliver -PruneOnly -PruneBackups 2 -Targets @($pileDir) -LooseAgentDir '' -NoZip *>&1 | ForEach-Object { "$_" }
+AssertEq "G13j -PruneOnly -PruneBackups 2 exits 0" 0 $LASTEXITCODE
+$left = @(Get-ChildItem -LiteralPath $pileDir -File | ForEach-Object { Get-BackupGeneration $_.Name } |
+    Where-Object { $null -ne $_ } | Sort-Object -Unique)
+Assert "G13k it kept exactly the newest two generations ($($left -join ','))" `
+    ($left.Count -eq 2 -and $left -contains '20260105-000000' -and $left -contains '20260104-000000')
+Assert "G13l and left the install itself alone" (Test-Path -LiteralPath (Join-Path $pileDir 'ghoztty.exe'))
+
 # The unattended reader. It is the half that matters: a flag nobody invokes is
 # not an improvement over reading file sizes by hand.
 $auditScript = Join-Path $Repo 'scripts\deliver-audit.ps1'

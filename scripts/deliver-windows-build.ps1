@@ -47,6 +47,8 @@
 # Usage:
 #   powershell -NoProfile -File scripts\deliver-windows-build.ps1 [-DryRun]
 #   scripts\deliver-windows-build.ps1 -Staging D:\git\ghoztty\zig-out-release
+#   powershell -NoProfile -File scripts\deliver-windows-build.ps1 -PruneOnly -PruneBackups 3
+#     (trim the .bak-* pile to the newest 3 generations and do nothing else, T2178)
 #
 # Exit codes: 0 delivered and verified (possibly with skipped locations),
 #             1 something was delivered wrong, 2 the run was never viable
@@ -108,6 +110,18 @@ param(
     # (the default) only REPORTS what a prune would remove: deleting is a
     # user-gated action, so this script offers it rather than doing it.
     [int]$PruneBackups = -1,
+    # Do the -PruneBackups trim and NOTHING else (T2178): no staging, no copy,
+    # no verify. The one-command remedy the audit's BACKUP PILE line names, so
+    # trimming the pile does not first add one more generation to it the way a
+    # full delivery would. Still user-gated: nothing runs this on its own.
+    [switch]$PruneOnly,
+    # The audit's BACKUP PILE line fires at this many MB of .bak-* files across
+    # the locations it reads (T2178). 39 deliveries had stacked 6 GB on the
+    # Desktop and the NAS with nothing reporting it anywhere a person reads.
+    [int]$BackupPileMB = 1024,
+    # The keep-count the BACKUP PILE line suggests. Three generations is three
+    # rollbacks, which is more than any recovery here has ever used.
+    [int]$BackupPileKeep = 3,
     # Ship a PUBLISHED release instead of a repo build (T1221): `latest` or a
     # `win-v*` tag. Its portable zip is downloaded from GitHub and becomes the
     # staging prefix, and that same zip - byte for byte - becomes the share's
@@ -167,6 +181,99 @@ function Complete-Delivery {
     exit 0
 }
 $script:deliveredCount = 0
+
+# ---- backups: where they live, how big the pile is, the trim (T2178) ---------
+#
+# Only where a run WRITES. -NoZip used to leave the zip's directory in the list,
+# so a run that had been told to stay away from the share still enumerated it -
+# and with -PruneBackups would have deleted there.
+function Get-BackupDirs {
+    $dirs = @($Targets) + @($LooseAgentDir)
+    if ($ZipPath -and -not $NoZip) { $dirs += (Split-Path $ZipPath -Parent) }
+    return @($dirs | Where-Object { $_ } | Select-Object -Unique)
+}
+
+# One row per reachable directory that holds any backup: the files, their
+# generations and their size. Reads only.
+function Measure-BackupPile {
+    $rows = @()
+    foreach ($dir in @(Get-BackupDirs)) {
+        if (-not (Test-Path -LiteralPath $dir -PathType Container)) { continue }
+        $baks = @(Get-ChildItem -LiteralPath $dir -File -ErrorAction SilentlyContinue |
+            Where-Object { $null -ne (Get-BackupGeneration $_.Name) })
+        if (-not $baks.Count) { continue }
+        $rows += [pscustomobject]@{
+            Dir   = $dir
+            Files = $baks
+            Gens  = @($baks | ForEach-Object { Get-BackupGeneration $_.Name } | Sort-Object -Unique).Count
+            MB    = [math]::Round((($baks | Measure-Object -Property Length -Sum).Sum) / 1MB, 1)
+        }
+    }
+    return $rows
+}
+
+# The command that trims the pile, as a person would paste it. The targets are
+# spelled out only when they are not the defaults, so the everyday line stays
+# short and a sandboxed run never names the real install locations.
+function Get-PruneCommand([int]$Keep) {
+    $cmd = "powershell -NoProfile -File scripts\deliver-windows-build.ps1 -PruneOnly -PruneBackups $Keep"
+    if ($script:customLocations) {
+        # A PowerShell-prompt form, because `-File` has no array syntax for
+        # -Targets (deliver-audit.ps1 says the same about calling the audit).
+        $cmd = "& scripts\deliver-windows-build.ps1 -PruneOnly -PruneBackups $Keep"
+        $q = { param($s) "'" + ($s -replace "'", "''") + "'" }
+        $cmd += " -Targets $(@($Targets | ForEach-Object { & $q $_ }) -join ',')"
+        $cmd += " -LooseAgentDir $(& $q $LooseAgentDir)"
+        $cmd += if ($ZipPath -and -not $NoZip) { " -ZipPath $(& $q $ZipPath)" } else { ' -NoZip' }
+    }
+    return $cmd
+}
+$script:customLocations = $PSBoundParameters.ContainsKey('Targets') -or
+    $PSBoundParameters.ContainsKey('LooseAgentDir') -or $PSBoundParameters.ContainsKey('ZipPath') -or $NoZip
+
+# The audit's report of the pile: a row per location, and the BACKUP PILE line
+# with the trim command once the total reaches -BackupPileMB. It never deletes
+# and never counts as a problem - deleting is the user's call, so this is the
+# offer, put where a person reads it (deliver-audit.ps1 relays it into every
+# claim and the morning digest names it).
+function Write-BackupPileReport {
+    $rows = @(Measure-BackupPile)
+    if (-not $rows.Count) { return }
+    Say ''
+    Say '== backups (read only)'
+    foreach ($r in $rows) { Say "   $($r.Dir) : $($r.Files.Count) file(s) / $($r.Gens) generation(s) / $($r.MB) MB" }
+    $total = [math]::Round(($rows | Measure-Object -Property MB -Sum).Sum, 1)
+    $gens = ($rows | Measure-Object -Property Gens -Maximum).Maximum
+    if ($total -ge $BackupPileMB) {
+        $gb = [math]::Round($total / 1024, 2)
+        Say ("BACKUP PILE: ${gb} GB in $($rows.Count) location(s), up to $gens delivery generation(s) kept - " +
+            "trim to the newest $BackupPileKeep with: $(Get-PruneCommand $BackupPileKeep)")
+    }
+}
+
+# The trim itself: with -PruneBackups <keep>, delete all but the newest <keep>
+# generations in every location; without it, only say what is there.
+function Invoke-BackupRetention {
+    foreach ($r in @(Measure-BackupPile)) {
+        $dir = $r.Dir; $baks = $r.Files; $mb = $r.MB
+        if ($PruneBackups -lt 0) {
+            Say ("   $dir : $($baks.Count) file(s) / $($r.Gens) generation(s) / ${mb} MB" +
+                " - prune with -PruneBackups <keep>")
+            continue
+        }
+        $doomed = @(Select-StaleBackups -Names @($baks | ForEach-Object { $_.Name }) -Keep $PruneBackups)
+        if (-not $doomed.Count) { Say "   $dir : nothing to prune (keeping $PruneBackups generation(s))"; continue }
+        $freed = [math]::Round((($baks | Where-Object { $doomed -contains $_.Name } | Measure-Object -Property Length -Sum).Sum) / 1MB, 1)
+        if ($DryRun) { Say "   $dir : would delete $($doomed.Count) file(s), freeing ${freed} MB"; continue }
+        $gone = 0
+        foreach ($n in $doomed) {
+            try { Remove-Item -LiteralPath (Join-Path $dir $n) -Force -ErrorAction Stop; $gone++ } catch {
+                Say "   note: could not delete $n ($($_.Exception.Message))"
+            }
+        }
+        Say "   $dir : deleted $gone of $($doomed.Count) file(s), freed ~${freed} MB"
+    }
+}
 $script:locationCount = 0
 
 if (-not $Suffix) { $Suffix = Get-Date -Format 'yyyyMMdd-HHmmss' }
@@ -393,6 +500,7 @@ function Invoke-Audit {
         }
     }
 
+    Write-BackupPileReport
     Say ''
     Complete-Audit
 }
@@ -400,6 +508,18 @@ function Invoke-Audit {
 if ($VerifyOnly) {
     Say "== audit (nothing will be written)"
     Invoke-Audit
+}
+
+# ---- -PruneOnly: the trim the BACKUP PILE line offers, and nothing else ------
+if ($PruneOnly) {
+    if ($PruneBackups -lt 0) {
+        Say 'ABORT: -PruneOnly needs -PruneBackups <keep> (how many delivery generations to keep)'
+        exit 2
+    }
+    Say "== backups (keeping the newest $PruneBackups generation(s))"
+    Invoke-BackupRetention
+    Say "PRUNE DONE$(if ($DryRun) { ' (dry run, nothing deleted)' })"
+    exit 0
 }
 
 # ---- published only, where the rule applies (T1221) ---------------------------
@@ -889,36 +1009,7 @@ if ($NoZip -or -not $ZipPath) {
 # ---- backup retention: offered, never done -----------------------------------
 Say ''
 Say '== backups'
-$backupDirs = @($Targets) + @($LooseAgentDir)
-# Only where this run actually WROTE. -NoZip used to leave the zip's directory
-# in the list, so a run that had been told to stay away from the share still
-# enumerated it - and with -PruneBackups would have deleted there.
-if ($ZipPath -and -not $NoZip) { $backupDirs += (Split-Path $ZipPath -Parent) }
-$backupDirs = @($backupDirs | Where-Object { $_ } | Select-Object -Unique)
-foreach ($dir in $backupDirs) {
-    if (-not (Test-Path -LiteralPath $dir -PathType Container)) { continue }
-    $baks = @(Get-ChildItem -LiteralPath $dir -File -ErrorAction SilentlyContinue |
-        Where-Object { $null -ne (Get-BackupGeneration $_.Name) })
-    if (-not $baks.Count) { continue }
-    $mb = [math]::Round((($baks | Measure-Object -Property Length -Sum).Sum) / 1MB, 1)
-    $gens = @($baks | ForEach-Object { Get-BackupGeneration $_.Name } | Sort-Object -Unique)
-    if ($PruneBackups -lt 0) {
-        Say ("   $dir : $($baks.Count) file(s) / $($gens.Count) generation(s) / ${mb} MB" +
-            " - prune with -PruneBackups <keep>")
-        continue
-    }
-    $doomed = @(Select-StaleBackups -Names @($baks | ForEach-Object { $_.Name }) -Keep $PruneBackups)
-    if (-not $doomed.Count) { Say "   $dir : nothing to prune (keeping $PruneBackups generation(s))"; continue }
-    $freed = [math]::Round((($baks | Where-Object { $doomed -contains $_.Name } | Measure-Object -Property Length -Sum).Sum) / 1MB, 1)
-    if ($DryRun) { Say "   $dir : would delete $($doomed.Count) file(s), freeing ${freed} MB"; continue }
-    $gone = 0
-    foreach ($n in $doomed) {
-        try { Remove-Item -LiteralPath (Join-Path $dir $n) -Force -ErrorAction Stop; $gone++ } catch {
-            Say "   note: could not delete $n ($($_.Exception.Message))"
-        }
-    }
-    Say "   $dir : deleted $gone of $($doomed.Count) file(s), freed ~${freed} MB"
-}
+Invoke-BackupRetention
 
 Say ''
 Complete-Delivery

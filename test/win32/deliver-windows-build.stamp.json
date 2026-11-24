@@ -1,21 +1,23 @@
 {
     "guard":  "deliver-verify",
     "script":  "test/win32/deliver-windows-build.ps1",
-    "generated":  "2026-11-23T22:55:23-08:00",
-    "commit":  "70a0645f1",
+    "generated":  "2026-11-24T13:37:14-08:00",
+    "commit":  "4a0a4b48a",
     "uncommitted":  [
+                        "scripts/deliver-audit.ps1",
+                        "scripts/deliver-windows-build.ps1",
                         "test/win32/deliver-windows-build.ps1"
                     ],
     "files":  {
-                  "scripts/deliver-audit.ps1":  "5598626fd46a8b8da014508f9d26c8f423cebddb4c741aec4e5fbe6d882149ce",
-                  "scripts/deliver-windows-build.ps1":  "921866556dc1bd62bd8f85a3b413ff3f3557a3c70214f02d3b98004dc2851f2c",
+                  "scripts/deliver-audit.ps1":  "b6c6cf46f84044da7ea61b28be8fb6ce22c24620b3e2f40e1929d2a3721135f2",
+                  "scripts/deliver-windows-build.ps1":  "8871956f8ac46b4e5c163adab71ee284bb218cdcf0b4a43e0801b9db28baaa07",
                   "scripts/delivery-manifest.ps1":  "e1d865b58a35c5d226f2078a8e0d4e274d75fbbb5adc2f5aa2639382ae71de60",
-                  "test/win32/deliver-windows-build.ps1":  "f44a24052c394a2a858c6896bb5d895ffe99fc2fb61ad117bccaa81a75505ac5"
+                  "test/win32/deliver-windows-build.ps1":  "4fd0ee6e067dcddb4e1f0c2658ae4a6e90c6565ad891f42f001d227dc6984a22"
               },
     "code":  {
-                 "scripts/deliver-audit.ps1":  "code1:0a06f7c65f26c50d356a9b699660d99af055626f9fe6ee3e8257711eacac033e",
-                 "scripts/deliver-windows-build.ps1":  "code1:8cecabc124eca2e6f52fe60b66581e6f3c5310f5de3bbb0a04ab33bdb016d125",
+                 "scripts/deliver-audit.ps1":  "code1:20007c4074f71b2ec15ffd1f8d3e0acc57b5936d5238c9d98bb1467a4b12b6b3",
+                 "scripts/deliver-windows-build.ps1":  "code1:bc76ee0f44f0689302d4dbde5c99ad983ad8e94a6627aa8ba50e7b1c2228693f",
                  "scripts/delivery-manifest.ps1":  "code1:320328379574361dd4adabdcd2af640fce04c4ab2c6845d0eb6c5252dda250aa",
-                 "test/win32/deliver-windows-build.ps1":  "code1:c48b3eeaffc11470f80749a3dfb468e3b15e6cb7c210264c7cc48e43debcb912"
+                 "test/win32/deliver-windows-build.ps1":  "code1:949bdd9885a1b5384ed228a4c742041a1b86b99049cd8bf71978581eea8d7871"
              }
 }

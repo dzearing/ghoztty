@@ -260,6 +260,13 @@ Concretely, in order, with no stops in between:
        have) has no recorded pass for the release line the user is running.
        It never blocks a publish, so the digest is the only place it gets
        asked for. `scripts\manual-check.ps1` records a run.
+
+       **And name a `BACKUP PILE` line** (T2178) under **Decisions** the same
+       way, with the command it carries: step 0's claim repeats it under
+       `DELIVER AUDIT` whenever the `.bak-*` generations beside the Desktop
+       portable and the share pass 1 GB (6.1 GB on 2026-11-24). Deleting them
+       is the user's call, so the loop never runs that command itself; the
+       digest is how the offer reaches them.
      - **Open pull requests** (T1059) — paste the block this prints, verbatim,
        as an H3 inside `## Commentary`:
 

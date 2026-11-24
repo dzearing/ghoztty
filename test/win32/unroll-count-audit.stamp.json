@@ -1,11 +1,11 @@
 {
     "guard":  "unroll-count",
     "script":  "test/win32/unroll-count-audit.ps1",
-    "generated":  "2026-11-24T13:26:48-08:00",
-    "commit":  "3c434c7bf",
+    "generated":  "2026-11-24T13:44:33-08:00",
+    "commit":  "4a0a4b48a",
     "uncommitted":  [
-                        "scripts/guard-due.ps1",
-                        "scripts/lib/HarnessFloor.ps1"
+                        "scripts/deliver-audit.ps1",
+                        "scripts/deliver-windows-build.ps1"
                     ],
     "files":  {
                   "scripts/acceptance-parallel.ps1":  "1106b67ef623a664e020325f9c491716c9300a405c899a1e9d77bd349d53143f",
@@ -33,8 +33,8 @@
                   "scripts/crash-catch.ps1":  "830f8e5827d8b2eecfa934fece0733f87fc00c736297952450908dd0dab9360c",
                   "scripts/crash-databreak.ps1":  "03e868f010ac75c549778e05aa225c97033a1af23bc86eec268cf5708f0dc3b6",
                   "scripts/daily-publish.ps1":  "08178386e3525122b9715a9bb5f32e0d28175c7440f15f684764251ab7e50c66",
-                  "scripts/deliver-audit.ps1":  "5598626fd46a8b8da014508f9d26c8f423cebddb4c741aec4e5fbe6d882149ce",
-                  "scripts/deliver-windows-build.ps1":  "921866556dc1bd62bd8f85a3b413ff3f3557a3c70214f02d3b98004dc2851f2c",
+                  "scripts/deliver-audit.ps1":  "b6c6cf46f84044da7ea61b28be8fb6ce22c24620b3e2f40e1929d2a3721135f2",
+                  "scripts/deliver-windows-build.ps1":  "8871956f8ac46b4e5c163adab71ee284bb218cdcf0b4a43e0801b9db28baaa07",
                   "scripts/delivery-manifest.ps1":  "e1d865b58a35c5d226f2078a8e0d4e274d75fbbb5adc2f5aa2639382ae71de60",
                   "scripts/delivery-version.ps1":  "0e13b53aff9be9cf6c7c4c35cbe4fc3293dccf5fef434bef769806b966eb62ce",
                   "scripts/divergence-inventory.ps1":  "f299f907df872214375bd6f88b868bbbaf5db7125301d6481c6a39d44222ff61",
@@ -53,7 +53,7 @@
                   "scripts/go-loop-lock.ps1":  "eda6fc5f2bc851e11a9718ddbdd529d9fb9a5ce06637703e93800f37ccc0a2bb",
                   "scripts/go-loop-pane-probe.ps1":  "e491be3477c3236c4e10af70db2f40e9d632c45f83bf860f4b09fe6eeda5e2b7",
                   "scripts/go-loop-watchdog.ps1":  "37f19f9ce08a701645b7267fea8411125b9112d83ef5ff0cbddb8e380f058d67",
-                  "scripts/guard-due.ps1":  "832078a65af589ce9ba6aca24394447b1e9cdcba88ad9d64f78b9db0e632a1cb",
+                  "scripts/guard-due.ps1":  "f27ab4ffafdb07d2e0e4854ca1a7f500a6766a1ec81e7d0416dc651482172947",
                   "scripts/harness-floor.ps1":  "cfa23792d110d499fa4086697daa516d218d0d110e594a7452167a81220ee15e",
                   "scripts/hero-glide-onscreen.ps1":  "46d211f7ec7843d13506f4e3bd13933630339adb8aff13b5c97d69ae3fd248a7",
                   "scripts/hidden-windows-cpu.ps1":  "61551ac8760570d16a46ab2ef235c9792a2e29fb9e9d116ebbc23a5ce9051876",
@@ -78,7 +78,7 @@
                   "scripts/lib/Duration.ps1":  "b9889f194a1af5fee4177fd4c87ea6f7d74be5bffac0828532b55ebaa1f4787c",
                   "scripts/lib/EscapeDamage.ps1":  "87c096ced08379d50c3dbabbd65bcf6596c2812039dde1e4d00d66943a0baa84",
                   "scripts/lib/HardDelete.ps1":  "78ca1c0b521f9ae991e6b8f5304eb2a4e30a7a8ef1e3ba93839de8b740ea88b2",
-                  "scripts/lib/HarnessFloor.ps1":  "3b6ae6f1b53bd84d541bfa0b46fd0c47eb0d3976d66bf996ef115fc7e2dbf80c",
+                  "scripts/lib/HarnessFloor.ps1":  "59f84f6fce589bd82ac182c09d3adef0f47f9cfa6f060bd3bbba33a04e99e21b",
                   "scripts/lib/LaneDesktop.ps1":  "eba72a217797149f3d24226023a839ec9beb8ebccfbc25a94f10bfd248594353",
                   "scripts/lib/LaneLeak.ps1":  "d89adfe019c541d2c285186e5f818760596be9d4f0385a4a6c12d81dbad1d987",
                   "scripts/lib/LaneSolo.ps1":  "3774871845d542b517f11f423a4ab8a4ce1fa4df14ed29c6b9b670381461bbf4",

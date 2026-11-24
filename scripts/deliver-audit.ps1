@@ -40,6 +40,9 @@ param(
     [string]$LooseAgentDir = '',
     [string]$ZipPath = '',
     [switch]$NoZip,
+    # Pass through: the size at which the audit's BACKUP PILE line fires (T2178).
+    # Negative = the delivery script's own default.
+    [int]$BackupPileMB = -1,
     # Seconds before the audit is abandoned. A NAS that has gone to sleep can
     # hold a directory probe for a long time, and this runs inside the claim.
     [int]$TimeoutSeconds = 120
@@ -56,7 +59,7 @@ function Read-Watermark {
     try { return (Get-Content -LiteralPath $Watermark -Raw) | ConvertFrom-Json } catch { return $null }
 }
 
-function Write-Watermark($Result, $Problems, $Expect, $Summary) {
+function Write-Watermark($Result, $Problems, $Expect, $Summary, $Backups = '') {
     $dir = Split-Path $Watermark -Parent
     if ($dir -and -not (Test-Path -LiteralPath $dir -PathType Container)) {
         New-Item -ItemType Directory -Force -Path $dir | Out-Null
@@ -68,6 +71,9 @@ function Write-Watermark($Result, $Problems, $Expect, $Summary) {
         problems = [int]$Problems
         expect   = [string]$Expect
         summary  = [string]$Summary
+        # The audit's BACKUP PILE line, or '' (T2178). Kept so the cached
+        # claim path below can repeat it every turn, not once a day.
+        backups  = [string]$Backups
     }
     try { Set-Content -LiteralPath $Watermark -Value ($obj | ConvertTo-Json -Depth 3) -Encoding UTF8 } catch {
         Write-Host "  note: the audit verdict could not be recorded ($($_.Exception.Message))"
@@ -79,6 +85,7 @@ if (-not $Force -and $wm -and [string]$wm.date -eq $today) {
     $n = [int]$wm.problems
     $what = if ([string]$wm.result -eq 'ok') { "ok +$($wm.expect)" } else { "$($wm.result) ($n problem(s))" }
     Write-Host "DELIVER AUDIT $what (already run today)"
+    if ([string]$wm.backups) { Write-Host "  $($wm.backups)" }
     exit 0
 }
 
@@ -100,6 +107,7 @@ if ($Targets.Count) { $cmd += " -Targets @($(@($Targets | ForEach-Object { Lit $
 if ($PSBoundParameters.ContainsKey('LooseAgentDir')) { $cmd += " -LooseAgentDir $(Lit $LooseAgentDir)" }
 if ($PSBoundParameters.ContainsKey('ZipPath')) { $cmd += " -ZipPath $(Lit $ZipPath)" }
 if ($NoZip) { $cmd += ' -NoZip' }
+if ($BackupPileMB -ge 0) { $cmd += " -BackupPileMB $BackupPileMB" }
 $cmd += '; exit $LASTEXITCODE'
 $quoted = "-NoProfile -ExecutionPolicy Bypass -Command `"$($cmd -replace '"', '\"')`""
 
@@ -138,9 +146,14 @@ $result = switch ($code) {
     1 { 'wrong' }
     default { 'skipped' }
 }
-Write-Watermark $result $problems $expect $verdictLine
+# T2178: the .bak-* pile beside the installs. Not a problem and never a refusal
+# (deleting is the user's call) - but a line in every claim and in the morning
+# digest, with the one command that trims it, is the offer put where it is read.
+$pileLine = [string](@($lines | Where-Object { $_ -like 'BACKUP PILE:*' })[-1])
+Write-Watermark $result $problems $expect $verdictLine $pileLine.Trim()
 
 Write-Host "DELIVER AUDIT $result : $verdictLine"
+if ($pileLine) { Write-Host "  $($pileLine.Trim())" }
 if ($result -eq 'wrong') {
     # The names, not just the count: this line is read in a claim report, and
     # "7 problem(s)" with no subject is a number nobody can act on.
