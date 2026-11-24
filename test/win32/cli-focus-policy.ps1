@@ -123,6 +123,23 @@ function Count-Panes([int64]$hwnd) {
     return -1
 }
 
+# Poll until the window reports $want panes, then let it settle for $SettleMs so
+# the focus / z-order oracles that follow read the post-layout state. A fixed
+# sleep here was T2042: a viewer split (WebView2 start-up) landed after the 2s
+# sleep under the parallel runner's load and arms F/H read the old count, while
+# the same arms passed alone. Returns the last count it read, so the assert
+# message names what the app actually said at the deadline.
+function Wait-PaneCount([int64]$hwnd, [int]$want, [int]$SettleMs = 600, [int]$TimeoutMs = 20000) {
+    $sw = [Diagnostics.Stopwatch]::StartNew()
+    $c = Count-Panes $hwnd
+    while ($c -ne $want -and $sw.ElapsedMilliseconds -lt $TimeoutMs) {
+        Start-Sleep -Milliseconds 250
+        $c = Count-Panes $hwnd
+    }
+    if ($c -eq $want) { Start-Sleep -Milliseconds $SettleMs }
+    return $c
+}
+
 function Active { [int64](Get-TestActiveWindow -Window ([IntPtr]$script:w1)) }
 function Focused { [int64](Get-TestFocusedWindow -Window ([IntPtr]$script:w1)) }
 
@@ -225,8 +242,8 @@ try {
     Enter-ForeignApp
     $n = Count-Panes $w2
     Write-Host "      +split --target=bg1: $(Invoke-Cli @('+split', '--target=bg1'))"
-    Start-Sleep -Milliseconds 900
-    Assert ((Count-Panes $w2) -eq $n + 1) "E: the split landed ($n -> $(Count-Panes $w2) panes)"
+    $c = Wait-PaneCount $w2 ($n + 1)
+    Assert ($c -eq $n + 1) "E: the split landed ($n -> $c panes)"
     # $w2, not 0: the split lays out a window that is ALREADY in the background,
     # which is where a pane's eagerly-created chrome (a tooltip owned by the
     # window, T1866) could lift it over the user's app.
@@ -236,8 +253,8 @@ try {
     Enter-ForeignApp
     $n = Count-Panes $w2
     Write-Host "      +split --view --target=bg1: $(Invoke-Cli @('+split', '--target=bg1', "--view=$viewFile"))"
-    Start-Sleep -Seconds 2
-    Assert ((Count-Panes $w2) -eq $n + 1) "F: the viewer split landed ($n -> $(Count-Panes $w2) panes)"
+    $c = Wait-PaneCount $w2 ($n + 1) -SettleMs 1500
+    Assert ($c -eq $n + 1) "F: the viewer split landed ($n -> $c panes)"
     # The viewer's nav bar registers its tooltips on its first layout (T1866):
     # read the background window's z-order after it.
     Assert-Background $w2 'F:'
@@ -263,7 +280,8 @@ try {
         [void](Invoke-Cli @('+split', '--target=rbg', "--name=$nm", '--direction=right'))
         Start-Sleep -Milliseconds 700
     }
-    Assert ((Count-Panes $wR) -eq 4) "L setup: the background window holds 4 panes ($(Count-Panes $wR))"
+    $c = Wait-PaneCount $wR 4 -SettleMs 0
+    Assert ($c -eq 4) "L setup: the background window holds 4 panes ($c)"
 
     # PS 5.1 native-arg passing eats embedded quotes; escape them for Win32.
     function Invoke-Rearrange([string]$layout) {
@@ -278,14 +296,14 @@ try {
     Assert ((Focused) -eq $p1) 'G: setup - the keyboard is in the first pane'
     $n = Count-Panes $script:w1
     [void](Invoke-Cli @('+split', '--direction=right'))
-    Start-Sleep -Milliseconds 900
-    Assert ((Count-Panes $script:w1) -eq $n + 1) 'G: the split landed in the window being typed in'
+    $c = Wait-PaneCount $script:w1 ($n + 1)
+    Assert ($c -eq $n + 1) "G: the split landed in the window being typed in ($n -> $c panes)"
     Assert ((Focused) -eq $p1) "G: the keyboard stayed on the pane it was in (focus=$(Focused), wanted $p1)"
     Assert ((Active) -eq $script:w1) 'G: ...and that window stayed active'
 
     [void](Invoke-Cli @('+split', '--direction=down', "--view=$viewFile"))
-    Start-Sleep -Seconds 2
-    Assert ((Count-Panes $script:w1) -eq $n + 2) 'H: the viewer split landed'
+    $c = Wait-PaneCount $script:w1 ($n + 2) -SettleMs 1500
+    Assert ($c -eq $n + 2) "H: the viewer split landed ($n -> $c panes)"
     Assert ((Focused) -eq $p1) "H: the keyboard stayed on the pane it was in (focus=$(Focused))"
 
     # ---- L: +rearrange a BACKGROUND window while typing in Ghoztty (T1810) ---
@@ -293,15 +311,15 @@ try {
     # it fired, SetFocus on a child of an inactive top-level would activate it.
     $out = Invoke-Rearrange '{"direction":"horizontal","ratio":40,"left":{"pane":"rc"},"right":{"direction":"vertical","ratio":50,"left":{"pane":"rb"},"right":{"pane":"ra"}}}'
     Write-Host "      +rearrange --target=rbg: $out"
-    Start-Sleep -Milliseconds 1200
-    Assert ((Count-Panes $wR) -eq 3) "L: the rearrange landed (the omitted pane closed; $(Count-Panes $wR) panes)"
+    $c = Wait-PaneCount $wR 3 -SettleMs 900
+    Assert ($c -eq 3) "L: the rearrange landed (the omitted pane closed; $c panes)"
     Assert ((Active) -eq $script:w1) "L: the window being typed in stayed active (active=$(Active), wanted $script:w1, rearranged=$wR)"
     Assert ((Focused) -eq $p1) "L: the keyboard stayed on the pane it was in (focus=$(Focused), wanted $p1)"
 
     # ---- M: +close a pane of a BACKGROUND window while typing (T1810) -------
     [void](Invoke-Cli @('+close', '--target=ra'))
-    Start-Sleep -Milliseconds 1200
-    Assert ((Count-Panes $wR) -eq 2) "M: the close landed ($(Count-Panes $wR) panes)"
+    $c = Wait-PaneCount $wR 2 -SettleMs 900
+    Assert ($c -eq 2) "M: the close landed ($c panes)"
     Assert ((Active) -eq $script:w1) "M: the window being typed in stayed active (active=$(Active))"
     Assert ((Focused) -eq $p1) "M: the keyboard stayed on the pane it was in (focus=$(Focused), wanted $p1)"
 
@@ -312,8 +330,8 @@ try {
     Start-Sleep -Milliseconds 1200
     Assert-Background 0 'N:'
     [void](Invoke-Cli @('+close', '--target=rb'))
-    Start-Sleep -Milliseconds 1200
-    Assert ((Count-Panes $wR) -eq 1) "O: the close landed ($(Count-Panes $wR) panes)"
+    $c = Wait-PaneCount $wR 1 -SettleMs 900
+    Assert ($c -eq 1) "O: the close landed ($c panes)"
     Assert-Background 0 'O:'
     if (-not (Focus-TestWindow -Window ([IntPtr]$script:w1) -Child ([IntPtr]$p1))) {
         Write-Host 'SETUP FAIL: could not put the keyboard back in the first pane'; exit 1

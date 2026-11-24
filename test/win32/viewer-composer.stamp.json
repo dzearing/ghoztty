@@ -1,12 +1,10 @@
 {
     "guard":  "viewer-composer",
     "script":  "test/win32/viewer-composer.ps1",
-    "generated":  "2026-09-27T00:13:34-07:00",
-    "commit":  "4f00ef2ac",
+    "generated":  "2026-11-23T22:21:16-08:00",
+    "commit":  "aa8520289",
     "uncommitted":  [
-                        "src/apprt/win32/viewer_feedback_page.zig",
-                        "src/apprt/win32/ViewerFeedbackWeb.zig",
-                        "src/viewer/composer.js"
+
                     ],
     "files":  {
                   "src/apprt/win32/viewer_feedback_page.zig":  "75ac79316a2b0ab69868c523656a2040bb58e1cc7f26fb87a757a3ff3b508053",
@@ -15,5 +13,9 @@
                   "src/viewer/composer.js":  "ba5e2801f2702309b5707497de1ab122b7837da482bf6c15919ed947c8b87eb5",
                   "test/win32/lib/WebViewCdp.ps1":  "694f3e4f7852950d38ca69bcd317b75b1797f364c7f41fa5c23ed3cb56abd5fe",
                   "test/win32/viewer-composer.ps1":  "884e11cadc3a85a60b400e48522b2c7c5e7ddad28d3f8e039338c62197eded23"
-              }
+              },
+    "code":  {
+                 "test/win32/lib/WebViewCdp.ps1":  "code1:1acd85df8f4044c4f3bceae308817aed8f6feb05e621912c16c24a0a9cd27d10",
+                 "test/win32/viewer-composer.ps1":  "code1:95a09f6fc33b30b56766bb32c0f5b89f6523418accd5aceb352ec20b7f1206fe"
+             }
 }
