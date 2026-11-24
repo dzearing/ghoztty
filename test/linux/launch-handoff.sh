@@ -48,7 +48,7 @@ exit_code() {
     wait "$1" 2>/dev/null; rc=$?
 }
 # crash_of <log>: the first lines of a crash in an app log, for a FAIL detail.
-crash_of() { grep -m1 -B2 -A14 -E 'panic|Segmentation|abort|error\(' "$1" 2>/dev/null | tr '\n' ' ' | head -c 2000; }
+crash_of() { grep -m1 -B4 -A24 -E 'panic|Segmentation fault|reached unreachable|SIGABRT|Abort' "$1" 2>/dev/null | grep -v -E 'debug\(|program destroyed|EGL context' | tr '\n' ' ' | head -c 3000; }
 vfield() {
     hl_ipc version 2>/dev/null | python3 -c '
 import json, sys
