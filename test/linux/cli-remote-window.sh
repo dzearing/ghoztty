@@ -268,7 +268,7 @@ rport=$(free_port)
 base="http://127.0.0.1:$rport"
 hl_launch RELAY env LISTEN_ADDR="127.0.0.1:$rport" METRICS_ADDR=127.0.0.1:0 DEV_AUTH=true \
     DEV_CLIENT_TOKEN="$DEV_TOKEN" DEV_EMAIL=dev@example.com STATE_DIR="$HL_RUNTIME/relay-state" "$relay_bin"
-healthy() { curl -fsS -o /dev/null --max-time 2 "$base/healthz"; }
+healthy() { curl -fsS -o /dev/null --max-time 2 "$base/healthz" 2>/dev/null; }
 hl_wait_for 30 healthy
 rc=$?
 hl_check "Y2 the relay is healthy on $base" $rc "$(tail -5 "$RELAY_LOG" 2>/dev/null | tr '\n' ' ')"
