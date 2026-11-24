@@ -275,8 +275,11 @@ fn replace(
     const pwd: ?[]const u8 = if (old.getPwd()) |p| try arena.dupe(u8, p) else null;
     const name: ?[]const u8 = if (old.ipcName()) |nm| try arena.dupe(u8, nm) else null;
     const title: ?[:0]const u8 = if (old.titleOverride()) |t| try arena.dupeZ(u8, t) else null;
+    // The pane's banner rides across too (T3560): the replacement is the same
+    // pane to the user, and its backend keeps the notice out of the slot.
+    const banner: ?[]const u8 = if (old.getPaneBanner()) |b| try arena.dupe(u8, b) else null;
 
-    Surface.pending_restore = .{ .session_id = sid, .pane_id = pane_id, .working_directory = pwd };
+    Surface.pending_restore = .{ .session_id = sid, .pane_id = pane_id, .working_directory = pwd, .banner = banner };
     const replacement = Surface.new(.{});
     Surface.pending_restore = null;
     defer replacement.unref();

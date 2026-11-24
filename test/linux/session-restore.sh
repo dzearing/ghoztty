@@ -121,6 +121,14 @@ hl_wait_for 10 sids_ok
 hl_check "R4 the manifest records every pane with its session id within seconds" $? "$(manifest_q '[l.get("session_id") for l in leaves]')"
 four_live() { [ "$(live_leaves)" = 4 ]; }
 hl_wait_for 10 four_live
+# T3560: pa and pb carry banners (pb's session dies later); pc has none.
+banA='## pa goal\n- [x] **restore** the `banner`\n| job | state |\n|---|---:|\n| lint | ok |'
+banB='pb status line'
+cli +set-banner --target=pa "$banA" > /dev/null 2>&1
+cli +set-banner --target=pb "$banB" > /dev/null 2>&1
+banners_recorded() { [ "$(manifest_q 'sorted((l.get("ipc_name"), l.get("banner")) for l in leaves if l.get("banner"))')" = "$(python3 -c 'import sys; print(sorted([("pa", sys.argv[1]), ("pb", sys.argv[2])]))' "$banA" "$banB")" ]; }
+hl_wait_for 10 banners_recorded
+hl_check "RB1 the manifest records pa's and pb's banners as their markdown source, and none for pc" $? "$(manifest_q '[(l.get("ipc_name"), l.get("banner")) for l in leaves]')"
 before=$(shape)
 wins_before=$(printf '%s\n' "$before" | grep -c .)
 listA=$(leaf_field pa pid); listB0=$(leaf_field pb pid); listC=$(leaf_field pc pid)
@@ -147,6 +155,8 @@ hl_wait_for 10 read_pa
 hl_check "R8b pa's restored screen still shows what it printed before the crash" $? "$(cli +read --name=pa --lines=8 2>&1 | tr '\n' '|' | head -c 300)"
 grep -q 'session layout: restored 2 of 2 window(s), 4 pane(s) re-attached' "$APP2_LOG"
 hl_check "R9 the app logs that it re-attached all four panes" $? "$(grep -m1 'session layout: restored' "$APP2_LOG")"
+[ "$(leaf_field pa banner)" = "$banA" ] && [ "$(leaf_field pb banner)" = "$banB" ] && [ "$(leaf_field pc banner)" = None ]
+hl_check "RB2 the relaunch puts pa's and pb's banners back, and pc stays bannerless" $? "pa=$(leaf_field pa banner) pb=$(leaf_field pb banner) pc=$(leaf_field pc banner)"
 
 # ---- 3. a real quit detaches and snapshots --------------------------------
 kill -TERM "$APP2" 2>/dev/null
@@ -193,6 +203,9 @@ listB=$(leaf_field pb pid)
 hl_check "R14 pb, whose session died, is back as a FRESH shell under its own pane id" $? "old=$listB0 new=$listB id=$(leaf_field pb id) want=$idB"
 [ "$(leaf_field pc pid)" = "$listC" ] && [ "$(leaf_field pa pid)" = "$listA" ]
 hl_check "R15 the panes whose sessions lived are re-attached beside it" $? "pc=$(leaf_field pc pid)/$listC pa=$(leaf_field pa pid)/$listA"
+sleep 1
+[ "$(leaf_field pb banner)" = "$banB" ]
+hl_check "RB3 pb's fresh shell keeps pb's own banner; the session-gone notice did not take its slot" $? "pb=$(leaf_field pb banner)"
 shot="$HL_RUNTIME/wa-window.png"
 wa_size() { hl_screenshot wa "$shot" --window > /dev/null 2>&1 && hl_png_stats "$shot" | awk '{ sub("w=","",$1); sub("h=","",$2); print $1, $2 }'; }
 size_ok() {
@@ -249,6 +262,13 @@ hl_check "R17c every window and pane is back after the agent restart" $? "$(shap
 read_pa_any() { cli +read --name=pa --lines=60 2>/dev/null | grep -Eq 'ready-pa'; }
 hl_wait_for 10 read_pa_any
 hl_check "R17d the relaunched pa replays the history it had" $? "$(cli +read --name=pa --lines=10 2>&1 | tr '\n' '|' | head -c 400)"
+# T3560: the notice fires on this path (pc, bannerless, shows it), and pa's
+# own banner keeps the slot.
+notice_c() { leaf_field pc banner | grep -q 'Session interrupted'; }
+hl_wait_for 5 notice_c
+hl_check "RB4 bannerless pc's slot carries the session-interrupted notice after the agent restart" $? "pc=$(leaf_field pc banner)"
+[ "$(leaf_field pa banner)" = "$banA" ]
+hl_check "RB5 the relaunched pa keeps its own banner instead of the notice" $? "pa=$(leaf_field pa banner)"
 
 # ---- 6. what the user closes stays closed ----------------------------------
 cli +close --target=wa > /dev/null 2>&1

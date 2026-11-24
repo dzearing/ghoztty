@@ -87,6 +87,51 @@ pub fn viewerRestore(leaf: schema.Leaf) ViewerRestore {
     };
 }
 
+/// The banner a terminal leaf records (T3560; win32's T422 leaf `banner`):
+/// the pane's raw markdown SOURCE, so a restore re-runs the parser the
+/// user's `+set-banner` did. No banner, or a cleared one, records none -
+/// which leaves the restored pane's slot free for the session-interrupted
+/// notice.
+pub fn bannerToRecord(text: ?[]const u8) ?[]const u8 {
+    const t = text orelse return null;
+    return if (t.len > 0) t else null;
+}
+
+/// The banner a restored leaf puts back (T3560): a terminal leaf's recorded
+/// source, never a viewer's (a viewer has no banner; `+set-banner` refuses
+/// one) and never an empty one. Non-null also tells the pane's backend its
+/// banner slot is taken (`pane_banner_restored`).
+pub fn bannerToRestore(leaf: schema.Leaf) ?[]const u8 {
+    if (leaf.isViewer()) return null;
+    return bannerToRecord(leaf.banner);
+}
+
+test "bannerToRecord keeps the source and records none for no banner" {
+    const src = "## T3560\n- [x] **restore** the `banner`";
+    try std.testing.expectEqualStrings(src, bannerToRecord(src).?);
+    try std.testing.expect(bannerToRecord(null) == null);
+    try std.testing.expect(bannerToRecord("") == null);
+}
+
+test "bannerToRestore: a terminal leaf's banner comes back, a viewer's and an empty one never" {
+    try std.testing.expectEqualStrings("goal", bannerToRestore(.{ .session_id = "s", .banner = "goal" }).?);
+    try std.testing.expect(bannerToRestore(.{ .session_id = "s" }) == null);
+    try std.testing.expect(bannerToRestore(.{ .banner = "" }) == null);
+    try std.testing.expect(bannerToRestore(.{ .kind = schema.kind_viewer, .banner = "stray" }) == null);
+    // The round trip through the on-disk schema keeps the source byte for byte.
+    const a = std.testing.allocator;
+    const src = "**T3560** _restore_\n| job | state |\n|---|---:|\n| lint | `ok` |";
+    const nodes = [_]schema.Node{.{ .leaf = .{ .session_id = "0123456789abcdef0123456789abcdef", .banner = bannerToRecord(src) } }};
+    const tabs = [_]schema.Tab{.{ .nodes = &nodes }};
+    const wins = [_]schema.Window{.{ .id = "w", .tabs = &tabs }};
+    const body = try schema.serialize(a, .{ .windows = &wins });
+    defer a.free(body);
+    var parsed = try schema.parse(a, body);
+    defer parsed.deinit();
+    const leaf = parsed.value.windows[0].tabs[0].nodes[0].leaf.?;
+    try std.testing.expectEqualStrings(src, bannerToRestore(leaf).?);
+}
+
 test "frameFromSize records a size and refuses none" {
     const f = frameFromSize(1024, 640).?;
     try std.testing.expectEqual(@as(i32, 1024), f.w);

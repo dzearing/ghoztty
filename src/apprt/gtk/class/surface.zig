@@ -95,6 +95,10 @@ pub const Surface = extern struct {
         /// built on). Its `working_directory` is the viewer's origin
         /// directory - the repository a diff spec re-runs in.
         viewer_home: ?[]const u8 = null,
+        /// The pane's banner as its markdown source (T3560), put back
+        /// whether the pane re-attaches or opens fresh: it is the pane's own
+        /// state, not the session's. Ignored for a viewer.
+        banner: ?[]const u8 = null,
     };
 
     /// The restore the NEXT `Surface.new` adopts (T3397), set by the session
@@ -802,6 +806,12 @@ pub const Surface = extern struct {
         /// freed in finalize.
         banner: ?*PaneBanner = null,
 
+        /// Set when a restore put this pane's banner back (T3560): the
+        /// backend is told its banner slot is taken, so the
+        /// session-interrupted notice keeps to the scrollback instead of
+        /// replacing the pane's own banner (win32's T422).
+        banner_restored: bool = false,
+
         /// The activity state `+set-state` / OSC 7777 last gave this pane
         /// (T3339): `+list` reports it as `state`.
         activity_state: terminal.osc.Command.ActivityState = .idle,
@@ -855,6 +865,11 @@ pub const Surface = extern struct {
             .env = dupeEnv(alloc, overrides.env) catch &.{},
         };
         if (restore) |r| self.adoptRestore(alloc, r);
+        // After the pane id: the card and its test dump name the pane.
+        if (restore) |r| if (r.banner) |b| if (b.len > 0) {
+            self.setPaneBanner(b);
+            priv.banner_restored = priv.banner != null;
+        };
         return self;
     }
 
@@ -2144,6 +2159,9 @@ pub const Surface = extern struct {
             .session_id = priv.restore_session_id,
             .restore_snapshot = priv.restore_snapshot,
             .restore_offset = priv.restore_offset,
+            // T3560: the pane's own banner is already back, so the
+            // session-interrupted notice stays in the scrollback.
+            .pane_banner_restored = priv.banner_restored,
         };
     }
 

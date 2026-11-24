@@ -102,6 +102,11 @@ hl_check "A3 two terminal panes run under agent $agent1, beside a viewer" $? \
 before=$(shape)
 pidA1=$(leaf_field pa pid); pidB1=$(leaf_field pb pid)
 idV=$(leaf_field pv id)
+# T3560: pa carries a banner across the rebuild; pb has none, so its slot is
+# free for the session-interrupted notice.
+banA='## pa goal\n- [x] survive the agent'
+cli +set-banner --target=pa "$banA" > /dev/null 2>&1
+hl_wait_for 5 sh -c "[ \"\$(env -u GHOZTTY_IPC_SOCKET -u GHOZTTY_PANE_ID '$app' +list --json 2>/dev/null | grep -c 'survive the agent')\" -ge 1 ]"
 
 # ---- 2. the agent dies: the panes come back in place on a new agent --------
 kill_agent_tree "$agent1"
@@ -127,6 +132,16 @@ wdA=$(readlink "/proc/$pidA2/cwd" 2>/dev/null)
 hl_check "A9 the rebuilt pa shell starts in pa's directory" $? "cwd=$wdA"
 ! grep -q 'gave up' "$APP_LOG"
 hl_check "A10 no give-up line" $?
+# T3560: the rebuilt pa keeps its own banner - the notice did not take its
+# slot - while bannerless pb's slot carries the notice.
+banner_kept() { [ "$(leaf_field pa banner)" = "$banA" ]; }
+hl_wait_for 5 banner_kept
+sleep 1
+banner_kept
+hl_check "A10b the rebuilt pa keeps its own banner, not the session-interrupted notice" $? "banner=$(leaf_field pa banner)"
+notice_b() { leaf_field pb banner | grep -q 'Session interrupted'; }
+hl_wait_for 5 notice_b
+hl_check "A10c bannerless pb's slot carries the session-interrupted notice" $? "banner=$(leaf_field pb banner)"
 
 # ---- 3. the rebuilt panes work ---------------------------------------------
 cli +send-keys --target=pa 'echo A11_$((40+2))' Enter > /dev/null 2>&1
