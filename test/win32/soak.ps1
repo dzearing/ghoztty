@@ -68,10 +68,9 @@ function Rep($m) { $m | Tee-Object -FilePath $report -Append | Write-Host }
 # answer" progress note, which it prints on its way to succeeding. T1215: the
 # 30-minute run on 2026-10-22 died on exactly that at the teardown `+close`,
 # after every assertion had passed, and skipped the kill and desktop teardown.
-function Invoke-Tolerant([scriptblock]$Body) {
-    $ErrorActionPreference = 'Continue'
-    & $Body
-}
+# Invoke-Tolerant runs such a call under `Continue`; it is shared since T2176,
+# and test\win32\native-stderr-audit.ps1 sweeps for an unwrapped site.
+. (Join-Path $PSScriptRoot 'lib\NativeTolerant.ps1')
 
 # The verdict goes through the shared scorer (T271), so a zero-assertion run -
 # a `-SelfTest` whose grading helpers all threw, or a soak that reached the end
@@ -352,7 +351,7 @@ function Get-UserSessionIds {
         if (-not $soakIsDebugLineage) { Remove-Item Env:GHOZTTY_AGENT_INSTANCE -ErrorAction SilentlyContinue }
         $env:LOCALAPPDATA = [Environment]::GetFolderPath('LocalApplicationData')
         return @(
-            (& $exe +sessions 2>&1 | ForEach-Object { $_.ToString() }) |
+            (Invoke-Tolerant { & $exe +sessions 2>&1 | ForEach-Object { $_.ToString() } }) |
                 Where-Object { $_ -match '^[0-9a-f]{32}' } |
                 ForEach-Object { ($_ -split '\s+')[0] }
         )

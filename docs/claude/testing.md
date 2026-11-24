@@ -1584,6 +1584,19 @@ typed text; the 2026-10-22 sites were read and are presence checks, held as a
 per-file baseline. A new one splits its marker or says why the echo is enough:
 `# echo-marker: <reason>` on the wait's line or the one above.
 
+**Under `Stop`, wrap a redirected app call in `Invoke-Tolerant`** (T2176). With
+`$ErrorActionPreference = 'Stop'`, PowerShell 5.1 turns every stderr line of a
+native call whose stderr is redirected (`2>$null`, `2>&1`, `*>`) into a
+terminating error - and the CLI prints "Waiting for Ghoztty to answer ..." on
+stderr whenever the app is slow, on its way to succeeding. soak.ps1 died that
+way at its teardown after every assertion had passed (T1215). Write
+`Invoke-Tolerant { & $exe +close --target=x 2>$null | Out-Null }`
+(`test\win32\lib\NativeTolerant.ps1`): the call runs under `Continue`, the
+caller stays under `Stop`, and `$LASTEXITCODE` comes back.
+`test\win32\native-stderr-audit.ps1` sweeps for an unwrapped site; the
+2026-11-24 sites are a per-file baseline that only goes down. A call whose
+failure IS the assertion says so: `# native-stderr: <reason>`.
+
 **A pixel aggregate scores its subject, not the whole capture** (T1281). A mean,
 a lit-pixel count or a colour set taken over the full window mixes the subject
 with chrome, so the chrome alone can pass it - T1115's whole-window mean

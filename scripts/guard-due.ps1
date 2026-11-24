@@ -9467,6 +9467,22 @@ $GuardTable = @(
         )
     },
 
+    # T2176 - the native-stderr sweep: a redirected app call under Stop, which
+    # the CLI's "Waiting for Ghoztty to answer" note ends with no verdict
+    # (T1215). Covers the shared Invoke-Tolerant helper too: section C runs it
+    # live against a real stderr line.
+    [pscustomobject]@{
+        Name   = 'native-stderr'
+        Script = 'test\win32\native-stderr-audit.ps1'
+        Stamp  = 'test\win32\native-stderr-audit.stamp.json'
+        Covers = @(
+            'test\win32\native-stderr-audit.ps1',
+            'test\win32\lib\NativeStderrAudit.ps1',
+            'test\win32\lib\NativeTolerant.ps1',
+            'test\win32\native-stderr-audit.baseline.json'
+        )
+    },
+
     # T2024 - the WMI-bound audit: the shared libraries look processes up in
     # the kernel table (lib\ProcessTable.ps1), and anything left on WMI is
     # bounded. Covers the table itself (section D runs it) and the libraries
