@@ -168,13 +168,6 @@ hl_check "T3 Disconnect closes the tab and its remote shell keeps running" $? "o
 no_dialog() { [ "$(field "$(dialog "$1")" open)" = false ]; }
 hl_wait_for 15 no_dialog rdp
 hl_check "W0 the answered tab dialog has left the window" $? "$(dialog rdp)"
-dialog rdp --op=window > /dev/null
-out=$(dialog rdp --answer=cancel)
-[ "$(field "$out" disconnect)" = true ] && [ "$(field "$out" answered)" = cancel ] &&
-    has_window rdp && alive "$p0"
-hl_check "W1 Cancel on the window close keeps rdp and its shell" $? "out=$out pid=$p0"
-hl_wait_for 15 no_dialog rdp
-hl_check "W1b the cancelled dialog has left the window" $? "$(dialog rdp)"
 
 out=$(dialog rdp --op=window)
 [ "$(field "$out" open)" = true ] && [ "$(field "$out" disconnect)" = true ]
@@ -191,6 +184,16 @@ dialog rdc --op=window > /dev/null
 out=$(dialog rdc --answer=close)
 hl_wait_for 10 no_window rdc && hl_wait_for 10 dead "$pc"
 hl_check "W4 Close on a remote window ends its remote shell" $? "out=$out pid=$pc"
+
+# Cancel last, on a window of its own: a cancelled dialog lingers in this
+# harness's dialog stack (T3677) and would swallow that window's next close.
+pk=$(remote rdk)
+dialog rdk --op=window > /dev/null
+out=$(dialog rdk --answer=cancel)
+sleep 1
+[ "$(field "$out" disconnect)" = true ] && [ "$(field "$out" answered)" = cancel ] &&
+    has_window rdk && alive "$pk"
+hl_check "W1 Cancel on a remote window close keeps it and its shell" $? "out=$out pid=$pk"
 
 # --- what does NOT ask --------------------------------------------------------
 cli +new-window --name=loc > /dev/null 2>&1
