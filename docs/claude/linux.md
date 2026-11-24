@@ -100,7 +100,12 @@ when everything is present. What it puts where:
   automated clone with HTTP 406, so it clones GNOME's GitHub mirror; and a
   source checkout answers `--version` with `uninstalled`, which the build's
   version check rejects, so the wrapper answers with the tag's number.
-- `~/.local/ghoztty-tools/bin` links both, and `wsl-run.ps1` puts that dir on
+- **go 1.26.0** (`relay/go.mod` says `go 1.26`) in `~/.local/go-1.26.0`, the
+  official linux-amd64 tarball (T3670). Section Y of
+  `test/linux/cli-remote-window.sh` builds the local rendezvous relay from
+  `relay/` with it and dials a real relay end to end; without it that section
+  fails Y0 rather than skipping.
+- `~/.local/ghoztty-tools/bin` links all three, and `wsl-run.ps1` puts that dir on
   PATH right after `zig-out/bin`. Nothing else in `~` is touched.
 
 A `-Repo mnt` step has `GIT_DIR`/`GIT_WORK_TREE` exported at this worktree, so
@@ -1916,22 +1921,30 @@ refusal is made before any dial, and the relay wins when both are given.
   device) and `connection.state`; a local window has neither field.
 - **Not in the layout file**: `SessionLayout` skips remote windows, and a
   remote pane moved into a local window records no session id. Relay windows
-  coming back at relaunch are T3671, per-host defaults T3669, a real relay
-  dial in the test T3670; the chooser, pill and reconnect ladder are T3563.
+  coming back at relaunch are T3671, per-host defaults T3669; the chooser,
+  pill and reconnect ladder are T3563.
 
 Acceptance, against a loopback agent started with `--listen 127.0.0.1:<port>
---headless` (the Linux half of `test/win32/ipc-remote.ps1`):
+--headless` (the Linux half of `test/win32/ipc-remote.ps1`) and, in section Y
+(T3670), a REAL relay dial - the local rendezvous relay built from `relay/`
+with `DEV_AUTH`, a device enrolled with the dev bearer, and an agent in
+`--relay` mode holding that device's token (the Linux half of
+`test/win32/ipc-relay.ps1`; needs the distro's `go`):
 
 ```powershell
 powershell -NoProfile -File scripts\linux\wsl-run.ps1 -CommandFile test\linux\cli-remote-window.sh
 ```
 
-Ends `CLI REMOTE WINDOW: ALL PASS` (32 checks: the four refusals, the panes
+Ends `CLI REMOTE WINDOW: ALL PASS` (48 checks: the four refusals, the panes
 descend from the TCP agent and not the app, keys and `--command` round-trip,
 splits, a new tab (in the pressed pane's cwd; a local window's new tab stays
 local) and `--from-focused` stay on the machine, `+close` ends the remote
-shells and closes the link). `NEGATIVE=1` dials a dead port for the main
-window and must fail R1.
+shells and closes the link; then Y0-Y15 over the relay: the relayed panes
+descend from the `--relay` agent, `+list` names the machine by `--name` or
+else by device id, a split and a new tab stay on it, `+close` ends all three
+sessions). `NEGATIVE=1` dials a dead port for the main window and must fail
+R1; `NEGATIVE=relay` dials a device nobody enrolled and must fail Y5 with
+`failed to reach <device> via relay <url>: ...`.
 
 ## The relay account store: keyring, else a private file (T3341)
 
