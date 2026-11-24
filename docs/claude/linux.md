@@ -1688,7 +1688,11 @@ it used to carry (a `-Dtest-filter=firstLeaf` run matched no tests).
   or a relaunchable tombstone (one pane per session), else opens a fresh shell
   in its recorded pwd - under its recorded pane id either way. A restored
   launch shows only the restored windows unless it was given `-e`, which still
-  opens its own. Panes are built through the ordinary window/tab/split paths,
+  opens its own, in front, and runs its command there (T3594): a restored pane
+  nulls `initial-command` in its own config (core would otherwise hand `-e` to
+  whichever pane realizes first), and the `-e` window carries the command as an
+  explicit `Action.newWindow` override. Acceptance: section 5c (RE1-RE6) of
+  `test/linux/session-restore.sh`. Panes are built through the ordinary window/tab/split paths,
   each handed its restore through `Surface.pending_restore`. A window opens at
   its recorded size (`Application.newWindowForRestore`, set before it is
   presented; a size under 100 or over 16384 px is ignored) and each tab
