@@ -594,7 +594,7 @@ pub const Application = extern struct {
                     // realize before this one, so without the override the
                     // command reached no pane at all. Opened after the
                     // restore, so it is the window in front.
-                    self.newWindow(null, .{ .command = cmd }) catch |err|
+                    Action.newWindow(self, null, .{ .command = cmd }) catch |err|
                         log.warn("launch command window failed err={}", .{err});
                     log.info("launch command: opened its window beside the {d} restored", .{restored});
                 }
