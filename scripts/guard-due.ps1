@@ -2148,6 +2148,21 @@ $GuardTable = @(
             'src\apprt\win32\Window.zig'
         )
     },
+    # A tucked pane's strip as a screen reader finds it (T2122): a UI
+    # Automation button named 'Tucked pane: <name>' whose Invoke brings the
+    # pane forward. Window.zig answers WM_GETOBJECT and lists the strips.
+    [pscustomobject]@{
+        Name   = 'pane-stack-strip-uia'
+        Script = 'test\win32\pane-stack-strip-uia.ps1'
+        Stamp  = 'test\win32\pane-stack-strip-uia.stamp.json'
+        Covers = @(
+            'test\win32\pane-stack-strip-uia.ps1',
+            'test\win32\lib\UiaProbe.ps1',
+            'src\apprt\win32\strip_uia.zig',
+            'src\apprt\win32\strip_uia_provider.zig',
+            'src\apprt\win32\Window.zig'
+        )
+    },
     # A tucked pane's strip (T2109): painted in the strip colour, named by the
     # banner title live on +set-banner, and a click on it brings the pane on
     # show. `pane_sidebar.zig` is named because the label is its `paneLabel`.

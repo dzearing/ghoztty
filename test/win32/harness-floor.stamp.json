@@ -1,10 +1,11 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-11-24T07:13:37-08:00",
-    "commit":  "12330af51",
+    "generated":  "2026-11-24T08:18:50-08:00",
+    "commit":  "2f373c96a",
     "uncommitted":  [
-                        "test/win32/pane-stack-slide.ps1"
+                        "test/win32/lib/UiaProbe.ps1",
+                        "test/win32/pane-stack-strip-uia.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "e3d359fb624aa2c8abf555bea66b63a798c01ec9dce023416631191e2c943050",
@@ -363,6 +364,7 @@
                   "test/win32/lib/Transcript.ps1":  "c40f2e867980e78b4999e7a9a83efe7d260dabda1a5f43bb32b5dd1b29dee61a",
                   "test/win32/lib/TreeSwapAudit.ps1":  "d0189d964f705a3c1447497e0119773fb925b85dc6e561110d127c067f4a9d6e",
                   "test/win32/lib/TypeRampAudit.ps1":  "73d6ed707cf50c96c71e3d3f2e4e61e9bb0b5b86d355aee62bfcc87034006a0d",
+                  "test/win32/lib/UiaProbe.ps1":  "6a5f665a6d5fe0c5bcd2192cfc435b7c9e7779e3603f78e6ee565fa4f85ea27e",
                   "test/win32/lib/UnrollCountAudit.ps1":  "966bbf5a3b5e2e6fba3d0f651a722f8930a1b3611c7a2c018ac4f90a9dd9d798",
                   "test/win32/lib/UnwiredHookAudit.ps1":  "4a0600ed0088b093dddebaab1adfbbf2fffe4c572a49948a89cd58ec94acc28c",
                   "test/win32/lib/UserInstallSentinel.ps1":  "e8e4fb160ba7370674c1b595c129a17200347056287c078e6074a04f5751c4b0",
@@ -439,8 +441,9 @@
                   "test/win32/pane-sidebar-window-order.ps1":  "a517254da8d4d08229703a2e4ae2f90c6e531d443383181336e1e6e85a0fd333",
                   "test/win32/pane-stack-focus.ps1":  "186fe0cb2691714d5b2d23ec1ef558249464e24e6109a3ce54964892b7bcfa6b",
                   "test/win32/pane-stack-grid.ps1":  "dfcd236f29b165da5e00b13e3eedbbbf466c2d647f4e258f3cf35d108d7d2cdb",
-                  "test/win32/pane-stack-slide.ps1":  "66301ec5e15c5858966d5fb8b9f9bf3eeaf6fadbd2d64b56345ab0f934332680",
+                  "test/win32/pane-stack-slide.ps1":  "351858c008d828e2881ab7ddc1b02d519366d32bdf9ad20fa0ea0189c9d072c9",
                   "test/win32/pane-stack-strip.ps1":  "cc74fdd9d5245766edb9e48e3bfbc4ea0e868282ea4a054e68872b8edecc06a4",
+                  "test/win32/pane-stack-strip-uia.ps1":  "5dba024e7f3181863632e9aaa5ab1ff287d8a0ae469f04c7cd8d25ea5be77ba5",
                   "test/win32/pane-stack-unfold.ps1":  "527b7fa6941bce96cbc3f6b6aa3ad910f3266b83a3fcdb70d37d31aa855ff9ac",
                   "test/win32/parity-decisions.ps1":  "6f371c66bd381d734ac8a5408671d8695e48d7a6215004c299a2ccb1a92ace88",
                   "test/win32/parity-sweep.ps1":  "2a22c9f7c35cdc28c7107c0f6940841e70959b60c7a4e1a60d87b22b7bfb969a",

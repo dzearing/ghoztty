@@ -1,0 +1,24 @@
+{
+    "guard":  "pane-stack-strip-uia",
+    "script":  "test/win32/pane-stack-strip-uia.ps1",
+    "generated":  "2026-11-24T06:50:58-08:00",
+    "commit":  "2b7927959",
+    "uncommitted":  [
+                        "src/apprt/win32/strip_uia.zig",
+                        "src/apprt/win32/strip_uia_provider.zig",
+                        "src/apprt/win32/Window.zig",
+                        "test/win32/lib/UiaProbe.ps1",
+                        "test/win32/pane-stack-strip-uia.ps1"
+                    ],
+    "files":  {
+                  "src/apprt/win32/strip_uia.zig":  "b3aa56a2be440c387364d480521c68a6e77ca45eb6a6b2940a8df1208ece2507",
+                  "src/apprt/win32/strip_uia_provider.zig":  "a24466ec87363f1c95f8e02e5914935f553f43abba56fd54f319a20a03b87177",
+                  "src/apprt/win32/Window.zig":  "3e982f8c676b62841d4c8db1d5b08a2007ea559fb1a5bf837328f8387208d86b",
+                  "test/win32/lib/UiaProbe.ps1":  "6a5f665a6d5fe0c5bcd2192cfc435b7c9e7779e3603f78e6ee565fa4f85ea27e",
+                  "test/win32/pane-stack-strip-uia.ps1":  "5dba024e7f3181863632e9aaa5ab1ff287d8a0ae469f04c7cd8d25ea5be77ba5"
+              },
+    "code":  {
+                 "test/win32/lib/UiaProbe.ps1":  "code1:278a06a84be03611a6f9e7e47005e442bfc3905ba82f3b2da6fde56b07c8b472",
+                 "test/win32/pane-stack-strip-uia.ps1":  "code1:e3121f60abc63c9951509e2e5be906a3a41357623f1dc34a66961b5121ed59e4"
+             }
+}

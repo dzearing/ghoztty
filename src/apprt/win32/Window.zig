@@ -188,6 +188,8 @@ const comp_tree = @import("../../renderer/comp_tree.zig");
 const pane_stack_grid = @import("pane_stack_grid.zig");
 const pane_stack_layout = @import("pane_stack_layout.zig");
 const pane_stack_strip = @import("pane_stack_strip.zig");
+const strip_uia = @import("strip_uia.zig");
+const strip_uia_provider = @import("strip_uia_provider.zig");
 const pane_stack_slide = @import("pane_stack_slide.zig");
 const glide_landing_timer = @import("glide_landing_timer.zig");
 const strip_face = @import("strip_face.zig");
@@ -329,6 +331,11 @@ pub const WM_APP_TEST_FULLSCREEN_POINTER: u32 = w32.WM_APP + 41;
 /// rather than a key state read later, it is also how an acceptance script on a
 /// background desktop - where no key can be held - drives the same path.
 pub const WM_APP_SHIFT_CLOSE: u32 = w32.WM_APP + 40;
+
+/// A screen reader invoked a tucked pane's strip (T2122): lParam is the pane,
+/// by address. Posted by `strip_uia_provider` from inside a UI Automation
+/// call, so the pane is brought forward from the message loop, as a click is.
+pub const WM_APP_STRIP_INVOKE: u32 = w32.WM_APP + 56;
 
 /// Hero-mode carousel thumbnail refresh period (Mac parity: 0.15s).
 const HERO_SNAP_INTERVAL_MS: u32 = 150;
@@ -1161,6 +1168,11 @@ stack_persisted_stamp: u64 = 0,
 /// The tucked pane whose strip the pointer is over (T2109): its label takes
 /// Mac's stronger hover ink. Compared, never dereferenced.
 strip_hover: ?*PaneView = null,
+
+/// The window's UI Automation root (T2122), which describes the tucked
+/// strips to a screen reader. Made on the first `UiaRootObjectId` ask;
+/// detached on `WM_DESTROY`.
+strip_uia_root: ?*strip_uia_provider.Root = null,
 
 /// The strips' names as drawn once (T2871, `strip_label`), laid into the
 /// desk's pixels on every paint after, and what draws and measures them: a
@@ -15165,6 +15177,79 @@ pub fn bringForward(self: *Window, view: *PaneView) void {
     if (view.hwnd()) |h| App.deferSetFocus(h); // T48: defer out of WndProc
 }
 
+/// A tucked pane's strip as the window's UI Automation provider describes it
+/// (T2122): the pane by address (compared, never dereferenced by the
+/// provider), the strip in screen pixels, and its place in the paint order.
+pub const UiaStrip = struct {
+    view_addr: usize,
+    rect: strip_uia.Rect,
+    paint: usize,
+};
+
+/// The strips a screen reader can reach now, in reading order: every tucked
+/// pane's band - not a card still gliding into or out of one, which is a card
+/// until the glide ends.
+pub fn uiaStrips(self: *Window, out: []UiaStrip) usize {
+    const hwnd = self.hwnd orelse return 0;
+    var strips: [MAX_DRAG_NODES]TuckedStrip = undefined;
+    const n = self.tuckedStrips(&strips);
+    var m: usize = 0;
+    for (strips[0..n], 0..) |s, i| {
+        if (m >= out.len) break;
+        if (s.glide != null) continue;
+        var tl: w32.POINT = .{ .x = s.tab.left, .y = s.tab.top };
+        var br: w32.POINT = .{ .x = s.tab.right, .y = s.tab.bottom };
+        _ = w32.ClientToScreen(hwnd, &tl);
+        _ = w32.ClientToScreen(hwnd, &br);
+        out[m] = .{
+            .view_addr = @intFromPtr(s.view),
+            .rect = .{ .left = tl.x, .top = tl.y, .right = br.x, .bottom = br.y },
+            .paint = i,
+        };
+        m += 1;
+    }
+    std.sort.insertion(UiaStrip, out[0..m], {}, struct {
+        fn lt(_: void, a: UiaStrip, b: UiaStrip) bool {
+            return strip_uia.readsBefore(a.rect, b.rect);
+        }
+    }.lt);
+    return m;
+}
+
+/// The pane at `view_addr` if it is a tucked strip on show now.
+fn uiaStripView(self: *Window, view_addr: usize) ?*PaneView {
+    var buf: [MAX_DRAG_NODES]UiaStrip = undefined;
+    for (buf[0..self.uiaStrips(&buf)]) |s| {
+        if (s.view_addr == view_addr) return @ptrFromInt(view_addr);
+    }
+    return null;
+}
+
+/// The name strip `view_addr` shows (`paneStripLabel`), or null when it is
+/// not a strip on show any more.
+pub fn uiaStripLabel(self: *Window, view_addr: usize, buf: []u8) ?[]const u8 {
+    const view = self.uiaStripView(view_addr) orelse return null;
+    return self.paneStripLabel(view, buf);
+}
+
+/// A screen reader invoked strip `view_addr`: post it back to the message
+/// loop (`WM_APP_STRIP_INVOKE`). False when the window cannot take it.
+pub fn uiaInvokeStrip(self: *Window, view_addr: usize) bool {
+    const hwnd = self.hwnd orelse return false;
+    return w32.PostMessageW(hwnd, WM_APP_STRIP_INVOKE, 0, @bitCast(view_addr)) != 0;
+}
+
+/// `WM_APP_STRIP_INVOKE`: bring the pane forward as a click on its strip
+/// does, if it is still a strip - the layout may have moved on since the ask.
+fn invokeStripFromUia(self: *Window, view_addr: usize) void {
+    const view = self.uiaStripView(view_addr) orelse {
+        log.info("strip invoke from UI Automation ignored: no longer a tucked strip", .{});
+        return;
+    };
+    log.info("strip invoked from UI Automation: bringing the pane forward", .{});
+    self.bringForward(view);
+}
+
 /// A focus path just made a pane its tab's focused pane (T2110): goto_split,
 /// a sidebar row, a `ghoztty://focus` link, IPC `--focus`. On Mac every one
 /// of them goes through `PaneStackState.noteFocus` before the relayout, so a
@@ -23523,7 +23608,19 @@ pub fn windowWndProc(
             // later destruction can re-enter our WindowProc via
             // SetFocus and deadlock on a COM marshaling reply.
             if (lparam == w32.OBJID_CLIENT) return 0;
+            // UI Automation's own question (T2122): answered with the
+            // provider that describes the tucked strips. It is not the MSAA
+            // client object above and builds no oleacc proxy.
+            if (@as(i32, @truncate(lparam)) == strip_uia_provider.UiaRootObjectId) {
+                if (window.strip_uia_root == null)
+                    window.strip_uia_root = strip_uia_provider.Root.create(window.app.core_app.alloc, window, hwnd) catch null;
+                if (window.strip_uia_root) |r| return r.lresult(wparam, lparam);
+            }
             return w32.DefWindowProcW(hwnd, msg, wparam, lparam);
+        },
+        WM_APP_STRIP_INVOKE => {
+            window.invokeStripFromUia(@bitCast(lparam));
+            return 0;
         },
         w32.WM_TIMER => {
             if (wparam == RESIZE_TRACE_FLUSH_TIMER_ID) {
@@ -23851,6 +23948,12 @@ pub fn windowWndProc(
             resize_trace.flush();
             // A property left on a destroyed window leaks its entry (T1536).
             _ = w32.RemovePropW(hwnd, DRAG_CURSOR_PROP);
+            // A screen reader may hold the strips' provider long after this
+            // (T2122): from here on it answers "element not available".
+            if (window.strip_uia_root) |r| {
+                window.strip_uia_root = null;
+                r.detach();
+            }
             _ = w32.SetWindowLongPtrW(hwnd, w32.GWLP_USERDATA, 0);
             window.onDestroy();
             return 0;
