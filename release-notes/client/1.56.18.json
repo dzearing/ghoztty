@@ -1,0 +1,24 @@
+{
+  "version": "1.56.18",
+  "sections": [
+    { "title": "New",
+      "items": [
+        { "text": "The Linux pane sidebar lists every window and searches them." },
+        { "text": "The Linux pane banner folds to its title row on a click, and Ctrl+Shift+B opens its editor." },
+        { "text": "Linux pane banners survive a relaunch and an agent recovery, and keep the session-interrupted notice out of their slot." },
+        { "text": "Linux banner links get the shared right-click menu, and the window title shows when a pane is busy or waiting on a question." },
+        { "text": "test/linux/cli-pane-drag.sh is executable like its siblings." }
+      ] },
+    { "title": "Fixes",
+      "items": [
+        { "text": "Layout-recovery test's 'extra session' red was already fixed." },
+        { "text": "The menu check no longer mistakes a pending update row for a broken menu." },
+        { "text": "The session-restore test now really resizes the window before checking the pane follows." },
+        { "text": "Window > Float on Top lands on the first choice again." }
+      ] },
+    { "title": "Improvements",
+      "items": [
+        { "text": "A divider drag is proven to carry the pane banner in the same pass." }
+      ] }
+  ]
+}
