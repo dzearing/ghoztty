@@ -1,0 +1,22 @@
+{
+  "version": "1.56.22",
+  "sections": [
+    { "title": "New",
+      "items": [
+        { "text": "A stashed pane on Linux leaves the layout and comes back to its slot." },
+        { "text": "On Linux, +new-remote-window opens a window on a remote machine's agent." },
+        { "text": "A new tab in a remote Linux window opens on that machine." },
+        { "text": "Relay windows on Linux come back at relaunch, re-attached to the same far shell." }
+      ] },
+    { "title": "Fixes",
+      "items": [
+        { "text": "The Settings window appears at once; its theme catalog loads behind it." },
+        { "text": "The dashboard server restarts itself onto new code after task-dashboard.js changes." },
+        { "text": "The dashboard reload test ends red, not green, if its section aborts." }
+      ] },
+    { "title": "Improvements",
+      "items": [
+        { "text": "An 8-pane divider drag fits the two-frame budget again; T2459 already fixed it." }
+      ] }
+  ]
+}
