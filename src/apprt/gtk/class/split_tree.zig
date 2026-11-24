@@ -276,7 +276,7 @@ pub const SplitTree = extern struct {
 
     fn snapshot(self: *Self, snap: *gtk.Snapshot) callconv(.c) void {
         self.snapshotDesk(@ptrCast(snap));
-        gtk.Widget.virtual_methods.snapshot.call(Class.parent, self.as(gtk.Widget), snap);
+        gtk.Widget.virtual_methods.snapshot.call(Class.parent, self.as(Parent), snap);
     }
 
     fn init(self: *Self, _: *Class) callconv(.c) void {
