@@ -1,8 +1,8 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-11-24T14:33:14-08:00",
-    "commit":  "376bf89ee",
+    "generated":  "2026-11-24T14:46:24-08:00",
+    "commit":  "c7f617d70",
     "uncommitted":  [
 
                     ],
@@ -140,7 +140,7 @@
                   "test/win32/dark-menus.ps1":  "15c2c0c17b2e5ab161a88c79cb27c0fb18f4f59986ce769b848998b249cd625d",
                   "test/win32/dashboard-dom.ps1":  "588b973da60dc74921f6acd2e47ff5d2ce448fe06359f6551a16e1b5e4d779cf",
                   "test/win32/dashboard-keepalive.ps1":  "907915acd38d52b16755167f2df7e4383bc5d1cb53a3f8cbd84e419a559c7429",
-                  "test/win32/deliver-windows-build.ps1":  "f44a24052c394a2a858c6896bb5d895ffe99fc2fb61ad117bccaa81a75505ac5",
+                  "test/win32/deliver-windows-build.ps1":  "4fd0ee6e067dcddb4e1f0c2658ae4a6e90c6565ad891f42f001d227dc6984a22",
                   "test/win32/deny-escape-damage.ps1":  "2fc4374ce0468d7f7274c10218e38a1ec1c5ec2634fdb231bf2b8b290e9a7e29",
                   "test/win32/deny-git-autostash.ps1":  "625dfd8e4a308dc01902adb6c31b80b0a60a47a1b2e230a9385eaaecd40846e0",
                   "test/win32/deny-sh-from-powershell.ps1":  "345a909a59c95edc61dc97247f3d94784431cae1203ca76951f5dbe755e25a8e",
