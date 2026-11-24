@@ -145,16 +145,23 @@ function Measure-InkVs($shot, $rect, [int]$rr, [int]$rg, [int]$rb) {
     return $ink
 }
 
-# The card's own fill, read from a Kill-box-sized patch of card immediately to
-# the LEFT of the Kill box - same card, same row, clear of the button. The
-# reference has to come from OUTSIDE the box: a hovered Kill's fill can be the
-# majority of its own box, so a mode taken inside it would make the box its own
-# reference and score the hovered state as LESS ink, not more.
+# The card's own fill, read as the mode of a narrow strip of card at its LEFT
+# edge (the geometry's CardX, "inside the card's fill and clear of every
+# mark"), over the Kill box's own rows - same card, same rows, clear of every
+# button. The reference has to come from OUTSIDE the box: a hovered Kill's fill
+# can be the majority of its own box, so a mode taken inside it would make the
+# box its own reference and score the hovered state as LESS ink, not more.
+#
+# T2018: it used to be the Kill-box-sized patch immediately LEFT of Kill. T1746
+# put the Show / Resume button exactly there (chooser_sessions.zig: the action
+# button's right edge is kill.left - action_gap), so the "card fill" became the
+# button's fill, every pixel of the Kill box scored as ink at rest (1156 = the
+# whole 34x34 box at 125%) and the hover read as LESS. The left edge of the card
+# carries nothing until the status dot at pad_x, whatever buttons the card wears.
 function Get-CardFill($shot, $box) {
-    $w = $box.Right - $box.Left
     $counts = @{}
-    $x0 = [Math]::Max(0, ($box.Left - $w - 4) - $shot.Left)
-    $x1 = [Math]::Min($shot.Width, ($box.Right - $w - 4) - $shot.Left)
+    $x0 = [Math]::Max(0, $script:cardRefLeft - $shot.Left)
+    $x1 = [Math]::Min($shot.Width, $script:cardRefRight - $shot.Left)
     $y0 = [Math]::Max(0, $box.Top - $shot.Top)
     $y1 = [Math]::Min($shot.Height, $box.Bottom - $shot.Top)
     if ($x1 -le $x0 -or $y1 -le $y0) { return $null }
@@ -243,6 +250,10 @@ try {
     }
     Assert (($box.Right - $box.Left) -gt 0 -and ($box.Bottom - $box.Top) -gt 0) `
         'the Kill button has a real box to measure'
+    # The card-fill reference strip (Get-CardFill): from CardX to 4 DIP past it,
+    # still short of the status dot's column at pad_x (12 DIP).
+    $script:cardRefLeft = $client.Left + $geo.CardX
+    $script:cardRefRight = $script:cardRefLeft + [int][math]::Floor(4 * $scale + 0.5)
 
     # --- (1) baseline --------------------------------------------------------
     $rest = Get-KillInk $chooser $box
