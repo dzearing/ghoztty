@@ -1,6 +1,8 @@
 const std = @import("std");
 const gobject = @import("gobject");
 const gtk = @import("gtk");
+const adw = @import("adw");
+const adw_version = @import("../adw_version.zig");
 
 const gresource = @import("../build/gresource.zig");
 const i18n = @import("../../../os/main.zig").i18n;
@@ -153,7 +155,10 @@ pub const CloseConfirmationDialog = extern struct {
         const priv = self.private();
         if (priv.answered) return;
         priv.answered = true; // the close below must not answer it first
-        self.close();
+        // libadwaita's own close (Escape's path), not a forced one.
+        if (comptime adw_version.supportsDialogs()) {
+            _ = self.as(adw.Dialog).close();
+        } else self.close();
         self.dispatch(response_id);
     }
 

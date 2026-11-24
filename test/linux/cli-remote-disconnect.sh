@@ -143,6 +143,7 @@ gone=$?
 sleep 3 # past the 1 s undo window: the parked pane's end has run
 [ $gone = 0 ] && alive "$pa"
 hl_check "D4 Disconnect removes rdp-a here and its remote shell keeps running" $? "out=$out gone=$gone pid=$pa"
+echo "DIAG probe after D4: $(dialog rdp)"
 
 out=$(dialog rdp-b --op=pane --answer=close)
 hl_wait_for 10 no_pane rdp-b && hl_wait_for 10 dead "$pb"
