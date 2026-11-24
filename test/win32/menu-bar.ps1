@@ -508,6 +508,25 @@ function Split-Row([string]$s) {
     [pscustomobject]@{ Path = $s; Accel = $accel; Flags = $flags }
 }
 function Rows($tree) { @($tree | ForEach-Object { Split-Row $_ }) }
+
+# T2017: the rows `Window.openMenu` PREPENDS to the root at runtime, each
+# followed by its own separator - the pending app update (T1673,
+# update_badge.menuLabel: "Download|Install Update <ver>[ (last try failed)]")
+# and the waiting background-process update (T1068,
+# agent_upgrade.pending_menu_label). They are correct behaviour, not drift,
+# and whether one shows depends on box state outside this script (a leaked
+# update-offer-debug.txt put "Download Update 9.9.9" at the top and turned B
+# and H red on a correct build). So the static model is compared against
+# the tree with ONLY these rows removed, and only from the top, in the
+# shape the app builds them; anything else still counts as a difference.
+$conditionalRootRow = '^(?:(?:Download|Install) Update \S+(?: \(last try failed\))?|Background Update Ready' + $EL + ')$'
+function Split-Conditional([string[]]$paths) {
+    $i = 0; $found = @()
+    while (($i + 1) -lt $paths.Count -and $paths[$i] -match $conditionalRootRow -and $paths[$i + 1] -eq '---') {
+        $found += $paths[$i]; $i += 2
+    }
+    [pscustomobject]@{ Conditional = $found; Static = @($paths[$i..($paths.Count - 1)]) }
+}
 function Row($tree, [string]$path) {
     $r = @(Rows $tree | Where-Object { $_.Path -eq $path })
     if ($r.Count -eq 0) { return $null }
@@ -807,14 +826,25 @@ try {
 $tree = Open-Menu $g
 Assert ($null -ne $tree) 'B: menu opens for the tree walk'
 if ($null -ne $tree) {
-    $paths = @(Rows $tree | ForEach-Object { $_.Path })
+    $split = Split-Conditional @(Rows $tree | ForEach-Object { $_.Path })
+    foreach ($c in $split.Conditional) { Write-Host "  NOTE  B: conditional root row present (box state, not the model): '$c'" }
+    $paths = $split.Static
     Assert ($paths.Count -eq $expectedTree.Count) "B: tree has $($expectedTree.Count) rows (got $($paths.Count))"
     $bad = @()
     for ($i = 0; $i -lt [Math]::Min($paths.Count, $expectedTree.Count); $i++) {
         if ($paths[$i] -ne $expectedTree[$i]) { $bad += "row $i got '$($paths[$i])' want '$($expectedTree[$i])'" }
     }
     Assert ($bad.Count -eq 0) 'B: every submenu, row and separator matches the model, in order'
-    if ($bad.Count) { $bad | Select-Object -Last 12 | ForEach-Object { Write-Host "      $_" } }
+    if ($bad.Count) {
+        # T2017: name the rows that differ as a SET first, then the first
+        # mismatch. Printing only the last 12 rows hid where a shift began:
+        # two rows inserted near the top read as a wall of Help rows "wrong".
+        $extra = @($paths | Where-Object { $expectedTree -notcontains $_ })
+        $missing = @($expectedTree | Where-Object { $paths -notcontains $_ })
+        foreach ($e in $extra) { Write-Host "      EXTRA   '$e' (at row $([array]::IndexOf($paths, $e)))" }
+        foreach ($m in $missing) { Write-Host "      MISSING '$m'" }
+        $bad | Select-Object -First 6 | ForEach-Object { Write-Host "      $_" }
+    }
 
     # Accelerators come from the live keybind set, menu-wide.
     $withAccel = @(Rows $tree | Where-Object { $_.Accel -ne '' })
@@ -1150,7 +1180,7 @@ Assert ((Get-TestChromeMetrics -Window $g.Top -StripVisible $true).CaptionH -eq 
 $tree = Open-Menu $g 4000
 Assert ($null -ne $tree) 'H: the strip menu button opens the menu there'
 if ($null -ne $tree) {
-    Assert ((@(Rows $tree | ForEach-Object { $_.Path })).Count -eq $expectedTree.Count) `
+    Assert ((Split-Conditional @(Rows $tree | ForEach-Object { $_.Path })).Static.Count -eq $expectedTree.Count) `
         'H: ...and it is the same menu, not a stub'
     Close-Menu $g
 }
