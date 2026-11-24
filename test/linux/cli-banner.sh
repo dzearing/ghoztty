@@ -5,7 +5,11 @@
 # widgets), the terminal is laid out BELOW it (its rows shrink, and come back
 # on a clear), +list --json reports `banner` and `state`, +set-state takes a
 # pane or a whole window, and a viewer pane refuses both verbs with the
-# shared sentence. Run it ONLY through the wrapper, from this box:
+# shared sentence. T3561: the state shows in the window title (" (busy)",
+# " (question)", pinned titles too) and on the tab (spinner, attention), and
+# a right-click on a banner link offers the shared link menu (driven through
+# the `pane-banner --link-menu/--menu-pick` debug seam, hand-offs recorded by
+# GHOZTTY_TEST_VIEWER_LINKS). Run it ONLY through the wrapper, from this box:
 #
 #   powershell -NoProfile -File scripts\linux\wsl-run.ps1 -CommandFile test\linux\cli-banner.sh
 #

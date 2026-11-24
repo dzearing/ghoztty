@@ -283,13 +283,31 @@ private runtime dir, so a test app can never meet the user's.
   a separator per rule. The card is prepended to the pane's content box,
   which turns vertical, so the terminal is laid out and resized BELOW it.
   Link clicks take `banner_link.clickAction` with the modifiers of the press
-  (`Surface.bannerLink`; Ctrl splits a viewer beside the pane). `+set-state` /
-  OSC 7777 is stored on the surface and listed as `state`; it is not shown
-  yet (T3561). A debug build appends every render to
+  (`Surface.bannerLink`; Ctrl splits a viewer beside the pane). A
+  right-click on a link (T3561) pops the viewer's link menu - same rows,
+  order and ids (`banner_link.build` through `viewer_links.menu`), popped by
+  the shared `Viewer.popLinkMenu` at the press: a capture-phase secondary
+  `GtkGestureClick` on each label reads `gtk_label_get_current_uri` and
+  claims the press, so GtkLabel's own Copy Link menu never opens (a
+  right-click off a link still gets it). A file link is named by its path,
+  which Copy Path copies. `+set-state` / OSC 7777 is stored on the surface,
+  listed as `state`, and shown (T3561): the window title gains the most
+  urgent pane's human label, ` (busy)` / ` (question)` (`needs_input` >
+  `busy` > `idle` over every pane of every tab, pinned title included -
+  `window_activity.zig`, none-lane tested; the title is composed by
+  `Window.syncTitle`, which replaced the tab-title property binding), and
+  each tab's entry shows a spinner (`AdwTabPage:loading`) while busy and
+  asks for attention (`needs-attention`) on a move into `needs_input`
+  (cleared on leaving it, or by selecting the tab as for a bell). GTK 4 has
+  no urgency hint, so the Mac's Dock bounce / win32's taskbar flash for a
+  background window has no counterpart here. A debug build appends every render to
   `$GHOZTTY_TEST_BANNER_DUMP` (`BANNER <pane-id> shown|cleared`, one line per
   widget, `END`). Acceptance: `wsl-run.ps1 -CommandFile
-  test\linux\cli-banner.sh`, ends `CLI BANNER: ALL PASS` (32 checks). Not
-  yet: the link menu (T3561). A banner survives a relaunch and an agent
+  test\linux\cli-banner.sh`, ends `CLI BANNER: ALL PASS` (46 checks; S1t-S5t
+  the title, S1m/S2m the tab marks, M1-M7 the link menu through the debug
+  seam `hl_ipc pane-banner --target=<pane> --link-menu=<target>` /
+  `--menu-pick=<row>`, recorded under `GHOZTTY_TEST_VIEWER_LINKS` like the
+  viewer's). A banner survives a relaunch and an agent
   recovery (T3560, under Session persistence). A banner's title names its
   pane's sidebar row (below).
 - **Banner collapse and the editor (T3559)**: the card is a horizontal box -
