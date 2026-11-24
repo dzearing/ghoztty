@@ -84,8 +84,8 @@ stashed_is() { [ "$(lst stashed "$1")" = "$2" ]; }
 focused_is() { [ "$(lst focused "$1")" = "$2" ]; }
 has_window() { cli +list --json 2>/dev/null | grep -q "\"target\":\"$1\""; }
 alive() { [ -n "$1" ] && kill -0 "$1" 2>/dev/null; }
-# on_stage <window>: the names on the window's stage (the panes laid out),
-# space separated in tree order; "single" when the tab shows one pane.
+# on_stage <window> <pane>: the names on the stage of <pane>'s tab (the panes
+# laid out), sorted; "single" when the tab shows one pane.
 on_stage() {
     local pane; pane=$(lst id "$1" "$2")
     hl_ipc pane-stack "--target=$pane" 2>/dev/null | python3 -c '
@@ -94,11 +94,11 @@ d = json.loads(sys.stdin.read() or "{}")
 st = d.get("stage")
 names = dict(x.split("=", 1) for x in sys.argv[1:])
 if st is None: print("single"); sys.exit(0)
-print(" ".join(names.get(p["pane"], p["pane"]) for p in st.get("panes", [])))
+print(" ".join(sorted(names.get(p["pane"], p["pane"]) for p in st.get("panes", []))))
 ' "$ida=a" "$idb=b" "$idc=c" 2>/dev/null
 }
 stage_is() { [ "$(on_stage "$1" "$2")" = "$3" ]; }
-dump() { echo "shape=$(lst shape sw) stashed=[$(lst stashed sw)] focused=$(lst focused sw) stage=[$(on_stage sw b)]"; }
+dump() { echo "shape=$(lst shape sw) stashed=[$(lst stashed sw)] focused=$(lst focused sw) stage=[$(on_stage sw a)]"; }
 
 # sw: a | b over c, every pane named.
 cli +new-window --target=sw --name=a > /dev/null 2>&1
@@ -140,9 +140,9 @@ hl_check "T5 b's shell is still running" $? "pid=$pid_b"
 focused_is sw a
 hl_check "T6 the focus stayed on a (b did not hold it)" $? "$(dump)"
 cli +send-keys --target=b 'echo stash-marker-$((6*7))' Enter > /dev/null 2>&1
-b_says() { cli +read --target=b 2>/dev/null | grep -q 'stash-marker-42'; }
+b_says() { cli +read --name=b 2>/dev/null | grep -q 'stash-marker-42'; }
 hl_wait_for 10 b_says
-hl_check "T7 a stashed pane still takes +send-keys and answers +read" $? "$(cli +read --target=b 2>&1 | tail -3)"
+hl_check "T7 a stashed pane still takes +send-keys and answers +read" $? "$(cli +read --name=b 2>&1 | tail -3)"
 out=$(cli +stash --target=b 2>&1); rc=$?
 [ $rc = 0 ] && stashed_is sw "b" && stage_is sw a "a c"
 hl_check "T8 stashing it again succeeds and changes nothing (idempotent)" $? "rc=$rc out=$out $(dump)"
@@ -225,7 +225,7 @@ cli +split --pane=a --name=d > /dev/null 2>&1
 has_d() { [ -n "$(lst id sw d)" ]; }
 hl_wait_for 10 has_d
 cli +stash --target=d > /dev/null 2>&1
-hl_wait_for 10 stashed_is sw "b d"
+hl_wait_for 10 stashed_is sw "d b"
 s=$?
 cli +close --target=a > /dev/null 2>&1
 gone_a() { [ -z "$(lst id sw a)" ]; }
