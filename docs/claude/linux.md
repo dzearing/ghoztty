@@ -273,7 +273,36 @@ private runtime dir, so a test app can never meet the user's.
   `--config`, T3369), `+set-banner`, `+set-state` (T3339) and the
   `focus` and `handoff-quit` actions are real; every other verb answers
   `+<verb> is not served by the Linux app yet (<task>)`, naming the card that
-  brings it (T3596 stash/restore, T3597 remote).
+  brings it (T3597 remote). `+stash` / `+restore` are real since T3596
+  (below).
+- **`+stash` / `+restore` (T3596)** are win32's T1827 bodies
+  (`gtk/ipc_stash.zig`, Mac `handleStash`'s refusal sentences byte for byte)
+  over the GTK split tree. A stashed pane stays a LEAF of its tab's tree -
+  shell running, every verb still reaching it, `+list` saying
+  `stashed: true` - and only the layout skips it: the mark is
+  `Surface.stash_seq` (on the instance, so win32's pure `pane_stash.zig` reads
+  it off any leaf), `pane_stack_grid.buildWith(.visible)` collapses a split
+  with a stashed side into the other, and `SplitTree.onRebuild` gives the
+  pane no card (its old card goes with the old stage; a restore builds a new
+  one, the path a close undo takes). `SplitTree.setTree` runs
+  `pane_stash.normalize` after every tree change, so a tab always shows a
+  pane: a close that leaves only stashed panes brings the top one back,
+  focused. Stashing the focused pane hands focus to the neighbor a close
+  would pick, ON SCREEN (`gotoVisible` over `pane_stash.visibleClone`, which
+  keyboard navigation uses too); a background pane's stash leaves focus
+  alone. `+restore` puts the pane back in the slot it left and moves focus
+  only with `--focus`. The last pane on screen and a Quick Terminal pane are
+  refused; both verbs are idempotent. The sidebar keeps a dimmed row for a
+  stashed pane (`pane-sidebar-stashed`, the seam's `stashed`), and a click on
+  it restores and focuses it. Keys: `stash_pane` is **Ctrl+Shift+M** on
+  Linux (Windows' chord), `restore_stashed_pane` (top of the stash, focused)
+  has no default, as on the Mac. Not yet: a relaunch keeping the stash,
+  stash-aware resize / equalize / swap / pane drops, the Alt-click exchange
+  (T3667), the sidebar's stash tray (T3607). Acceptance: `wsl-run.ps1
+  -CommandFile test\linux\cli-stash.sh`, ends `CLI STASH: ALL PASS` (31
+  checks); `wsl-run.ps1 -Step 'NEGATIVE=1 bash test/linux/cli-stash.sh'`
+  (a Windows `$env:NEGATIVE` never reaches WSL) presses Ctrl+Shift+N and must
+  fail K1 (and X1, which builds on it).
 - **`handoff-quit` (T3595)** is win32's T1070 server half: the request a
   launch of ANOTHER build sends when the user answers "Switch". No CLI verb -
   only a launch carries the `handoff` identity. Refused (shared
@@ -459,7 +488,8 @@ private runtime dir, so a test app can never meet the user's.
   window"). Panes move with their shells; ratios are percents clamped 10-90;
   focus stays on a surviving focused pane, else goes to the top-left leaf. A
   pane the layout omits is parked for `undo-timeout` and then closes with its
-  shell (close undo, T3384, below); there is no stash yet.
+  shell (close undo, T3384, below); a stashed pane (T3596) keeps its mark
+  wherever the layout puts it.
   Acceptance: `wsl-run.ps1 -CommandFile test\linux\cli-rearrange.sh`, ends
   `CLI REARRANGE: ALL PASS` (28 checks).
 - **Close undo (T3384)** is Mac's ExpiringUndoManager and win32's T1825/T2234,
@@ -1698,7 +1728,8 @@ it used to carry (a `-Dtest-filter=firstLeaf` run matched no tests).
   presented; a size under 100 or over 16384 px is ignored) and each tab
   re-pins its recorded title.
 - **Not restored:** window position - Wayland gives a client none, so where a
-  window lands is the compositor's call. **Not yet:** stash (T3596).
+  window lands is the compositor's call. **Not yet:** the stash - a stashed
+  pane (T3596) comes back on screen after a relaunch (T3667).
 - **Banners (T3560)** come back with their pane whether it re-attaches or
   opens a fresh shell (`session_layout_rules.bannerToRecord` /
   `bannerToRestore`, none-lane tested; win32's T422). The restored pane tells
