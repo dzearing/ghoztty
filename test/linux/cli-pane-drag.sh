@@ -133,11 +133,11 @@ drop() { # drop <label> <want target> <want outcome> <want shape> <pd args...>
     [ "$t" = "$want_t" ] && [ "$o" = "$want_o" ] && shape_is "$want_s"
     hl_check "$label" $? "target=$t outcome=$o shape=$(shape_of) reply=$r"
 }
-drop "D6 a onto c's centre swaps them: H(c,V(b,a))" swap moved "H(c,V(b,a))" \
+drop "D6 a onto c's centre swaps them: H(c,V(b,a))" swap moved "H(c,V(b,$a))" \
     --target="$a" --drop-on="$c" --fx=0.5 --fy=0.5
-drop "D7 c onto b's lower triangle splits b downward: V(V(b,c),a)" split moved "V(V(b,c),a)" \
+drop "D7 c onto b's lower triangle splits b downward: V(V(b,c),a)" split moved "V(V(b,c),$a)" \
     --target="$c" --drop-on="$b" --fx=0.5 --fy=0.92
-drop "D8 b onto c's upper triangle would leave it in place: nothing moves" split in_place "V(V(b,c),a)" \
+drop "D8 b onto c's upper triangle would leave it in place: nothing moves" split in_place "V(V(b,c),$a)" \
     --target="$b" --drop-on="$c" --fx=0.5 --fy=0.08
 drop "D9 a at the window's left edge spans that side: H(a,V(b,c))" top_level moved "H($a,V(b,c))" \
     --target="$a" --drop-on="$b" --fx=0.01 --fy=0.5
