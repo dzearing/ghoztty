@@ -684,6 +684,10 @@ test {
     // Stacked panes on GTK: where the grid and cards sit in the stage, a
     // strip's face and its turned label (T3567). No GTK imports.
     _ = @import("gtk/pane_stage_rules.zig");
+    // What a launch does when another build serves the socket: the dialog's
+    // buttons, the scripted answer, the window a join forwards (T3598). No
+    // GTK imports.
+    _ = @import("gtk/launch_handoff_rules.zig");
     // Cross-machine windows on GTK: a remote machine's name in `+list`, its
     // link state, and the machine copy a re-dial works from (T3597). No GTK
     // imports.

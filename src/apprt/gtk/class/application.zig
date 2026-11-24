@@ -35,6 +35,7 @@ const RelayWindows = @import("../RelayWindows.zig");
 const PaneSidebar = @import("../PaneSidebar.zig");
 const BannerEditor = @import("../BannerEditor.zig");
 const AgentRecovery = @import("../AgentRecovery.zig");
+const launch_handoff = @import("../launch_handoff.zig");
 const ApprtApp = @import("../App.zig");
 const Common = @import("../class.zig").Common;
 const WeakRef = @import("../weak_ref.zig").WeakRef;
@@ -534,6 +535,17 @@ pub const Application = extern struct {
 
             // Release the context so something else can use it.
             defer glib.MainContext.release(ctx);
+        }
+
+        // Ghoztty (T3598): a launch of one build while ANOTHER build serves
+        // the CLI socket asks first - Switch / Open Window / Cancel - instead
+        // of silently joining it (win32's T1023/T1070). Before registration,
+        // so a Switch can still become the primary instance once the running
+        // build has quit. Same build, or nobody serving: no-op.
+        switch (launch_handoff.decide(self.private().config.get())) {
+            .start => {},
+            .exit_ok => std.posix.exit(0),
+            .exit_failed => std.posix.exit(1),
         }
 
         // Register the application
