@@ -81,6 +81,7 @@ const IpcHandlers = @import("IpcHandlers.zig");
 const ProcessTree = @import("ProcessTree.zig");
 const clipboard_image = @import("clipboard_image.zig");
 const claude_image_paste = @import("claude_image_paste.zig");
+const path_paste = @import("path_paste.zig");
 const ClaudeKeybinding = @import("ClaudeKeybinding.zig");
 const session_disconnect = @import("session_disconnect.zig");
 const provenance = @import("provenance.zig");
@@ -3381,7 +3382,22 @@ pub fn clipboardRequest(
         }
         defer _ = w32.CloseClipboard();
 
-        const hglobal = w32.GetClipboardData(w32.CF_UNICODETEXT) orelse return false;
+        const hglobal = w32.GetClipboardData(w32.CF_UNICODETEXT) orelse {
+            // No text. A clipboard holding files - Explorer's ctrl+C, an
+            // image pane's ctrl+C beside its picture (T1909) - pastes their
+            // paths, as Mac pastes a copied file URL (T3581). Anything else
+            // returns false, which hands ^V to the program (T154).
+            const hdrop_mem = w32.GetClipboardData(w32.CF_HDROP) orelse return false;
+            const files = hdropText(alloc, @ptrCast(hdrop_mem)) orelse return false;
+            defer alloc.free(files);
+            if (!path_paste.pasteFiles(false, files.len)) return false;
+            // A picture beside the file is the image pane's copy: in a
+            // Claude Code pane bound for image paste, the picture still goes
+            // to Claude, exactly as before the paths were readable (T2721).
+            image_with_companion = state == .paste and clipboard_image.available();
+            log.info("paste: no text on the clipboard, pasting {d} byte(s) of file path(s) (T3581)", .{files.len});
+            break :blk try alloc.dupeZ(u8, files);
+        };
         const ptr16 = w32.GlobalLock(hglobal) orelse {
             log.warn("GlobalLock failed", .{});
             return false;
@@ -6576,49 +6592,57 @@ fn focusFollowsMouse(self: *Surface, lparam: isize) void {
     App.deferSetFocus(hwnd); // T48: never SetFocus inside a WndProc
 }
 
-/// Handle WM_DROPFILES — a file (or files) was dropped onto this
-/// surface. Convert each path to UTF-8, quote if it contains
-/// whitespace, and paste into the terminal at the cursor.
-pub fn handleDropFiles(self: *Surface, wparam: usize) void {
-    if (!self.core_surface_ready) return;
-    const hdrop: w32.HDROP = @ptrFromInt(wparam);
-    defer w32.DragFinish(hdrop);
-
-    // Number of files dropped (passing 0xFFFFFFFF as iFile).
+/// The paths an HDROP names, as the text a pane receives for them
+/// (`path_paste`: space-joined, quoted on whitespace). Shared by a drop onto
+/// the pane and a paste of a clipboard holding only files (T3581), so the two
+/// routes cannot disagree. `DragQueryFileW` reads both the wide and the ANSI
+/// `DROPFILES` shape. Null when nothing is named or on allocation failure;
+/// caller frees.
+fn hdropText(alloc: Allocator, hdrop: w32.HDROP) ?[]u8 {
+    // Number of files (passing 0xFFFFFFFF as iFile).
     const count = w32.DragQueryFileW(hdrop, 0xFFFFFFFF, null, 0);
-    if (count == 0) return;
+    if (count == 0) return null;
 
-    const alloc = self.app.core_app.alloc;
     var buf: std.ArrayListUnmanaged(u8) = .empty;
-    defer buf.deinit(alloc);
+    errdefer buf.deinit(alloc);
 
     var i: u32 = 0;
     while (i < count) : (i += 1) {
         // First call with NULL gets length (in chars, excluding NUL).
         const u16_len = w32.DragQueryFileW(hdrop, i, null, 0);
         if (u16_len == 0) continue;
-        const u16_buf = alloc.alloc(u16, u16_len + 1) catch return;
+        const u16_buf = alloc.alloc(u16, u16_len + 1) catch return null;
         defer alloc.free(u16_buf);
         const got = w32.DragQueryFileW(hdrop, i, u16_buf.ptr, @intCast(u16_buf.len));
         if (got == 0) continue;
 
         // UTF-16 → UTF-8.
-        const utf8_buf = alloc.alloc(u8, u16_buf.len * 4) catch return;
+        const utf8_buf = alloc.alloc(u8, u16_buf.len * 4) catch return null;
         defer alloc.free(utf8_buf);
         // The destination is sized from the source (4 bytes per unit covers
         // the worst case), so nothing truncates here; the bounded call is the
         // house rule rather than a fix (T990).
         const utf8_len = utf16_text.toUtf8Truncating(utf8_buf, u16_buf[0..got]);
-        const path = utf8_buf[0..utf8_len];
-
-        if (i > 0) buf.append(alloc, ' ') catch return;
-        const needs_quote = std.mem.indexOfAny(u8, path, " \t") != null;
-        if (needs_quote) buf.append(alloc, '"') catch return;
-        buf.appendSlice(alloc, path) catch return;
-        if (needs_quote) buf.append(alloc, '"') catch return;
+        path_paste.append(alloc, &buf, utf8_buf[0..utf8_len]) catch return null;
     }
 
-    if (buf.items.len == 0) return;
+    if (buf.items.len == 0) {
+        buf.deinit(alloc);
+        return null;
+    }
+    return buf.toOwnedSlice(alloc) catch null;
+}
+
+/// Handle WM_DROPFILES — a file (or files) was dropped onto this
+/// surface. Paste the paths (`hdropText`) into the terminal at the cursor.
+pub fn handleDropFiles(self: *Surface, wparam: usize) void {
+    if (!self.core_surface_ready) return;
+    const hdrop: w32.HDROP = @ptrFromInt(wparam);
+    defer w32.DragFinish(hdrop);
+
+    const alloc = self.app.core_app.alloc;
+    const text = hdropText(alloc, hdrop) orelse return;
+    defer alloc.free(text);
 
     // Send through keyCallback as text so it goes through the same
     // path as IME/clipboard input (PTY-bound, encoding-correct).
@@ -6628,7 +6652,7 @@ pub fn handleDropFiles(self: *Surface, wparam: usize) void {
         .mods = .{},
         .consumed_mods = .{},
         .composing = false,
-        .utf8 = buf.items,
+        .utf8 = text,
         .unshifted_codepoint = 0,
     }) catch |err| {
         log.err("drop-files keyCallback: {}", .{err});

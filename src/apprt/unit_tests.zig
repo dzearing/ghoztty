@@ -263,6 +263,10 @@ test {
     // same no-OS-imports deal.
     _ = @import("win32/claude_image_paste.zig");
 
+    // Pure win32 rule for the text a dropped or pasted file list becomes
+    // (T3581), same no-OS-imports deal.
+    _ = @import("win32/path_paste.zig");
+
     // Runtime registry + aggregate install flow (T869): the binary probe,
     // the external-plugin manifest gate, the rollback/refcount integration
     // and the UI-facing service. std.fs tempdir tests, every lane.

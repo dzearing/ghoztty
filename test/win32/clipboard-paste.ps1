@@ -506,6 +506,78 @@ if (-not (Start-ClaudeProbe 'L')) {
 }
 Set-ClaudeImagePasteBinding $true
 
+# --- M: a copied FILE (Explorer's ctrl+C) + ctrl+v -> pastes its path (T3581) -
+# THE T3581 CASE. Explorer writes CF_HDROP and no text at all, so pre-fix the
+# paste found nothing and ^V fell through: the path never reached the line.
+# The file name holds a space, so the path arrives double-quoted, the same
+# rule a drag-and-drop onto the pane uses (path_paste.zig).
+$fileDir = Join-Path $script:fakeRoot 'files'
+New-Item -ItemType Directory -Force -Path $fileDir | Out-Null
+$copiedFile = Join-Path $fileDir 'zq copied file.txt'
+[IO.File]::WriteAllText($copiedFile, 'x')
+function Set-FileDropClipboard([string[]]$paths, [bool]$withImage) {
+    $bmp = $null
+    if ($withImage) {
+        $bmp = New-Object System.Drawing.Bitmap 32, 32
+        $g = [System.Drawing.Graphics]::FromImage($bmp)
+        $g.Clear([System.Drawing.Color]::Green)
+        $g.Dispose()
+    }
+    try {
+        for ($t = 0; $t -lt 10; $t++) {
+            try {
+                $do = New-Object System.Windows.Forms.DataObject
+                if ($bmp) { $do.SetData([System.Windows.Forms.DataFormats]::Bitmap, $bmp) }
+                $do.SetData([System.Windows.Forms.DataFormats]::FileDrop, [string[]]$paths)
+                [System.Windows.Forms.Clipboard]::SetDataObject($do, $true)
+                return $true
+            } catch { Start-Sleep -Milliseconds 200 }
+        }
+    } finally { if ($bmp) { $bmp.Dispose() } }
+    return $false
+}
+Assert (Set-FileDropClipboard @($copiedFile) $false) 'M: harness: file-drop clipboard set'
+Assert ([System.Windows.Forms.Clipboard]::ContainsFileDropList() -and
+    -not [System.Windows.Forms.Clipboard]::ContainsText()) 'M: harness: the clipboard holds a file and NO text'
+& $Exe +send-keys --target=$script:pane 'cls' Enter | Out-Null
+Start-Sleep -Milliseconds 800
+$sent = Send-TestKeys -Window $top -Target $surface -Modifiers ctrl -Key V
+Assert $sent 'M: ctrl+v injected'
+$want = '"' + $copiedFile + '"'
+$tail = Wait-Text ([regex]::Escape($want)) 10
+if ($NegativeControl) {
+    Write-Host 'NEGATIVE CONTROL: asserting a copied file pastes NOTHING - this run MUST fail'
+    Assert ($null -eq $tail) 'M (inverted): ctrl+v with a copied file pastes nothing'
+} else {
+    Assert ($null -ne $tail) "M: ctrl+v with a copied file pastes its quoted path onto the input line (want $want)"
+}
+& $Exe +send-keys --target=$script:pane C-c | Out-Null
+Start-Sleep -Milliseconds 500
+
+# --- N: picture + its file (an image pane's copy), Claude running -> ^V (T3581) -
+# T1909 put the file beside the picture. Now that the paths are readable, the
+# picture must still reach Claude Code bound for image paste, as before.
+Assert (Set-FileDropClipboard @($copiedFile) $true) 'N: harness: picture + file clipboard set'
+Assert ([System.Windows.Forms.Clipboard]::ContainsImage() -and
+    [System.Windows.Forms.Clipboard]::ContainsFileDropList()) 'N: harness: the clipboard reports a picture AND a file'
+if (-not (Start-ClaudeProbe 'N')) {
+    Assert $false 'N: claude probe became ready'
+} else {
+    $code = Invoke-ProbeCtrlV 'N'
+    Assert ($code -eq 22) "N: picture + file, Claude running: ctrl+v reaches Claude as ^V (probe char=$code, want 22)"
+    Stop-Probe
+}
+
+# --- O: the same clipboard at a plain shell probe -> the path pastes (T3581) ---
+Set-FileDropClipboard @($copiedFile) $true | Out-Null
+if (-not (Start-Probe 'O')) {
+    Assert $false 'O: probe became ready'
+} else {
+    $code = Invoke-ProbeCtrlV 'O'
+    Assert ($code -eq 34) "O: picture + file, no Claude: ctrl+v pastes the quoted path (probe char=$code, want 34 '`"')"
+    Stop-Probe
+}
+
 Assert (-not ($app.Process -and $app.Process.HasExited)) 'no crash at end of run'
 
 } catch {
