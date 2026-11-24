@@ -8388,6 +8388,101 @@ test "an environment failure lands the pane on the error card" {
     pane.deinit(alloc);
 }
 
+/// Get a live test's ENVIRONMENT settled before any pane asks for one, and ask
+/// again when the runtime merely refused us (T592). Test-only: each live
+/// viewer test settles its environment here before `pane.start`, then its
+/// controller with `settleLiveController` (T2155), so
+/// a transient refusal is retried in all of them - not only the host floor -
+/// instead of landing the pane in `.failed` and skipping the test green and
+/// empty, and each phase's time is logged so a red names the phase that ran
+/// long. (Measured idle: environment ~3ms, controller ~0.2s.)
+///
+/// `floor-lane.ps1 -Lane all` runs two lanes that each stand up a real
+/// WebView2, and it used to start the second the instant the first exited -
+/// into a browser tree that was still tearing down, which answers
+/// `hr=0x80004005`. The wrapper now waits for that tree to be gone, and this
+/// is the other end of the same fix: whatever else on the box is holding the
+/// runtime busy, one refusal is not this box's answer about whether a viewer
+/// can run here. A PERMANENT failure (no runtime installed, a DLL that will
+/// not load) is that answer, and is taken on the first reply - retrying it
+/// would only spend the deadline waiting for an installer to run itself. On
+/// return the host is `.ready` or `.failed` with that considered failure.
+fn settleLiveEnvironment(
+    alloc: Allocator,
+    host: *webview2.Host,
+    who: []const u8,
+) !void {
+    // The policy - retry a refusal, take a permanent answer on the first
+    // reply, stop at the cap - is `webview2.shouldRetryEnvironment`, which is a
+    // function of values so it has tests that do not need a live runtime to
+    // run (T665). This loop is its one caller.
+    const max_attempts = webview2.floor_max_attempts;
+    var attempt: u8 = 0;
+    var timer = try std.time.Timer.start();
+    while (true) {
+        host.ensure();
+        const env_settled = webview2.pumpUntil(host, struct {
+            fn f(ctx: *const anyopaque) bool {
+                const h: *const webview2.Host = @alignCast(@ptrCast(ctx));
+                return h.state != .creating;
+            }
+        }.f);
+        if (!env_settled) {
+            log.err(
+                "{s}: no environment within the deadline (still {s}); " ++
+                    "something is probably holding the WebView2 profile",
+                .{ who, @tagName(host.state) },
+            );
+            return error.WebView2EnvironmentTimeout;
+        }
+        if (host.state == .ready) break;
+
+        const why = host.failure.?;
+        attempt += 1;
+        if (!webview2.shouldRetryEnvironment(why, attempt, max_attempts)) break;
+        log.warn(
+            "{s}: environment refused ({s}); attempt {d} of {d}, " ++
+                "waiting for the runtime to settle",
+            .{ who, @tagName(why), attempt, max_attempts },
+        );
+        host.deinit();
+        host.* = webview2.Host.init(alloc);
+        std.Thread.sleep(2 * std.time.ns_per_s);
+    }
+    log.warn("{s}: environment {s} in {d}ms", .{
+        who,
+        @tagName(host.state),
+        timer.read() / std.time.ns_per_ms,
+    });
+}
+
+/// Pump until a live test's pane has its controller (or a considered
+/// `.failed`), under `webview2.controllerDeadlineNs` rather than the plain
+/// hang deadline (T2155). The controller cold-starts the browser process tree,
+/// which is the one live wait whose healthy time depends on the box: ~0.2s
+/// idle, and past 60s once under a two-lane load, which turned the T163 popup
+/// test red while it passed alone. Still bounded, still says TIMEOUT rather
+/// than `expected .ready, found .creating` (T407), and logs how long it took.
+fn settleLiveController(pane: *const ViewerPane, who: []const u8) !void {
+    var timer = try std.time.Timer.start();
+    const settled = webview2.pumpUntilWithin(pane, struct {
+        fn f(ctx: *const anyopaque) bool {
+            const p: *const ViewerPane = @ptrCast(@alignCast(ctx));
+            return p.state != .waiting_env and p.state != .creating;
+        }
+    }.f, webview2.controllerDeadlineNs());
+    const ms = timer.read() / std.time.ns_per_ms;
+    if (!settled) {
+        log.err(
+            "{s}: no controller within the deadline (still {s} after {d}ms); " ++
+                "something is probably holding the WebView2 profile, or the box is starved",
+            .{ who, @tagName(pane.state), ms },
+        );
+        return error.WebView2ControllerTimeout;
+    }
+    log.warn("{s}: controller {s} in {d}ms", .{ who, @tagName(pane.state), ms });
+}
+
 test "host floor: a real controller on a real window, on this box" {
     // The test that proves T373's half of the undocumented ABI, the way T372
     // proved the environment's: it drives the WHOLE chain against the live
@@ -8457,59 +8552,9 @@ test "host floor: a real controller on a real window, on this box" {
     var host = webview2.Host.init(alloc);
     defer host.deinit();
 
-    // Get the ENVIRONMENT settled before the pane asks for one, and ask again
-    // when the runtime merely refused us (T592).
-    //
-    // `floor-lane.ps1 -Lane all` runs two lanes that each stand up a real
-    // WebView2, and it used to start the second the instant the first exited —
-    // into a browser tree that was still tearing down, which answers
-    // `hr=0x80004005`. The wrapper now waits for that tree to be gone, and this
-    // is the other end of the same fix: whatever else on the box is holding the
-    // runtime busy, one refusal is not this box's answer about whether a viewer
-    // can run here. A PERMANENT failure (no runtime installed, a DLL that will
-    // not load) is that answer, and is taken on the first reply — retrying it
-    // would only spend the deadline waiting for an installer to run itself.
-    //
     // The skip branch further down still exists and still means what it meant:
-    // after this loop, `.failed` is a considered verdict rather than a race.
-    {
-        // The policy — retry a refusal, take a permanent answer on the first
-        // reply, stop at the cap — is `webview2.shouldRetryEnvironment`, which
-        // is a function of values so it has tests that do not need a live
-        // runtime to run (T665). This loop is its one caller.
-        const max_attempts = webview2.floor_max_attempts;
-        var attempt: u8 = 0;
-        while (true) {
-            host.ensure();
-            const env_settled = webview2.pumpUntil(&host, struct {
-                fn f(ctx: *const anyopaque) bool {
-                    const h: *const webview2.Host = @alignCast(@ptrCast(ctx));
-                    return h.state != .creating;
-                }
-            }.f);
-            if (!env_settled) {
-                log.err(
-                    "host floor: no environment within the deadline (still {s}); " ++
-                        "something is probably holding the WebView2 profile",
-                    .{@tagName(host.state)},
-                );
-                return error.WebView2EnvironmentTimeout;
-            }
-            if (host.state == .ready) break;
-
-            const why = host.failure.?;
-            attempt += 1;
-            if (!webview2.shouldRetryEnvironment(why, attempt, max_attempts)) break;
-            log.warn(
-                "host floor: environment refused ({s}); attempt {d} of {d}, " ++
-                    "waiting for the runtime to settle",
-                .{ @tagName(why), attempt, max_attempts },
-            );
-            host.deinit();
-            host = webview2.Host.init(alloc);
-            std.Thread.sleep(2 * std.time.ns_per_s);
-        }
-    }
+    // after this, `.failed` is a considered verdict rather than a race.
+    try settleLiveEnvironment(alloc, &host, "host floor");
 
     var pane: ViewerPane = .{};
     defer pane.deinit(alloc);
@@ -8537,23 +8582,7 @@ test "host floor: a real controller on a real window, on this box" {
     // test has to be one. Bounded: a hang would wedge the lane, and a silent
     // timeout would make the test green and empty.
     var msg: w32.MSG = undefined;
-    const settled = webview2.pumpUntil(&pane, struct {
-        fn f(ctx: *const anyopaque) bool {
-            const p: *const ViewerPane = @ptrCast(@alignCast(ctx));
-            return p.state != .waiting_env and p.state != .creating;
-        }
-    }.f);
-    if (!settled) {
-        // Say TIMEOUT, not `expected .ready, found .creating` — the second
-        // reads as a broken pane rather than as a wait that ran out, and that
-        // misreading is what T407 was filed over.
-        log.err(
-            "host floor: no controller within the deadline (still {s}); " ++
-                "something is probably holding the WebView2 profile",
-            .{@tagName(pane.state)},
-        );
-        return error.WebView2ControllerTimeout;
-    }
+    try settleLiveController(&pane, "host floor");
 
     if (pane.state == .failed) {
         // Name WHICH kind, so a reader of the lane log can tell "this box has
@@ -13306,21 +13335,17 @@ test "T163: a popup is adopted as a pane, sized, and can close itself" {
     // undefined. The popup seams are pane-keyed so this stays possible.
     opener.open_popup_window = &testPopupOpen;
 
+    // Under a two-lane box load this went red as `WebView2ControllerTimeout`
+    // while passing alone (T2155): the controller's cold start outran the plain
+    // hang deadline. Both helpers say why.
+    try settleLiveEnvironment(alloc, &host, "T163");
+
     try opener.createHostWindow(hinstance, parent, .{ .left = 0, .top = 0, .right = 640, .bottom = 480 });
     try opener.navigate(alloc, opener_url);
     opener.start(alloc, &host);
 
     var msg: w32.MSG = undefined;
-    const settled = webview2.pumpUntil(&opener, struct {
-        fn f(ctx: *const anyopaque) bool {
-            const p: *const ViewerPane = @ptrCast(@alignCast(ctx));
-            return p.state != .waiting_env and p.state != .creating;
-        }
-    }.f);
-    if (!settled) {
-        log.err("T163: no controller within the deadline (still {s})", .{@tagName(opener.state)});
-        return error.WebView2ControllerTimeout;
-    }
+    try settleLiveController(&opener, "T163");
     if (opener.state == .failed) {
         log.warn(
             "SKIPPED live popup test, no usable runtime: {s}",
@@ -13734,18 +13759,13 @@ test "T927: a harness press is a real click, and an ExecuteScript click is not" 
         std.crypto.random.bytes(&id_bytes);
         _ = pane_id_mod.format(&pane.pane_id, id_bytes);
     }
+    try settleLiveEnvironment(alloc, &host, "T927");
     try pane.createHostWindow(hinstance, parent, .{ .left = 0, .top = 0, .right = 640, .bottom = 480 });
     try pane.navigate(alloc, page_path);
     pane.start(alloc, &host);
 
     var msg: w32.MSG = undefined;
-    const settled = webview2.pumpUntil(&pane, struct {
-        fn f(ctx: *const anyopaque) bool {
-            const p: *const ViewerPane = @ptrCast(@alignCast(ctx));
-            return p.state != .waiting_env and p.state != .creating;
-        }
-    }.f);
-    if (!settled) return error.WebView2ControllerTimeout;
+    try settleLiveController(&pane, "T927");
     if (pane.state == .failed) {
         log.warn("SKIPPED live press test, no usable runtime: {s}", .{@tagName(pane.failure.?)});
         return;
@@ -13867,18 +13887,13 @@ test "T3107: a pane whose renderer dies loads its page again, and gives up with 
         std.crypto.random.bytes(&id_bytes);
         _ = pane_id_mod.format(&pane.pane_id, id_bytes);
     }
+    try settleLiveEnvironment(alloc, &host, "T3107");
     try pane.createHostWindow(hinstance, parent, .{ .left = 0, .top = 0, .right = 640, .bottom = 480 });
     try pane.navigate(alloc, doc_path);
     pane.start(alloc, &host);
 
     var msg: w32.MSG = undefined;
-    const settled = webview2.pumpUntil(&pane, struct {
-        fn f(ctx: *const anyopaque) bool {
-            const p: *const ViewerPane = @ptrCast(@alignCast(ctx));
-            return p.state != .waiting_env and p.state != .creating;
-        }
-    }.f);
-    if (!settled) return error.WebView2ControllerTimeout;
+    try settleLiveController(&pane, "T3107");
     if (pane.state == .failed) {
         log.warn("SKIPPED live renderer-crash test, no usable runtime: {s}", .{@tagName(pane.failure.?)});
         return;

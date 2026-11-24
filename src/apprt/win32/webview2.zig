@@ -993,7 +993,27 @@ pub fn testDeadlineNs() u64 {
 /// here was unbounded, and reading five hand-rolled loops to find out otherwise
 /// is exactly the cost this removes.
 pub fn pumpUntil(ctx: *const anyopaque, done: *const fn (*const anyopaque) bool) bool {
-    const deadline = testDeadlineNs();
+    return pumpUntilWithin(ctx, done, testDeadlineNs());
+}
+
+/// How long a live test waits for a CONTROLLER, in nanoseconds: three
+/// `testDeadlineNs` (T2155). The plain deadline is a hang bound, and a
+/// controller is the one live wait whose healthy time depends on the box: it
+/// cold-starts the browser process tree, measured at ~0.2s idle, and under a
+/// two-lane load (both lanes building and running WebView2) it once ran past
+/// 60s and turned the T163 popup test red while it passed alone. Scaled from
+/// the same knob, so `GHOZTTY_WEBVIEW2_TEST_TIMEOUT_MS` still shortens it for a
+/// test of the timeout path, and still well inside floor-lane's 420s STALL.
+pub fn controllerDeadlineNs() u64 {
+    return testDeadlineNs() * 3;
+}
+
+/// `pumpUntil` with an explicit deadline in nanoseconds.
+pub fn pumpUntilWithin(
+    ctx: *const anyopaque,
+    done: *const fn (*const anyopaque) bool,
+    deadline: u64,
+) bool {
     var timer = std.time.Timer.start() catch return done(ctx);
     var msg: w32.MSG = undefined;
     while (!done(ctx)) {
@@ -1050,6 +1070,34 @@ test "testDeadlineNs: the default is a minute, and junk does not shorten it" {
     // every live test fail on a deadline it never actually waited for.
     try setEnvForTest("GHOZTTY_WEBVIEW2_TEST_TIMEOUT_MS", "soon");
     try testing.expectEqual(@as(u64, 60 * std.time.ns_per_s), testDeadlineNs());
+}
+
+test "controllerDeadlineNs: three plain deadlines, and the override still shortens it (T2155)" {
+    const prev = std.process.getEnvVarOwned(testing.allocator, "GHOZTTY_WEBVIEW2_TEST_TIMEOUT_MS") catch null;
+    defer if (prev) |p| testing.allocator.free(p);
+    defer restoreEnvForTest("GHOZTTY_WEBVIEW2_TEST_TIMEOUT_MS", prev);
+
+    try setEnvForTest("GHOZTTY_WEBVIEW2_TEST_TIMEOUT_MS", "");
+    try testing.expectEqual(@as(u64, 180 * std.time.ns_per_s), controllerDeadlineNs());
+    // Still a hang bound under floor-lane's 420s STALL, so a controller that
+    // never comes is named by the test and not by the wedge detector.
+    try testing.expect(controllerDeadlineNs() < 420 * std.time.ns_per_s);
+
+    try setEnvForTest("GHOZTTY_WEBVIEW2_TEST_TIMEOUT_MS", "50");
+    try testing.expectEqual(@as(u64, 150 * std.time.ns_per_ms), controllerDeadlineNs());
+
+    // `pumpUntilWithin` honours the deadline it is given, not the default.
+    const never = struct {
+        fn f(_: *const anyopaque) bool {
+            return false;
+        }
+    }.f;
+    const dummy: u8 = 0;
+    var timer = try std.time.Timer.start();
+    try testing.expect(!pumpUntilWithin(&dummy, never, 30 * std.time.ns_per_ms));
+    const elapsed = timer.read();
+    try testing.expect(elapsed >= 30 * std.time.ns_per_ms);
+    try testing.expect(elapsed < 10 * std.time.ns_per_s);
 }
 
 test "TestProfile: the live tests derive their folder from a private root" {
