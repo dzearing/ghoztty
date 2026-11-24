@@ -586,8 +586,8 @@ pub extern fn gtk_text_buffer_set_text(buffer: *GtkTextBuffer, text: [*]const u8
 pub extern fn gtk_text_buffer_get_bounds(buffer: *GtkTextBuffer, start: *GtkTextIter, end: *GtkTextIter) void;
 pub extern fn gtk_text_buffer_get_text(buffer: *GtkTextBuffer, start: *const GtkTextIter, end: *const GtkTextIter, include_hidden: c_int) [*:0]u8;
 pub extern fn gtk_text_buffer_select_range(buffer: *GtkTextBuffer, ins: *const GtkTextIter, bound: *const GtkTextIter) void;
-/// `GTK_WRAP_WORD_CHAR`.
-pub const wrap_word_char: c_int = 3;
+/// `GtkWrapMode` `GTK_WRAP_WORD_CHAR` (not Pango's, above).
+pub const text_wrap_word_char: c_int = 3;
 pub extern fn adw_alert_dialog_new(heading: ?[*:0]const u8, body: ?[*:0]const u8) *GtkWidget;
 pub extern fn adw_alert_dialog_add_response(dialog: *GtkWidget, id: [*:0]const u8, label: [*:0]const u8) void;
 pub extern fn adw_alert_dialog_set_response_appearance(dialog: *GtkWidget, id: [*:0]const u8, appearance: c_int) void;

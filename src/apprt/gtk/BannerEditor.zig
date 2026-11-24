@@ -60,7 +60,7 @@ pub fn open(alloc: Allocator, surface: *Surface) void {
     wk.adw_alert_dialog_set_close_response(dialog, "cancel");
 
     const view = wk.gtk_text_view_new();
-    wk.gtk_text_view_set_wrap_mode(view, wk.wrap_word_char);
+    wk.gtk_text_view_set_wrap_mode(view, wk.text_wrap_word_char);
     wk.gtk_text_view_set_monospace(view, 1);
     wk.gtk_text_view_set_accepts_tab(view, 0);
     wk.gtk_widget_add_css_class(view, "pane-banner-editor");
