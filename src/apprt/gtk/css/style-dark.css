@@ -6,3 +6,11 @@
   background-color: rgba(36, 36, 36, 1);
   background-clip: content-box;
 }
+
+/* The elevated pane style draws no divider line over its desk (T3566). This
+ * provider is separate from style.css and wins over it, so the override that
+ * style.css carries has to be repeated here. */
+.window .pane-elevated .split paned > separator {
+  background: none;
+  background-color: transparent;
+}
