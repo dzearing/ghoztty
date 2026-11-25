@@ -217,6 +217,7 @@ pub fn handleSeam(app: Context, request: Request) Allocator.Error!server.SeamRep
     if (std.mem.eql(u8, request.action, "shortcut-guide")) return .{ .reply = try shortcutGuideSeam(app, request) };
     if (std.mem.eql(u8, request.action, "pane-seen")) return .{ .reply = try paneSeenSeam(app, request) };
     if (std.mem.eql(u8, request.action, "close-dialog")) return .{ .reply = try closeDialogSeam(app, request) };
+    if (std.mem.eql(u8, request.action, "window-size")) return .{ .reply = try windowSizeSeam(app, request) };
     if (!std.mem.eql(u8, request.action, "capture-pane")) return .unhandled;
     return .{ .reply = try capturePane(app, request) };
 }
@@ -920,6 +921,54 @@ fn ghostReport(arena: Allocator, surface: *Surface, png_path: ?[]const u8) Ghost
         }
     }
     return rep;
+}
+
+/// `window-size --target=<pane|window> [--size=<W>x<H>]` (T3630): resize the
+/// target's window to W x H logical px as dragging its edge would (the
+/// window's default size, which GTK keeps as the size of a window that is
+/// not maximized or fullscreen), then report the window's laid-out size. A
+/// window resize is a resize source of its own (docs/reference/
+/// terminal-resize.md) and the headless harness has no seat to drag an edge
+/// with. The reply is the size as of NOW; the new one is laid out on GTK's
+/// next frame, so a caller polls a later read for it.
+fn windowSizeSeam(app: Context, request: Request) Allocator.Error![]u8 {
+    var target_arg: ?[]const u8 = null;
+    var size_arg: ?[]const u8 = null;
+    for (request.arguments orelse &.{}) |arg| {
+        if (std.mem.startsWith(u8, arg, "--target=")) target_arg = arg["--target=".len..];
+        if (std.mem.startsWith(u8, arg, "--size=")) size_arg = arg["--size=".len..];
+    }
+    const target_name = target_arg orelse return server.errorResponse(c_alloc, "--target is required for window-size", .{});
+
+    var arena_state = std.heap.ArenaAllocator.init(c_alloc);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const target = switch (try resolve(arena, app, target_name)) {
+        .found => |t| t,
+        .ambiguous => |windows| return server.errorResponse(c_alloc, "{s}", .{
+            try target_lookup.ambiguityError(arena, target_name, windows),
+        }),
+        .not_found => return server.errorResponse(c_alloc, "pane '{s}' not found in registry", .{target_name}),
+    };
+    const w: *wk.GtkWidget = @ptrCast(target.window_().as(gtk.Widget));
+
+    if (size_arg) |s| {
+        var it = std.mem.splitScalar(u8, s, 'x');
+        const rw = std.fmt.parseInt(c_int, it.next() orelse "", 10) catch 0;
+        const rh = std.fmt.parseInt(c_int, it.next() orelse "", 10) catch 0;
+        if (rw <= 0 or rh <= 0 or rw > 16384 or rh > 16384)
+            return server.errorResponse(c_alloc, "--size must be <W>x<H>, each 1..16384", .{});
+        wk.gtk_window_set_default_size(w, rw, rh);
+    }
+
+    var out: std.Io.Writer.Allocating = .init(c_alloc);
+    defer out.deinit();
+    std.json.Stringify.value(.{
+        .success = true,
+        .width = wk.gtk_widget_get_width(w),
+        .height = wk.gtk_widget_get_height(w),
+    }, .{}, &out.writer) catch return error.OutOfMemory;
+    return c_alloc.dupe(u8, out.written());
 }
 
 /// `close-dialog --target=<pane|window> [--op=pane|tab|window]

@@ -2,7 +2,9 @@
 # resize-pacing.sh - T3568 acceptance for terminal resize pacing on the GTK
 # debug app (docs/reference/terminal-resize.md; Linux L11f): a divider drag
 # reaches a running program as a few paced SIGWINCHes, not one per frame of
-# the drag, and folding / unfolding a banner reaches it as exactly one each.
+# the drag, folding / unfolding a banner reaches it as exactly one each, and
+# a window-edge drag (T3630, the debug-only window-size seam) is paced like
+# the divider.
 #
 # The program is a SIGWINCH counter (python3) that logs the size it sees on
 # every signal. The view is resized on every drag step - each step runs the
@@ -15,9 +17,9 @@
 #
 #   powershell -NoProfile -File scripts\linux\wsl-run.ps1 -CommandFile test\linux\resize-pacing.sh
 #
-# NEGATIVE=1 drags in steps 250ms apart - longer than the settle - so every
-# step reaches the program on its own, and must FAIL R6 (1 failure): the
-# counter really counts, and R6 can tell a paced drag from a per-frame one.
+# NEGATIVE=1 drags (divider and window edge) in steps 250ms apart - longer than the settle - so every
+# step reaches the program on its own, and must FAIL R6 and R12 (2 failures): the
+# counter really counts, and R6/R12 tell a paced drag from a per-frame one.
 # Output: one PASS/FAIL line per check, then 'RESIZE PACING: ALL PASS' or
 # 'RESIZE PACING: <n> FAILURE(S)'. Exit 0 only on ALL PASS.
 set -u
@@ -167,6 +169,39 @@ hl_check "R8 unfolding it is one SIGWINCH, back to the expanded rows ($rows_back
 
 grep -q 'resize pace=debounce' "$APP_LOG"
 hl_check "R9 the core paced those resizes as a running program's (pace=debounce on the log)" $? "$(grep -m3 'resize pace=' "$APP_LOG" | tr '\n' '|')"
+
+# ---- 3. a window resize (T3630) --------------------------------------------
+# The window's edge dragged in $STEPS steps, through the debug-only
+# window-size seam (gtk_window_set_default_size, as an edge drag would). Each
+# reply carries the width laid out so far, so the widths prove the window
+# really moved on the way.
+ws() { hl_ipc window-size "--target=$first" "$@"; }
+wwidth() { printf '%s' "$1" | python3 -I -c 'import json,sys; print(json.load(sys.stdin).get("width", 0))' 2>/dev/null; }
+settled
+ww0=$(wwidth "$(ws)")
+wh0=$(printf '%s' "$(ws)" | python3 -I -c 'import json,sys; print(json.load(sys.stdin).get("height", 0))' 2>/dev/null)
+before=$(winches)
+wsizes0=$(tail -1 "$winch_log")
+wwidths=""
+t0=$(date +%s%N)
+for i in $(seq 1 $STEPS); do
+    wwidths="$wwidths $(wwidth "$(ws "--size=$((ww0 + i * DX))x$wh0")")"
+    [ "$GAP" = 0 ] || sleep "$GAP"
+done
+t1=$(date +%s%N)
+win_ms=$(( (t1 - t0) / 1000000 ))
+settled
+ww1=$(wwidth "$(ws)")
+n=$(( $(winches) - before ))
+wdistinct=$(printf '%s\n' $wwidths | sort -u | wc -l | tr -d ' ')
+
+[ "$ww1" -gt "$ww0" ] 2>/dev/null && [ "$wdistinct" -ge $((STEPS / 2)) ]
+hl_check "R10 the window edge moved on the resize's frames ($ww0 -> $ww1 px, $wdistinct distinct widths over $STEPS steps)" $? "widths=$wwidths"
+[ "$n" -ge 1 ] && [ "$(tail -1 "$winch_log")" != "$wsizes0" ]
+hl_check "R11 the program was told the window's new size ($n SIGWINCH, now $(tail -1 "$winch_log" 2>/dev/null))" $? "before=[$wsizes0]"
+wcap=$(( win_ms / 350 + 2 ))
+[ "$n" -le "$wcap" ] && [ $((n * 3)) -le "$STEPS" ]
+hl_check "R12 the window resize reached the program paced: $n SIGWINCH for $STEPS steps over ${win_ms}ms (at most $wcap, and at most one per 3 steps)" $? "$(tr '\n' '|' < "$winch_log")"
 
 rm -f "$winch_py" "$winch_log"
 hl_finish "$L"
