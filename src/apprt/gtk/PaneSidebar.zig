@@ -1173,7 +1173,7 @@ fn entryFocused(entry: *wk.GtkWidget) bool {
 
 fn onEditChanged(entry: *wk.GtkWidget, self: *PaneSidebar) callconv(.c) void {
     const e = if (self.edit) |*x| x else return;
-    if (e.entry != entry) return;
+    if (e.entry == null or e.entry.? != entry) return;
     e.setText(std.mem.span(wk.gtk_editable_get_text(entry)));
 }
 
@@ -1192,7 +1192,7 @@ fn onEditKey(_: *wk.GtkEventController, keyval: c_uint, _: c_uint, _: c_uint, se
 fn onEditLeave(ctl: *wk.GtkEventController, self: *PaneSidebar) callconv(.c) void {
     if (self.clearing) return;
     const e = if (self.edit) |*x| x else return;
-    if (e.entry != wk.gtk_event_controller_get_widget(ctl)) return;
+    if (e.entry == null or e.entry.? != wk.gtk_event_controller_get_widget(ctl)) return;
     self.commitEdit("away");
 }
 
@@ -1312,7 +1312,7 @@ fn freeMenuState(self: *PaneSidebar) void {
 }
 
 fn onWindowRowSecondary(_: *wk.GtkEventController, _: c_int, x: f64, y: f64, r: *Row) callconv(.c) void {
-    r.sidebar.openWindowMenu(r, x, y);
+    _ = r.sidebar.openWindowMenu(r, x, y);
 }
 
 /// Pop window row `r`'s menu at (`x`, `y`) of the row (Mac
