@@ -469,8 +469,28 @@ private runtime dir, so a test app can never meet the user's.
   SIDEBAR DRAG: ALL PASS` (25 checks); `NEGATIVE=1` must fail D2, D2b, D4b.
   A real pointer drag is NOT RUN (no seat). Not yet: window and group drag
   (T3697), the stash tray (T3698), cross-window drops (T3699), the order
-  across a restore (T3700); group editing - the window-row menu and the
-  headers' tools (T3608); the rest of the row tools (T3695).
+  across a restore (T3700); the rest of the row tools (T3695).
+  **Group editing (T3608)**: a window row's right-click menu (a
+  `GtkPopoverMenu` parented to the card, actions `sbmenu.*`) offers Create
+  Group..., Move to Group (the other groups as listed, only when there is
+  one) and Remove from Group (grouped windows), and the Ungrouped header's
+  buttons start with a pencil (`rows.Tool.rename`). Create Group... and the
+  pencil open an in-place `GtkEntry` (placeholder "Group name") where the
+  name was; it is kept across redraws (text and caret), Return or clicking
+  away commits, Escape or nothing typed changes nothing. Each pins
+  `<group>: <name>` on the tab, or on the window when it carries a
+  window-wide pin; the rules are win32's pure `pane_sidebar_menu` /
+  `pane_sidebar_rename`. Seam: `--menu=<window row id>` (reply `menu`:
+  `row`, `items`, `groups`, `popped`), `--menu-pick=create|remove|
+  move:<group>`, `--edit=<text>`, `--edit-key=enter|escape` (reply
+  `editing`: `row`, `purpose`, `placeholder`, `text`, `shown`, `focused`).
+  The headless Weston has no seat, so the popover closes at once for want of
+  a grab; the menu's state lasts until a pick or the next open, which is
+  what `--menu-pick` acts on. Acceptance: `wsl-run.ps1 -CommandFile
+  test\linux\cli-sidebar-groups.sh`, ends `CLI SIDEBAR GROUPS: ALL PASS`
+  (26 checks); `NEGATIVE=1` never presses Return and must fail G9/G9b. Not
+  yet: the list keeping its place across a regroup (needs T3697's window
+  order) and script-proof user titles (T3702).
   `--view` on `+new-window`/`+split` opens a viewer pane (T3411, below).
 - **Names (T3370)** follow win32's rules exactly (`apprt/ipc/target_lookup.zig`,
   T2250): a window name is global (`+new-window --target`, else a minted
