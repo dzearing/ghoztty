@@ -277,13 +277,7 @@ cli +set-banner --target="$lm" --clear > /dev/null 2>&1
 r=$(st)
 [ -n "$lm" ] && [ "$(sq "$r" 'P["'"$lm"'"]["label"]')" = "$label0" ]
 hl_check "S33 clearing the banner brings the pane's own name back" $? "pane=$lm want=[$label0] $r"
-cli +send-keys --target="$lm" "printf '\033]2;retitled-strip\007'" Enter > /dev/null 2>&1
-ok=1
-for _ in $(seq 1 25); do
-    [ "$(sq "$(st)" 'P["'"$lm"'"]["label"]')" = retitled-strip ] && { ok=0; break; }
-    sleep 0.2
-done
-hl_check "S34 an OSC 2 retitle renames the strip while the pane stays minimized" $ok "pane=$lm $(st)"
+# (S34, the OSC 2 retitle, needs a pane running a shell: section 10's.)
 
 # ---- 9. dragging a strip has a strip's own targets (T3629) -------------------
 # The drop half of a strip drag, through the seam (`pane-drag --blade`, the
@@ -321,9 +315,9 @@ my=$(sq "$r" 'P["'"$card"'"]["frame"][1] + P["'"$card"'"]["frame"][3] // 2')
 d=$(pd "--target=$bm" --blade "--drop-at=$mx,$my")
 [ "$(dq "$d" 'd.get("target"), d.get("outcome")')" = "('none', 'none')" ]
 hl_check "S35 a strip let go over the middle of a card is no drop (no split quadrants, no swap)" $? "strip=$bm card=$card $d"
-d=$(pd "--target=$card" "--drop-at=$mx,$my")
+d=$(pd "--target=$bm" "--drop-at=$mx,$my")
 [ "$(dq "$d" 'd.get("target")')" != none ]
-hl_check "S36 the same point is a target for an ordinary pane drag (the control)" $? "$d"
+hl_check "S36 the same point is a target for the same pane dragged by its header (the control)" $? "$d"
 # The leading edge of the SECOND card on show is the slot between two cards
 # (the only one when one card shows): the strip moves there. A strip is never
 # between two cards on show, so this is never the strip's own place.
@@ -360,7 +354,7 @@ hl_check "S40 a strip let go at the window's top edge spans the window above the
 cli +new-window --target=wcol --name=c1 --command="sleep 600" > /dev/null 2>&1
 for _ in $(seq 1 50); do [ -n "$(id_of c1)" ] && break; sleep 0.2; done
 for n in 2 3 4 5; do
-    cli +split --target=c$((n - 1)) --direction=down --name=c$n --command="sleep 600" > /dev/null 2>&1
+    cli +split --target=c$((n - 1)) --direction=down --name=c$n --command=/bin/sh > /dev/null 2>&1
 done
 sleep 1
 cs() { hl_ipc pane-stack "--target=$(id_of c1)" "$@"; }
@@ -373,6 +367,17 @@ hl_check "S42 no card on show in the column is under the minimum height" $? "$r"
 hl_check "S43 a column's strips lie across it (wider than tall)" $? "$r"
 [ "$(sq "$r" 'any(g["direction"] == "vertical" for g in s["gutters"])')" = True ]
 hl_check "S44 the column's gutters run vertically (rows of cards stacked down)" $? "$r"
+# A retitle (OSC 2) from a minimized pane's own program renames its strip
+# while it stays minimized. c2..c5 run a shell, so the keys reach one.
+c1id=$(id_of c1)
+rm_=$(sq "$r" '[p["pane"] for p in mini if p["pane"] != "'"$c1id"'"][0]')
+cli +send-keys --target="$rm_" "printf '\033]2;retitled-strip\007'" Enter > /dev/null 2>&1
+ok=1
+for _ in $(seq 1 25); do
+    [ "$(sq "$(cs)" 'P["'"$rm_"'"]["minimized"] and P["'"$rm_"'"]["label"] == "retitled-strip"')" = True ] && { ok=0; break; }
+    sleep 0.2
+done
+hl_check "S34 an OSC 2 retitle renames the strip while the pane stays minimized" $ok "pane=$rm_ $(cli +read --target="$rm_" --lines=4 2>&1 | tr '\n' '|' | head -c 200) $(cs)"
 ! grep -E "without calling gtk_widget_measure|Allocation (width|height) too small|Gtk-CRITICAL" "$APP_LOG" > /dev/null
 hl_check "S25 the app logged no GTK allocation warnings or criticals" $? "$(grep -m3 -E 'gtk_widget_measure|too small|Gtk-CRITICAL' "$APP_LOG")"
 
