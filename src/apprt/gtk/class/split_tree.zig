@@ -1320,14 +1320,16 @@ pub const SplitTree = extern struct {
         const priv = self.private();
         const dragging = priv.row_drag != null;
         var dragged: ?usize = null;
-        if (dragging) if (priv.bar_held) |held| {
-            const alloc = Application.default().allocator();
-            if (alloc.alloc(gutter_rules.Gutter, gutterCount(grid))) |gs| {
-                defer alloc.free(gs);
-                for (gs, 0..) |*g, i| g.* = gutterAt(grid, i);
-                dragged = gutter_rules.place(gs, held, priv.bar_last);
-            } else |_| {}
-        };
+        if (dragging) {
+            if (priv.bar_held) |held| {
+                const alloc = Application.default().allocator();
+                if (alloc.alloc(gutter_rules.Gutter, gutterCount(grid))) |gs| {
+                    defer alloc.free(gs);
+                    for (gs, 0..) |*g, i| g.* = gutterAt(grid, i);
+                    dragged = gutter_rules.place(gs, held, priv.bar_last);
+                } else |_| {}
+            }
+        }
         const hovered: ?usize = if (priv.pointer) |p| gutterHit(grid, p[0], p[1]) else null;
         const l = gutter_rules.lit(hovered, dragged, dragging) orelse {
             priv.bar_lit = null;
@@ -1356,9 +1358,11 @@ pub const SplitTree = extern struct {
             return;
         };
         var gutter = shown.gutter;
-        if (shown.strength == .drag) if (slide) |s| {
-            if (s.shownGutter(gutter, shown.direction == .horizontal, 2)) |at| gutter = at;
-        };
+        if (shown.strength == .drag) {
+            if (slide) |s| {
+                if (s.shownGutter(gutter, shown.direction == .horizontal, 2)) |at| gutter = at;
+            }
+        }
         wk.gtk_widget_set_opacity(bar, shown.strength.opacity());
         wk.gtk_widget_set_child_visible(bar, 1);
         if (wk.gtk_widget_get_next_sibling(bar) != null) wk.gtk_widget_insert_before(bar, stage, null);

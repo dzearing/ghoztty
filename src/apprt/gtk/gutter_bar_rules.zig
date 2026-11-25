@@ -70,17 +70,19 @@ fn sharesSpan(a: PxRect, b: PxRect, d: Direction) bool {
 /// span, nearest where the bar was `last`; its own kind wins a tie. Null when
 /// no gutter qualifies (the bar goes out).
 pub fn place(gutters: []const Gutter, held: Held, last: PxRect) ?usize {
-    if (held.node) |node| for (gutters, 0..) |g, i| {
-        if (g.kind == .divider and g.node == node) return i;
-    };
+    if (held.node) |node| {
+        for (gutters, 0..) |g, i| {
+            if (g.kind == .divider and g.node == node) return i;
+        }
+    }
     const at = mid(last, held.direction);
     var best: ?usize = null;
-    var best_d: i64 = std.math.maxInt(i64);
+    var best_d: u64 = std.math.maxInt(u64);
     var best_same = false;
     for (gutters, 0..) |g, i| {
         if (g.direction != held.direction) continue;
         if (!sharesSpan(g.rect, last, held.direction)) continue;
-        const d: i64 = @abs(@as(i64, mid(g.rect, held.direction)) - at);
+        const d: u64 = @abs(@as(i64, mid(g.rect, held.direction)) - at);
         const same = g.kind == held.kind;
         if (d < best_d or (d == best_d and same and !best_same)) {
             best = i;
