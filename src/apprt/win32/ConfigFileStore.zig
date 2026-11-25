@@ -714,6 +714,6 @@ test "ConfigFileStore: off Windows the backup clock is local time, not UTC" {
     // And the clock the store names backups with is that local one.
     const now = localNow();
     const now_utc = utcStamp(std.time.timestamp());
-    const diff = (@as(i32, now_utc.hour) - @as(i32, now.hour) + 24) % 24;
+    const diff = @mod(@as(i32, now_utc.hour) - @as(i32, now.hour), 24);
     try testing.expectEqual(@as(i32, 5), diff);
 }
