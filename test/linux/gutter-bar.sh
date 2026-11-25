@@ -160,7 +160,8 @@ r=$(st "--press=$dx,$dy" "--release=0,0" "--press=$dx,$dy" "--release=0,0")
 hl_check "B14 a double-click on a divider evens out the panes across it" $? "uneven by $uneven, then $r"
 
 # A column on the right: p2 over p5. Its divider runs the other way.
-cli +split --target=p2 --direction=down --name=p5 > /dev/null 2>&1
+# (`--pane` splits that exact pane; `--target` names a window, docs/claude/cli.md.)
+cli +split --pane=p2 --direction=down --name=p5 > /dev/null 2>&1
 for _ in $(seq 1 50); do
     [ "$(sq "$(st)" 'len(gut("divider", "vertical"))')" = 1 ] && break
     sleep 0.2
@@ -171,19 +172,24 @@ r=$(st "--press=$dx,$dy" "--drag=100,0" "--release=100,0")
 read -r vx vy <<< "$(sq "$r" '"%d %d" % mid(gut("divider", "vertical")[0]["rect"])')"
 r=$(st "--press=$vx,$vy" "--drag=0,60" "--release=0,60")
 p2=$(id_of p2); p5=$(id_of p5)
-w_before=$(sq "$r" 'P["'"$first"'"]["frame"][2]')
-h_uneven=$(sq "$r" 'abs(P["'"$p2"'"]["frame"][3] - P["'"$p5"'"]["frame"][3])')
+# The column's two panes, and the widths of every pane on show.
+heights='abs(P["'"$p2"'"]["frame"][3] - P["'"$p5"'"]["frame"][3])'
+widths='sorted((p["frame"][0], p["frame"][2]) for p in shown)'
+[ "$(sq "$r" 'P["'"$p2"'"]["frame"][0] == P["'"$p5"'"]["frame"][0] and P["'"$p2"'"]["frame"][0] > P["'"$first"'"]["frame"][0]')" = True ]
+hl_check "B15 p2 and p5 make a column to the right of the first pane" $? "p2=$p2 p5=$p5 $r"
+w_before=$(sq "$r" "$widths")
+h_uneven=$(sq "$r" "$heights")
 read -r vx vy <<< "$(sq "$r" '"%d %d" % mid(gut("divider", "vertical")[0]["rect"])')"
 r=$(st "--press=$vx,$vy" "--release=0,0" "--press=$vx,$vy" "--release=0,0")
-[ "$(sq "$r" 'r["press"]')" = even ] && [ "$(sq "$r" 'abs(P["'"$p2"'"]["frame"][3] - P["'"$p5"'"]["frame"][3]) <= 2')" = True ] && [ "${h_uneven:-0}" -ge 60 ]
-hl_check "B15 a double-click on a divider running across a column evens its heights" $? "uneven by $h_uneven, then $r"
-[ "$(sq "$r" 'P["'"$first"'"]["frame"][2]')" = "$w_before" ]
-hl_check "B16 ... and leaves every width as it was set" $? "width before=$w_before after=$(sq "$r" 'P["'"$first"'"]["frame"][2]')"
+[ "$(sq "$r" 'r["press"]')" = even ] && [ "$(sq "$r" "$heights <= 2")" = True ] && [ "${h_uneven:-0}" -ge 60 ]
+hl_check "B15b a double-click on a divider running across a column evens its heights" $? "uneven by $h_uneven, then $r"
+[ "$(sq "$r" "$widths")" = "$w_before" ]
+hl_check "B16 ... and leaves every width as it was set" $? "widths before=$w_before after=$(sq "$r" "$widths")"
 cli +close --target=p5 > /dev/null 2>&1
 
 # ---- 4. a stacked run: a grip's double-click evens the run --------------------
-cli +split --target=p2 --direction=right --name=p3 > /dev/null 2>&1
-cli +split --target=p3 --direction=right --name=p4 > /dev/null 2>&1
+cli +split --pane=p2 --direction=right --name=p3 > /dev/null 2>&1
+cli +split --pane=p3 --direction=right --name=p4 > /dev/null 2>&1
 for _ in $(seq 1 50); do
     [ "$(sq "$(st)" 'len(s.get("panes", [])) == 4 and len(mini) >= 1')" = True ] && break
     sleep 0.2
