@@ -331,6 +331,14 @@ pub const SplitTree = extern struct {
         while (it.next()) |entry| entry.view.setRearrangeHeader(on);
     }
 
+    /// Enable or disable every pane's pop-out button (T3618): `allowed` is
+    /// the window's answer for this tree (`Window.popOutAllowedFor`).
+    pub fn syncPopOut(self: *Self, allowed: bool) void {
+        const tree = self.private().tree orelse return;
+        var it = tree.iterator();
+        while (it.next()) |entry| entry.view.setPopOutAllowed(allowed);
+    }
+
     fn dropFromTarget(owner: *anyopaque, dragged_id: []const u8, x: f64, y: f64) PaneDrag.DropResult {
         const self: *Self = @ptrCast(@alignCast(owner));
         return self.dropPaneAt(dragged_id, x, y);
@@ -2103,6 +2111,8 @@ pub const SplitTree = extern struct {
         // cross-window swap sends back (T3616) - loses its header.
         if (ext.getAncestor(Window, self.as(gtk.Widget))) |window| {
             self.syncRearrangeHeaders(window.rearrangeMode());
+            // A pane more or fewer changes who may pop out (T3618).
+            window.syncPopOut();
         }
 
         // Every pane is a card, and the focused one of several is lit (T3566).

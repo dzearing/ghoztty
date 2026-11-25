@@ -1388,6 +1388,14 @@ pub const Surface = extern struct {
         self.syncHeaderTitle();
     }
 
+    /// Enable or disable the header's pop-out button (T3618). A pane that
+    /// never showed a header has none to set; its first show is followed
+    /// by the window's `syncPopOut`.
+    pub fn setPopOutAllowed(self: *Self, allowed: bool) void {
+        const header = self.private().rearrange_header orelse return;
+        header.setPopOutEnabled(allowed);
+    }
+
     /// The laid-out height of the pane's content - the terminal, or a
     /// viewer's page - under any header and banner (`pane-drag` seam).
     pub fn contentHeight(self: *Self) c_int {
@@ -1409,6 +1417,7 @@ pub const Surface = extern struct {
         const box = gobject.ext.cast(gtk.Box, parent) orelse return null;
         const header = PaneDrag.Header.create(std.heap.c_allocator, self.paneId()) catch return null;
         header.ghost = .{ .owner = self, .build = &dragGhostThunk };
+        header.pop_out = .{ .owner = self, .pop = &popOutThunk };
         const box_w: *wk.GtkWidget = @ptrCast(box);
         wk.gtk_orientable_set_orientation(box_w, 1); // GTK_ORIENTATION_VERTICAL
         wk.gtk_box_prepend(box_w, header.box);
@@ -1452,6 +1461,14 @@ pub const Surface = extern struct {
     fn dragGhostThunk(owner: *anyopaque) ?PaneDragGhost.Built {
         const self: *Self = @ptrCast(@alignCast(owner));
         return self.dragGhost();
+    }
+
+    /// The header's pop-out button, and a drag of this pane released over
+    /// nothing (T3618): move the pane into a new window of its own.
+    fn popOutThunk(owner: *anyopaque) PaneDrag.DropResult {
+        const self: *Self = @ptrCast(@alignCast(owner));
+        const window = ext.getAncestor(Window, self.as(gtk.Widget)) orelse return .{ .target = "new_window", .outcome = "not_here" };
+        return Window.popOutPane(self.paneId(), window);
     }
 
     /// What a banner's relative links resolve against: this pane's working

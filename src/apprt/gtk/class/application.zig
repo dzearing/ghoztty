@@ -1658,6 +1658,25 @@ pub const Application = extern struct {
         return self.private().config.ref();
     }
 
+    /// An EMPTY window for a pane moved out of its own (T3618, Mac
+    /// `TerminalController.newWindow(at:)`): no tab of its own - the moved
+    /// pane arrives as its first - bound to the app's config like every
+    /// window, and `w` x `h` when given (the size of the window it leaves).
+    /// The caller adopts the pane into it and presents it.
+    pub fn newWindowForPopOut(self: *Self, w: c_int, h: c_int) *Window {
+        self.private().requested_window = true;
+        const win = Window.new(self, .none);
+        _ = gobject.Object.bindProperty(
+            self.as(gobject.Object),
+            "config",
+            win.as(gobject.Object),
+            "config",
+            .{},
+        );
+        if (w > 0 and h > 0) win.as(gtk.Window).setDefaultSize(w, h);
+        return win;
+    }
+
     /// Open a window for an IPC `+new-window` (T3370) and return it.
     /// `take_focus` false shows it without asking for focus: a script's
     /// window opens in the background unless it passed `--focus` (T1797,

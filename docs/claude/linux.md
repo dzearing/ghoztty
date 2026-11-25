@@ -662,14 +662,42 @@ private runtime dir, so a test app can never meet the user's.
   most 220x150 in the pane's shape plus a 10px shadow margin, held by the
   middle of the title strip - drawn with GtkSnapshot and rendered ONCE to a
   texture by the window's GSK renderer (a still, like the Mac's NSImage).
-  Log: `drag began pane=... ghost=<w>x<h> hot=<x>,<y>`. Not yet: the drop
-  preview, including lighting the dwelling tab (T3708), the hover handle with
-  the mode off (T3709), a release over nothing or the header's pop-out button
-  making a new window (T3618). Debug seam:
+  Log: `drag began pane=... ghost=<w>x<h> hot=<x>,<y>`. **A new window**
+  (T3618): a drag let go over nothing - GTK's `drag-cancel` with
+  `GDK_DRAG_CANCEL_NO_TARGET`, and none of our drop targets saw the release
+  (`PaneDrag.drop_seen`, so a quiet drop such as an in-place one never pops
+  out; Escape is `USER_CANCELLED` and does nothing) - moves the pane into a
+  new window holding only it, and so does the header's right-hand button
+  (`window-new-symbolic`, flat). Both call `Window.popOutPane`: a new EMPTY
+  window (`Application.newWindowForPopOut`, at the source window's size, or
+  its restored size when that one is maximized or fullscreen) adopts the
+  same `Surface` through `adoptFromWindow`, so shell, pid, pane id and agent
+  session go with it, the mode follows and the new window is presented. The
+  release-over-nothing move runs on an idle, after the drag has ended.
+  **A window's last pane may not** (`pane_drop_apply.popOutAllowed`, win32
+  `pane_relocate.popOutAllowed`, Mac `canPopOut`): its button is disabled
+  (`Window.syncPopOut`, re-run on every tree rebuild and every tab attach or
+  detach, since a second tab makes a lone pane movable) and a release over
+  nothing is refused, so a drag never closes a window. Wayland gives a client
+  no pointer or window position, so where the new window opens is the
+  compositor's call (Mac and win32 open it at the drop point). Logs: `pop out
+  pane=... into a new window size=<w>x<h>`, `pop out pane=... refused`,
+  `drag released over nothing pane=...`, `pop-out button pane=...
+  outcome=...`. Not yet: the drop preview, including lighting the dwelling
+  tab (T3708), and the hover handle with the mode off (T3709). Debug seam:
   `hl_ipc pane-drag --target=<pane> [--key=escape] [--drop-on=<pane>
   --fx=<0..1> --fy=<0..1> | --drop-at=<x>,<y> | --drop-tab=<n>]
   [--hover-tab=<n> | --hover-leave] [--bar-of=<pane>]
-  [--ghost | --ghost-png=<path>]` (`--ghost` adds a `ghost` object: the
+  [--release-nowhere | --pop-out] [--ghost | --ghost-png=<path>]`
+  (`--release-nowhere` is the no-target cancel's call, `--pop-out` the
+  button's own `clicked` - not `gtk_widget_activate`, which GTK4 animates and
+  clicks only after a timeout - and gives a disabled button no click; both
+  report as a drop with `target` `new_window` and `outcome`
+  `moved|refused|not_here|none`, and every header reports `pop_out`, its
+  button enabled. Acceptance: `wsl-run.ps1 -CommandFile
+  test\linux\pane-pop-out.sh`, ends `PANE POP OUT: ALL PASS` (16 checks);
+  `NEGATIVE=1` aims both moves at a lone window's last pane and must fail
+  P6, P7, P9, P11 and P12) (`--ghost` adds a `ghost` object: the
   card's planned geometry, the texture size and scale, and pixels sampled
   from the very texture a drag-begin would set; `--ghost-png` also saves it.
   Acceptance: `wsl-run.ps1 -CommandFile test\linux\pane-drag-ghost.sh`, ends

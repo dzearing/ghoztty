@@ -235,6 +235,7 @@ pub const phase_capture: c_int = 1;
 pub extern fn gtk_box_new(orientation: c_int, spacing: c_int) *GtkWidget;
 pub extern fn gtk_box_append(box: *GtkWidget, child: *GtkWidget) void;
 pub extern fn gtk_button_new_from_icon_name(icon: [*:0]const u8) *GtkWidget;
+pub extern fn gtk_button_set_has_frame(button: *GtkWidget, has_frame: c_int) void;
 pub extern fn gtk_entry_new() *GtkWidget;
 pub extern fn gtk_entry_set_placeholder_text(entry: *GtkWidget, text: ?[*:0]const u8) void;
 pub extern fn gtk_editable_get_text(editable: *GtkWidget) [*:0]const u8;

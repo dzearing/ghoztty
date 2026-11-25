@@ -19,6 +19,16 @@
 //! strip (T3617, `PaneDragGhost.zig`); the hover handle with the mode off and
 //! the live drop preview are follow-up cards.
 //!
+//! **A new window (T3618).** A drag let go over nothing - no pane drop target
+//! of this app took it - moves the pane into a new window of its own, and so
+//! does the header's right-hand button (Mac `PaneHeaderView`'s pop-out). GTK
+//! says "nothing took it" as a `drag-cancel` with `GDK_DRAG_CANCEL_NO_TARGET`;
+//! a release one of our targets saw - even one that resolved to "leave it
+//! where it is" - never pops out, and neither does an Escape. A window's last
+//! pane may not pop out (the button is disabled on it), so a drag never closes
+//! a window. The move runs on an idle, after the drag has ended: it rebuilds
+//! the tree the dragging header sits in.
+//!
 //! **The tab bar (T3615).** The window's `AdwTabBar` takes pane drops too: a
 //! release there moves the pane into a new tab of its own at the index under
 //! the pointer, and resting 500ms on another tab's button selects it so the
@@ -48,6 +58,15 @@ const pango_ellipsize_end: c_int = 3;
 pub const header_height: c_int = 24;
 
 // ---- The drag in flight ------------------------------------------------------
+
+/// `GdkDragCancelReason`: nothing would take the drop.
+const drag_cancel_no_target: c_int = 0;
+
+/// Whether one of this app's pane drop targets received the drop of the drag
+/// in flight - set by `onDrop` whatever it resolved to, cleared at
+/// `drag-begin` - so a release over a target that chose to do nothing is not
+/// read as a release over nothing.
+var drop_seen: bool = false;
 
 var dragged_buf: [64]u8 = undefined;
 var dragged_len: usize = 0;
@@ -80,10 +99,20 @@ pub const Header = struct {
     /// Builds the pane's ghost card (T3617; `Surface.dragGhost`), or null to
     /// keep GTK's own icon.
     ghost: ?GhostSource = null,
+    /// The right-hand button that moves the pane into a new window (T3618).
+    pop_button: *wk.GtkWidget,
+    /// Moves the pane into a new window (T3618; `Surface.popOutThunk`): the
+    /// button, and a drag released over nothing.
+    pop_out: ?PopOutSource = null,
 
     pub const GhostSource = struct {
         owner: *anyopaque,
         build: *const fn (owner: *anyopaque) ?Ghost.Built,
+    };
+
+    pub const PopOutSource = struct {
+        owner: *anyopaque,
+        pop: *const fn (owner: *anyopaque) DropResult,
     };
 
     pub fn create(alloc: std.mem.Allocator, pane: []const u8) !*Header {
@@ -107,14 +136,59 @@ pub const Header = struct {
         wk.gtk_widget_set_halign(label, 1); // GTK_ALIGN_START
         wk.gtk_box_append(box, label);
 
+        // The pop-out button, on the right (Mac `PaneHeaderView`). Flat, so
+        // it reads as part of the header; the arrow cursor over it says it
+        // is a button and not more grip.
+        const pop = wk.gtk_button_new_from_icon_name("window-new-symbolic");
+        wk.gtk_button_set_has_frame(pop, 0);
+        wk.gtk_widget_add_css_class(pop, "ghoztty-rearrange-popout");
+        wk.gtk_widget_set_cursor_from_name(pop, "default");
+        wk.gtk_widget_set_tooltip_text(pop, "Move this pane to a new window");
+        wk.gtk_widget_set_valign(pop, 3); // GTK_ALIGN_CENTER
+        wk.gtk_box_append(box, pop);
+
         const source = wk.gtk_drag_source_new();
-        self.* = .{ .box = box, .label = label, .pane_id = pane, .source = source };
+        self.* = .{ .box = box, .label = label, .pane_id = pane, .source = source, .pop_button = pop };
+        _ = wk.g_signal_connect_data(pop, "clicked", @ptrCast(&onPopClicked), self, null, 0);
         wk.gtk_drag_source_set_actions(source, wk.gdk_action_move);
         _ = wk.g_signal_connect_data(source, "prepare", @ptrCast(&onPrepare), self, null, 0);
         _ = wk.g_signal_connect_data(source, "drag-begin", @ptrCast(&onDragBegin), self, null, 0);
+        _ = wk.g_signal_connect_data(source, "drag-cancel", @ptrCast(&onDragCancel), self, null, 0);
         _ = wk.g_signal_connect_data(source, "drag-end", @ptrCast(&onDragEnd), self, null, 0);
         wk.gtk_widget_add_controller(box, source);
         return self;
+    }
+
+    /// Enable or disable the pop-out button: disabled on a window's last
+    /// pane, which has nowhere to go that is not where it already is.
+    pub fn setPopOutEnabled(self: *Header, enabled: bool) void {
+        wk.gtk_widget_set_sensitive(self.pop_button, @intFromBool(enabled));
+    }
+
+    /// Whether the pop-out button is enabled (the `pane-drag` seam).
+    pub fn popOutEnabled(self: *Header) bool {
+        return wk.gtk_widget_get_sensitive(self.pop_button) != 0;
+    }
+
+    /// Press the pop-out button as a click would (the `pane-drag --pop-out`
+    /// seam): its own `clicked` signal, so the handler a pointer click runs
+    /// is the one that runs. Not `gtk_widget_activate`: GTK4 animates an
+    /// activated button and emits `clicked` only after a timeout, past the
+    /// seam's reply. An insensitive button gets no click from GTK, and none
+    /// here: null when the button is disabled or hidden.
+    pub fn pressPopOut(self: *Header) ?DropResult {
+        if (!self.popOutEnabled() or !self.isShown()) return null;
+        pop_click_result = null;
+        wk.g_signal_emit_by_name(self.pop_button, "clicked");
+        return pop_click_result;
+    }
+
+    /// The released-over-nothing half (T3618), as `drag-cancel` with no
+    /// target runs it - but at once, for the `pane-drag --release-nowhere`
+    /// seam, which has no drag to end first.
+    pub fn releaseOverNothing(self: *Header) DropResult {
+        const src = self.pop_out orelse return .{ .target = "new_window", .outcome = "none" };
+        return src.pop(src.owner);
     }
 
     /// Show or hide the header. Hidden takes no space at all.
@@ -151,8 +225,34 @@ pub const Header = struct {
         return wk.gdk_content_provider_new_for_bytes(mime.ptr, bytes);
     }
 
+    fn onPopClicked(_: *wk.GtkWidget, self: *Header) callconv(.c) void {
+        const src = self.pop_out orelse return;
+        const r = src.pop(src.owner);
+        pop_click_result = r;
+        log.info("pop-out button pane={s} outcome={s}", .{ self.pane_id, r.outcome });
+    }
+
+    /// GTK says why a drag ended without a drop. Only "nothing would take
+    /// it", with none of our targets having seen the release, is a release
+    /// over nothing; an Escape or an error leaves the pane where it is.
+    /// Returning true says the cancel was handled, so GTK skips the card's
+    /// fly-back to where the drag began - the pane is going somewhere.
+    fn onDragCancel(_: *wk.GtkEventController, _: *wk.GdkDrag, reason: c_int, self: *Header) callconv(.c) c_int {
+        if (reason != drag_cancel_no_target or drop_seen) {
+            log.info("drag cancelled pane={s} reason={d} drop_seen={}", .{ self.pane_id, reason, drop_seen });
+            return 0;
+        }
+        if (self.pop_out == null) return 0;
+        const pending = std.heap.c_allocator.create(PendingPop) catch return 0;
+        pending.* = .{ .header = self };
+        log.info("drag released over nothing pane={s}: a new window", .{self.pane_id});
+        _ = wk.g_idle_add(&runPendingPop, pending);
+        return 1;
+    }
+
     fn onDragBegin(_: *wk.GtkEventController, _: *wk.GdkDrag, self: *Header) callconv(.c) void {
         setDragged(self.pane_id);
+        drop_seen = false;
         // The ghost card under the pointer, held by its title strip (Mac
         // `PaneDragGhost`); the drag source keeps its own reference.
         const g = if (self.ghost) |src| src.build(src.owner) else null;
@@ -168,6 +268,23 @@ pub const Header = struct {
         setDragged(null);
     }
 };
+
+/// What the last pop-out click did (the seam reads it after activating).
+var pop_click_result: ?DropResult = null;
+
+/// A pop-out a drag released over nothing asked for, run on an idle so the
+/// drag has ended and its source is no longer mid-signal when the tree that
+/// holds it rebuilds. The header lives as long as its surface, and the
+/// surface is not freed by a drag ending.
+const PendingPop = struct { header: *Header };
+
+fn runPendingPop(data: ?*anyopaque) callconv(.c) c_int {
+    const pending: *PendingPop = @ptrCast(@alignCast(data orelse return 0));
+    defer std.heap.c_allocator.destroy(pending);
+    const r = pending.header.releaseOverNothing();
+    log.info("released over nothing pane={s} target={s} outcome={s}", .{ pending.header.pane_id, r.target, r.outcome });
+    return 0; // G_SOURCE_REMOVE
+}
 
 // ---- The drop target ------------------------------------------------------------
 
@@ -255,6 +372,7 @@ fn onDrop(_: *wk.GtkEventController, drop: *wk.GdkDrop, x: f64, y: f64, t: *Drop
     const own = buf[0..id.len];
     @memcpy(own, id);
     if (t.hover) |h| h.leave(t.owner);
+    drop_seen = true;
     const r = t.drop(t.owner, own, x, y);
     log.info("drop pane={s} at={d:.0},{d:.0} target={s} outcome={s}", .{ own, x, y, r.target, r.outcome });
     const moved = std.mem.eql(u8, r.outcome, "moved");

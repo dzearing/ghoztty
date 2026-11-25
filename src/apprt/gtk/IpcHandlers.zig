@@ -55,6 +55,7 @@ const viewer_scheme = @import("viewer_scheme.zig");
 const capture_seam = @import("capture_seam.zig");
 const pane_snapshot = @import("pane_snapshot.zig");
 const wk = @import("webkit.zig");
+const PaneDrag = @import("PaneDrag.zig");
 const url_scheme = @import("../ipc/url_scheme.zig");
 const url_activation = @import("url_activation.zig");
 const gtk_url_scheme = @import("url_scheme.zig");
@@ -593,6 +594,12 @@ fn paneStack(app: Context, request: Request) Allocator.Error![]u8 {
 /// `dwell_tab` and `tab_buttons` (the bar's buttons the resolver reads),
 /// all of the window the target pane is in AFTER any drop, and
 /// `window_count`, the app's windows (a window a drop emptied is gone).
+/// `--release-nowhere` is a drag of the target let go over nothing, and
+/// `--pop-out` a click of its header's pop-out button (T3618): both move it
+/// into a new window of its own through the very call the drag's no-target
+/// cancel and the button make, and report as a drop (`target` new_window,
+/// `outcome` moved|refused|not_here; `none` when `--pop-out` met a disabled
+/// or missing button). Each header reports `pop_out`, its button enabled.
 fn paneDrag(app: Context, request: Request) Allocator.Error![]u8 {
     var target_arg: ?[]const u8 = null;
     var key_arg: ?[]const u8 = null;
@@ -602,6 +609,8 @@ fn paneDrag(app: Context, request: Request) Allocator.Error![]u8 {
     var hover_arg: ?[]const u8 = null;
     var bar_of_arg: ?[]const u8 = null;
     var hover_leave = false;
+    var release_nowhere = false;
+    var pop_out = false;
     var ghost_arg = false;
     var ghost_png: ?[]const u8 = null;
     var fx: f64 = 0.5;
@@ -614,6 +623,8 @@ fn paneDrag(app: Context, request: Request) Allocator.Error![]u8 {
         if (std.mem.startsWith(u8, arg, "--drop-tab=")) tab_arg = arg["--drop-tab=".len..];
         if (std.mem.startsWith(u8, arg, "--hover-tab=")) hover_arg = arg["--hover-tab=".len..];
         if (std.mem.eql(u8, arg, "--hover-leave")) hover_leave = true;
+        if (std.mem.eql(u8, arg, "--release-nowhere")) release_nowhere = true;
+        if (std.mem.eql(u8, arg, "--pop-out")) pop_out = true;
         if (std.mem.startsWith(u8, arg, "--bar-of=")) bar_of_arg = arg["--bar-of=".len..];
         if (std.mem.eql(u8, arg, "--ghost")) ghost_arg = true;
         if (std.mem.startsWith(u8, arg, "--ghost-png=")) {
@@ -727,6 +738,19 @@ fn paneDrag(app: Context, request: Request) Allocator.Error![]u8 {
             .y = y,
         };
     }
+    // A release over nothing, or the header's pop-out button (T3618): the
+    // pane into a new window. Both need the header, as a real one does - a
+    // drag starts from it and the button is on it.
+    if (release_nowhere or pop_out) {
+        const h = surface.rearrangeHeader() orelse
+            return server.errorResponse(c_alloc, "pane '{s}' has no rearrange header (the mode was never on)", .{target_name});
+        const r: PaneDrag.DropResult = if (release_nowhere)
+            h.releaseOverNothing()
+        else
+            h.pressPopOut() orelse .{ .target = "new_window", .outcome = "none" };
+        drop = .{ .target = r.target, .outcome = r.outcome, .side = null, .pane = null, .index = null, .x = 0, .y = 0 };
+    }
+
     // A drop can carry the pane into another window, and close the one it
     // left: report the window it is in now. Found by its tree, not by
     // widget ancestry - the tree it landed in rebuilds its widgets later.
@@ -742,7 +766,7 @@ fn paneDrag(app: Context, request: Request) Allocator.Error![]u8 {
     var bar_buf: [Window.max_tab_buttons]pane_drop.Rect = undefined;
     const bar = window.tabBarCandidate(&bar_buf);
 
-    const HeaderRep = struct { pane: []const u8, shown: bool, height: c_int, title: []const u8, content_height: c_int, is_split: bool };
+    const HeaderRep = struct { pane: []const u8, shown: bool, height: c_int, title: []const u8, content_height: c_int, is_split: bool, pop_out: bool };
     var headers: std.ArrayList(HeaderRep) = .empty;
     var panes = paneIterator(app);
     while (panes.next()) |p| {
@@ -755,6 +779,7 @@ fn paneDrag(app: Context, request: Request) Allocator.Error![]u8 {
             .title = if (h) |v| try arena.dupe(u8, v.title()) else "",
             .content_height = p.surface.contentHeight(),
             .is_split = p.surface.isSplit(),
+            .pop_out = if (h) |v| v.popOutEnabled() else false,
         });
     }
     const Rep = struct {

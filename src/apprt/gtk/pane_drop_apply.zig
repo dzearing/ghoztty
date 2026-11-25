@@ -215,6 +215,31 @@ pub fn tabDrop(leaves: usize, source_tab: usize, seam: usize, tab_count: usize) 
     return .in_place;
 }
 
+/// May the pane be moved into a new window of its own (T3618): a release
+/// over nothing, or the header's pop-out button? `leaves` is how many panes
+/// its tab holds, `tab_count` how many tabs its window has. A window's last
+/// pane may not - the move would close one window to open another around
+/// the very same pane, and a window closing as a drag's side effect skips
+/// its close confirmation (Mac `PaneHeaderView.canPopOut`, win32
+/// `pane_relocate.popOutAllowed`). Joining ANOTHER window stays allowed.
+pub fn popOutAllowed(leaves: usize, tab_count: usize) bool {
+    if (leaves == 0 or tab_count == 0) return false;
+    return pane_relocate.popOutAllowed(leaves, tab_count);
+}
+
+/// The size a popped-out window opens at: the window it leaves, or - when
+/// that one is maximized or fullscreen - its restored (default) size, so
+/// the new window is not a second screen-filling one (win32 T1546). Null
+/// when neither is known: the new window takes its own estimate.
+pub fn popOutSize(w: c_int, h: c_int, filling: bool, restored_w: c_int, restored_h: c_int) ?[2]c_int {
+    if (filling) {
+        if (restored_w > 0 and restored_h > 0) return .{ restored_w, restored_h };
+        return null;
+    }
+    if (w > 0 and h > 0) return .{ w, h };
+    return null;
+}
+
 /// The handle of the leaf whose pane id is `id`, or null.
 pub fn handleOf(
     comptime Tree: type,
@@ -611,4 +636,25 @@ test "the resolver's tab bar answer drives tabDrop end to end" {
     try testing.expectEqual(TabDrop{ .new_tab = 1 }, tabDrop(2, 0, t.new_tab.index, 2));
     // And the same point is a dwell on tab 1.
     try testing.expectEqual(@as(usize, 1), pane_drop.hoveredTab(.{ .x = 300, .y = 17 }, &.{bar}).?.index);
+}
+
+test "a pane may pop out into a new window unless it is its window's last" {
+    // A window's only pane in its only tab: refused.
+    try testing.expect(!popOutAllowed(1, 1));
+    // A pane with a sibling in its tab, or a lone pane with another tab.
+    try testing.expect(popOutAllowed(2, 1));
+    try testing.expect(popOutAllowed(1, 2));
+    try testing.expect(popOutAllowed(3, 4));
+    // A tree or window that reads empty has no pane to move.
+    try testing.expect(!popOutAllowed(0, 2));
+    try testing.expect(!popOutAllowed(2, 0));
+}
+
+test "a popped-out window takes its source's size, or the restored size of a filling one" {
+    try testing.expectEqual([2]c_int{ 900, 600 }, popOutSize(900, 600, false, 500, 400).?);
+    // Maximized or fullscreen: the restored size, never a second full screen.
+    try testing.expectEqual([2]c_int{ 500, 400 }, popOutSize(1920, 1080, true, 500, 400).?);
+    try testing.expect(popOutSize(1920, 1080, true, 0, 0) == null);
+    // Nothing laid out yet: the new window's own estimate.
+    try testing.expect(popOutSize(0, 0, false, 500, 400) == null);
 }

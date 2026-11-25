@@ -1330,6 +1330,7 @@ pub const Window = extern struct {
             const tab = gobject.ext.cast(Tab, priv.tab_view.getNthPage(@intCast(i)).getChild()) orelse continue;
             tab.getSplitTree().syncRearrangeHeaders(on);
         }
+        self.syncPopOut();
         inline for (&.{ "tabs-autohide", "tabs-visible" }) |key| {
             self.as(gobject.Object).notifyByPspec(@field(properties, key).impl.param_spec);
         }
@@ -1598,6 +1599,78 @@ pub const Window = extern struct {
         tab.getSplitTree().focusSurface(surface);
         self.finishArrival(&.{surface}, source_mode);
         return true;
+    }
+
+    /// How many panes `tree` holds (its leaves).
+    fn leafCount(tree: *SplitTree) usize {
+        const t = tree.getTree() orelse return 0;
+        var count: usize = 0;
+        var it = t.iterator();
+        while (it.next()) |_| count += 1;
+        return count;
+    }
+
+    /// May a pane of `tree`, a tab of this window, move into a new window
+    /// of its own (T3618; `pane_drop_apply.popOutAllowed`)?
+    pub fn popOutAllowedFor(self: *Self, tree: *SplitTree) bool {
+        return pane_drop_apply.popOutAllowed(leafCount(tree), @intCast(self.private().tab_view.getNPages()));
+    }
+
+    /// Move the pane `id` into a NEW window holding only it (T3618, Mac
+    /// "anywhere else: a new window" and the header's pop-out button): a
+    /// drag released over nothing, or that button. The same pane - shell,
+    /// scrollback, pane id and agent session go with it, through the
+    /// cross-window adoption a drop on another window's tab bar makes
+    /// (`adoptFromWindow`, which also brings the rearrange mode along and
+    /// presents the new window). A window's last pane is refused, so this
+    /// never closes a window. The new window opens at the size of the one
+    /// it leaves; Wayland gives a client no pointer or window position, so
+    /// where it lands is the compositor's call.
+    pub fn popOutPane(id: []const u8, near: *Self) PaneDrag.DropResult {
+        var result: PaneDrag.DropResult = .{ .target = "new_window", .outcome = "not_here" };
+        const home = paneHome(id, near) orelse return result;
+        const surface = home.tree.surfaceById(id) orelse return result;
+        if (!home.window.popOutAllowedFor(home.tree)) {
+            result.outcome = "refused";
+            log.info("pop out pane={s} refused: the window's last pane", .{id});
+            return result;
+        }
+        const src = home.window.as(gtk.Window);
+        const src_w = home.window.as(gtk.Widget);
+        var dw: c_int = 0;
+        var dh: c_int = 0;
+        src.getDefaultSize(&dw, &dh);
+        const filling = src.isMaximized() != 0 or src.isFullscreen() != 0;
+        const size = pane_drop_apply.popOutSize(src_w.getWidth(), src_w.getHeight(), filling, dw, dh);
+        const win = Application.default().newWindowForPopOut(
+            if (size) |s| s[0] else 0,
+            if (size) |s| s[1] else 0,
+        );
+        if (!win.adoptFromWindow(home, surface, 0)) {
+            // Nothing moved: the empty window goes again.
+            win.as(gtk.Window).destroy();
+            return result;
+        }
+        result.outcome = "moved";
+        log.info("pop out pane={s} into a new window size={d}x{d}", .{
+            id,
+            if (size) |s| s[0] else 0,
+            if (size) |s| s[1] else 0,
+        });
+        return result;
+    }
+
+    /// Re-read whether each pane's header may pop it out (T3618): the
+    /// button is disabled on a window's last pane. Run when a tree rebuilds
+    /// and when a tab comes or goes, since either changes the answer.
+    pub fn syncPopOut(self: *Self) void {
+        const tab_view = self.private().tab_view;
+        const n = tab_view.getNPages();
+        for (0..@intCast(n)) |i| {
+            const tab = gobject.ext.cast(Tab, tab_view.getNthPage(@intCast(i)).getChild()) orelse continue;
+            const tree = tab.getSplitTree();
+            tree.syncPopOut(self.popOutAllowedFor(tree));
+        }
     }
 
     /// A pane drag over the tab bar at (x, y), in the bar's coordinates:
@@ -2435,6 +2508,9 @@ pub const Window = extern struct {
         // The focused pane is the sidebar's selected row (T3557).
         // Disconnected with the tab's other handlers on detach (by data).
         _ = gobject.Object.signals.notify.connect(tab, *Self, sidebarTabNotify, self, .{ .detail = "active-surface" });
+
+        // A tab more: a window's lone pane may pop out now (T3618).
+        self.syncPopOut();
         // The window's title is the selected tab's plus the activity suffix
         // (T3561), recomposed whenever that title moves.
         _ = gobject.Object.signals.notify.connect(tab, *Self, tabTitleNotify, self, .{ .detail = "title" });
@@ -2679,6 +2755,9 @@ pub const Window = extern struct {
 
         // Its panes' states leave with it (T3561).
         self.syncActivity();
+
+        // A tab fewer: a window's last pane may no longer pop out (T3618).
+        self.syncPopOut();
     }
 
     fn tabViewCreateWindow(
