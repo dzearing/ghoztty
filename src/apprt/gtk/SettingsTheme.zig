@@ -926,7 +926,8 @@ pub fn writeState(self: *SettingsTheme, jws: *std.json.Stringify, alloc: Allocat
         for ([_]*wk.GtkWidget{ ui.tab_light, ui.tab_dark }) |t| try jws.write(std.mem.span(wk.gtk_button_get_label(t) orelse ""));
         try jws.endArray();
         try jws.objectField("tab_active");
-        try jws.write(if (wk.gtk_toggle_button_get_active(ui.tab_light) != 0) "light" else if (wk.gtk_toggle_button_get_active(ui.tab_dark) != 0) "dark" else null);
+        const tab_active: ?[]const u8 = if (wk.gtk_toggle_button_get_active(ui.tab_light) != 0) "light" else if (wk.gtk_toggle_button_get_active(ui.tab_dark) != 0) "dark" else null;
+        try jws.write(tab_active);
         try jws.objectField("tab_caption");
         try jws.write(std.mem.span(wk.gtk_label_get_text(ui.tab_caption)));
         try jws.objectField("filter");
