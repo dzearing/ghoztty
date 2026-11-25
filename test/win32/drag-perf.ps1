@@ -405,6 +405,22 @@ try {
     if ($serial.Keys.Count -eq 0 -or $batched.Keys.Count -eq 0) {
         throw 'no drag samples at all - GHOZTTY_PERF oracle missing (release build?)'
     }
+    # Having a row is not having the RIGHT row (T2240): on 2026-10-24 every
+    # shape printed two identical panes=2 rows and no panes=4 row while the
+    # counts above still read 3/3, because a drag over a folded layout handed
+    # back a 2-pane sample under the 4-pane key. The app stamps each summary
+    # with the panes the drag actually resized, so a row filed under N must
+    # say panes=N.
+    $misfiled = @()
+    foreach ($mode in $shapes.Keys) {
+        foreach ($c in @($shapes[$mode].Keys)) {
+            $got = $shapes[$mode][$c].Panes
+            if ($got -ne $c) { $misfiled += "$mode $c-pane row reports panes=$got" }
+        }
+    }
+    Assert ($misfiled.Count -eq 0) `
+    ("every shape's N-pane row is a drag over N panes, not another count's sample" +
+        $(if ($misfiled.Count) { " ($($misfiled -join '; '))" } else { " ($($shapes.Count) shapes x $($PaneCounts.Count) counts)" }))
 
     $lo = ($PaneCounts | Sort-Object)[0]
     $hi = ($PaneCounts | Sort-Object)[-1]
