@@ -36,8 +36,18 @@
 //! config file and All Settings with Mac's All / Changed / Not on other
 //! pages filter; a curated key's row there links to its page.
 //!
-//! **A repeatable key (T3632)** - Font features and the Font row's family
-//! list on their page, and every list key under All Settings - is Mac's
+//! **The Font row (T3765)** is Mac's `FontControl`: an `AdwComboRow` over the
+//! monospaced families fontconfig knows (`font_families.zig`), Default
+//! (JetBrains Mono) first, which removes the key. A pick replaces the first
+//! `font-family` value of the user's file and keeps the fallbacks; "+N
+//! fallback" sits beside it with the rest as its tooltip, and the fallbacks
+//! are chips on a row below once the file names a font. A primary no
+//! installed family matches is listed "(not installed)" and the subtitle
+//! says Ghoztty uses the next font. The rules are `settings_controls.zig`'s,
+//! shared with win32.
+//!
+//! **A repeatable key (T3632)** - Font features on its page, and every list
+//! key under All Settings - is Mac's
 //! `ListControl`: the user's file's values as removable chips, then an "add a
 //! value" field. Both write through `SettingsModel.setList`, so the longest
 //! run of existing lines that still matches stays put with its comments; a
@@ -67,6 +77,7 @@ const controls = @import("../win32/settings_controls.zig");
 
 const Application = @import("class/application.zig").Application;
 const ShortcutGuideWindow = @import("ShortcutGuideWindow.zig");
+const font_families = @import("font_families.zig");
 
 const log = std.log.scoped(.gtk_settings);
 
@@ -87,7 +98,7 @@ const Row = struct {
 };
 
 /// How a curated row is drawn.
-pub const Kind = enum { toggle, choice, shell, spin, slider, flags, text, list };
+pub const Kind = enum { toggle, choice, shell, spin, slider, flags, text, list, font };
 
 /// One curated row as built. Widgets live as long as the window; strings and
 /// slices are in `build_arena`.
@@ -104,8 +115,14 @@ pub const Curated = struct {
     entry: ?*wk.GtkWidget = null,
     /// A list row's chip box: one chip per value in the user's file.
     chips: ?*wk.GtkWidget = null,
-    /// The row holding a shell row's Other... field.
+    /// The row holding a shell row's Other... field, or the Font row's
+    /// fallback chips.
     other_row: ?*wk.GtkWidget = null,
+    /// The Font row's "+N fallback" (Mac's caption beside the picker).
+    fallback_label: ?*wk.GtkWidget = null,
+    /// The Font row's not-installed primary while its picker lists one
+    /// (in `font_arena`); the items are rebuilt when this changes.
+    font_extra: ?[]const u8 = null,
     scale: ?*wk.GtkWidget = null,
     /// A choice or shell row's items, in the popup's order (a shell row's
     /// list ends with Other..., which is not in here).
@@ -165,6 +182,10 @@ slide_value: f64 = 0,
 /// "add a value" field across the redraw, as Mac's field keeps it.
 draft_key: std.ArrayListUnmanaged(u8) = .empty,
 draft_text: std.ArrayListUnmanaged(u8) = .empty,
+/// The installed font families the Font row offers (T3765), in
+/// `build_arena`; and the Font row's current items, in `font_arena`.
+fonts: font_families.Families = .{ .mono = &.{}, .all = &.{} },
+font_arena: std.heap.ArenaAllocator,
 
 const Group = struct { page: PageId, title: ?[]const u8, widget: *wk.GtkWidget };
 
@@ -230,6 +251,7 @@ fn create(app: *Application) !*SettingsWindow {
         .catalog = catalog,
         .file = file,
         .build_arena = std.heap.ArenaAllocator.init(gpa),
+        .font_arena = std.heap.ArenaAllocator.init(gpa),
     };
     self.model = SettingsModel.init(gpa, &self.store, .{ .ctx = self, .func = reloadHook });
     self.reloadData();
@@ -564,17 +586,41 @@ fn addCurated(self: *SettingsWindow, group: *wk.GtkWidget, def: *const pages.Row
                 c.flag_rows[i] = sw;
             }
         },
-        // A repeatable key (Font features, and the Font row's family list):
-        // Mac's `ListControl` - the file's values as removable chips, then
-        // a field that adds one (T3632).
-        .list, .font => if (entry_def.repeatable) {
+        // Mac's `FontControl` (T3765): a picker over the installed
+        // monospaced families - Default removes the key, a pick replaces the
+        // first value and keeps the fallbacks - with "+N fallback" beside it.
+        // The fallbacks are chips on a row under it (T3632's editor), shown
+        // once the file names a font for them to follow.
+        .font => {
+            c.kind = .font;
+            c.row = wk.adw_combo_row_new();
+            self.fonts = font_families.load(arena) catch |err| blk: {
+                log.warn("settings: listing fonts failed err={}", .{err});
+                break :blk .{ .mono = &.{}, .all = &.{} };
+            };
+            log.info("settings: font picker lists {d} monospaced families of {d}", .{ self.fonts.mono.len, self.fonts.all.len });
+            const fb = wk.gtk_label_new("");
+            wk.gtk_widget_add_css_class(fb, "caption");
+            wk.gtk_widget_add_css_class(fb, "dim-label");
+            wk.gtk_widget_set_valign(fb, 3);
+            wk.adw_action_row_add_suffix(c.row, fb);
+            c.fallback_label = fb;
+            const other = wk.adw_action_row_new();
+            plainTitle(other, "Fallback fonts");
+            wk.adw_action_row_set_subtitle(other, "Used in order for characters the font does not have.");
+            const ed = try self.buildListEditor(arena, "add a fallback", "settings-curated", index);
+            wk.adw_action_row_add_suffix(other, ed.box);
+            c.chips = ed.chips;
+            c.entry = ed.entry;
+            c.other_row = other;
+            self.connect(ed.entry, "activate", @ptrCast(&onCuratedListActivate));
+        },
+        // A repeatable key (Font features): Mac's `ListControl` - the file's
+        // values as removable chips, then a field that adds one (T3632).
+        .list => |l| if (entry_def.repeatable) {
             c.kind = .list;
             c.row = wk.adw_action_row_new();
-            const placeholder: []const u8 = switch (def.control) {
-                .list => |l| l.placeholder,
-                else => "add a font",
-            };
-            const ed = try self.buildListEditor(arena, placeholder, "settings-curated", index);
+            const ed = try self.buildListEditor(arena, l.placeholder, "settings-curated", index);
             wk.adw_action_row_add_suffix(c.row, ed.box);
             c.chips = ed.chips;
             c.entry = ed.entry;
@@ -609,7 +655,7 @@ fn addCurated(self: *SettingsWindow, group: *wk.GtkWidget, def: *const pages.Row
             c.entry = field;
         },
     }
-    if (c.kind == .choice or c.kind == .shell) self.connect(c.row, "notify::selected", @ptrCast(&onComboSelected));
+    if (c.kind == .choice or c.kind == .shell or c.kind == .font) self.connect(c.row, "notify::selected", @ptrCast(&onComboSelected));
     plainTitle(c.row, label);
     tag(c.row, "settings-curated", index);
 
@@ -849,7 +895,18 @@ pub fn expectedDisplay(self: *const SettingsWindow, buf: []u8, c: *const Curated
             break :blk cur;
         },
         .flags => cur,
-        .text, .color, .folder, .font, .list => if (c.kind == .list) self.fileListShown(buf, c.key) else self.textShown(buf, c),
+        .font => blk: {
+            const vals = r.values(self.gpa, c.key) catch break :blk "";
+            defer self.gpa.free(vals);
+            const primary = if (vals.len > 0) vals[0] else "";
+            if (primary.len == 0) break :blk controls.font_default_label;
+            if (controls.hasFamily(self.fonts.mono, primary)) {
+                for (self.fonts.mono) |f| if (std.ascii.eqlIgnoreCase(f, primary)) break :blk f;
+            }
+            if (controls.hasFamily(self.fonts.all, primary)) break :blk std.fmt.bufPrint(buf, "{s}", .{primary}) catch "";
+            break :blk std.fmt.bufPrint(buf, "{s} (not installed)", .{primary}) catch "";
+        },
+        .text, .color, .folder, .list => if (c.kind == .list) self.fileListShown(buf, c.key) else self.textShown(buf, c),
         else => c.def.labelFor(cur),
     };
 }
@@ -886,6 +943,10 @@ fn chipsShown(self: *const SettingsWindow, buf: []u8, chips: *wk.GtkWidget) []co
 pub fn widgetDisplay(self: *const SettingsWindow, buf: []u8, c: *const Curated) []const u8 {
     switch (c.kind) {
         .list => return self.chipsShown(buf, c.chips.?),
+        .font => {
+            const sel = wk.adw_combo_row_get_selected(c.row);
+            return if (sel < c.choices.len) c.choices[sel].label else "";
+        },
         .toggle => return if (wk.adw_switch_row_get_active(c.row) != 0) "On" else "Off",
         .choice, .shell => {
             const sel = wk.adw_combo_row_get_selected(c.row);
@@ -953,7 +1014,10 @@ fn refreshCurated(self: *SettingsWindow) void {
 
 fn refreshOne(self: *SettingsWindow, r: SettingsSources.Reader, arena: Allocator, c: *Curated) !void {
     const cur = r.value(c.key);
+    // Mac's orange line under the Font picker, when its font is missing.
+    var warning: ?[]const u8 = null;
     switch (c.kind) {
+        .font => warning = try self.refreshFont(r, arena, c),
         .toggle => wk.adw_switch_row_set_active(c.row, @intFromBool(std.mem.eql(u8, cur, "true"))),
         .choice => {
             var sel: c_uint = wk.invalid_list_position;
@@ -1030,6 +1094,8 @@ fn refreshOne(self: *SettingsWindow, r: SettingsSources.Reader, arena: Allocator
         p
     else if (overriding) |src|
         try SettingsSources.overrideMessage(arena, src, null)
+    else if (warning) |w|
+        w
     else if (!enabled)
         c.def.enabled_when.?.reason
     else
@@ -1040,6 +1106,51 @@ fn refreshOne(self: *SettingsWindow, r: SettingsSources.Reader, arena: Allocator
         std.mem.span(wk.adw_expander_row_get_subtitle(c.row) orelse "")
     else
         std.mem.span(wk.adw_action_row_get_subtitle(c.row) orelse "");
+}
+
+/// The Font row (Mac `FontControl`): its items (rebuilt only when the
+/// not-installed primary they end with changes), the selection, "+N
+/// fallback" with the fallbacks as its tooltip, and the fallback chips - the
+/// user's file's values after the first. Returns the not-installed warning.
+fn refreshFont(self: *SettingsWindow, r: SettingsSources.Reader, arena: Allocator, c: *Curated) !?[]const u8 {
+    const eff = try r.values(arena, c.key);
+    const primary: []const u8 = if (eff.len > 0) eff[0] else "";
+    const extra: ?[]const u8 = if (primary.len > 0 and !controls.hasFamily(self.fonts.mono, primary)) primary else null;
+    const same = if (c.font_extra) |old| (extra != null and std.mem.eql(u8, old, extra.?)) else extra == null;
+    if (!same or c.choices.len == 0) {
+        _ = self.font_arena.reset(.retain_capacity);
+        const fa = self.font_arena.allocator();
+        const fc = try controls.fontChoices(fa, self.fonts.mono, self.fonts.all, if (extra) |e| try fa.dupe(u8, e) else "");
+        const opts = try fa.alloc(pages.Option, fc.len);
+        for (fc, opts) |f, *o| o.* = .{ .value = f.value, .label = f.label };
+        c.choices = opts;
+        c.font_extra = if (extra != null) fc[fc.len - 1].value else null;
+        try setComboItems(arena, c.row, c.choices, false);
+    }
+    const sel = controls.fontChoiceIndex(c.choices, primary) orelse 0;
+    wk.adw_combo_row_set_selected(c.row, @intCast(sel));
+
+    var buf: [64]u8 = undefined;
+    if (controls.fontFallbackLabel(&buf, eff.len)) |t| {
+        wk.gtk_label_set_text(c.fallback_label.?, (try arena.dupeZ(u8, t)).ptr);
+        wk.gtk_widget_set_tooltip_text(c.fallback_label.?, (try arena.dupeZ(u8, try std.mem.join(arena, ", ", eff[1..]))).ptr);
+        wk.gtk_widget_set_visible(c.fallback_label.?, 1);
+    } else {
+        wk.gtk_label_set_text(c.fallback_label.?, "");
+        wk.gtk_widget_set_visible(c.fallback_label.?, 0);
+    }
+
+    const file_vals = try self.file.values(arena, c.key);
+    const editable = if (self.sources) |*s| s.overriding(c.key) == null else true;
+    try self.fillChips(c.chips.?, if (file_vals.len > 1) file_vals[1..] else &.{}, "settings-curated", self.curatedIndex(c), editable);
+    wk.gtk_widget_set_sensitive(c.entry.?, @intFromBool(editable));
+    // A fallback follows a font the file names; with none, there is
+    // nothing for it to fall back from (and an add would become the font).
+    wk.gtk_widget_set_visible(c.other_row.?, @intFromBool(file_vals.len > 0));
+
+    if (primary.len == 0 or controls.hasFamily(self.fonts.all, primary)) return null;
+    var wbuf: [512]u8 = undefined;
+    return try arena.dupe(u8, controls.fontNotInstalledText(&wbuf, primary));
 }
 
 fn refreshCounts(self: *SettingsWindow) void {
@@ -1210,7 +1321,7 @@ pub fn listShown(self: *const SettingsWindow, alloc: Allocator, key: []const u8)
 
 /// The "add a value" field of a curated list row, as typed.
 pub fn listField(c: *const Curated) ?[]const u8 {
-    if (c.kind != .list) return null;
+    if (c.kind != .list and c.kind != .font) return null;
     return std.mem.span(wk.gtk_editable_get_text(c.entry.?));
 }
 
@@ -1409,6 +1520,24 @@ fn draftFor(self: *const SettingsWindow, key: []const u8) []const u8 {
     return self.draft_text.items;
 }
 
+/// The Font picker's pick (Mac `FontControl`'s setter): "" (Default)
+/// removes the key; a family replaces the FIRST value of the user's file -
+/// as the file says now - and keeps every fallback.
+pub fn pickFont(self: *SettingsWindow, key: []const u8, family: []const u8) bool {
+    const def = self.catalog.get(key) orelse return false;
+    if (self.sources) |*s| if (s.overriding(def.key) != null) return false;
+    if (family.len == 0) return self.chooseValue(def.key, "");
+    self.rereadFile();
+    const vals = self.file.values(self.gpa, def.key) catch return false;
+    defer self.gpa.free(vals);
+    const next = (controls.fontPick(self.gpa, vals, family) catch return false) orelse return true;
+    defer self.gpa.free(next);
+    const ok = self.writeList(def.key, next);
+    log.info("settings: font {s} ok={}", .{ family, ok });
+    self.afterChange();
+    return ok;
+}
+
 /// A flag's switch: every schema flag is written explicitly, as Mac's.
 pub fn setFlag(self: *SettingsWindow, key: []const u8, flag: []const u8, on: bool) bool {
     const entry_def = self.catalog.get(key) orelse return false;
@@ -1508,7 +1637,7 @@ pub const GestureError = error{ NotCurated, WrongControl, BadValue, NotListed };
 /// Type into a curated list row's "add a value" field and press Return.
 pub fn gestureListAdd(self: *SettingsWindow, key: []const u8, text: []const u8) GestureError!void {
     const c = self.curatedFor(key) orelse return error.NotCurated;
-    if (c.kind != .list) return error.WrongControl;
+    if (c.kind != .list and c.kind != .font) return error.WrongControl;
     wk.gtk_editable_set_text(c.entry.?, (self.gpa.dupeZ(u8, text) catch return error.BadValue).ptr);
     wk.g_signal_emit_by_name(c.entry.?, "activate");
 }
@@ -1516,7 +1645,7 @@ pub fn gestureListAdd(self: *SettingsWindow, key: []const u8, text: []const u8) 
 /// Click the x on a curated list row's `index`th chip.
 pub fn gestureListRemove(self: *SettingsWindow, key: []const u8, index: usize) GestureError!void {
     const c = self.curatedFor(key) orelse return error.NotCurated;
-    if (c.kind != .list) return error.WrongControl;
+    if (c.kind != .list and c.kind != .font) return error.WrongControl;
     try emitChipRemove(c.chips.?, index);
 }
 
@@ -1568,7 +1697,7 @@ pub fn gestureToggle(self: *SettingsWindow, key: []const u8) GestureError!void {
 /// shell row anything not listed goes through Other...).
 pub fn gestureChoose(self: *SettingsWindow, key: []const u8, val: []const u8) GestureError!void {
     const c = self.curatedFor(key) orelse return error.NotCurated;
-    if (c.kind != .choice and c.kind != .shell) return error.WrongControl;
+    if (c.kind != .choice and c.kind != .shell and c.kind != .font) return error.WrongControl;
     for (c.choices, 0..) |o, i| if (std.mem.eql(u8, o.value, val)) {
         wk.adw_combo_row_set_selected(c.row, @intCast(i));
         return;
@@ -1644,6 +1773,7 @@ fn destroy(self: *SettingsWindow) void {
     self.shown_pages.deinit(gpa);
     self.counts.deinit(gpa);
     self.build_arena.deinit();
+    self.font_arena.deinit();
     self.query.deinit(gpa);
     self.draft_key.deinit(gpa);
     self.draft_text.deinit(gpa);
@@ -1734,6 +1864,10 @@ fn onComboSelected(row: *wk.GtkWidget, _: ?*anyopaque, self: *SettingsWindow) ca
     if (self.syncing) return;
     const c = self.curatedOf(row) orelse return;
     const sel = wk.adw_combo_row_get_selected(row);
+    if (c.kind == .font) {
+        if (sel < c.choices.len) _ = self.pickFont(c.key, c.choices[sel].value);
+        return;
+    }
     if (c.kind == .shell) {
         if (sel == c.choices.len) {
             // Other...: its field opens; nothing is written until Return.
@@ -1817,7 +1951,9 @@ fn onCuratedListActivate(field: *wk.GtkWidget, self: *SettingsWindow) callconv(.
 fn onCuratedChipRemove(button: *wk.GtkWidget, self: *SettingsWindow) callconv(.c) void {
     const c = self.curatedOf(button) orelse return;
     const i = tagOf(button, "settings-chip") orelse return;
-    _ = self.removeListValue(c.key, i);
+    // The Font row's chips are the fallbacks: the file's values after the
+    // first.
+    _ = self.removeListValue(c.key, i + @intFromBool(c.kind == .font));
 }
 
 fn onRowChipRemove(button: *wk.GtkWidget, self: *SettingsWindow) callconv(.c) void {

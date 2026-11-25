@@ -1273,8 +1273,14 @@ fn readClipboard(app: Context, request: Request) Allocator.Error![]u8 {
 ///                                listed: --op=search first), win32's op name
 ///   --op=remove --key=<k> --index=<i>  All Settings: the i-th chip's x
 ///   --op=list-add / --op=list-remove   the same on a curated list row
+///                                (on the Font row: its fallback chips, so
+///                                index 0 is the file's SECOND value)
+///   --op=choose --key=font-family --value=<family>   the Font picker (T3765);
+///                                "" is Default; its "choices" are the items
 ///   state's "key" adds "list": {chips[],field,in_effect,removable} for an
-///   All Settings list row as drawn, and a curated list row "field"
+///   All Settings list row as drawn, and a curated list row "field"; the
+///   Font row adds "fallback" ("+N fallback" or null), "fallback_tooltip"
+///   and "fallback_chips"
 ///   state adds "page", "visible_page", "filter", "pages":[{id,title,count}],
 ///   "groups":[{page,title,drawn}] and, with --key, "key.curated":
 ///   {page,label,kind,display,expected,dot,reset,sensitive,enabled,subtitle,
@@ -1515,6 +1521,16 @@ fn writeSettingsState(jws: *std.json.Stringify, arena: Allocator, w_opt: anytype
                 try jws.write(W.listField(c));
                 try jws.objectField("other_visible");
                 try jws.write(if (c.other_row) |o| wk.gtk_widget_get_visible(o) != 0 else null);
+                // The Font row (T3765): "+N fallback" as drawn (null when
+                // hidden), its tooltip, and the fallback chips.
+                if (c.fallback_label) |fb| {
+                    try jws.objectField("fallback");
+                    try jws.write(if (wk.gtk_widget_get_visible(fb) != 0) std.mem.span(wk.gtk_label_get_text(fb)) else null);
+                    try jws.objectField("fallback_tooltip");
+                    try jws.write(if (wk.gtk_widget_get_tooltip_text(fb)) |t| std.mem.span(t) else null);
+                    try jws.objectField("fallback_chips");
+                    try jws.write(try W.chipValues(arena, c.chips.?));
+                }
                 try jws.endObject();
             } else try jws.write(null);
             try jws.endObject();

@@ -360,6 +360,121 @@ pub fn folderLabel(buf: []u8, value: []const u8, home: []const u8) []const u8 {
 }
 
 // ---------------------------------------------------------------------
+// Font (Mac `FontControl`, T3765)
+// ---------------------------------------------------------------------
+//
+// `font-family` is a repeatable key: the first value is the font, the rest
+// are fallbacks. Mac's row is a picker over the installed fixed-pitch
+// families; a pick replaces the FIRST value of the user's file and keeps the
+// fallbacks, "Default" removes the key, "+N fallback" counts the rest, and a
+// primary that is not installed says so. Each platform enumerates its own
+// families (fontconfig, DirectWrite); the rules are here.
+
+/// The picker's "unset" item: Ghostty's embedded default font.
+pub const font_default_label = "Default (JetBrains Mono)";
+
+/// One picker item: the family written (`""` = Default, remove the key) and
+/// what the menu shows.
+pub const FontChoice = struct { value: []const u8, label: []const u8 };
+
+/// The installed monospaced families as the picker lists them (Mac
+/// `monospacedFamilies`): hidden families (a leading `.`) and blanks dropped,
+/// duplicates folded, sorted. Caller frees the slice; the strings are
+/// borrowed from `names`.
+pub fn fontFamilies(alloc: std.mem.Allocator, names: []const []const u8) std.mem.Allocator.Error![]const []const u8 {
+    var out: std.ArrayListUnmanaged([]const u8) = .empty;
+    errdefer out.deinit(alloc);
+    for (names) |n| {
+        if (n.len == 0 or n[0] == '.') continue;
+        try out.append(alloc, n);
+    }
+    std.mem.sort([]const u8, out.items, {}, struct {
+        fn lt(_: void, a: []const u8, b: []const u8) bool {
+            return std.mem.lessThan(u8, a, b);
+        }
+    }.lt);
+    var w: usize = 0;
+    for (out.items) |n| {
+        if (w > 0 and std.mem.eql(u8, out.items[w - 1], n)) continue;
+        out.items[w] = n;
+        w += 1;
+    }
+    out.shrinkRetainingCapacity(w);
+    return out.toOwnedSlice(alloc);
+}
+
+/// Whether `family` is in `families`, as fontconfig and DirectWrite match a
+/// family name: ASCII case-insensitively.
+pub fn hasFamily(families: []const []const u8, family: []const u8) bool {
+    for (families) |f| if (std.ascii.eqlIgnoreCase(f, family)) return true;
+    return false;
+}
+
+/// The picker's items: Default, then each installed monospaced family, then
+/// - when the config names a primary the list does not hold - that primary,
+/// marked "(not installed)" only when no family of that name is installed at
+/// all (an installed proportional font is listed by its plain name). The
+/// labels are allocated with `alloc` (an arena).
+pub fn fontChoices(
+    alloc: std.mem.Allocator,
+    mono: []const []const u8,
+    all: []const []const u8,
+    primary: []const u8,
+) std.mem.Allocator.Error![]const FontChoice {
+    var out: std.ArrayListUnmanaged(FontChoice) = .empty;
+    try out.append(alloc, .{ .value = "", .label = font_default_label });
+    for (mono) |f| try out.append(alloc, .{ .value = f, .label = f });
+    if (primary.len > 0 and !hasFamily(mono, primary)) {
+        const label = if (hasFamily(all, primary))
+            primary
+        else
+            try std.fmt.allocPrint(alloc, "{s} (not installed)", .{primary});
+        try out.append(alloc, .{ .value = primary, .label = label });
+    }
+    return out.toOwnedSlice(alloc);
+}
+
+/// The item a primary selects: Default for none, else the family that names
+/// it (case-insensitively, as the font is matched). Null only when `choices`
+/// does not hold it, which `fontChoices` rules out. `choices` is any slice
+/// of items with a `value` field (a frontend's own option type).
+pub fn fontChoiceIndex(choices: anytype, primary: []const u8) ?usize {
+    if (primary.len == 0) {
+        for (choices, 0..) |c, i| if (c.value.len == 0) return i;
+        return null;
+    }
+    for (choices, 0..) |c, i| if (std.mem.eql(u8, c.value, primary)) return i;
+    for (choices, 0..) |c, i| if (c.value.len > 0 and std.ascii.eqlIgnoreCase(c.value, primary)) return i;
+    return null;
+}
+
+/// What a pick writes (Mac `FontControl`'s setter): the user's file's list
+/// with its FIRST value replaced by `family`, every fallback kept - or just
+/// `[family]` when the file sets none. Null means "write nothing": `family`
+/// is empty (Default, which removes the key instead) or already first.
+/// Caller frees the slice; the strings are borrowed.
+pub fn fontPick(alloc: std.mem.Allocator, file_list: []const []const u8, family: []const u8) std.mem.Allocator.Error!?[]const []const u8 {
+    if (family.len == 0) return null;
+    if (file_list.len > 0 and std.mem.eql(u8, file_list[0], family)) return null;
+    const out = try alloc.alloc([]const u8, @max(file_list.len, 1));
+    if (file_list.len > 0) @memcpy(out, file_list);
+    out[0] = family;
+    return out;
+}
+
+/// Mac's "+N fallback" beside the picker, for the list in effect; null when
+/// there is no fallback.
+pub fn fontFallbackLabel(buf: []u8, list_len: usize) ?[]const u8 {
+    if (list_len < 2) return null;
+    return std.fmt.bufPrint(buf, "+{d} fallback", .{list_len - 1}) catch null;
+}
+
+/// Mac's warning under a primary no installed family matches.
+pub fn fontNotInstalledText(buf: []u8, primary: []const u8) []const u8 {
+    return std.fmt.bufPrint(buf, "{s} isn't installed \u{2014} Ghoztty uses the next font.", .{primary}) catch "";
+}
+
+// ---------------------------------------------------------------------
 
 fn trimZeros(text: []const u8) []const u8 {
     if (std.mem.indexOfScalar(u8, text, '.') == null) return text;
@@ -497,4 +612,74 @@ test "settings_controls: folder labels" {
     try testing.expectEqualStrings("~\\src", folderLabel(&b, "c:\\users\\me\\src", home));
     try testing.expectEqualStrings("C:\\Users\\meow", folderLabel(&b, "C:\\Users\\meow", home));
     try testing.expectEqualStrings("D:\\work", folderLabel(&b, "D:\\work", home));
+}
+
+test "settings_controls: font families list like Mac's monospacedFamilies" {
+    const names = [_][]const u8{ "Hack", ".Hidden Mono", "DejaVu Sans Mono", "", "Hack", "Cascadia Code" };
+    const fams = try fontFamilies(testing.allocator, &names);
+    defer testing.allocator.free(fams);
+    try testing.expectEqual(@as(usize, 3), fams.len);
+    try testing.expectEqualStrings("Cascadia Code", fams[0]);
+    try testing.expectEqualStrings("DejaVu Sans Mono", fams[1]);
+    try testing.expectEqualStrings("Hack", fams[2]);
+    try testing.expect(hasFamily(fams, "hack"));
+    try testing.expect(!hasFamily(fams, "Menlo"));
+}
+
+test "settings_controls: font picker items mark only a missing primary" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const mono = [_][]const u8{ "DejaVu Sans Mono", "Hack" };
+    const all = [_][]const u8{ "DejaVu Sans", "DejaVu Sans Mono", "Hack" };
+
+    const plain = try fontChoices(arena, &mono, &all, "");
+    try testing.expectEqual(@as(usize, 3), plain.len);
+    try testing.expectEqualStrings("", plain[0].value);
+    try testing.expectEqualStrings(font_default_label, plain[0].label);
+    try testing.expectEqual(@as(?usize, 0), fontChoiceIndex(plain, ""));
+
+    const listed = try fontChoices(arena, &mono, &all, "Hack");
+    try testing.expectEqual(@as(usize, 3), listed.len);
+    try testing.expectEqual(@as(?usize, 2), fontChoiceIndex(listed, "Hack"));
+    try testing.expectEqual(@as(?usize, 2), fontChoiceIndex(listed, "hack"));
+
+    const missing = try fontChoices(arena, &mono, &all, "Menlo");
+    try testing.expectEqual(@as(usize, 4), missing.len);
+    try testing.expectEqualStrings("Menlo", missing[3].value);
+    try testing.expectEqualStrings("Menlo (not installed)", missing[3].label);
+    try testing.expectEqual(@as(?usize, 3), fontChoiceIndex(missing, "Menlo"));
+
+    // Installed, just not monospaced: listed by its own name, no warning.
+    const proportional = try fontChoices(arena, &mono, &all, "DejaVu Sans");
+    try testing.expectEqualStrings("DejaVu Sans", proportional[3].label);
+}
+
+test "settings_controls: a font pick replaces the first value and keeps fallbacks" {
+    const a = testing.allocator;
+    const empty = (try fontPick(a, &.{}, "Hack")).?;
+    defer a.free(empty);
+    try testing.expectEqual(@as(usize, 1), empty.len);
+    try testing.expectEqualStrings("Hack", empty[0]);
+
+    const list = [_][]const u8{ "Menlo", "Symbols Nerd Font", "Noto Emoji" };
+    const picked = (try fontPick(a, &list, "Hack")).?;
+    defer a.free(picked);
+    try testing.expectEqual(@as(usize, 3), picked.len);
+    try testing.expectEqualStrings("Hack", picked[0]);
+    try testing.expectEqualStrings("Symbols Nerd Font", picked[1]);
+    try testing.expectEqualStrings("Noto Emoji", picked[2]);
+    try testing.expectEqualStrings("Menlo", list[0]);
+
+    try testing.expect((try fontPick(a, &list, "")) == null);
+    try testing.expect((try fontPick(a, &list, "Menlo")) == null);
+}
+
+test "settings_controls: font fallback count and not-installed warning" {
+    var b: [128]u8 = undefined;
+    try testing.expect(fontFallbackLabel(&b, 0) == null);
+    try testing.expect(fontFallbackLabel(&b, 1) == null);
+    try testing.expectEqualStrings("+1 fallback", fontFallbackLabel(&b, 2).?);
+    try testing.expectEqualStrings("+3 fallback", fontFallbackLabel(&b, 4).?);
+    try testing.expectEqualStrings("Menlo isn't installed \u{2014} Ghoztty uses the next font.", fontNotInstalledText(&b, "Menlo"));
 }

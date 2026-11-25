@@ -6,8 +6,9 @@
 # debug-only `settings` seam (IpcHandlers.settingsSeam), whose ops call what
 # the window's own signal handlers call. P1-P23 (T3631) cover the curated
 # pages: each op moves the row's real libadwaita widget and reads it back.
-# L1-L10 (T3632) cover list keys: chips and an "add a value" field, curated
-# and under All Settings.
+# L1-L10 (T3632; L5 became F1-F8) cover list keys: chips and an "add a
+# value" field, curated and under All Settings. F1-F8 (T3765) cover the Font
+# row, Mac's installed-font picker, against fc-list's monospaced families.
 #
 # Run it ONLY through the wrapper, from this box:
 #
@@ -273,9 +274,47 @@ hl_check "L3 a chip's x removes that value only; the chips follow" $? "lines=$(l
 st --op=curated-reset --key=font-feature > /dev/null
 ! grep -q '^font-feature' "$dev" && [ "$(cur font-feature display)" = '' ] && [ "$(cur font-feature dot)" = false ]
 hl_check "L4 the row's reset removes every value; no chips, no dot" $? "lines=$(lines_of font-feature) chips=$(cur font-feature display)"
-st --op=list-add --key=font-family --value='DejaVu Sans Mono' > /dev/null
-[ "$(cur font-family kind)" = list ] && [ "$(lines_of font-family)" = 'DejaVu Sans Mono|' ] && [ "$(cur font-family display)" = 'DejaVu Sans Mono' ]
-hl_check "L5 the Font row edits the family list as chips too" $? "kind=$(cur font-family kind) lines=$(lines_of font-family)"
+
+# ---- the Font row (T3765): Mac's installed-font picker -----------------------
+# The items are fontconfig's monospaced families; fc-list is the oracle. A
+# face's first family name is its own (later ones are localized aliases).
+fc_mono=$(fc-list :spacing=mono family; fc-list :spacing=charcell family)
+fc_mono=$(printf '%s\n' "$fc_mono" | sed 's/,.*//' | grep -v '^\.' | grep -v '^$' | sort -u)
+ch=$(cur font-family choices)
+fams=$(printf '%s' "$ch" | python3 -I -c 'import json,sys; print("\n".join(c["value"] for c in json.load(sys.stdin)[1:]))')
+first=$(printf '%s' "$ch" | python3 -I -c 'import json,sys; c=json.load(sys.stdin)[0]; print(c["value"]+"|"+c["label"])')
+[ "$(cur font-family kind)" = font ] && [ "$first" = '|Default (JetBrains Mono)' ] && [ -n "$fams" ] && [ "$fams" = "$fc_mono" ] && [ "$(cur font-family display)" = 'Default (JetBrains Mono)' ] && [ "$(cur font-family other_visible)" = false ]
+hl_check "F1 the Font row is a picker: Default (JetBrains Mono), then exactly fc-list's monospaced families; no fallback row while unset" $? "kind=$(cur font-family kind) first=$first n=$(printf '%s\n' "$fams" | wc -l) fc=$(printf '%s\n' "$fc_mono" | wc -l) diff=$(diff <(printf '%s\n' "$fams") <(printf '%s\n' "$fc_mono") | tr '\n' ' ' | cut -c1-300)"
+fam1=$(printf '%s\n' "$fams" | grep -m1 -x 'DejaVu Sans Mono' || printf '%s\n' "$fams" | head -1)
+fam2=$(printf '%s\n' "$fams" | grep -v -x "$fam1" | head -1)
+o=$(st --op=choose --key=font-family --value="$fam1")
+[ "$(jget "$o" 'd["ok"]')" = true ] && [ "$(lines_of font-family)" = "$fam1|" ] && [ "$(cur font-family display)" = "$fam1" ] && [ "$(cur font-family dot)" = true ] && [ "$(cur font-family fallback)" = null ] && [ "$(cur font-family other_visible)" = true ]
+hl_check "F2 picking '$fam1' writes one font-family line; the picker shows it; the fallback row opens" $? "lines=$(lines_of font-family) display=$(cur font-family display) fallback=$(cur font-family fallback)"
+st --op=list-add --key=font-family --value='Symbols Nerd Font' > /dev/null
+[ "$(lines_of font-family)" = "$fam1|Symbols Nerd Font|" ] && [ "$(cur font-family fallback)" = '+1 fallback' ] && [ "$(cur font-family fallback_tooltip)" = 'Symbols Nerd Font' ] && [ "$(cur font-family fallback_chips)" = '["Symbols Nerd Font"]' ] && [ "$(cur font-family display)" = "$fam1" ]
+hl_check "F3 a fallback added under it follows the font; '+1 fallback' beside the picker names it" $? "lines=$(lines_of font-family) fallback=$(cur font-family fallback) tip=$(cur font-family fallback_tooltip) chips=$(cur font-family fallback_chips)"
+[ -n "$fam2" ] && st --op=choose --key=font-family --value="$fam2" > /dev/null
+[ -n "$fam2" ] && [ "$(lines_of font-family)" = "$fam2|Symbols Nerd Font|" ] && [ "$(cur font-family display)" = "$fam2" ] && [ "$(cur font-family fallback)" = '+1 fallback' ]
+hl_check "F4 picking another family ('$fam2') replaces only the first value; the fallback stays" $? "lines=$(lines_of font-family) display=$(cur font-family display) (needs two monospaced families installed)"
+st --op=list-remove --key=font-family --index=0 > /dev/null
+[ "$(lines_of font-family)" = "$fam2|" ] && [ "$(cur font-family fallback)" = null ] && [ "$(cur font-family fallback_chips)" = '[]' ]
+hl_check "F5 a fallback chip's x removes that fallback, not the font" $? "lines=$(lines_of font-family) fallback=$(cur font-family fallback)"
+# A font this box does not have, named by hand (All Settings' list row).
+st --op=curated-reset --key=font-family > /dev/null
+st --op=search --value=font-family > /dev/null
+st --op=add --key=font-family --value='Nowhere Mono' > /dev/null
+st --op=add --key=font-family --value="$fam1" > /dev/null
+st --op=search --value= > /dev/null
+sub=$(cur font-family subtitle)
+[ "$(lines_of font-family)" = "Nowhere Mono|$fam1|" ] && [ "$(cur font-family display)" = 'Nowhere Mono (not installed)' ] && [ "$sub" = "Nowhere Mono isn't installed — Ghoztty uses the next font." ] && [ "$(cur font-family fallback)" = '+1 fallback' ] && [ "$(cur font-family display)" = "$(cur font-family expected)" ]
+hl_check "F6 a font that is not installed is listed '(not installed)' and the row says Ghoztty uses the next font" $? "lines=$(lines_of font-family) display=$(cur font-family display) subtitle=$sub"
+st --op=choose --key=font-family --value="$fam1" > /dev/null
+sub=$(cur font-family subtitle)
+[ "$(lines_of font-family)" = "$fam1|$fam1|" ] && [ "$sub" != "Nowhere Mono isn't installed — Ghoztty uses the next font." ] && [ "$(jget "$(cur font-family choices)" 'any("not installed" in c["label"] for c in d)')" = false ]
+hl_check "F7 picking an installed family over it clears the warning and the '(not installed)' item" $? "lines=$(lines_of font-family) subtitle=$sub"
+st --op=choose --key=font-family --value= > /dev/null
+! grep -q '^font-family' "$dev" && [ "$(cur font-family display)" = 'Default (JetBrains Mono)' ] && [ "$(cur font-family dot)" = false ] && [ "$(cur font-family other_visible)" = false ]
+hl_check "F8 Default removes every font-family line, fallbacks included" $? "lines=$(lines_of font-family) display=$(cur font-family display)"
 
 # All Settings' list rows.
 st --op=search --value=keybind > /dev/null

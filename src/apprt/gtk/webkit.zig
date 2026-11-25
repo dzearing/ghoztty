@@ -246,6 +246,7 @@ pub extern fn gtk_editable_set_text(editable: *GtkWidget, text: [*:0]const u8) v
 pub extern fn gtk_editable_select_region(editable: *GtkWidget, start: c_int, end: c_int) void;
 pub extern fn gtk_editable_get_selection_bounds(editable: *GtkWidget, start: ?*c_int, end: ?*c_int) c_int;
 pub extern fn gtk_widget_set_tooltip_text(widget: *GtkWidget, text: ?[*:0]const u8) void;
+pub extern fn gtk_widget_get_tooltip_text(widget: *GtkWidget) ?[*:0]const u8;
 pub extern fn gtk_widget_set_sensitive(widget: *GtkWidget, sensitive: c_int) void;
 pub extern fn gtk_widget_get_sensitive(widget: *GtkWidget) c_int;
 pub extern fn gtk_widget_set_visible(widget: *GtkWidget, visible: c_int) void;
