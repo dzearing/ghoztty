@@ -1265,6 +1265,16 @@ fn readClipboard(app: Context, request: Request) Allocator.Error![]u8 {
 ///   --op=text --key=<k> --value=<v>      type into a curated text row + Return
 ///   --op=curated-reset --key=<k> the row's reset button
 ///   --op=reveal --key=<k>        All Settings' "<Page> >" link
+///
+/// List keys (T3632), Mac's `ListControl` - chips and an "add a value" field:
+///
+///   --op=add --key=<k> --value=<v>     All Settings: type into the list
+///                                row's field + Return (the row must be
+///                                listed: --op=search first), win32's op name
+///   --op=remove --key=<k> --index=<i>  All Settings: the i-th chip's x
+///   --op=list-add / --op=list-remove   the same on a curated list row
+///   state's "key" adds "list": {chips[],field,in_effect,removable} for an
+///   All Settings list row as drawn, and a curated list row "field"
 ///   state adds "page", "visible_page", "filter", "pages":[{id,title,count}],
 ///   "groups":[{page,title,drawn}] and, with --key, "key.curated":
 ///   {page,label,kind,display,expected,dot,reset,sensitive,enabled,subtitle,
@@ -1276,7 +1286,10 @@ fn settingsSeam(app: Context, request: Request) Allocator.Error![]u8 {
     var val: ?[]const u8 = null;
     var page_arg: ?[]const u8 = null;
     var filter_arg: ?[]const u8 = null;
+    var index_arg: usize = 0;
     for (request.arguments orelse &.{}) |arg| {
+        if (std.mem.startsWith(u8, arg, "--index=")) index_arg = std.fmt.parseInt(usize, arg["--index=".len..], 10) catch
+            return server.errorResponse(c_alloc, "--index must be a non-negative integer", .{});
         if (std.mem.startsWith(u8, arg, "--op=")) op = arg["--op=".len..];
         if (std.mem.startsWith(u8, arg, "--key=")) key = arg["--key=".len..];
         if (std.mem.startsWith(u8, arg, "--value=")) val = arg["--value=".len..];
@@ -1294,7 +1307,7 @@ fn settingsSeam(app: Context, request: Request) Allocator.Error![]u8 {
         if (filter_arg) |f| w.setFilter(std.meta.stringToEnum(SettingsWindow.Filter, f) orelse
             return server.errorResponse(c_alloc, "--filter must be all, changed or uncovered", .{}));
     }
-    const gestures = [_][]const u8{ "toggle", "choose", "step", "slide", "flag", "text", "curated-reset", "reveal" };
+    const gestures = [_][]const u8{ "toggle", "choose", "step", "slide", "flag", "text", "curated-reset", "reveal", "add", "remove", "list-add", "list-remove" };
     var is_gesture = false;
     for (gestures) |g| is_gesture = is_gesture or std.mem.eql(u8, op, g);
     if (std.mem.eql(u8, op, "action")) {
@@ -1322,11 +1335,20 @@ fn settingsSeam(app: Context, request: Request) Allocator.Error![]u8 {
             w.gestureText(k, v)
         else if (std.mem.eql(u8, op, "curated-reset"))
             w.gestureReset(k)
+        else if (std.mem.eql(u8, op, "add"))
+            w.gestureRowAdd(k, v)
+        else if (std.mem.eql(u8, op, "remove"))
+            w.gestureRowRemove(k, index_arg)
+        else if (std.mem.eql(u8, op, "list-add"))
+            w.gestureListAdd(k, v)
+        else if (std.mem.eql(u8, op, "list-remove"))
+            w.gestureListRemove(k, index_arg)
         else if (w.reveal(k)) {} else error.NotCurated;
         result catch |err| return server.errorResponse(c_alloc, "--op={s} on '{s}': {s}", .{ op, k, switch (err) {
             error.NotCurated => "no curated row has that key on a page this window shows",
             error.WrongControl => "that row is not drawn with this control",
             error.BadValue => "that row has no such value",
+            error.NotListed => "All Settings does not list that key as a list row (search for it first)",
         } });
         // The write (and its redraw) run now, so the reply reads the result.
         w.flush();
@@ -1346,7 +1368,7 @@ fn settingsSeam(app: Context, request: Request) Allocator.Error![]u8 {
                 error.OutOfMemory => return error.OutOfMemory,
                 error.UnknownKey => return server.errorResponse(c_alloc, "no setting named '{s}'", .{k}),
                 error.Overridden => return server.errorResponse(c_alloc, "'{s}' is set by a file that loads later", .{k}),
-                error.List => return server.errorResponse(c_alloc, "'{s}' is a list; this slice edits plain keys only", .{k}),
+                error.List => return server.errorResponse(c_alloc, "'{s}' is a list; use --op=add / --op=remove", .{k}),
             };
         } else return server.errorResponse(c_alloc, "unknown --op '{s}'", .{op});
     }
@@ -1437,6 +1459,19 @@ fn writeSettingsState(jws: *std.json.Stringify, arena: Allocator, w_opt: anytype
             try jws.write(w.problem(k));
             try jws.objectField("override");
             try jws.write(try w.overrideFor(arena, k));
+            try jws.objectField("list");
+            if (try w.listShown(arena, k)) |l| {
+                try jws.beginObject();
+                try jws.objectField("chips");
+                try jws.write(l.chips);
+                try jws.objectField("field");
+                try jws.write(l.field);
+                try jws.objectField("in_effect");
+                try jws.write(l.in_effect);
+                try jws.objectField("removable");
+                try jws.write(l.removable);
+                try jws.endObject();
+            } else try jws.write(null);
             try jws.objectField("curated");
             if (w.curatedFor(k)) |c| {
                 const W = @TypeOf(w.*);
@@ -1476,6 +1511,8 @@ fn writeSettingsState(jws: *std.json.Stringify, arena: Allocator, w_opt: anytype
                     try jws.endObject();
                 }
                 try jws.endArray();
+                try jws.objectField("field");
+                try jws.write(W.listField(c));
                 try jws.objectField("other_visible");
                 try jws.write(if (c.other_row) |o| wk.gtk_widget_get_visible(o) != 0 else null);
                 try jws.endObject();

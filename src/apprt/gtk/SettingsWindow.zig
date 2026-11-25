@@ -36,11 +36,19 @@
 //! config file and All Settings with Mac's All / Changed / Not on other
 //! pages filter; a curated key's row there links to its page.
 //!
+//! **A repeatable key (T3632)** - Font features and the Font row's family
+//! list on their page, and every list key under All Settings - is Mac's
+//! `ListControl`: the user's file's values as removable chips, then an "add a
+//! value" field. Both write through `SettingsModel.setList`, so the longest
+//! run of existing lines that still matches stays put with its comments; a
+//! value Ghostty refuses is not written and stays in the field with the
+//! reason. All Settings adds Mac's "In effect:" line under a list row.
+//!
 //! Rows are built once and refreshed in place after every write (a rebuild
 //! would lose the page's scroll), from the same reader the seam reports.
 //! Sections with their own UI that are their own cards are left off for
 //! now: the preview and themes (T3636), the agent status and Remote Machines
-//! (T3635); list keys are shown, edited under T3632.
+//! (T3635).
 const SettingsWindow = @This();
 
 const std = @import("std");
@@ -69,12 +77,17 @@ pub const Filter = SettingsSources.Reader.Filter;
 /// the widgets a change touches.
 const Row = struct {
     key: []const u8,
+    /// A plain key's value field, or a repeatable key's "add a value" field.
     entry: *wk.GtkWidget,
     note: *wk.GtkWidget,
+    /// A repeatable key's chip box (Mac `ListControl`) and its "In effect:"
+    /// line; null for a plain key.
+    chips: ?*wk.GtkWidget = null,
+    in_effect: ?*wk.GtkWidget = null,
 };
 
 /// How a curated row is drawn.
-pub const Kind = enum { toggle, choice, shell, spin, slider, flags, text };
+pub const Kind = enum { toggle, choice, shell, spin, slider, flags, text, list };
 
 /// One curated row as built. Widgets live as long as the window; strings and
 /// slices are in `build_arena`.
@@ -86,8 +99,11 @@ pub const Curated = struct {
     row: *wk.GtkWidget,
     dot: *wk.GtkWidget,
     reset: *wk.GtkWidget,
-    /// A text row's field, or a shell row's Other... field.
+    /// A text row's field, a shell row's Other... field, or a list row's
+    /// "add a value" field.
     entry: ?*wk.GtkWidget = null,
+    /// A list row's chip box: one chip per value in the user's file.
+    chips: ?*wk.GtkWidget = null,
     /// The row holding a shell row's Other... field.
     other_row: ?*wk.GtkWidget = null,
     scale: ?*wk.GtkWidget = null,
@@ -145,6 +161,10 @@ refresh_source: c_uint = 0,
 slide_source: c_uint = 0,
 slide_index: usize = 0,
 slide_value: f64 = 0,
+/// A list value the file refused: its key and the typed text, kept in the
+/// "add a value" field across the redraw, as Mac's field keeps it.
+draft_key: std.ArrayListUnmanaged(u8) = .empty,
+draft_text: std.ArrayListUnmanaged(u8) = .empty,
 
 const Group = struct { page: PageId, title: ?[]const u8, widget: *wk.GtkWidget };
 
@@ -544,9 +564,35 @@ fn addCurated(self: *SettingsWindow, group: *wk.GtkWidget, def: *const pages.Row
                 c.flag_rows[i] = sw;
             }
         },
-        // A color, folder, font, list or free text: edited as its value
-        // text, the All Settings way. A list's own editor is T3632.
-        .text, .color, .folder, .font, .list => {
+        // A repeatable key (Font features, and the Font row's family list):
+        // Mac's `ListControl` - the file's values as removable chips, then
+        // a field that adds one (T3632).
+        .list, .font => if (entry_def.repeatable) {
+            c.kind = .list;
+            c.row = wk.adw_action_row_new();
+            const placeholder: []const u8 = switch (def.control) {
+                .list => |l| l.placeholder,
+                else => "add a font",
+            };
+            const ed = try self.buildListEditor(arena, placeholder, "settings-curated", index);
+            wk.adw_action_row_add_suffix(c.row, ed.box);
+            c.chips = ed.chips;
+            c.entry = ed.entry;
+            self.connect(ed.entry, "activate", @ptrCast(&onCuratedListActivate));
+        } else {
+            c.kind = .text;
+            c.row = wk.adw_action_row_new();
+            const field = wk.gtk_entry_new();
+            wk.gtk_editable_set_width_chars(field, 22);
+            wk.gtk_widget_set_valign(field, 3);
+            tag(field, "settings-curated", index);
+            self.connect(field, "activate", @ptrCast(&onCuratedEntryActivate));
+            wk.adw_action_row_add_suffix(c.row, field);
+            c.entry = field;
+        },
+        // A color, folder or free text: edited as its value text, the All
+        // Settings way.
+        .text, .color, .folder => {
             c.kind = .text;
             c.row = wk.adw_action_row_new();
             const field = wk.gtk_entry_new();
@@ -554,7 +600,6 @@ fn addCurated(self: *SettingsWindow, group: *wk.GtkWidget, def: *const pages.Row
             wk.gtk_widget_set_valign(field, 3);
             switch (def.control) {
                 .text => |t| wk.gtk_entry_set_placeholder_text(field, (try arena.dupeZ(u8, t.placeholder)).ptr),
-                .list => |l| wk.gtk_entry_set_placeholder_text(field, (try arena.dupeZ(u8, l.placeholder)).ptr),
                 .color => |col| wk.gtk_entry_set_placeholder_text(field, (try arena.dupeZ(u8, col.none_label)).ptr),
                 else => {},
             }
@@ -596,6 +641,90 @@ fn setComboItems(arena: Allocator, row: *wk.GtkWidget, choices: []const pages.Op
     const model = wk.gtk_string_list_new(strs.ptr);
     wk.adw_combo_row_set_model(row, model);
     wk.g_object_unref(model);
+}
+
+const ListEditor = struct { box: *wk.GtkWidget, chips: *wk.GtkWidget, entry: *wk.GtkWidget };
+
+/// Mac's `ListControl`: a horizontally scrolling run of chips, then an
+/// "add a value" field. `tag_name`/`index` say whose row it is, so the
+/// chips' remove buttons and the field's Return find it.
+fn buildListEditor(self: *SettingsWindow, arena: Allocator, placeholder: []const u8, tag_name: [*:0]const u8, index: usize) !ListEditor {
+    _ = self;
+    const box = wk.gtk_box_new(0, 6);
+    wk.gtk_widget_set_valign(box, 3);
+    const chips = wk.gtk_box_new(0, 4);
+    const scroller = wk.gtk_scrolled_window_new();
+    wk.gtk_scrolled_window_set_policy(scroller, 1, 2); // automatic, never
+    wk.gtk_scrolled_window_set_propagate_natural_width(scroller, 1);
+    wk.gtk_scrolled_window_set_max_content_width(scroller, 360);
+    wk.gtk_scrolled_window_set_child(scroller, chips);
+    wk.gtk_widget_set_valign(scroller, 3);
+    wk.gtk_box_append(box, scroller);
+    const entry = wk.gtk_entry_new();
+    wk.gtk_editable_set_width_chars(entry, 12);
+    wk.gtk_widget_set_valign(entry, 3);
+    wk.gtk_entry_set_placeholder_text(entry, (try arena.dupeZ(u8, placeholder)).ptr);
+    tag(entry, tag_name, index);
+    wk.gtk_box_append(box, entry);
+    return .{ .box = box, .chips = chips, .entry = entry };
+}
+
+/// Make `chips` show `vals`: one chip each, its x button removing that
+/// value. `editable` false (a later file owns the key) leaves them inert.
+fn fillChips(self: *SettingsWindow, chips: *wk.GtkWidget, vals: []const []const u8, tag_name: [*:0]const u8, index: usize, editable: bool) !void {
+    while (wk.gtk_widget_get_first_child(chips)) |ch| wk.gtk_box_remove(chips, ch);
+    var arena_state = std.heap.ArenaAllocator.init(self.gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    for (vals, 0..) |v, i| {
+        const chip = wk.gtk_box_new(0, 2);
+        wk.gtk_widget_add_css_class(chip, "card");
+        wk.gtk_widget_set_valign(chip, 3);
+        const label = wk.gtk_label_new((try arena.dupeZ(u8, v)).ptr);
+        wk.gtk_widget_add_css_class(label, "monospace");
+        wk.gtk_widget_add_css_class(label, "caption");
+        wk.gtk_label_set_ellipsize(label, 3); // end
+        wk.gtk_label_set_max_width_chars(label, 40);
+        wk.gtk_widget_set_margin_start(label, 6);
+        wk.gtk_box_append(chip, label);
+        const x = wk.gtk_button_new_from_icon_name("window-close-symbolic");
+        wk.gtk_widget_add_css_class(x, "flat");
+        wk.gtk_widget_add_css_class(x, "circular");
+        wk.gtk_widget_set_tooltip_text(x, (try std.fmt.allocPrintSentinel(arena, "Remove {s}", .{v}, 0)).ptr);
+        wk.gtk_widget_set_sensitive(x, @intFromBool(editable));
+        tag(x, tag_name, index);
+        tag(x, "settings-chip", i);
+        self.connect(x, "clicked", @ptrCast(if (std.mem.eql(u8, std.mem.span(tag_name), "settings-curated"))
+            &onCuratedChipRemove
+        else
+            &onRowChipRemove));
+        wk.gtk_box_append(chip, x);
+        wk.gtk_box_append(chips, chip);
+    }
+}
+
+/// The values a chip box shows, read back from its labels. Caller frees the
+/// outer slice; the strings are GTK's.
+pub fn chipValues(alloc: Allocator, chips: *wk.GtkWidget) Allocator.Error![]const []const u8 {
+    var out: std.ArrayListUnmanaged([]const u8) = .empty;
+    var chip = wk.gtk_widget_get_first_child(chips);
+    while (chip) |ch| : (chip = wk.gtk_widget_get_next_sibling(ch)) {
+        const label = wk.gtk_widget_get_first_child(ch) orelse continue;
+        try out.append(alloc, std.mem.span(wk.gtk_label_get_text(label)));
+    }
+    return out.toOwnedSlice(alloc);
+}
+
+/// Mac's "In effect:" line: the first four effective values, then a count.
+fn inEffectText(arena: Allocator, vals: []const []const u8) ![:0]const u8 {
+    var out: std.ArrayListUnmanaged(u8) = .empty;
+    try out.appendSlice(arena, "In effect: ");
+    for (vals[0..@min(vals.len, 4)], 0..) |v, i| {
+        if (i > 0) try out.appendSlice(arena, "  \u{00B7}  ");
+        try out.appendSlice(arena, v);
+    }
+    if (vals.len > 4) try out.print(arena, "  \u{00B7}  \u{2026} ({d})", .{vals.len});
+    return out.toOwnedSliceSentinel(arena, 0);
 }
 
 /// A shell row's items: the default line (unset), then each common shell
@@ -695,6 +824,10 @@ pub fn curatedFor(self: *SettingsWindow, key: []const u8) ?*Curated {
     return null;
 }
 
+fn curatedIndex(self: *const SettingsWindow, c: *const Curated) usize {
+    return (@intFromPtr(c) - @intFromPtr(self.curated.items.ptr)) / @sizeOf(Curated);
+}
+
 fn curatedOf(self: *SettingsWindow, widget: *wk.GtkWidget) ?*Curated {
     const i = tagOf(widget, "settings-curated") orelse return null;
     if (i >= self.curated.items.len) return null;
@@ -716,7 +849,7 @@ pub fn expectedDisplay(self: *const SettingsWindow, buf: []u8, c: *const Curated
             break :blk cur;
         },
         .flags => cur,
-        .text, .color, .folder, .font, .list => self.textShown(buf, c),
+        .text, .color, .folder, .font, .list => if (c.kind == .list) self.fileListShown(buf, c.key) else self.textShown(buf, c),
         else => c.def.labelFor(cur),
     };
 }
@@ -732,10 +865,27 @@ fn textShown(self: *const SettingsWindow, buf: []u8, c: *const Curated) []const 
     return std.mem.join(fba.allocator(), ", ", vals) catch "";
 }
 
+/// The user's file's values for a list key, joined by ", " - what its chips
+/// should read (Mac's `ListControl` lists `model.file.values`).
+fn fileListShown(self: *const SettingsWindow, buf: []u8, key: []const u8) []const u8 {
+    var fba = std.heap.FixedBufferAllocator.init(buf);
+    const vals = self.file.values(self.gpa, key) catch return "";
+    defer self.gpa.free(vals);
+    return std.mem.join(fba.allocator(), ", ", vals) catch "";
+}
+
+/// What a chip box shows, read back from its labels and joined by ", ".
+fn chipsShown(self: *const SettingsWindow, buf: []u8, chips: *wk.GtkWidget) []const u8 {
+    var fba = std.heap.FixedBufferAllocator.init(buf);
+    const vals = chipValues(self.gpa, chips) catch return "";
+    defer self.gpa.free(vals);
+    return std.mem.join(fba.allocator(), ", ", vals) catch "";
+}
+
 /// What a curated control shows right now, read back from the widget.
 pub fn widgetDisplay(self: *const SettingsWindow, buf: []u8, c: *const Curated) []const u8 {
-    _ = self;
     switch (c.kind) {
+        .list => return self.chipsShown(buf, c.chips.?),
         .toggle => return if (wk.adw_switch_row_get_active(c.row) != 0) "On" else "Off",
         .choice, .shell => {
             const sel = wk.adw_combo_row_get_selected(c.row);
@@ -855,6 +1005,14 @@ fn refreshOne(self: *SettingsWindow, r: SettingsSources.Reader, arena: Allocator
                 wk.gtk_editable_set_text(field, (try arena.dupeZ(u8, self.textShown(&buf, c))).ptr);
             }
         },
+        .list => {
+            const vals = try self.file.values(arena, c.key);
+            const editable = if (self.sources) |*s| s.overriding(c.key) == null else true;
+            try self.fillChips(c.chips.?, vals, "settings-curated", self.curatedIndex(c), editable);
+            wk.gtk_widget_set_sensitive(c.entry.?, @intFromBool(editable));
+            // The field is left alone: the add empties it when it writes,
+            // and a refused value stays there to be fixed.
+        },
     }
 
     const entry_def = self.catalog.get(c.key);
@@ -939,19 +1097,45 @@ fn addRow(self: *SettingsWindow, key: []const u8) !void {
         wk.gtk_box_append(line, link);
     };
 
-    const entry = wk.gtk_entry_new();
-    wk.gtk_editable_set_width_chars(entry, 28);
-    const shown: []const u8 = if (entry_def.repeatable) blk: {
-        const vals = try r.values(arena, key);
-        break :blk try std.mem.join(arena, ", ", vals);
-    } else r.value(key);
-    wk.gtk_editable_set_text(entry, (try arena.dupeZ(u8, shown)).ptr);
-    wk.gtk_box_append(line, entry);
+    const overriding = if (self.sources) |*s| s.overriding(key) else null;
+    // A plain key is one field; a repeatable key is Mac's `ListControl` -
+    // the file's values as chips, then an "add a value" field (T3632).
+    var chips: ?*wk.GtkWidget = null;
+    var in_effect: ?*wk.GtkWidget = null;
+    const entry = if (entry_def.repeatable) blk: {
+        const ed = try self.buildListEditor(arena, "add a value", "settings-row", index);
+        try self.fillChips(ed.chips, try self.file.values(arena, key), "settings-row", index, overriding == null);
+        wk.gtk_editable_set_text(ed.entry, (try arena.dupeZ(u8, self.draftFor(key))).ptr);
+        wk.gtk_box_append(line, ed.box);
+        chips = ed.chips;
+        break :blk ed.entry;
+    } else blk: {
+        const field = wk.gtk_entry_new();
+        wk.gtk_editable_set_width_chars(field, 28);
+        wk.gtk_editable_set_text(field, (try arena.dupeZ(u8, r.value(key))).ptr);
+        wk.gtk_box_append(line, field);
+        break :blk field;
+    };
 
     const reset = wk.gtk_button_new_with_label("Reset");
     wk.gtk_widget_set_sensitive(reset, @intFromBool(r.isSetInFile(key)));
     wk.gtk_box_append(line, reset);
     wk.gtk_box_append(outer, line);
+
+    // A list's values in effect, from every file and the defaults.
+    if (entry_def.repeatable) {
+        const vals = try r.values(arena, key);
+        if (vals.len > 0) {
+            const l = wk.gtk_label_new((try inEffectText(arena, vals)).ptr);
+            wk.gtk_widget_add_css_class(l, "caption");
+            wk.gtk_widget_add_css_class(l, "monospace");
+            wk.gtk_widget_add_css_class(l, "dim-label");
+            wk.gtk_label_set_xalign(l, 0.0);
+            wk.gtk_label_set_ellipsize(l, 3);
+            wk.gtk_box_append(outer, l);
+            in_effect = l;
+        }
+    }
 
     const note = wk.gtk_label_new(null);
     wk.gtk_widget_add_css_class(note, "caption");
@@ -959,16 +1143,12 @@ fn addRow(self: *SettingsWindow, key: []const u8) !void {
     wk.gtk_label_set_wrap(note, 1);
     wk.gtk_box_append(outer, note);
 
-    // A key a later file overrides, or a list (its editor is a later
-    // card), is shown but not edited here.
-    const overriding = if (self.sources) |*s| s.overriding(key) else null;
+    // A key a later file overrides is shown but not edited here.
     if (overriding) |src| {
         const msg = try SettingsSources.overrideMessage(arena, src, null);
         wk.gtk_label_set_text(note, (try arena.dupeZ(u8, msg)).ptr);
         wk.gtk_widget_set_sensitive(entry, 0);
         wk.gtk_widget_set_sensitive(reset, 0);
-    } else if (entry_def.repeatable) {
-        wk.gtk_widget_set_sensitive(entry, 0);
     }
     if (self.model.problem(key)) |p| {
         wk.gtk_label_set_text(note, (try arena.dupeZ(u8, p)).ptr);
@@ -976,7 +1156,7 @@ fn addRow(self: *SettingsWindow, key: []const u8) !void {
     }
     wk.gtk_widget_set_visible(note, @intFromBool(overriding != null or self.model.problem(key) != null));
 
-    try self.rows.append(self.gpa, .{ .key = entry_def.key, .entry = entry, .note = note });
+    try self.rows.append(self.gpa, .{ .key = entry_def.key, .entry = entry, .note = note, .chips = chips, .in_effect = in_effect });
     self.connect(entry, "activate", @ptrCast(&onEntryActivate));
     self.connect(reset, "clicked", @ptrCast(&onResetClicked));
     // The row index rides on the widgets, so a signal finds its key.
@@ -997,6 +1177,41 @@ pub fn shownValue(self: *const SettingsWindow, key: []const u8) ?[]const u8 {
         if (std.mem.eql(u8, row.key, key)) return std.mem.span(wk.gtk_editable_get_text(row.entry));
     }
     return null;
+}
+
+/// A list key's All Settings row as drawn: its chips (read back from the
+/// labels), its "add a value" field and its "In effect:" line. Null when the
+/// key is not listed or is not a list. The strings are GTK's.
+pub const ListShown = struct {
+    chips: []const []const u8,
+    field: []const u8,
+    in_effect: ?[]const u8,
+    removable: bool,
+};
+
+pub fn listShown(self: *const SettingsWindow, alloc: Allocator, key: []const u8) Allocator.Error!?ListShown {
+    for (self.rows.items) |row| {
+        if (!std.mem.eql(u8, row.key, key)) continue;
+        const chips = row.chips orelse return null;
+        var removable = true;
+        var chip = wk.gtk_widget_get_first_child(chips);
+        while (chip) |ch| : (chip = wk.gtk_widget_get_next_sibling(ch)) {
+            if (wk.gtk_widget_get_last_child(ch)) |x| removable = removable and wk.gtk_widget_get_sensitive(x) != 0;
+        }
+        return .{
+            .chips = try chipValues(alloc, chips),
+            .field = std.mem.span(wk.gtk_editable_get_text(row.entry)),
+            .in_effect = if (row.in_effect) |l| std.mem.span(wk.gtk_label_get_text(l)) else null,
+            .removable = removable and wk.gtk_widget_get_sensitive(row.entry) != 0,
+        };
+    }
+    return null;
+}
+
+/// The "add a value" field of a curated list row, as typed.
+pub fn listField(c: *const Curated) ?[]const u8 {
+    if (c.kind != .list) return null;
+    return std.mem.span(wk.gtk_editable_get_text(c.entry.?));
 }
 
 /// The effective value a row reads (file line first), for the seam.
@@ -1129,6 +1344,71 @@ pub fn chooseValue(self: *SettingsWindow, key: []const u8, val: []const u8) bool
     return ok;
 }
 
+/// A list field's Return (Mac `ListControl.onSubmit`): the user's file's
+/// values plus `text`, through `setList`. Blank writes nothing. A refused
+/// value keeps its text in the field (`draftFor`) and the row says why.
+pub fn addListValue(self: *SettingsWindow, key: []const u8, text: []const u8) bool {
+    const v = std.mem.trim(u8, text, " \t");
+    if (v.len == 0) return false;
+    const def = self.catalog.get(key) orelse return false;
+    // The list as the file says NOW: an editor's save a moment ago is kept.
+    self.rereadFile();
+    const vals = self.file.values(self.gpa, def.key) catch return false;
+    defer self.gpa.free(vals);
+    var next: std.ArrayListUnmanaged([]const u8) = .empty;
+    defer next.deinit(self.gpa);
+    next.appendSlice(self.gpa, vals) catch return false;
+    next.append(self.gpa, v) catch return false;
+    const ok = self.writeList(def.key, next.items);
+    self.setDraft(if (ok) null else def.key, text);
+    self.afterChange();
+    return ok;
+}
+
+/// A chip's x: the user's file keeps every other value, in order.
+pub fn removeListValue(self: *SettingsWindow, key: []const u8, index: usize) bool {
+    const def = self.catalog.get(key) orelse return false;
+    const vals = self.file.values(self.gpa, def.key) catch return false;
+    defer self.gpa.free(vals);
+    if (index >= vals.len) return false;
+    var next: std.ArrayListUnmanaged([]const u8) = .empty;
+    defer next.deinit(self.gpa);
+    for (vals, 0..) |v, i| if (i != index) next.append(self.gpa, v) catch return false;
+    const ok = self.writeList(def.key, next.items);
+    self.afterChange();
+    return ok;
+}
+
+fn rereadFile(self: *SettingsWindow) void {
+    if (self.store.read(self.gpa)) |t| {
+        self.file.deinit();
+        self.file = t;
+    } else |_| {}
+}
+
+fn writeList(self: *SettingsWindow, key: []const u8, vals: []const []const u8) bool {
+    if (self.sources) |*s| if (s.overriding(key) != null) return false;
+    if (!(self.catalog.get(key) orelse return false).repeatable) return false;
+    const ok = self.model.setList(key, vals) catch false;
+    log.info("settings: list {s} n={d} ok={}", .{ key, vals.len, ok });
+    return ok;
+}
+
+fn setDraft(self: *SettingsWindow, key: ?[]const u8, text: []const u8) void {
+    self.draft_key.clearRetainingCapacity();
+    self.draft_text.clearRetainingCapacity();
+    const k = key orelse return;
+    self.draft_key.appendSlice(self.gpa, k) catch return;
+    self.draft_text.appendSlice(self.gpa, text) catch {};
+}
+
+/// The refused text a list row's field keeps, or "".
+fn draftFor(self: *const SettingsWindow, key: []const u8) []const u8 {
+    if (!std.mem.eql(u8, self.draft_key.items, key)) return "";
+    if (self.model.problem(key) == null) return "";
+    return self.draft_text.items;
+}
+
 /// A flag's switch: every schema flag is written explicitly, as Mac's.
 pub fn setFlag(self: *SettingsWindow, key: []const u8, flag: []const u8, on: bool) bool {
     const entry_def = self.catalog.get(key) orelse return false;
@@ -1223,7 +1503,59 @@ fn reloadHook(ctx: ?*anyopaque) void {
 // never reached the `activate` handler (measured in T3631's first run).
 // ---------------------------------------------------------------------
 
-pub const GestureError = error{ NotCurated, WrongControl, BadValue };
+pub const GestureError = error{ NotCurated, WrongControl, BadValue, NotListed };
+
+/// Type into a curated list row's "add a value" field and press Return.
+pub fn gestureListAdd(self: *SettingsWindow, key: []const u8, text: []const u8) GestureError!void {
+    const c = self.curatedFor(key) orelse return error.NotCurated;
+    if (c.kind != .list) return error.WrongControl;
+    wk.gtk_editable_set_text(c.entry.?, (self.gpa.dupeZ(u8, text) catch return error.BadValue).ptr);
+    wk.g_signal_emit_by_name(c.entry.?, "activate");
+}
+
+/// Click the x on a curated list row's `index`th chip.
+pub fn gestureListRemove(self: *SettingsWindow, key: []const u8, index: usize) GestureError!void {
+    const c = self.curatedFor(key) orelse return error.NotCurated;
+    if (c.kind != .list) return error.WrongControl;
+    try emitChipRemove(c.chips.?, index);
+}
+
+/// Type into an All Settings list row's "add a value" field and press
+/// Return. The row must be listed (search for it first).
+pub fn gestureRowAdd(self: *SettingsWindow, key: []const u8, text: []const u8) GestureError!void {
+    const row = self.listRow(key) orelse return error.NotListed;
+    wk.gtk_editable_set_text(row.entry, (self.gpa.dupeZ(u8, text) catch return error.BadValue).ptr);
+    wk.g_signal_emit_by_name(row.entry, "activate");
+}
+
+/// Click the x on an All Settings list row's `index`th chip.
+pub fn gestureRowRemove(self: *SettingsWindow, key: []const u8, index: usize) GestureError!void {
+    const row = self.listRow(key) orelse return error.NotListed;
+    try emitChipRemove(row.chips.?, index);
+}
+
+fn listRow(self: *SettingsWindow, key: []const u8) ?*Row {
+    for (self.rows.items) |*row| {
+        if (std.mem.eql(u8, row.key, key)) return if (row.chips != null) row else null;
+    }
+    return null;
+}
+
+fn emitChipRemove(chips: *wk.GtkWidget, index: usize) GestureError!void {
+    var i: usize = 0;
+    var chip = wk.gtk_widget_get_first_child(chips);
+    while (chip) |ch| : (chip = wk.gtk_widget_get_next_sibling(ch)) {
+        if (i == index) {
+            const x = wk.gtk_widget_get_last_child(ch) orelse return error.BadValue;
+            // An inert x (a later file owns the key) does nothing, as a
+            // click on an insensitive button does.
+            if (wk.gtk_widget_get_sensitive(x) != 0) wk.g_signal_emit_by_name(x, "clicked");
+            return;
+        }
+        i += 1;
+    }
+    return error.BadValue;
+}
 
 /// Flip a curated switch.
 pub fn gestureToggle(self: *SettingsWindow, key: []const u8) GestureError!void {
@@ -1313,6 +1645,8 @@ fn destroy(self: *SettingsWindow) void {
     self.counts.deinit(gpa);
     self.build_arena.deinit();
     self.query.deinit(gpa);
+    self.draft_key.deinit(gpa);
+    self.draft_text.deinit(gpa);
     self.model.deinit();
     if (self.sources) |*s| s.deinit();
     if (self.effective) |*e| e.deinit();
@@ -1373,6 +1707,10 @@ fn onFilterSelected(dd: *wk.GtkWidget, _: ?*anyopaque, self: *SettingsWindow) ca
 fn onEntryActivate(entry: *wk.GtkWidget, self: *SettingsWindow) callconv(.c) void {
     const row = self.rowOf(entry) orelse return;
     const text = std.mem.span(wk.gtk_editable_get_text(entry));
+    if (row.chips != null) {
+        _ = self.addListValue(row.key, text);
+        return;
+    }
     _ = self.setValue(row.key, text) catch |err| log.warn("settings: set {s} err={}", .{ row.key, err });
 }
 
@@ -1465,6 +1803,27 @@ fn onCuratedEntryActivate(field: *wk.GtkWidget, self: *SettingsWindow) callconv(
     const c = self.curatedOf(field) orelse return;
     _ = self.setValue(c.key, std.mem.span(wk.gtk_editable_get_text(field))) catch |err|
         log.warn("settings: set {s} err={}", .{ c.key, err });
+}
+
+fn onCuratedListActivate(field: *wk.GtkWidget, self: *SettingsWindow) callconv(.c) void {
+    const c = self.curatedOf(field) orelse return;
+    const key = c.key;
+    // Copy: the write's redraw may replace the field's text buffer.
+    const text = self.gpa.dupe(u8, std.mem.span(wk.gtk_editable_get_text(field))) catch return;
+    defer self.gpa.free(text);
+    if (self.addListValue(key, text)) wk.gtk_editable_set_text(field, "");
+}
+
+fn onCuratedChipRemove(button: *wk.GtkWidget, self: *SettingsWindow) callconv(.c) void {
+    const c = self.curatedOf(button) orelse return;
+    const i = tagOf(button, "settings-chip") orelse return;
+    _ = self.removeListValue(c.key, i);
+}
+
+fn onRowChipRemove(button: *wk.GtkWidget, self: *SettingsWindow) callconv(.c) void {
+    const row = self.rowOf(button) orelse return;
+    const i = tagOf(button, "settings-chip") orelse return;
+    _ = self.removeListValue(row.key, i);
 }
 
 fn onCuratedReset(button: *wk.GtkWidget, self: *SettingsWindow) callconv(.c) void {

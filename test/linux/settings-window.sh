@@ -6,6 +6,8 @@
 # debug-only `settings` seam (IpcHandlers.settingsSeam), whose ops call what
 # the window's own signal handlers call. P1-P23 (T3631) cover the curated
 # pages: each op moves the row's real libadwaita widget and reads it back.
+# L1-L10 (T3632) cover list keys: chips and an "add a value" field, curated
+# and under All Settings.
 #
 # Run it ONLY through the wrapper, from this box:
 #
@@ -250,6 +252,52 @@ hl_check "P22 All Settings' page link opens the key's page" $? "visible=$(jget "
 o=$(st --op=state --key=auto-update)
 [ "$(jget "$o" 'd["key"]["curated"]')" = null ] && [ "$(jget "$(st --op=state --page=keyboard)" 'd["visible_page"]')" = keyboard ]
 hl_check "P23 Updates offers no auto-update on Linux; the Keyboard page is there" $? "auto-update curated=$(jget "$o" 'd["key"]["curated"]')"
+
+# ---- list keys (T3632): chips and an "add a value" field --------------------
+# Mac's ListControl, on a curated row (Font features, the Font row's family
+# list) and on All Settings' list rows. Every op types into the real field and
+# emits its Return, or emits the chip's x button's clicked; the reply reads
+# the chip labels back.
+lines_of() { grep "^$1 = " "$dev" | sed "s/^$1 = //" | tr '\n' '|'; }
+lst() { jget "$(st --op=state --key="$1")" "d['key']['list']['$2']"; }
+# A hand-written run, with its comment, that the window has not drawn yet.
+printf '# ligatures off\nfont-feature = -calt\nfont-feature = ss01\n' >> "$dev"
+o=$(st --op=list-add --key=font-feature --value=-liga)
+[ "$(cur font-feature kind)" = list ] && [ "$(lines_of font-feature)" = '-calt|ss01|-liga|' ] && [ "$(cur font-feature display)" = '-calt, ss01, -liga' ] && [ "$(cur font-feature field)" = '' ]
+hl_check "L1 Font features is a chip list; adding -liga keeps the file's run (written since) and appends" $? "kind=$(cur font-feature kind) lines=$(lines_of font-feature) chips=$(cur font-feature display) field=$(cur font-feature field)"
+grep -A1 '^# ligatures off$' "$dev" | grep -q '^font-feature = -calt$'
+hl_check "L2 the run's comment stays above it" $? "file=$(tr '\n' '|' < "$dev")"
+st --op=list-remove --key=font-feature --index=1 > /dev/null
+[ "$(lines_of font-feature)" = '-calt|-liga|' ] && [ "$(cur font-feature display)" = '-calt, -liga' ] && [ "$(cur font-feature dot)" = true ]
+hl_check "L3 a chip's x removes that value only; the chips follow" $? "lines=$(lines_of font-feature) chips=$(cur font-feature display)"
+st --op=curated-reset --key=font-feature > /dev/null
+! grep -q '^font-feature' "$dev" && [ "$(cur font-feature display)" = '' ] && [ "$(cur font-feature dot)" = false ]
+hl_check "L4 the row's reset removes every value; no chips, no dot" $? "lines=$(lines_of font-feature) chips=$(cur font-feature display)"
+st --op=list-add --key=font-family --value='DejaVu Sans Mono' > /dev/null
+[ "$(cur font-family kind)" = list ] && [ "$(lines_of font-family)" = 'DejaVu Sans Mono|' ] && [ "$(cur font-family display)" = 'DejaVu Sans Mono' ]
+hl_check "L5 the Font row edits the family list as chips too" $? "kind=$(cur font-family kind) lines=$(lines_of font-family)"
+
+# All Settings' list rows.
+st --op=search --value=keybind > /dev/null
+o=$(st --op=add --key=keybind --value=ctrl+alt+j=new_window)
+ie=$(lst keybind in_effect)
+[ "$(jget "$o" 'd["ok"]')" = true ] && [ "$(lines_of keybind)" = 'ctrl+alt+j=new_window|' ] && [ "$(jget "$(st --op=state --key=keybind)" 'd["key"]["list"]["chips"]')" = '["ctrl+alt+j=new_window"]' ] && [ "$(lst keybind field)" = '' ]
+hl_check "L6 All Settings: a binding typed into keybind's field is one added line and one chip" $? "ok=$(jget "$o" 'd.get("ok")') lines=$(lines_of keybind) list=$(jget "$(st --op=state --key=keybind)" 'd["key"]["list"]')"
+case "$ie" in "In effect: "*) true ;; *) false ;; esac && [ "$(lst keybind removable)" = true ]
+hl_check "L7 a list row says what is in effect, and its chips can be removed" $? "in_effect=$ie"
+before=$(cat "$dev")
+o=$(st --op=add --key=keybind --value=ctrl+alt+k=not_an_action)
+p=$(jget "$(st --op=state --key=keybind)" 'd["key"]["problem"]')
+[ "$(jget "$o" 'd["ok"]')" = false ] && [ "$(cat "$dev")" = "$before" ] && [ -n "$p" ] && [ "$p" != null ] && [ "$(lst keybind field)" = 'ctrl+alt+k=not_an_action' ]
+hl_check "L8 a binding Ghostty refuses is not written; the row says why and keeps the text" $? "ok=$(jget "$o" 'd.get("ok")') problem=$p field=$(lst keybind field)"
+st --op=remove --key=keybind --index=0 > /dev/null
+! grep -q '^keybind' "$dev" && [ "$(jget "$(st --op=state --key=keybind)" 'd["key"]["list"]["chips"]')" = '[]' ]
+hl_check "L9 the chip's x removes the binding" $? "lines=$(lines_of keybind)"
+st --op=search --value=palette > /dev/null
+st --op=add --key=palette --value='3=#112233' > /dev/null
+[ "$(lines_of palette)" = '3=#112233|' ] && [ "$(jget "$(st --op=state --key=palette)" 'd["key"]["list"]["chips"]')" = '["3=#112233"]' ]
+hl_check "L10 a keyed list (palette) takes an entry the same way" $? "lines=$(lines_of palette)"
+st --op=search --value= > /dev/null
 
 # ---- close ------------------------------------------------------------------
 st --op=close > /dev/null
