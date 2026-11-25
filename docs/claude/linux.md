@@ -317,10 +317,34 @@ private runtime dir, so a test app can never meet the user's.
   agent-hosted pane detached, so the build taking over re-attaches the same
   shells. `+version` carries `handoff_quit: true` and `session_persistence`
   (a quit with persistence off ends the shells - what the launch tells the
-  user before they choose). The launch half - noticing the other build and
-  asking - is T3598. Acceptance: `wsl-run.ps1 -CommandFile
+  user before they choose). Acceptance: `wsl-run.ps1 -CommandFile
   test\linux\cli-handoff-quit.sh`, ends `CLI HANDOFF QUIT: ALL PASS` (17
   checks).
+- **The launch half: Switch / Open Window / Cancel (T3598)** is win32's
+  T1023/T1070 `handoffChoice` + `takeOverEndpoint`. `Application.run` calls
+  `launch_handoff.decide` BEFORE GApplication registration (a Switch must
+  still be able to become the primary instance): it asks whoever serves the
+  socket for `+version` and, only when that is a DIFFERENT build (shared
+  `ipc_handoff.mismatchPrompt`; same commit = same build, whatever the path),
+  shows a parentless `GtkAlertDialog` - [Switch] [Open Window] [Cancel], Enter
+  on Open Window, Escape = Cancel, no Switch against a build that does not
+  advertise `handoff_quit`. Switch sends `handoff-quit`, waits up to 20 s for
+  the pid and 5 s for the socket to stop answering, then registers and starts
+  as usual, so its own launch restore re-attaches the panes the old build
+  detached. Open Window forwards `+new-window --focus` (plus the launch's
+  `-e`/`--command` and cwd, `launch_handoff_rules.forwardArgs`) with the
+  launch's identity, and exits 0. Cancel exits 0. Every failure joins, and a
+  join nobody answers starts the launch as before. The same build is never
+  asked (a single-instance launch still joins over D-Bus; with
+  `--gtk-single-instance=false` it runs beside). Seams: `GHOZTTY_HANDOFF_PROMPT
+  =join|switch` (win32's), debug-only `GHOZTTY_HANDOFF_VERSION` /
+  `GHOZTTY_HANDOFF_COMMIT` (be another build) and
+  `GHOZTTY_TEST_HANDOFF_DIALOG=<file>` (records `shown <title>|<buttons>|
+  <text>`, then cancels the dialog). Acceptance: `wsl-run.ps1 -CommandFile
+  test\linux\launch-handoff.sh`, ends `LAUNCH HANDOFF: ALL PASS` (20 checks);
+  `wsl-run.ps1 -Step 'NEGATIVE=1 bash test/linux/launch-handoff.sh'` must
+  fail H6. The switched-out debug build can still abort in core `App.deinit`
+  on its way out (a surface outlives the quit): T3689, which H14 names.
 - **Pane banners and activity state (T3339)**: `+set-banner` / OSC 7778 put
   a card above the terminal (`PaneBanner.zig`): the shared parser
   (`win32/banner_markdown.zig`, with `PathContext.posix` so `./` and `~/`
