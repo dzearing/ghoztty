@@ -1,8 +1,8 @@
 {
     "guard":  "unwired-hook",
     "script":  "test/win32/unwired-hook-audit.ps1",
-    "generated":  "2026-11-25T08:24:00-08:00",
-    "commit":  "a1b1bda7c",
+    "generated":  "2026-11-25T09:08:09-08:00",
+    "commit":  "0d5725016",
     "uncommitted":  [
 
                     ],
@@ -66,7 +66,7 @@
                   "src/apprt/gtk/ipc/new_window.zig":  "2146e1ee1e3a4fd3de21447b81fec4344e3f76e366dc37ed2dd0ac657af9dbd2",
                   "src/apprt/gtk/ipc_remote_window.zig":  "5dcb238c811f5739df25ace480090f4da84bbf1be9c860f4413c2c50aceb6d24",
                   "src/apprt/gtk/ipc_stash.zig":  "3bf54e95b5035712dcf2a23ef51a7c848a655e3d1c6a7988025f526c51aa5bff",
-                  "src/apprt/gtk/IpcHandlers.zig":  "d8d9e2da55055d7396f33b8f07989ad8043c416cbbb1d4b178f0f4127e22c6f7",
+                  "src/apprt/gtk/IpcHandlers.zig":  "ff25631a24fe152776e56642d20a822c6c37d26edada1aba4252d5a8dabe1734",
                   "src/apprt/gtk/IpcServer.zig":  "ad1bb0f13aaea00f82f5086300343bb75789c64137d8ed4b0c9d0df128a678fb",
                   "src/apprt/gtk/key.zig":  "26190d1c1be8ddfc9874f035ffe218881ca6a24a91d27966555d3663c83a0cf4",
                   "src/apprt/gtk/launch_handoff.zig":  "52e116534e9c5e902b64e2261911370eda25773afb68b645149cf935949c83d6",

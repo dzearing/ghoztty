@@ -1756,16 +1756,41 @@ sight; GTK has no such resize yet).
 
 Measured by `test/linux/resize-pacing.sh` with a SIGWINCH-counting program: a
 30-frame divider drag over ~850ms reaches it as 3 SIGWINCH (the stage laid
-the pane out on every frame), and a banner fold / unfold as exactly one each.
-`NEGATIVE=1` drags in steps 250ms apart and must fail R6 alone (one SIGWINCH
-per step).
+the pane out on every frame), a banner fold / unfold as exactly one each, and
+a 30-step window-edge drag (R10-R12, T3630) as 3. `NEGATIVE=1` drags both in
+steps 250ms apart and must fail R6 and R12 alone (one SIGWINCH per step).
 
 ```powershell
 powershell -NoProfile -File scripts\linux\wsl-run.ps1 -CommandFile test\linux\resize-pacing.sh
+powershell -NoProfile -File scripts\linux\wsl-run.ps1 -CommandFile test\linux\prompt-redraw.sh
 ```
 
-Ends `RESIZE PACING: ALL PASS` (12 checks). Not yet: the prompt-redraw hold
-seen on GTK's own frames, and a window-resize source in the test (T3630).
+The window edge is moved through the debug-only **`window-size
+--target=<pane|window> [--size=WxH]`** seam (`gtk_window_set_default_size`,
+which GTK keeps as the size of an unmaximized window); the reply is the width
+laid out so far, so poll it. The headless output is 1280 px wide and a
+150-column window already fills it, so a test narrows the window - it cannot
+grow past the output.
+
+**At a prompt (T3630, `prompt-redraw.sh`).** No GTK code is needed for the
+prompt-redraw hold either: a GLArea resize re-renders through `glareaRender`
+-> `drawFrame` with the cells `updateFrame` held back, so a prompt the resize
+cleared stays on screen until bash redraws it. Measured with a green-background
+PS1 and `capture-pane` frames across a 16-step window storm: every resize
+`pace=now`, every frame shows the prompt, every hold released `by=redraw`.
+Its control SIGSTOPs bash, so the 250ms cap draws the cleared prompt and the
+frame has no green: the oracle can see a blank prompt. Three traps it found:
+
+- **An `-e bash --rcfile X` pane gets no shell integration** (T3758): the
+  explicit command rides `OPEN.command` under the default shell, which is the
+  one integrated. A test that needs OSC 133 marks runs bash as `$SHELL` with a
+  private `$HOME/.bashrc` instead.
+- **`capture-pane` straight after a resize fails** ("produced no frame") until
+  GTK re-allocates the pane on its next frame; poll it.
+- **Never put `$(...)` in a check's label before `$?`.** Words expand left to
+  right, so the label's command substitution resets `$?` to 0 and the check
+  passes whatever the condition said (T3568's R5 and background-windows B1
+  were vacuous that way). Take `rc=$?` on the condition's line and pass `$rc`.
 
 ## The Settings window (T3569)
 
