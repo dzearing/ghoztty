@@ -1581,7 +1581,7 @@ same functions the real gesture calls - the headless harness has no seat.
 powershell -NoProfile -File scripts\linux\wsl-run.ps1 -CommandFile test\linux\stacked-panes.sh
 ```
 
-Ends `STACKED PANES: ALL PASS` (25 checks).
+Ends `STACKED PANES: ALL PASS` (44 checks since T3629).
 
 ### Glides and paint order (T3625)
 
@@ -1708,10 +1708,40 @@ fails on a build without it: the undone close leaves the strip a strip, the
 manifest records `leaves [0,1] start 1 count 1`, and a SIGKILL relaunch lays
 the row out the same way with the caret in the pane on show.
 
+### Live strip labels, strip drags, columns (T3629)
+
+- **Live labels.** `SplitTree.relabelStrip` renames a showing strip face at
+  once (`labelFace`, the sidebar row's rule) and re-lays the stage out. It
+  runs on the surface's `title` / `title-override` / `pwd` notify and from
+  `Surface.setPaneBanner` (`+set-banner` and OSC 7778), so a banner, a cleared
+  banner or an OSC 2 retitle reaches a minimized pane's strip without waiting
+  for the next layout. The `pane-stack` seam reports each pane's `label`
+  (null when no face is on show).
+- **Dragging a strip.** Every face carries a `PaneDrag.StripSource`
+  (`GtkDragSource`, keyed by the stage's pane key). `stageDragBegin` leaves a
+  strip press unclaimed: the drag source claims it past GTK's drag threshold
+  (and the stage gesture is cancelled), and a shorter release is still the
+  stage's click that focuses the pane. A strip let go over nothing settles
+  back - no new window, unlike a header drag.
+- **A strip's targets.** `dropPaneAt(.., blade)` resolves a strip drag with
+  `pane_drop.resolveBlade` over `bladeGeometry` (the row's slots from the
+  grid's placements): a slot in its row (`reorder`, applied by
+  `pane_drop_apply.apply`), a window's edge band (`top_level`), nothing over a
+  card. A pane that lands among the cards on show is focused, one among the
+  strips stays one (the new tree is laid out to decide, as win32 does).
+  **No screen-edge tile**: Wayland gives a client neither the monitors' layout
+  around its window nor its position, so GTK passes no screens. A minimized
+  pane is a target for an ORDINARY pane drag by its strip's rect (its card is
+  out of sight at its last size).
+- The seam: `pane-drag --target=<strip's pane> --blade --drop-at=x,y` is the
+  drop half of a strip drag (`target` `reorder|top_level|none`, `side`, and
+  `pane` = the slot item's first pane). A real pointer drag needs a seat: T3757.
+- `stacked-panes.sh` sections 8-10 (S32-S44): live labels, strip drops, and
+  a five-pane column (`macos-pane-min-height`) with horizontal strips.
+
 Not yet: strips as blades with their shadows (T3729), a close beside a strip
-focusing it (T3744), the featured side pane (T3628), live
-relabel, strip drags and a column test (T3629), and the bar on a side
-panel's edge (the pane sidebar's, a viewer's contents).
+focusing it (T3744), the pane sidebar as a pane drop target (T3756), and the
+bar on a side panel's edge (the pane sidebar's, a viewer's contents).
 
 ## Resize pacing (T3568)
 
