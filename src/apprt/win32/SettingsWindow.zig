@@ -80,6 +80,7 @@ const preview_view = @import("settings_preview_view.zig");
 const remote_view = @import("settings_remote_view.zig");
 const DirectoryProbe = @import("DirectoryProbe.zig");
 const folder_dialog = @import("folder_dialog.zig");
+const wsl_distros = @import("wsl_distros.zig");
 const ShortcutGuideWindow = @import("ShortcutGuideWindow.zig");
 const panel_theme = @import("panel_theme.zig");
 const system_colors = @import("system_colors.zig");
@@ -1358,12 +1359,30 @@ pub fn chooseShell(self: *SettingsWindow, key: []const u8, command: []const u8) 
     const trimmed = std.mem.trim(u8, command, " \t");
     if (trimmed.len == 0) return self.chooseValue(key, "");
     var buf: [std.fs.max_path_bytes + 64]u8 = undefined;
-    if (shellProblem(self.gpa, &buf, trimmed)) |problem| {
-        self.model.setProblem(key, problem) catch {};
+    const problem = shellProblem(self.gpa, &buf, trimmed) orelse
+        wslSpecProblem(self.gpa, &buf, key, trimmed);
+    if (problem) |p| {
+        self.model.setProblem(key, p) catch {};
         self.invalidate();
         return false;
     }
     return self.chooseValue(key, trimmed);
+}
+
+/// T3750: `wsl:<distro>` is the `--shell` spelling, which only the scripted
+/// row's key (`command-shell`) understands; the default-shell `command` key
+/// takes a command line. And the distro must be installed (read from the
+/// registry, so asking never starts WSL).
+fn wslSpecProblem(gpa: Allocator, buf: []u8, key: []const u8, value: []const u8) ?[]const u8 {
+    const distro = controls.wslSpecDistro(value) orelse return null;
+    const row = controlRow(key, .shell) orelse return null;
+    if (!row.control.shell.scripted)
+        return std.fmt.bufPrint(buf, "Use wsl.exe -d {s} --cd ~ here.", .{distro}) catch "Use wsl.exe -d <distro> here.";
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const installed = wsl_distros.listInstalled(arena_state.allocator()) catch return null;
+    if (wsl_distros.find(installed, distro) != null) return null;
+    return std.fmt.bufPrint(buf, "No WSL distro named {s} is installed.", .{distro}) catch "That WSL distro isn't installed.";
 }
 
 fn shellProblem(gpa: Allocator, buf: []u8, command: []const u8) ?[]const u8 {
@@ -1381,15 +1400,34 @@ fn shellProblem(gpa: Allocator, buf: []u8, command: []const u8) ?[]const u8 {
 }
 
 /// The common Windows shells that are installed (Mac filters its list by
-/// `isExecutableFile`).
-fn installedShells(self: *SettingsWindow, out: *[controls.common_shells.len]controls.CommonShell) []const controls.CommonShell {
+/// `isExecutableFile`), then Git Bash and one entry per WSL distro (T3750):
+/// `controls.shellCatalog`, the list every shell picker reads. The distros
+/// come from the registry, so building it never starts WSL.
+pub fn installedShells(gpa: Allocator, arena: Allocator) Allocator.Error![]controls.ShellEntry {
+    var found: [controls.common_shells.len]controls.CommonShell = undefined;
     var n: usize = 0;
     var buf: [std.fs.max_path_bytes + 64]u8 = undefined;
-    for (controls.common_shells) |s| if (shellProblem(self.gpa, &buf, s.program) == null) {
-        out[n] = s;
+    for (controls.common_shells) |s| if (shellProblem(gpa, &buf, s.program) == null) {
+        found[n] = s;
         n += 1;
     };
-    return out[0..n];
+    const distros = wsl_distros.listInstalled(arena) catch &.{};
+    return controls.shellCatalog(arena, found[0..n], try gitBashPath(arena), distros);
+}
+
+/// Git for Windows' bash.exe, the first of `controls.gitBashCandidates` that
+/// exists, or null (in `arena`).
+fn gitBashPath(arena: Allocator) Allocator.Error!?[]const u8 {
+    const pf = std.process.getEnvVarOwned(arena, "ProgramFiles") catch "";
+    const pf86 = std.process.getEnvVarOwned(arena, "ProgramFiles(x86)") catch "";
+    const lad = std.process.getEnvVarOwned(arena, "LOCALAPPDATA") catch "";
+    var bufs: [3][std.fs.max_path_bytes]u8 = undefined;
+    for (controls.gitBashCandidates(&bufs, pf, pf86, lad)) |maybe| {
+        const p = maybe orelse continue;
+        const st = std.fs.cwd().statFile(p) catch continue;
+        if (st.kind == .file) return try arena.dupe(u8, p);
+    }
+    return null;
 }
 
 /// "Choose Folder..." in the folder row: the system folder picker.
@@ -1507,17 +1545,22 @@ fn popupPick(self: *SettingsWindow, anchor: Rect, labels: []const ?[]const u8, c
     return @intCast(cmd - 1);
 }
 
-/// Mac `ShellControl`: the default, the installed common shells, the
-/// current command when it is none of them, then Other... (which edits the
-/// command in place; Mac asks in a sheet).
+/// Mac `ShellControl`: the default, the installed shells (T3750: Git Bash
+/// and one `WSL: <distro>` each among them), the current command when it is
+/// none of them, then Other... (which edits the command in place; Mac asks in
+/// a sheet). The scripted row writes an entry's `--shell` spelling, the
+/// default-shell row its `command` line.
 fn openShellMenu(self: *SettingsWindow, key: []const u8, scripted: bool, anchor: Rect) void {
+    var arena_state = std.heap.ArenaAllocator.init(self.gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const entries = installedShells(self.gpa, arena) catch return;
     const r = self.reader() orelse return;
     const set = r.isSetInFile(key);
-    const value = r.value(key);
-    var found_buf: [controls.common_shells.len]controls.CommonShell = undefined;
-    const found = self.installedShells(&found_buf);
-    var labels: [controls.common_shells.len + 5]?[]const u8 = undefined;
-    var values: [controls.common_shells.len + 5][]const u8 = undefined;
+    // Copied: a write reloads the reader `value` points into.
+    const value = arena.dupe(u8, r.value(key)) catch return;
+    const labels = arena.alloc(?[]const u8, entries.len + 5) catch return;
+    const values = arena.alloc([]const u8, entries.len + 5) catch return;
     var n: usize = 0;
     var checked: ?usize = null;
     labels[n] = controls.shellDefaultLabel(scripted);
@@ -1526,17 +1569,14 @@ fn openShellMenu(self: *SettingsWindow, key: []const u8, scripted: bool, anchor:
     n += 1;
     labels[n] = null;
     n += 1;
-    var current_listed = false;
-    for (found) |sh| {
+    const listed = if (set) controls.shellEntryFor(entries, value, scripted) else null;
+    for (entries, 0..) |sh, i| {
         labels[n] = sh.label;
-        values[n] = sh.program;
-        if (set and std.ascii.eqlIgnoreCase(value, sh.program)) {
-            checked = n;
-            current_listed = true;
-        }
+        values[n] = if (scripted) sh.spec else sh.command;
+        if (listed == i) checked = n;
         n += 1;
     }
-    if (set and !current_listed and value.len > 0) {
+    if (set and listed == null and value.len > 0) {
         labels[n] = value;
         values[n] = value;
         checked = n;
@@ -1553,12 +1593,7 @@ fn openShellMenu(self: *SettingsWindow, key: []const u8, scripted: bool, anchor:
         return;
     }
     if (labels[idx] == null) return;
-    // Copy: a write reloads the reader `value` points into.
-    var copy: [512]u8 = undefined;
-    const v = values[idx];
-    const n2 = @min(v.len, copy.len);
-    @memcpy(copy[0..n2], v[0..n2]);
-    _ = self.chooseShell(key, copy[0..n2]);
+    _ = self.chooseShell(key, values[idx]);
 }
 
 /// Mac `FolderControl`: Home folder (unset), Where Ghoztty was launched

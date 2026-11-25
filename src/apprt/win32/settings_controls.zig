@@ -188,8 +188,105 @@ pub const common_shells = [_]CommonShell{
     .{ .program = "pwsh.exe", .label = "PowerShell 7 (pwsh.exe)" },
     .{ .program = "powershell.exe", .label = "Windows PowerShell (powershell.exe)" },
     .{ .program = "cmd.exe", .label = "Command Prompt (cmd.exe)" },
-    .{ .program = "wsl.exe", .label = "WSL (wsl.exe)" },
 };
+
+/// One shell a picker offers (T3750): Settings > Shell, and the per-pane
+/// pickers that read the same list (command palette, the + dropdown).
+pub const ShellEntry = struct {
+    /// What the menu shows.
+    label: []const u8,
+    /// The value the `command` key takes: the program, a quoted path when it
+    /// holds a space, or `wsl.exe -d <distro> --cd ~` for one distro (a bare
+    /// `wsl.exe` would land in the `/mnt/c` mirror of the app's folder).
+    command: []const u8,
+    /// The `--shell` / `command-shell` spelling: the program or path as is,
+    /// or `wsl:<distro>` (T3749), which those two already understand.
+    spec: []const u8,
+};
+
+pub const git_bash_label = "Git Bash (bash.exe)";
+
+/// Where Git for Windows puts its login bash, in the order a lookup tries:
+/// the machine-wide install, the 32-bit one, then the per-user one. PATH is
+/// deliberately not searched: `C:\Windows\System32\bash.exe` is WSL's
+/// launcher, not Git Bash. Each base is an environment value (empty = unset).
+pub fn gitBashCandidates(
+    buf: *[3][std.fs.max_path_bytes]u8,
+    program_files: []const u8,
+    program_files_x86: []const u8,
+    local_app_data: []const u8,
+) [3]?[]const u8 {
+    const tails = [3][]const u8{ "\\Git\\bin\\bash.exe", "\\Git\\bin\\bash.exe", "\\Programs\\Git\\bin\\bash.exe" };
+    const bases = [3][]const u8{ program_files, program_files_x86, local_app_data };
+    var out: [3]?[]const u8 = .{ null, null, null };
+    for (bases, tails, 0..) |raw, tail, i| {
+        const base = std.mem.trimRight(u8, std.mem.trim(u8, raw, " \""), "\\/");
+        if (base.len == 0) continue;
+        out[i] = std.fmt.bufPrint(&buf[i], "{s}{s}", .{ base, tail }) catch null;
+    }
+    return out;
+}
+
+/// Whether a WSL distro name can ride a `command` line, which splits on
+/// whitespace and knows no quoting on Windows. WSL names are letters, digits,
+/// `.`, `-` and `_`, so this only ever drops a corrupt registry entry.
+pub fn distroNameUsable(name: []const u8) bool {
+    if (name.len == 0) return false;
+    return std.mem.indexOfAny(u8, name, " \t\"") == null;
+}
+
+/// The list every shell picker shows, in this order: the common shells that
+/// were found (`found`, already filtered and in `common_shells` order), Git
+/// Bash when `git_bash` names its bash.exe, then one `WSL: <distro>` per
+/// installed distro (`distros`, as `wsl_distros.listInstalled` returns them).
+/// Strings are allocated in `arena`.
+pub fn shellCatalog(
+    arena: std.mem.Allocator,
+    found: []const CommonShell,
+    git_bash: ?[]const u8,
+    distros: []const []const u8,
+) std.mem.Allocator.Error![]ShellEntry {
+    var out: std.ArrayList(ShellEntry) = .empty;
+    for (found) |s| try out.append(arena, .{ .label = s.label, .command = s.program, .spec = s.program });
+    if (git_bash) |path| {
+        const command = if (std.mem.indexOfAny(u8, path, " \t") != null)
+            try std.fmt.allocPrint(arena, "\"{s}\"", .{path})
+        else
+            try arena.dupe(u8, path);
+        try out.append(arena, .{ .label = git_bash_label, .command = command, .spec = try arena.dupe(u8, path) });
+    }
+    for (distros) |name| {
+        if (!distroNameUsable(name)) continue;
+        try out.append(arena, .{
+            .label = try std.fmt.allocPrint(arena, "WSL: {s}", .{name}),
+            .command = try std.fmt.allocPrint(arena, "wsl.exe -d {s} --cd ~", .{name}),
+            .spec = try std.fmt.allocPrint(arena, "wsl:{s}", .{name}),
+        });
+    }
+    return out.items;
+}
+
+/// The catalog entry a shell row's current value names, matched against the
+/// form that row writes (`spec` for the scripted row, else `command`), case-
+/// insensitively the way Windows matches program names.
+pub fn shellEntryFor(entries: []const ShellEntry, value: []const u8, scripted: bool) ?usize {
+    const v = std.mem.trim(u8, value, " \t");
+    if (v.len == 0) return null;
+    for (entries, 0..) |e, i| {
+        const form = if (scripted) e.spec else e.command;
+        if (std.ascii.eqlIgnoreCase(form, v)) return i;
+    }
+    return null;
+}
+
+/// The distro a `wsl:<distro>` shell spec names (T3749's `--shell` form), or
+/// null for any other value. Mirrors `ipc/args.zig` `wslDistroSpec`.
+pub fn wslSpecDistro(value: []const u8) ?[]const u8 {
+    const v = std.mem.trim(u8, value, " \t");
+    if (v.len <= 4 or !std.ascii.startsWithIgnoreCase(v, "wsl:")) return null;
+    const distro = std.mem.trim(u8, v[4..], " \t");
+    return if (distro.len == 0) null else distro;
+}
 
 /// The "unset" entry: what runs when the key is not in the file. On Windows
 /// `command` falls back to cmd.exe (Config.finalize) and `command-shell`
@@ -216,7 +313,8 @@ pub fn programOf(command: []const u8) []const u8 {
 /// Mac `ShellControl.problem`, for Windows: null when the command's program
 /// exists - an absolute path, or a name found on `path_env` (`;`-separated)
 /// as written or with one of `pathext` (`.EXE;.CMD;...`). `exists` answers
-/// "is this a file".
+/// "is this a file". A `wsl:<distro>` spec (T3750) is checked as `wsl.exe`;
+/// whether that distro is installed is the caller's question.
 pub fn shellProblem(
     buf: []u8,
     command: []const u8,
@@ -225,7 +323,7 @@ pub fn shellProblem(
     ctx: anytype,
     comptime exists: fn (@TypeOf(ctx), []const u8) bool,
 ) ?[]const u8 {
-    const program = programOf(command);
+    const program = if (wslSpecDistro(command) != null) "wsl.exe" else programOf(command);
     if (program.len == 0) return "Enter a shell.";
     if (isAbsolute(program)) {
         if (exists(ctx, program) or hasExtMatch(program, pathext, ctx, exists)) return null;
@@ -579,6 +677,65 @@ test "settings_controls: shell check finds absolute paths and PATH programs" {
     try testing.expectEqualStrings("pwsh.exe", programOf("pwsh.exe -NoLogo"));
     try testing.expectEqualStrings("C:\\a b\\x.exe", programOf("\"C:\\a b\\x.exe\" -y"));
     try testing.expectEqualStrings("Default shell (cmd.exe)", shellDefaultLabel(false));
+}
+
+test "shellCatalog: common shells, Git Bash, then one WSL entry per distro (T3750)" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const found = [_]CommonShell{ common_shells[0], common_shells[2] };
+    const distros = [_][]const u8{ "Debian", "bad name", "Ubuntu-22.04" };
+    const got = try shellCatalog(arena, &found, "C:\\Program Files\\Git\\bin\\bash.exe", &distros);
+    try testing.expectEqual(@as(usize, 5), got.len);
+    try testing.expectEqualStrings("pwsh.exe", got[0].command);
+    try testing.expectEqualStrings("pwsh.exe", got[0].spec);
+    try testing.expectEqualStrings("Command Prompt (cmd.exe)", got[1].label);
+    // A spaced path is quoted for `command` (which splits on whitespace)
+    // and kept bare for `--shell` / `command-shell` (one argv word).
+    try testing.expectEqualStrings(git_bash_label, got[2].label);
+    try testing.expectEqualStrings("\"C:\\Program Files\\Git\\bin\\bash.exe\"", got[2].command);
+    try testing.expectEqualStrings("C:\\Program Files\\Git\\bin\\bash.exe", got[2].spec);
+    try testing.expectEqualStrings("WSL: Debian", got[3].label);
+    try testing.expectEqualStrings("wsl.exe -d Debian --cd ~", got[3].command);
+    try testing.expectEqualStrings("wsl:Debian", got[3].spec);
+    // A name that cannot ride a command line is dropped, not mangled.
+    try testing.expectEqualStrings("WSL: Ubuntu-22.04", got[4].label);
+    try testing.expectEqualStrings("wsl:Ubuntu-22.04", got[4].spec);
+
+    const none = try shellCatalog(arena, &.{}, null, &.{});
+    try testing.expectEqual(@as(usize, 0), none.len);
+    const unspaced = try shellCatalog(arena, &.{}, "D:\\Git\\bin\\bash.exe", &.{});
+    try testing.expectEqualStrings("D:\\Git\\bin\\bash.exe", unspaced[0].command);
+}
+
+test "shellEntryFor: matches the form the row writes (T3750)" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const distros = [_][]const u8{"Ubuntu"};
+    const got = try shellCatalog(arena_state.allocator(), &common_shells, null, &distros);
+    try testing.expectEqual(@as(?usize, 3), shellEntryFor(got, "WSL.EXE -d ubuntu --cd ~", false));
+    try testing.expectEqual(@as(?usize, 3), shellEntryFor(got, " wsl:Ubuntu ", true));
+    try testing.expectEqual(@as(?usize, null), shellEntryFor(got, "wsl:Ubuntu", false));
+    try testing.expectEqual(@as(?usize, 0), shellEntryFor(got, "PWSH.exe", true));
+    try testing.expectEqual(@as(?usize, null), shellEntryFor(got, "", false));
+}
+
+test "gitBashCandidates: machine, x86, then per-user; unset bases skipped (T3750)" {
+    var buf: [3][std.fs.max_path_bytes]u8 = undefined;
+    const c = gitBashCandidates(&buf, "C:\\Program Files\\", "", "C:\\Users\\u\\AppData\\Local");
+    try testing.expectEqualStrings("C:\\Program Files\\Git\\bin\\bash.exe", c[0].?);
+    try testing.expect(c[1] == null);
+    try testing.expectEqualStrings("C:\\Users\\u\\AppData\\Local\\Programs\\Git\\bin\\bash.exe", c[2].?);
+}
+
+test "shellProblem: a wsl:<distro> spec is checked as wsl.exe (T3750)" {
+    const fs: FakeFs = .{ .files = &.{"C:\\Windows\\System32\\wsl.exe"} };
+    var b: [256]u8 = undefined;
+    try testing.expect(shellProblem(&b, "wsl:Ubuntu", "C:\\Windows\\System32", ".EXE", fs, FakeFs.exists) == null);
+    try testing.expectEqualStrings("wsl.exe isn't on your PATH.", shellProblem(&b, "wsl:Ubuntu", "C:\\Nope", ".EXE", fs, FakeFs.exists).?);
+    try testing.expectEqualStrings("Ubuntu", wslSpecDistro("wsl: Ubuntu").?);
+    try testing.expect(wslSpecDistro("wsl:") == null);
+    try testing.expect(wslSpecDistro("wsl.exe") == null);
 }
 
 test "settings_controls: the Linux shell check walks a POSIX PATH" {

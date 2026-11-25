@@ -48,6 +48,12 @@
 #   I  `--shell=wsl:<distro>` (T3735): a distro that is not installed is refused
 #      by +new-window and +split, naming the installed ones, and opens nothing.
 #      `-Wsl` adds the real arm: the pane runs `wsl.exe -d <distro> --cd ~`.
+#   J  the shell list the pickers offer (T3750): cmd/PowerShell when found, Git
+#      Bash when installed, one 'WSL: <distro>' per registered distro (no bare
+#      WSL entry), read through `settings --op=shells`. A Git Bash pick (its
+#      quoted path) reaches new panes with persistence on AND off - off, the
+#      exec backend used to split the path at its space. `-Wsl` adds a distro
+#      pick, which must run wsl.exe itself, not `cmd /c wsl.exe`.
 #
 # Non-interactive; asserts and exits nonzero on any failure. Hermetic: a per-run
 # $env:LOCALAPPDATA + GHOSTTY_LOCAL_AGENT_BIN (so no real session-layout is
@@ -646,7 +652,10 @@ function Run-SettingsShell($id, $persist, $shell, $want) {
     $s = Invoke-GhozttyIpc -Action 'settings' -Arguments @('--op=shell', '--key=command', "--value=$shell")
     $text = if (Test-Path $cfg) { [System.IO.File]::ReadAllText($cfg) } else { '' }
     Assert "H$id.4 the Shell pick wrote command = $shell to the config" `
-        ($null -ne $s -and [bool]$s.data.ok -and $text -match ('(?m)^command = ' + [regex]::Escape($shell) + '\r?$'))
+        ($null -ne $s -and [bool]$s.data.ok -and $text -match ('(?m)^command = (' + [regex]::Escape($shell) + '|"' + [regex]::Escape($shell) + '")\r?$'))
+    # (The second form: the config reader strips one pair of surrounding
+    # quotes, so a value that is itself quoted - Git Bash's spaced path,
+    # T3750 - is written wrapped once more, and reads back as written.)
 
     $known = Leaf-Pids $tmp "h-$id-k1"
     Run-Cli '+new-window' "$tmp\nw1.txt" 20 | Out-Null
@@ -757,6 +766,75 @@ if ($Wsl -or (Test-WslDefaultDistroRunning)) {
     "  SKIP I.6-I.7 the real-distro arm - $(Get-WslSkipReason); pass -Wsl to run it (it boots the WSL2 VM)"
 }
 Stop-TestProcs
+
+# ---- J: the shell list the pickers offer (T3750) ---------------------------
+# Settings > Shell (and the per-pane pickers after it) list the found common
+# shells, Git Bash, and one 'WSL: <distro>' per installed distro. The list is
+# read back through the debug `settings --op=shells` seam, which returns
+# `SettingsWindow.installedShells` - the function the menu builds from - and
+# is checked against the registry (so nothing here starts WSL) and the disk.
+# Then a pick of each NEW kind is written the way the menu writes it and must
+# reach the next window: Git Bash always (when installed), a distro under -Wsl.
+$tmpJ = Join-Path $root 'j'
+New-Item -ItemType Directory -Force (Get-GhozttyAgentStateDir -Root $tmpJ) | Out-Null
+$env:LOCALAPPDATA = $tmpJ
+$env:GHOSTTY_LOCAL_AGENT_BIN = $AgentExe
+# persistence: on (default) - only the IPC seam is read here, into a throwaway $env:LOCALAPPDATA.
+[void](Start-OnTestDesktop -Exe $Exe -Arguments @())
+$firstJ = First-Pane $tmpJ 'j' 60
+Assert "J.1 the app opened a window with a pane" ($firstJ -ne '')
+$sj = Invoke-GhozttyIpc -Action 'settings' -Arguments @('--op=shells')
+$shells = if ($null -ne $sj -and [bool]$sj.success) { @($sj.data.shells | ForEach-Object { $_ }) } else { @() }
+Assert "J.2 --op=shells answered with a list (got $($shells.Count))" ($shells.Count -gt 0)
+$labels = @($shells | ForEach-Object { [string]$_.label })
+Assert "J.3 Command Prompt is offered" ($labels -contains 'Command Prompt (cmd.exe)')
+Assert "J.4 the bare 'WSL (wsl.exe)' entry is gone - each distro is its own entry" (-not ($labels -contains 'WSL (wsl.exe)'))
+# The app's LOCALAPPDATA is $tmpJ, so its per-user candidate is there.
+$gitBash = @("$env:ProgramFiles\Git\bin\bash.exe", "${env:ProgramFiles(x86)}\Git\bin\bash.exe", "$tmpJ\Programs\Git\bin\bash.exe") |
+    Where-Object { $_ -and (Test-Path -LiteralPath $_ -PathType Leaf) } | Select-Object -First 1
+$gbEntry = @($shells | Where-Object { $_.label -eq 'Git Bash (bash.exe)' }) | Select-Object -First 1
+if ($gitBash) {
+    Assert "J.5 Git Bash is offered when installed ($gitBash)" ($null -ne $gbEntry -and $gbEntry.spec -eq $gitBash)
+    $wantCmd = if ($gitBash -match '\s') { '"' + $gitBash + '"' } else { $gitBash }
+    AssertEq "J.6 Git Bash's command form is its path, quoted when spaced" $wantCmd ([string]$gbEntry.command)
+} else {
+    Assert "J.5 Git Bash is not offered when it is not installed" ($null -eq $gbEntry)
+}
+$lxssJ = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Lxss'
+$distrosJ = @(Get-ChildItem $lxssJ -ErrorAction SilentlyContinue | ForEach-Object { (Get-ItemProperty $_.PSPath).DistributionName } |
+    Where-Object { $_ -and $_ -notlike 'docker-desktop*' } | Sort-Object -Unique)
+$wslEntries = @($shells | Where-Object { ([string]$_.label).StartsWith('WSL: ') })
+AssertEq "J.7 one 'WSL: <distro>' entry per installed distro" $distrosJ.Count $wslEntries.Count
+foreach ($d in $distrosJ) {
+    $e = @($wslEntries | Where-Object { $_.label -eq "WSL: $d" }) | Select-Object -First 1
+    Assert "J.8 WSL: $d writes 'wsl.exe -d $d --cd ~' and --shell form 'wsl:$d'" `
+        ($null -ne $e -and $e.command -eq "wsl.exe -d $d --cd ~" -and $e.spec -eq "wsl:$d")
+}
+Stop-TestProcs
+
+if ($gitBash) {
+    # The quoted path is the form the exec backend used to split at the
+    # space (persistence off: no pane at all); the agent path read it whole.
+    $gbCmd = if ($gitBash -match '\s') { '"' + $gitBash + '"' } else { $gitBash }
+    Run-SettingsShell 'J1' 'true' $gbCmd 'bash.exe'
+    Stop-TestProcs
+    Run-SettingsShell 'J2' 'false' $gbCmd 'bash.exe'
+    Stop-TestProcs
+} else {
+    $script:skipped++
+    "  SKIP J1-J2 the Git Bash pick - Git for Windows is not installed"
+}
+
+# A distro pick reaches the next window as wsl.exe itself - pre-fix the agent
+# ran `cmd /c wsl.exe -d ...`, so the pane's process was cmd.exe.
+if (($Wsl -or (Test-WslDefaultDistroRunning)) -and $distrosJ.Count -gt 0) {
+    $dJ = $distrosJ[0]
+    Run-SettingsShell 'J3' 'true' "wsl.exe -d $dJ --cd ~" 'wsl.exe'
+    Stop-TestProcs
+} else {
+    $script:skipped++
+    "  SKIP J3 the distro pick - $(if ($distrosJ.Count -eq 0) { 'no user distro is registered' } else { Get-WslSkipReason }); pass -Wsl to run it (it boots the WSL2 VM)"
+}
 
 # ---- teardown --------------------------------------------------------------
 Stop-TestProcs

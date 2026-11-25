@@ -56,6 +56,8 @@
 //! {"action":"settings","arguments":["--op=flag","--key=shell-integration-features","--value=sudo:true"]}
 //! {"action":"settings","arguments":["--op=color","--key=cursor-color","--value=#ff8800"]}         (the color dialog's pick)
 //! {"action":"settings","arguments":["--op=shell","--key=command","--value=cmd.exe /K"]}           (a shell pick / Other...)
+//! {"action":"settings","arguments":["--op=shells"]}   (T3750: the shell list the Shell menu offers; no window needed)
+//!   -> {"success":true,"data":{"shells":[{"label","command","spec"}]}}
 //!   a stepper / megabytes row's --op=set types into its field (the number /
 //!   the MB); a curated row reports "display" (what its control shows) and a
 //!   flags row "flags":[{"name","on"}]
@@ -131,6 +133,8 @@ pub const Op = enum {
     flag,
     color,
     shell,
+    // The shell list every picker offers (T3750).
+    shells,
 };
 
 pub const Request = struct {
@@ -197,6 +201,7 @@ pub fn handle(app: *App, alloc: Allocator, arguments: ?[]const []const u8) Alloc
             SettingsWindow.closeAll();
             return try stateResponse(alloc, null, null);
         },
+        .shells => return try shellsResponse(alloc),
         else => {},
     }
     const w = SettingsWindow.current() orelse
@@ -341,6 +346,42 @@ pub fn handle(app: *App, alloc: Allocator, arguments: ?[]const []const u8) Alloc
         else => {},
     }
     return try stateResponseUndo(alloc, SettingsWindow.current(), ok, undo_result);
+}
+
+/// `--op=shells`: `SettingsWindow.installedShells`, the list the Shell menu
+/// builds when it opens, in its order.
+fn shellsResponse(alloc: Allocator) Allocator.Error![]u8 {
+    var arena_state = std.heap.ArenaAllocator.init(alloc);
+    defer arena_state.deinit();
+    const entries = try SettingsWindow.installedShells(alloc, arena_state.allocator());
+    var out: std.Io.Writer.Allocating = .init(alloc);
+    errdefer out.deinit();
+    var jws: std.json.Stringify = .{ .writer = &out.writer };
+    (struct {
+        fn write(j: *std.json.Stringify, list: []const @import("settings_controls.zig").ShellEntry) !void {
+            try j.beginObject();
+            try j.objectField("success");
+            try j.write(true);
+            try j.objectField("data");
+            try j.beginObject();
+            try j.objectField("shells");
+            try j.beginArray();
+            for (list) |e| {
+                try j.beginObject();
+                try j.objectField("label");
+                try j.write(e.label);
+                try j.objectField("command");
+                try j.write(e.command);
+                try j.objectField("spec");
+                try j.write(e.spec);
+                try j.endObject();
+            }
+            try j.endArray();
+            try j.endObject();
+            try j.endObject();
+        }
+    }).write(&jws, entries) catch return error.OutOfMemory;
+    return out.toOwnedSlice();
 }
 
 fn stateResponse(alloc: Allocator, w_opt: ?*SettingsWindow, ok: ?bool) Allocator.Error![]u8 {

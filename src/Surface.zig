@@ -1255,6 +1255,11 @@ pub fn init(
                     if (!rb.local_shell_integration) break :direct null;
                     if (remote_command == null) break :direct null;
                     const c = command orelse break :direct null;
+                    // T3750: a configured `.shell` line that runs WSL with
+                    // arguments (`wsl.exe -d Ubuntu --cd ~`, what Settings >
+                    // Shell writes for one distro) is exec'd as its words,
+                    // the way the exec backend runs it, not `cmd /c`.
+                    if (c == .shell) break :direct try internal_os.agent_exec_argv.agentWslArgv(alloc, c.shell);
                     const words = (try c.directArgv(alloc)) orelse break :direct null;
                     defer alloc.free(words);
                     break :direct try internal_os.agent_exec_argv.agentExecArgv(alloc, words);

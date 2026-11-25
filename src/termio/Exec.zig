@@ -1875,7 +1875,19 @@ fn execCommand(
                         try alloc.dupe(u8, v);
                     try args.append(alloc, try alloc.dupeZ(u8, argv0));
                 } else {
-                    var it = std.mem.tokenizeAny(u8, v, " \t");
+                    // T3750: except a leading "quoted program", the form
+                    // Settings writes for a shell whose path holds a space
+                    // ("C:\Program Files\Git\bin\bash.exe"), which the agent
+                    // path already reads as one word. Split blindly, it was
+                    // two words, the first `"C:\Program`.
+                    var rest = std.mem.trim(u8, v, " \t");
+                    if (rest.len > 1 and rest[0] == '"') {
+                        if (std.mem.indexOfScalarPos(u8, rest, 1, '"')) |end| {
+                            try args.append(alloc, try alloc.dupeZ(u8, rest[1..end]));
+                            rest = rest[end + 1 ..];
+                        }
+                    }
+                    var it = std.mem.tokenizeAny(u8, rest, " \t");
                     while (it.next()) |tok| {
                         try args.append(alloc, try alloc.dupeZ(u8, tok));
                     }
@@ -2126,6 +2138,30 @@ test "execCommand windows: shell with args is split on whitespace" {
     try testing.expectEqual(2, result.len);
     try testing.expectEqualStrings("wsl", result[0]);
     try testing.expectEqualStrings("~", result[1]);
+}
+
+test "execCommand windows: a leading quoted program stays one word (T3750)" {
+    if (comptime builtin.os.tag != .windows) return error.SkipZigTest;
+
+    const testing = std.testing;
+    var arena = ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+    const passwd = struct {
+        fn get(_: Allocator) !PasswdEntry {
+            return .{};
+        }
+    };
+
+    const bare = try execCommand(alloc, .{ .shell = "\"C:\\Program Files\\Git\\bin\\bash.exe\"" }, passwd);
+    try testing.expectEqual(1, bare.len);
+    try testing.expectEqualStrings("C:\\Program Files\\Git\\bin\\bash.exe", bare[0]);
+
+    const with_args = try execCommand(alloc, .{ .shell = "\"C:\\Program Files\\Git\\bin\\bash.exe\" -l  -i" }, passwd);
+    try testing.expectEqual(3, with_args.len);
+    try testing.expectEqualStrings("C:\\Program Files\\Git\\bin\\bash.exe", with_args[0]);
+    try testing.expectEqualStrings("-l", with_args[1]);
+    try testing.expectEqualStrings("-i", with_args[2]);
 }
 
 test "execCommand windows: direct command is passed through unchanged" {

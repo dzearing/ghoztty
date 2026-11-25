@@ -135,6 +135,19 @@ fn buildArgv(
     exists: *const fn ([]const u8) bool,
 ) Allocator.Error!?[]const []const u8 {
     if (argv.len == 0 or !needsQuoting(argv)) return null;
+    return resolvedArgv(alloc, argv, path_env, pathext_env, exists);
+}
+
+/// `argv` with its program resolved the way cmd would find it, or null when
+/// it names no file.
+fn resolvedArgv(
+    alloc: Allocator,
+    argv: []const []const u8,
+    path_env: []const u8,
+    pathext_env: []const u8,
+    exists: *const fn ([]const u8) bool,
+) Allocator.Error!?[]const []const u8 {
+    if (argv.len == 0) return null;
     const program = (try resolveProgram(alloc, argv[0], path_env, pathext_env, exists)) orelse
         return null;
     errdefer alloc.free(program);
@@ -151,6 +164,50 @@ fn buildArgv(
         filled = i + 1;
     }
     return out;
+}
+
+/// The argv a WINDOWS local agent is sent for a configured `command` line
+/// that runs WSL with arguments (T3750) - `wsl.exe -d Ubuntu --cd ~`, what
+/// Settings > Shell writes for one distro - or null for any other line.
+///
+/// As `OPEN.command` the agent ran it `cmd /c wsl.exe ...`: the distro opened,
+/// but under a hidden cmd, the same wrapper T864 removed for a bare `wsl`
+/// (`+list` named cmd as the shell, and the pane's process tree carried it).
+/// The exec backend already runs such a line as its whitespace-split words
+/// (`termio/Exec.zig`), so this is the agent path doing the same. Words are
+/// split on whitespace with no quoting, exactly as the exec path splits them.
+pub fn agentWslArgv(alloc: Allocator, line: []const u8) Allocator.Error!?[]const []const u8 {
+    if (comptime builtin.os.tag != .windows) return null;
+    const path_env = std.process.getEnvVarOwned(alloc, "PATH") catch null;
+    defer if (path_env) |p| alloc.free(p);
+    const pathext_env = std.process.getEnvVarOwned(alloc, "PATHEXT") catch null;
+    defer if (pathext_env) |p| alloc.free(p);
+    return buildWslArgv(alloc, line, path_env orelse "", pathext_env orelse "", &isFile);
+}
+
+/// Whether `program` is WSL's launcher: `wsl`, `wsl.exe`, or a path to it.
+pub fn isWslProgram(program: []const u8) bool {
+    const start = if (std.mem.lastIndexOfAny(u8, program, "\\/")) |i| i + 1 else 0;
+    var base = program[start..];
+    if (std.ascii.endsWithIgnoreCase(base, ".exe")) base = base[0 .. base.len - 4];
+    return std.ascii.eqlIgnoreCase(base, "wsl");
+}
+
+/// `agentWslArgv` past its platform and environment reads, for tests.
+fn buildWslArgv(
+    alloc: Allocator,
+    line: []const u8,
+    path_env: []const u8,
+    pathext_env: []const u8,
+    exists: *const fn ([]const u8) bool,
+) Allocator.Error!?[]const []const u8 {
+    var words: std.ArrayList([]const u8) = .empty;
+    defer words.deinit(alloc);
+    var it = std.mem.tokenizeAny(u8, line, " \t");
+    while (it.next()) |w| try words.append(alloc, w);
+    // A bare `wsl` is already a shell choice (T864's OPEN.shell route).
+    if (words.items.len < 2 or !isWslProgram(words.items[0])) return null;
+    return resolvedArgv(alloc, words.items, path_env, pathext_env, exists);
 }
 
 pub fn freeArgv(alloc: Allocator, argv: []const []const u8) void {
@@ -171,6 +228,7 @@ fn stubExists(p: []const u8) bool {
         "C:\\tools\\prog.exe",
         "C:\\a b\\x.ps1",
         "C:\\a b\\run.bat",
+        "C:\\Windows\\System32\\wsl.exe",
     };
     for (files) |f| if (std.ascii.eqlIgnoreCase(f, p)) return true;
     return false;
@@ -242,4 +300,33 @@ test "buildArgv: leaks nothing when an allocation fails" {
             if (got) |a| freeArgv(alloc, a);
         }
     }.f, .{});
+}
+
+test "buildWslArgv: a WSL line with arguments becomes a resolved argv (T3750)" {
+    const alloc = testing.allocator;
+    const got = (try buildWslArgv(alloc, "  wsl.exe -d Ubuntu  --cd ~ ", stub_path, "", &stubExists)).?;
+    defer freeArgv(alloc, got);
+    try testing.expectEqual(@as(usize, 5), got.len);
+    try testing.expectEqualStrings("C:\\Windows\\System32\\wsl.exe", got[0]);
+    try testing.expectEqualStrings("-d", got[1]);
+    try testing.expectEqualStrings("Ubuntu", got[2]);
+    try testing.expectEqualStrings("--cd", got[3]);
+    try testing.expectEqualStrings("~", got[4]);
+
+    const bare_name = (try buildWslArgv(alloc, "WSL ~", stub_path, "", &stubExists)).?;
+    defer freeArgv(alloc, bare_name);
+    // A bare name takes the PATHEXT entry's case, as `resolveProgram` spells it.
+    try testing.expectEqualStrings("C:\\Windows\\System32\\WSL.EXE", bare_name[0]);
+}
+
+test "buildWslArgv: anything but WSL with arguments keeps today's route (T3750)" {
+    const alloc = testing.allocator;
+    // A bare wsl is a shell choice (OPEN.shell), not a command.
+    try testing.expect((try buildWslArgv(alloc, "wsl.exe", stub_path, "", &stubExists)) == null);
+    try testing.expect((try buildWslArgv(alloc, "pwsh -NoLogo", stub_path, "", &stubExists)) == null);
+    try testing.expect((try buildWslArgv(alloc, "", stub_path, "", &stubExists)) == null);
+    // No wsl.exe to run: the string stays, and cmd reports the error.
+    try testing.expect((try buildWslArgv(alloc, "wsl -d X", "C:\\nowhere", "", &stubExists)) == null);
+    try testing.expect(isWslProgram("C:\\Windows\\System32\\WSL.EXE"));
+    try testing.expect(!isWslProgram("wslg.exe"));
 }
