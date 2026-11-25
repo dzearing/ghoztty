@@ -5325,6 +5325,13 @@ pub fn clone(
     // Copy the conditional set
     result._conditional_set = self._conditional_set;
 
+    // `_command-explicit` is derived by `finalize` and is not a Key, so the
+    // loop above skips it, and nothing re-finalizes a clone. Carry it, or the
+    // clone says "nobody asked for a command" about a config that did
+    // (T3734: every apprt stores a reloaded config by cloning it, and the
+    // reset made a Settings-chosen shell fall back to the agent's default).
+    result.@"_command-explicit" = self.@"_command-explicit";
+
     return result;
 }
 
@@ -11306,6 +11313,35 @@ test "finalize: _command-explicit survives a conditional-state rebuild" {
     defer rebuilt.deinit();
     try testing.expect(rebuilt.command != null);
     try testing.expect(rebuilt.@"_command-explicit");
+}
+
+// T3734: `clone` copies Key fields only, and `_command-explicit` is not a Key.
+// Every apprt stores a RELOADED config by cloning it (win32 `config_change`),
+// so before the fix a command written by Settings > Shell lost its "explicit"
+// mark on the first reload, and an agent-backed pane fell back to the agent's
+// default shell (cmd.exe) while a launch-time config kept working.
+test "clone: _command-explicit survives a clone" {
+    const testing = std.testing;
+    const alloc = testing.allocator;
+    var cfg = try Config.default(alloc);
+    defer cfg.deinit();
+    var it: TestIterator = .{ .data = &.{"--command=wsl.exe"} };
+    try cfg.loadIter(alloc, &it);
+    try cfg.finalize();
+    try testing.expect(cfg.@"_command-explicit");
+
+    var copy = try cfg.clone(alloc);
+    defer copy.deinit();
+    try testing.expect(copy.command != null);
+    try testing.expect(copy.@"_command-explicit");
+
+    // And the negative: a default shell stays non-explicit through a clone.
+    var def = try Config.default(alloc);
+    defer def.deinit();
+    try def.finalize();
+    var def_copy = try def.clone(alloc);
+    defer def_copy.deinit();
+    try testing.expect(!def_copy.@"_command-explicit");
 }
 
 // T1524: rearrange mode arrives from main with a default chord, and a default

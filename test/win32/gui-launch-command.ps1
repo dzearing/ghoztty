@@ -40,6 +40,11 @@
 #      "did the user name their shell?" is a broader question than "which
 #      integration script?", and T864 is the gap between them. Runs against a
 #      stub named wsl.exe, never the real one (starting WSL boots a VM).
+#   H  a shell chosen in Settings > Shell on a RUNNING app (T3734) reaches the
+#      next new window, split and tab, with session persistence on AND off,
+#      and survives a relaunch. Pre-fix, persistence on: every new pane still
+#      ran cmd.exe, because the reload stored a clone of the config and
+#      `Config.clone` dropped `_command-explicit`. `-Wsl` adds the real-WSL arm.
 #
 # Non-interactive; asserts and exits nonzero on any failure. Hermetic: a per-run
 # $env:LOCALAPPDATA + GHOSTTY_LOCAL_AGENT_BIN (so no real session-layout is
@@ -49,7 +54,11 @@
 #   powershell -NoProfile -File test\win32\gui-launch-command.ps1
 param(
     [string]$Exe = 'D:\git\ghoztty\zig-out\bin\ghoztty.exe',
-    [string]$AgentExe = 'D:\git\ghoztty\zig-out\bin\ghoztty-agent.exe'
+    [string]$AgentExe = 'D:\git\ghoztty\zig-out\bin\ghoztty-agent.exe',
+    # Section H's WSL arm writes a bare `wsl.exe` through Settings and opens a
+    # window on the REAL wsl.exe, which boots the WSL2 VM. CLAUDE.md: never
+    # start WSL unasked, so it is opt-in and skipped with a reason otherwise.
+    [switch]$Wsl
 )
 
 # T351: the shared reset/kill helpers (Stop-RepoGhoztty). Dot-sourced HERE, ahead
@@ -73,6 +82,7 @@ $ErrorActionPreference = 'Continue'
 
 $script:failures = 0
 $script:passes = 0
+$script:skipped = 0
 $root = Join-Path $env:TEMP "ghoztty-gui-launch-command-$PID"
 
 function Assert($name, $cond) {
@@ -549,6 +559,150 @@ AssertEq "G5 and it was the STUB that ran, not the real WSL" `
 
 Stop-TestProcs
 
+# ============================================================================
+"== H: a shell chosen in Settings on a running app reaches new panes (T3734)"
+# ============================================================================
+# The user's report: choose WSL in Settings > Shell, and every new window still
+# opens cmd.exe. Sections A-G all set the command BEFORE launch; this one sets
+# it the way the Settings window does, on an app that is already running, and
+# reads each new pane's shell process (the leaf pid, as in F2/G3 - never a
+# title). The write goes through the debug `settings` IPC action's `--op=shell`,
+# which calls `SettingsWindow.chooseShell`, the function the Shell menu's pick
+# calls. The shell is bare `powershell.exe`, exactly what the menu writes for
+# Windows PowerShell, so the always-run arm proves the same route WSL takes
+# without booting a VM.
+#
+# The root cause was in the shared core: the reload stored the new config via
+# `Config.clone`, which copies Key fields only, so `_command-explicit` reset to
+# false and the session-persistence agent path (default ON) fell back to the
+# agent's own default shell. With persistence off the exec path never looks at
+# the flag, which is why the off arm is the control: it was green pre-fix.
+. (Join-Path $PSScriptRoot 'lib\PaneCapture.ps1')   # Invoke-GhozttyIpc
+
+# The leaf pids in one snapshot, by pane name.
+function Leaf-Pids($tmp, $tag) {
+    $map = @{}
+    foreach ($l in (Leaves-Of-Windows (Snapshot-Windows $tmp $tag))) {
+        if ([string]$l.name -ne '') { $map[[string]$l.name] = [int]$l.pid }
+    }
+    return $map
+}
+# The process of the first pane NOT in $known, once it reports a pid.
+function Wait-NewPaneShell($tmp, $tag, $known, $timeoutSec = 45) {
+    $deadline = (Get-Date).AddSeconds($timeoutSec)
+    $i = 0
+    while ((Get-Date) -lt $deadline) {
+        $m = Leaf-Pids $tmp "$tag-$i"
+        foreach ($k in $m.Keys) {
+            if ($known.ContainsKey($k) -or $m[$k] -le 0) { continue }
+            $p = Get-CimInstance Win32_Process -Filter "ProcessId=$($m[$k])"
+            if ($null -ne $p) { return [pscustomobject]@{ Name = $k; Proc = $p } }
+        }
+        $i++
+        Start-Sleep -Milliseconds 700
+    }
+    return $null
+}
+function Shell-Name($found) { if ($null -eq $found) { return '(no new pane)' } return [string]$found.Proc.Name }
+
+# One Settings-write run. $persist is the --session-persistence value, $shell
+# what the Shell row is set to, $want the process name its panes must run.
+function Run-SettingsShell($id, $persist, $shell, $want) {
+    $tmp = Join-Path $root "h-$id"
+    $xdg = Join-Path $tmp 'xdg'
+    New-Item -ItemType Directory -Force (Join-Path $xdg 'ghostty') | Out-Null
+    $cfg = Join-Path $xdg 'ghostty\config-debug.ghostty'
+    [System.IO.File]::WriteAllText($cfg, "font-size = 13`n")
+    New-Item -ItemType Directory -Force (Get-GhozttyAgentStateDir -Root $tmp) | Out-Null
+    $env:LOCALAPPDATA = $tmp
+    $env:GHOSTTY_LOCAL_AGENT_BIN = $AgentExe
+    $env:XDG_CONFIG_HOME = $xdg
+    $env:GHOZTTY_SETTINGS_BACKUP_DIR = Join-Path $tmp 'backups'
+    $app = $null
+    try {
+        # F9 opens a tab: no CLI verb does, and a posted keybind works on the
+        # background desktop (hidden-window-memory.ps1 section T).
+        # persistence: both, from $persist - H runs this once on and once off, into a throwaway $env:LOCALAPPDATA.
+        $app = Start-OnTestDesktop -Exe $Exe -Arguments @("--session-persistence=$persist", '--keybind=f9=new_tab')
+    } finally {
+        Remove-Item Env:XDG_CONFIG_HOME -ErrorAction SilentlyContinue
+        Remove-Item Env:GHOZTTY_SETTINGS_BACKUP_DIR -ErrorAction SilentlyContinue
+    }
+    $first = First-Pane $tmp "h-$id" 60
+    Assert "H$id.1 the app opened a window with a pane (persistence=$persist)" ($first -ne '')
+
+    # The control: before any write, a new window is the default cmd.exe -
+    # so the oracle below can tell the two shells apart.
+    $known = Leaf-Pids $tmp "h-$id-k0"
+    Run-Cli '+new-window' "$tmp\nw0.txt" 20 | Out-Null
+    $pre = Wait-NewPaneShell $tmp "h-$id-pre" $known
+    AssertEq "H$id.2 before the Settings write a new window runs the default shell" 'cmd.exe' (Shell-Name $pre)
+
+    $s = Invoke-GhozttyIpc -Action 'settings' -Arguments @('--op=action')
+    Assert "H$id.3 the Settings window opened" ($null -ne $s -and [bool]$s.success)
+    $s = Invoke-GhozttyIpc -Action 'settings' -Arguments @('--op=shell', '--key=command', "--value=$shell")
+    $text = if (Test-Path $cfg) { [System.IO.File]::ReadAllText($cfg) } else { '' }
+    Assert "H$id.4 the Shell pick wrote command = $shell to the config" `
+        ($null -ne $s -and [bool]$s.data.ok -and $text -match ('(?m)^command = ' + [regex]::Escape($shell) + '\r?$'))
+
+    $known = Leaf-Pids $tmp "h-$id-k1"
+    Run-Cli '+new-window' "$tmp\nw1.txt" 20 | Out-Null
+    $nw = Wait-NewPaneShell $tmp "h-$id-nw" $known
+    AssertEq "H$id.5 a new window runs $want (persistence=$persist; pre-fix with persistence on: cmd.exe)" $want (Shell-Name $nw)
+
+    $known = Leaf-Pids $tmp "h-$id-k2"
+    Run-Cli "+split --target=$first --direction=right" "$tmp\sp.txt" 20 | Out-Null
+    $sp = Wait-NewPaneShell $tmp "h-$id-sp" $known
+    AssertEq "H$id.6 a new split runs $want (persistence=$persist)" $want (Shell-Name $sp)
+
+    $known = Leaf-Pids $tmp "h-$id-k3"
+    $tab = $null
+    $top = if ($app) { Wait-TestWindow -ProcessId $app.Pid -Class 'GhozttyWindow' } else { [IntPtr]::Zero }
+    if ($top -ne [IntPtr]::Zero) {
+        $vis = @(Get-TestChildWindows -Window ([IntPtr]$top) -Class 'GhozttyTerminal' | Where-Object Visible)
+        if ($vis.Count -ge 1) {
+            [void](Send-TestKeys -Window ([IntPtr]$top) -Target ([IntPtr]$vis[0].Hwnd) -Key F9)
+            $tab = Wait-NewPaneShell $tmp "h-$id-tab" $known
+        }
+    }
+    AssertEq "H$id.7 a new tab runs $want (persistence=$persist)" $want (Shell-Name $tab)
+    # Not `return`: the asserts above write to the pipeline, which IS the
+    # return value, so a returned path would arrive glued to every PASS line.
+    $script:lastSettingsShellTmp = $tmp
+}
+
+Run-SettingsShell '1' 'true' 'powershell.exe' 'powershell.exe'
+$tmpH1 = $script:lastSettingsShellTmp
+# The relaunch: the written config read at launch, persistence on.
+Stop-TestProcs
+$xdgH1 = Join-Path $tmpH1 'xdg'
+$tmpH1r = Join-Path $root 'h-1r'
+New-Item -ItemType Directory -Force (Get-GhozttyAgentStateDir -Root $tmpH1r) | Out-Null
+$env:LOCALAPPDATA = $tmpH1r
+$env:GHOSTTY_LOCAL_AGENT_BIN = $AgentExe
+$env:XDG_CONFIG_HOME = $xdgH1
+# persistence: on (default) - the relaunch arm reads the written config the way a user's next launch does, into a throwaway $env:LOCALAPPDATA.
+try { [void](Start-OnTestDesktop -Exe $Exe -Arguments @()) } finally { Remove-Item Env:XDG_CONFIG_HOME -ErrorAction SilentlyContinue }
+$relaunch = Wait-NewPaneShell $tmpH1r 'h-1r' @{} 60
+AssertEq "H1.8 after a relaunch the first window runs powershell.exe" 'powershell.exe' (Shell-Name $relaunch)
+Stop-TestProcs
+
+Run-SettingsShell '2' 'false' 'powershell.exe' 'powershell.exe'
+Stop-TestProcs
+
+# The real thing: bare wsl.exe as the menu writes it, resolved from System32
+# by the spawn. Runs when asked (-Wsl, which may boot the VM) or when a distro
+# is ALREADY running, so it starts nothing (T1751's gate; asking the distro
+# table starts nothing either).
+. (Join-Path (Split-Path (Split-Path $PSScriptRoot -Parent) -Parent) 'scripts\lib\WslState.ps1')
+if ($Wsl -or (Test-WslDefaultDistroRunning)) {
+    Run-SettingsShell '3' 'true' 'wsl.exe' 'wsl.exe'
+    Stop-TestProcs
+} else {
+    $script:skipped++
+    "  SKIP H3 the real-WSL arm - $(Get-WslSkipReason); pass -Wsl to run it (it boots the WSL2 VM)"
+}
+
 # ---- teardown --------------------------------------------------------------
 Stop-TestProcs
 $env:LOCALAPPDATA = $savedLocalAppData
@@ -570,4 +724,4 @@ if ($script:failures -eq 0) {
 }
 
 ""
-Write-TestVerdict -Pass $script:passes -Fail $script:failures
+Write-TestVerdict -Pass $script:passes -Fail $script:failures -Skipped ([int]$script:skipped)
