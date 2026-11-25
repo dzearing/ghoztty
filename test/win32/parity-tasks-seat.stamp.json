@@ -1,21 +1,22 @@
 {
     "guard":  "parity-tasks",
     "script":  "test/win32/parity-tasks-seat.ps1",
-    "generated":  "2026-11-23T21:24:45-08:00",
-    "commit":  "1b72ce2f2",
+    "generated":  "2026-11-25T02:07:22-08:00",
+    "commit":  "99f0ba4bb",
     "uncommitted":  [
-                        "scripts/parity-tasks.ps1"
+                        "scripts/parity-tasks.ps1",
+                        "test/win32/parity-tasks-seat.ps1"
                     ],
     "files":  {
                   "scripts/lib/CardRot.ps1":  "c0ee5e1d432d4ad22f7a5020db60edae29b5cc3f4271f1ce9c8627490b6f3a74",
                   "scripts/lib/TaskVerify.ps1":  "64b9839a73193b1cf47b24d3c3718944d0d88c57c8ac91ec9d5caefb46d3b3ff",
-                  "scripts/parity-tasks.ps1":  "6d89c66e808dc7b14e72c8163efd9e0a154bf8a520eca8ef8aad47e743bc7a14",
-                  "test/win32/parity-tasks-seat.ps1":  "690edc11733ba052e10de05dc272f006931a741e9f12d439369518d35184929e"
+                  "scripts/parity-tasks.ps1":  "7cd6a50968a10e7768e6843d09ba1a27712a8863102265857d838007328fa8df",
+                  "test/win32/parity-tasks-seat.ps1":  "37e1ae5b68bd9fa619b421ca0162c5f818ee0f8d66b177c5790e2eb43453fff0"
               },
     "code":  {
                  "scripts/lib/CardRot.ps1":  "code1:ad0e609eb162a2144be17ed7f7a29a0e14a3621af864cda33e4dd8b586c5bb5a",
                  "scripts/lib/TaskVerify.ps1":  "code1:08435acdddd505dd40e04ee3b55ea179024b36d93c7352e1e17525d62315649a",
-                 "scripts/parity-tasks.ps1":  "code1:71ff1a79e77f84005f9a7be32ff4e0cab84f0b8fd2e0de9e2a8b2df91b898652",
-                 "test/win32/parity-tasks-seat.ps1":  "code1:996aacccec4a90723db65225d03cbc7e3a4cfeb59fdd802c714c03efd1f38435"
+                 "scripts/parity-tasks.ps1":  "code1:805e29bac6365c882ce80889e5845ee8822dadb571c0fc3b6498a3d615d2e686",
+                 "test/win32/parity-tasks-seat.ps1":  "code1:14586329b042d8ef10a73e1131ca5511ac4b46dd251e368148800917241d23fe"
              }
 }

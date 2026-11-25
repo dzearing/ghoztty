@@ -1,8 +1,8 @@
 {
     "guard":  "idle-frame-release",
     "script":  "test/win32/idle-frame-release.ps1",
-    "generated":  "2026-11-25T02:29:46-08:00",
-    "commit":  "7e9f378b7",
+    "generated":  "2026-11-25T02:31:07-08:00",
+    "commit":  "99f0ba4bb",
     "uncommitted":  [
 
                     ],

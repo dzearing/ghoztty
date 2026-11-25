@@ -1087,6 +1087,132 @@ function Get-TouchingCommits {
     return @($kept)
 }
 
+# ------------------------------------------- identifiers a card names (T2236) ---
+#
+# A card often names the CODE it is about rather than a file: T1337 said
+# "diff.js posts diffNavOverflow ... nothing under src/apprt/win32 handles
+# it". Neither a file path nor a unique basename, so `next` reported "0
+# commit(s) since touched its files" while 91cf69005 had added the handler 13
+# days after filing. The question for such a card is "has any commit since
+# added or removed that identifier?", which is git's pickaxe (`log -S`).
+#
+# What counts as an identifier, deliberately narrow (a common word buys a
+# pickaxe hit on every commit, which is the hub-file trap again):
+#   - a backticked single token (`diffNavOverflow`, `Get-StaleSignal`,
+#     `open_failed`) of 6+ characters, no dots, slashes or spaces - so a
+#     backticked path or command line is not one;
+#   - a bare camelCase token of 8+ characters (diffNavOverflow);
+#   - a bare snake_case token of 8+ characters (open_failed would be 11).
+# Task ids never count. Anything present in more than $StaleIdentMaxFiles
+# tracked code files at HEAD is too common to say anything and is dropped.
+$StaleIdentBacktick = '`([A-Za-z_][\w-]{4,}\w)`'
+$StaleIdentCamel = '(?<![\w`./\\-])([a-z][a-z0-9]*[A-Z][A-Za-z0-9]*)(?!\.?[\w/\\-])'
+$StaleIdentSnake = '(?<![\w`./\\-])([a-z][a-z0-9]*(?:_[a-z0-9]+)+)(?!\.?[\w/\\-])'
+$StaleIdentMaxFiles = 25
+$StaleIdentMax = 6
+
+# Where a pickaxe hit means "the code changed". The tracker's own docs are left
+# out for the same reason the path signal leaves them out: the card itself, and
+# every note about it, names the identifier.
+$StaleCodeRoots = @('src', 'scripts', 'test', 'macos', 'pkg', 'include', 'dist', 'build.zig')
+
+# The card text the identifiers are read from: title + body, without the
+# frontmatter's other fields and without the `## Progress log`, which is the
+# turns' own notes (a claim note naming the fix's identifier is not news).
+function Get-TaskIdentifierText {
+    param([string]$Text)
+    $title = ''
+    $body = $Text
+    $fm = [regex]::Match($Text, '(?s)\A---\r?\n(.*?)\r?\n---\r?\n')
+    if ($fm.Success) {
+        $t = [regex]::Match($fm.Groups[1].Value, '(?m)^title:\s*(.*)$')
+        if ($t.Success) { $title = $t.Groups[1].Value }
+        $body = $Text.Substring($fm.Length)
+    }
+    $log = [regex]::Match($body, '(?m)^## Progress log\b')
+    if ($log.Success) { $body = $body.Substring(0, $log.Index) }
+    return ($title + "`n" + $body)
+}
+
+function Get-TaskCodeIdentifiers {
+    param([string]$Path, [string]$Root)
+    if (-not $Root) { return @() }
+    $text = Get-TaskIdentifierText ([System.IO.File]::ReadAllText($Path))
+    $seen = [ordered]@{}
+    foreach ($pat in @($StaleIdentBacktick, $StaleIdentCamel, $StaleIdentSnake)) {
+        foreach ($m in [regex]::Matches($text, $pat)) {
+            $id = $m.Groups[1].Value
+            if ($pat -ne $StaleIdentBacktick -and $id.Length -lt 8) { continue }
+            if ($id -match '^T\d+[a-z]?$') { continue }
+            if ($seen.Contains($id)) { continue }
+            $seen[$id] = $true
+        }
+    }
+    # A token that is a tracked file's stem (`chrome_reposition` for
+    # chrome_reposition.zig) is a module name: the FILE signal already answers
+    # for it, and its pickaxe hits every import shuffle (ten on T2238's card).
+    $stems = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
+    foreach ($name in (Get-BareNameIndex -Root $Root).Keys) {
+        $dot = $name.LastIndexOf('.')
+        if ($dot -gt 0) { [void]$stems.Add($name.Substring(0, $dot)) }
+    }
+    $kept = @()
+    foreach ($id in $seen.Keys) {
+        if ($kept.Count -ge $StaleIdentMax) { break }
+        if ($stems.Contains($id)) { continue }
+        try {
+            $files = @(& git -C $Root grep -l -F -w -e $id '--' @StaleCodeRoots 2>$null)
+        } catch { $files = @() }
+        if ($files.Count -gt $StaleIdentMaxFiles) { continue }
+        $kept += $id
+    }
+    return @($kept)
+}
+
+# Directories a card names (`src/apprt/win32`). They never count on their own -
+# every commit touches some area, which is why Get-TaskCodePaths keeps files
+# only - but they are the right SCOPE for the identifier search: a card about a
+# message nothing under src/apprt/win32 handles is answered by a commit there,
+# not by a test elsewhere that happens to spell the same name.
+function Get-TaskCodeDirs {
+    param([string]$Path, [string]$Root)
+    if (-not $Root) { return @() }
+    $text = [System.IO.File]::ReadAllText($Path)
+    $seen = [ordered]@{}
+    foreach ($m in [regex]::Matches($text, $StalePathPattern)) {
+        $p = ($m.Groups[1].Value -replace '\\', '/').TrimEnd('.', ',', ')', ':', ';', '/')
+        if (-not $p -or $seen.Contains($p)) { continue }
+        if (-not (Test-Path -LiteralPath (Join-Path $Root $p) -PathType Container)) { continue }
+        $seen[$p] = $true
+    }
+    return @($seen.Keys)
+}
+
+# Commits since $Since whose diff added or removed any of $Identifiers, in the
+# same "<sha> <date> <subject>" shape Get-TouchingCommits returns. One git pass
+# for all of them (an ERE alternation); identifiers are [\w-] only, so nothing
+# in them needs escaping.
+function Get-IdentifierCommits {
+    param([string]$Root, [string[]]$Identifiers, [string[]]$Scope, [datetime]$Since)
+    if (-not $Root -or -not $Identifiers -or $Identifiers.Count -eq 0) { return @() }
+    if (-not $Scope -or $Scope.Count -eq 0) { $Scope = $StaleCodeRoots }
+    $sinceArg = '--since=' + $Since.ToString('yyyy-MM-ddTHH:mm:ss')
+    $pick = '-S' + ($Identifiers -join '|')
+    try {
+        $out = @(& git -C $Root log $sinceArg '--no-merges' '--pickaxe-regex' $pick '--format=%aI %h %as %s' '--' @Scope 2>$null)
+        if ($LASTEXITCODE -ne 0) { return @() }
+    } catch { return @() }
+    $kept = @()
+    foreach ($line in $out) {
+        if (-not $line) { continue }
+        $bits = $line.Split(' ', 2)
+        $when = try { [datetime]::Parse($bits[0]) } catch { $null }
+        if ($when -and $when -le $Since) { continue }
+        $kept += $bits[1]
+    }
+    return @($kept)
+}
+
 # One line for `next`, or $null when there is nothing worth saying. Silence is
 # the default on purpose: a task filed yesterday whose files nobody touched
 # adds a line of noise to every pick for no information.
@@ -1097,12 +1223,22 @@ function Get-StaleSignal {
     $ageDays = [int][math]::Floor(((Get-Date) - $filed).TotalDays)
     $paths = Get-TaskCodePaths -Path $Path -Root $Root
     $commits = @(Get-TouchingCommits -Root $Root -Paths $paths -Since $filed)
+    # T2236: and the commits that added or removed an identifier the card names.
+    $idents = @(Get-TaskCodeIdentifiers -Path $Path -Root $Root)
+    $identCommits = @()
+    if ($idents.Count -gt 0) {
+        $dirs = @(Get-TaskCodeDirs -Path $Path -Root $Root)
+        $identCommits = @(Get-IdentifierCommits -Root $Root -Identifiers $idents -Scope $dirs -Since $filed)
+        foreach ($c in $identCommits) { if ($commits -notcontains $c) { $commits += $c } }
+    }
     if ($ageDays -lt 7 -and $commits.Count -eq 0) { return $null }
     return [pscustomobject]@{
-        AgeDays = $ageDays
-        Filed   = $filed
-        Paths   = $paths
-        Commits = $commits
+        AgeDays      = $ageDays
+        Filed        = $filed
+        Paths        = $paths
+        Commits      = $commits
+        Identifiers  = $idents
+        IdentCommits = $identCommits
     }
 }
 
@@ -1745,6 +1881,10 @@ switch ($Command) {
                     Write-Host ("      filed {0} ({1}d ago); {2} commit(s) since touched its files" -f `
                             $stale.Filed.ToString('yyyy-MM-dd'), $stale.AgeDays, $stale.Commits.Count)
                     foreach ($c in ($stale.Commits | Select-Object -First 3)) { Write-Host ("        {0}" -f $c) }
+                    if ($stale.IdentCommits.Count -gt 0) {
+                        Write-Host ("      {0} of them added or removed an identifier the card names: {1}" -f `
+                                $stale.IdentCommits.Count, ($stale.Identifiers -join ', '))
+                    }
                     if ($stale.Commits.Count -gt 0) {
                         Write-Host "      CHECK FIRST: confirm the defect still reproduces - it may already be fixed."
                     }

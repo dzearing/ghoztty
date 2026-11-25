@@ -1076,6 +1076,66 @@ Assert 'Q5b ...and next still hands out the task, silent about staleness rather 
 
 if (Test-Path $qrepo) { Remove-Item -Recurse -Force $qrepo -ErrorAction SilentlyContinue }
 
+# --- Q7. a card that names only an IDENTIFIER (T2236) ---------------------------
+# T1337 named `diffNavOverflow` and the directory src/apprt/win32, and nothing
+# else; `next` said "0 commit(s) since touched its files" while a commit 13
+# days later had added the handler. The fixture is that card: an identifier a
+# later commit adds, under the one directory the card names. Two decoys must
+# NOT count: a commit spelling the identifier OUTSIDE that directory, and a
+# commit to the tracker's own docs.
+'Q7. CHECK FIRST names the commit that added an identifier the card names'
+$q7 = Join-Path $env:TEMP "ghoztty-parity-ident-$PID"
+$qrepo = $q7
+$qtasks = Join-Path $q7 'docs\design\windows-parity-tasks'
+if (Test-Path $q7) { Remove-Item -Recurse -Force $q7 }
+New-Item -ItemType Directory -Force $qtasks | Out-Null
+New-Item -ItemType Directory -Force (Join-Path $q7 'src\apprt\win32') | Out-Null
+New-Item -ItemType Directory -Force (Join-Path $q7 'test') | Out-Null
+Q-Git @('init', '--quiet')
+Q-Git @('config', 'user.email', 'seat@example.com')
+Q-Git @('config', 'user.name', 'Seat Harness')
+Q-Git @('config', 'commit.gpgsign', 'false')
+Q-Write 'src/apprt/win32/viewer.zig' "// viewer`n"
+Q-Write 'test/other.ps1' "# other`n"
+Q-Git @('add', '-A'); Q-Git @('commit', '-m', 'seed', '--quiet')
+Q-Task 'T1' 'diff.js posts `diffNavOverflow` at the end of a file; nothing under src/apprt/win32 handles that message.'
+Q-Task 'T2' 'The bridge never answers `quietUnusedSignal`, and nothing handles it; see `viewer_bridge` too.'
+# viewer_bridge is a tracked file's STEM - a module name the file signal owns -
+# so the commit that only rewrites viewer_bridge.zig's import must not count.
+Q-Write 'src/apprt/win32/viewer_bridge.zig' "// bridge`n"
+Q-Git @('add', '-A'); Q-Git @('commit', '-m', 'file two fixture tasks', '--quiet')
+# settle: git timestamps to the second, so the fix must land a full second after the filing commit; there is no event to wait on
+Start-Sleep -Seconds 2
+Q-Write 'test/other.ps1' "# other: diffNavOverflow quietUnusedSignal`n"
+Q-Git @('add', '-A'); Q-Git @('commit', '-m', 'a test elsewhere spells the names', '--quiet')
+Q-Write 'test/imports.ps1' "# imports viewer_bridge`n"
+Q-Git @('add', '-A'); Q-Git @('commit', '-m', 'an import shuffle', '--quiet')
+Q-Write 'docs/design/windows-parity-tasks/T2.md' ([System.IO.File]::ReadAllText((Join-Path $qtasks 'T2.md')) + "`nquietUnusedSignal again.`n")
+Q-Git @('add', '-A'); Q-Git @('commit', '-m', 'chore(tracker): note on T2', '--quiet')
+Q-Write 'src/apprt/win32/viewer.zig' "// viewer`nfn onMessage() void { _ = `"diffNavOverflow`"; }`n"
+Q-Git @('add', '-A'); Q-Git @('commit', '-m', 'the viewer walks into the next file', '--quiet')
+
+$r = Task-Run -CmdArgs @('next') -Dir $qtasks
+Assert 'Q7 next on an identifier-only card counts the commit that added the identifier' (
+    $r.Out -match 'NEXT: T1' -and $r.Out -match '1 commit\(s\) since touched')
+if ($r.Out -notmatch '1 commit\(s\) since touched') { "      (Q7 saw: " + ($r.Out -replace "`r?`n", ' / ') + ')' }
+Assert 'Q7a ...names that commit, and only that one (the out-of-scope test is a decoy)' (
+    $r.Out -match 'the viewer walks into the next file' -and $r.Out -notmatch 'a test elsewhere')
+Assert 'Q7b ...says which identifier, and says CHECK FIRST' (
+    $r.Out -match 'identifier the card names: diffNavOverflow' -and $r.Out -match 'CHECK FIRST')
+# T2 names no directory, so its scope is every code root: the test commit DOES
+# count for it, and the tracker note does not. Close T1 to reach it.
+$t1 = Join-Path $qtasks 'T1.md'
+[System.IO.File]::WriteAllText($t1, ([System.IO.File]::ReadAllText($t1) -replace 'status: "todo"', 'status: "done"'), (New-Object System.Text.UTF8Encoding $false))
+$r = Task-Run -CmdArgs @('next') -Dir $qtasks
+Assert 'Q7c with no directory named the search covers the code roots, never the tracker docs' (
+    $r.Out -match 'NEXT: T2' -and $r.Out -match '1 commit\(s\) since touched' -and
+    $r.Out -match 'a test elsewhere' -and $r.Out -notmatch 'note on T2')
+Assert 'Q7d a token that is a tracked file''s stem is the file signal''s, not a pickaxe hit' (
+    $r.Out -notmatch 'an import shuffle' -and $r.Out -notmatch 'names: [^\r\n]*viewer_bridge')
+if ($r.Out -notmatch 'a test elsewhere' -or $r.Out -match 'an import shuffle') { "      (Q7c/d saw: " + ($r.Out -replace "`r?`n", ' / ') + ')' }
+if (Test-Path $q7) { Remove-Item -Recurse -Force $q7 -ErrorAction SilentlyContinue }
+
 # --- R. set-tags on an already-filed task (T503) -----------------------------
 # Tags arrived on `new` alone, so a task filed before them could only be
 # categorised by hand-editing frontmatter - which is why the backlog carried
