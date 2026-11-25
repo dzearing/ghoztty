@@ -1849,12 +1849,56 @@ powershell -NoProfile -File scripts\linux\wsl-run.ps1 -CommandFile test\linux\se
 Ends `SETTINGS WINDOW: ALL PASS` (76 checks: W1-W20 for the window and
 All Settings, P1-P23 for the pages, L1-L10 less L5 for list keys, F1-F8 for
 the Font picker, C1-C14 with C4b and C11b for Config file and the toast).
-Left off the pages for their own cards: the preview and
-themes T3636, color wells and the
-folder picker T3759, search across the pages T3760. Also
+Left off the pages for their own cards: color wells and the
+folder picker T3759, search across the pages T3760 (the preview and themes
+are T3636's, below). Also
 still to port: the file-mode and local-time fix T3634 (until it lands, a
 backup's date in Restore... reads in UTC: `ConfigFileStore.localNow` is
 Windows-only).
+
+### The theme picker and the live preview (T3636)
+
+`src/apprt/gtk/SettingsTheme.zig`, Mac's `ThemeSection` and
+`SettingsPreview`, on win32's pure `theme_catalog.zig` (bundled plus
+`$XDG_CONFIG_HOME/ghostty/themes`, the user's winning a name clash; light vs
+dark by background luminance; `light:A,dark:B`; family seeding; the
+mismatch), `settings_theme_grid.zig` (a tab lists only its kind, 11 tiles then
+"All N <kind> themes...", the pick first) and `settings_preview.zig` (inputs
+and caption). Nothing about which theme goes where is decided in GTK code.
+
+- **Use** is an `AdwActionRow` with two linked `GtkToggleButton`s (GNOME's
+  segmented control); the tabs are two more, labelled with the picked names
+  in light & dark mode. The filter is a `GtkSearchEntry` (delay 0). Tiles are
+  buttons in a `GtkFlowBox` (homogeneous, 118 px minimum, 10 px apart).
+- **Colors are CSS.** One provider on the window's display holds a
+  `.gz-tile-<catalog index>` rule per theme plus the fixed shapes; a second
+  holds `.gz-preview-term`'s rgba and is reloaded only when it changes, so a
+  translucent terminal shows the backdrop through exactly as on Mac. Both are
+  removed when the window closes. Tile and preview text is Pango markup
+  (`foreground`, `font_family`, `size` in 1024ths of a point, `alpha`).
+- **The cursor**: block = the cell's `background`; bar / underline = U+258F /
+  U+2581 in the cursor color; hollow = U+25AF. It blinks at 530 ms only while
+  the card is mapped (the timer stops itself off screen; `map` restarts it).
+- The grid is redrawn on idle after a tab, filter or All click, never under
+  the clicked widget's own signal; `flush()` runs it for the seam.
+
+Seam (win32's names): `--op=theme-mode --value=true|false`,
+`theme-tab --value=light|dark`, `theme-filter --value=`, `theme-all`,
+`theme-tile --value=<name>` (clicks the DRAWN tile; refused when the tab does
+not draw it), `theme-pick --key=light|dark --value=<name>` (the model call).
+State adds `theme` (model, the catalog's names/kinds/backgrounds, and `drawn`)
+and `preview` (inputs, caption, and `drawn`: caption, the terminal rule, the
+lines' markup, elevated, mapped, blinking).
+
+```powershell
+powershell -NoProfile -File scripts\linux\wsl-run.ps1 -CommandFile test\linux\settings-theme.sh
+```
+
+Ends `SETTINGS THEME: ALL PASS` (32 checks: K catalog, G grid, P one theme,
+M light & dark, X mismatch, V preview, O a later file owns `theme`, R
+reopen). `NEGATIVE=1` expects the light slot seeded with a dark theme and
+must fail M1. The headless Weston reports the system as dark (adwaita's
+default there), so K3 and M5 read `system_dark` rather than assume it.
 
 ### List keys (T3632)
 
