@@ -11,6 +11,14 @@
 # START here (that half is NOT RUN; see the task). Every drop moves the very
 # same panes: same shells, same pids.
 #
+# T3615 adds the tab bar (D19-D31): a pane dropped on a tab's button becomes
+# a new tab of its own at that index (Window.dropOnTabBar, the code a release
+# on the AdwTabBar calls), a pane that is already its tab's only one moves
+# its tab instead or stays put, a 500ms rest on another tab's button selects
+# it (Window.tabDwellAt, the drag-motion handler's call), and a drop then
+# lands in that tab's layout from the tab the pane left - which closes when
+# it empties. A window's only pane never leaves it.
+#
 # Run it ONLY through the wrapper:
 #
 #   powershell -NoProfile -File scripts\linux\wsl-run.ps1 -CommandFile test\linux\cli-pane-drag.sh
@@ -290,9 +298,9 @@ drop_x() { # drop_x <label> <want target> <want tabs> <pd args...>
     [ "$t" = "$want_t" ] && [ "$o" = moved ] && tabs_are "$want_s"
     hl_check "$label" $? "target=$t outcome=$o tabs=$(tabs_of dw) reply=$r"
 }
-drop_x "D27 a from the tab it left splits c in the tab on show, and its old tab closes" split "d | *V(b,V(c,$a))" \
-    --target="$a" --drop-on=c --fx=0.5 --fy=0.92
-drop_x "D28 d from another tab swaps with b there: each takes the other's place" swap "b | *V(d,V(c,$a))" \
+drop_x "D27 a from the tab it left splits c in the tab on show, and its old tab closes" split "d | *V(b,H(c,$a))" \
+    --target="$a" --drop-on=c --fx=0.92 --fy=0.5
+drop_x "D28 d from another tab swaps with b there: each takes the other's place" swap "b | *V(d,H(c,$a))" \
     --target="$d" --drop-on=b --fx=0.5 --fy=0.5
 b_alone() { [ "$(split_of "$b")" = False ] && [ "$(split_of "$d")" = True ]; }
 hl_wait_for 5 b_alone
