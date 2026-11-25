@@ -209,7 +209,7 @@ pub const SplitTree = extern struct {
 
     // ---- The pane style (T3566; docs/reference/pane-style.md) ---------------
 
-    const PaneLook = struct { style: pane_style.Style, is_light: bool };
+    const PaneLook = struct { style: pane_style.Style, is_light: bool, glass: bool = false };
 
     /// The style every window draws now (`macos-pane-style`, which applies
     /// to every window at once) and whether its desk is the light one.
@@ -221,6 +221,7 @@ pub const SplitTree = extern struct {
         return .{
             .style = Window.paneStyleOf(cfg),
             .is_light = pane_style.isLight(.{ .r = bg.r, .g = bg.g, .b = bg.b }),
+            .glass = pane_style.hasGlass(Window.paneStyleOf(cfg), cfg.@"macos-pane-glass"),
         };
     }
 
@@ -238,6 +239,7 @@ pub const SplitTree = extern struct {
         const tree_widget: *wk.GtkWidget = @ptrCast(self);
         setClass(tree_widget, pane_style.tree_class_elevated, elevated);
         setClass(tree_widget, pane_style.tree_class_light, elevated and look.is_light);
+        setClass(tree_widget, pane_style.tree_class_glass, look.glass);
 
         const priv = self.private();
         const tree = priv.tree orelse return;
@@ -259,6 +261,10 @@ pub const SplitTree = extern struct {
             // rounded corners; the rim and the shadow are the card's own.
             wk.gtk_widget_set_overflow(w, if (elevated) 1 else 0);
             setClass(w, pane_style.card_class_focused, pane_style.isFocusedCard(look.style, count, focused == entry.view));
+            // The pane's glass sheet (T3622) follows a reload that turns
+            // glass on or off; the viewer's page follows it too.
+            entry.view.as(gtk.Widget).queueDraw();
+            entry.view.syncGlass();
         }
     }
 

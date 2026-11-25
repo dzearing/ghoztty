@@ -63,6 +63,9 @@ pub extern fn webkit_web_view_get_context(view: *WebView) *WebContext;
 pub extern fn webkit_web_view_load_uri(view: *WebView, uri: [*:0]const u8) void;
 pub extern fn webkit_web_view_get_uri(view: *WebView) ?[*:0]const u8;
 pub extern fn webkit_web_view_get_settings(view: *WebView) *Settings;
+/// What the view paints under the page (T3622): transparent over a glass
+/// pane's sheet for our own template pages, white otherwise.
+pub extern fn webkit_web_view_set_background_color(view: *WebView, rgba: *const GdkRGBA) void;
 pub extern fn webkit_settings_set_javascript_can_open_windows_automatically(settings: *Settings, enabled: c_int) void;
 pub extern fn webkit_web_view_evaluate_javascript(
     view: *WebView,

@@ -123,6 +123,148 @@ pub fn renderDesk(buf: []u32, size: DeskSize, full_w: f32, full_h: f32, pal: Pal
     for (buf[0 .. size.w * size.h]) |*p| p.* |= 0xFF00_0000;
 }
 
+// ---- Glass panes (T3622; pane-style.md "Glass panes") ---------------------
+
+/// How much of the terminal's background a glass sheet keeps over the desk
+/// (Mac `PaneGlass.tint`; win32 `pane_elevation.GLASS_TINT`), focused or not.
+pub const glass_tint: f32 = 0.40;
+/// ... and under a banner card, which is a pane of glass of its own laid on
+/// the pane, so the pane's sheet thins there (Mac `PaneGlass.bannerTint`).
+pub const glass_banner_tint: f32 = 0.25;
+
+/// The tree's class while its panes are glass: `style.css` turns the banner
+/// strip into a rim-and-shadow card with no wash of its own.
+pub const tree_class_glass: [:0]const u8 = "pane-glass";
+
+/// Whether a window's panes are glass sheets: `macos-pane-glass` (default
+/// true), in the elevated style only - the flat style has no desk to show.
+pub fn hasGlass(style: Style, glass: bool) bool {
+    return hasDesk(style) and glass;
+}
+
+/// Upstream's unfocused dimming - a wash of `unfocused-split-fill` over an
+/// unfocused pane of a split - is not drawn on glass: focus changes only the
+/// rim and the glow there, and a background-coloured wash would make the
+/// unfocused pane the MORE solid one (Mac 9da9618f8; win32 `dim_math`,
+/// T2281). Flat, and elevated without glass, keep it.
+pub fn showsUnfocusedWash(glass: bool, search_active: bool, focused: bool, is_split: bool) bool {
+    return !glass and !search_active and !focused and is_split;
+}
+
+/// One band of a pane's sheet: `bg` at `alpha`, premultiplied by nothing
+/// (GdkRGBA is straight alpha).
+pub const SheetColor = struct { r: f32, g: f32, b: f32, a: f32 };
+
+/// The sheet's colour: the terminal's own background at the glass tint, or
+/// the thinner banner tint under a banner card.
+pub fn sheetColor(bg: color_math.Rgb, under_banner: bool) SheetColor {
+    return .{
+        .r = @as(f32, @floatFromInt(bg.r)) / 255.0,
+        .g = @as(f32, @floatFromInt(bg.g)) / 255.0,
+        .b = @as(f32, @floatFromInt(bg.b)) / 255.0,
+        .a = if (under_banner) glass_banner_tint else glass_tint,
+    };
+}
+
+/// A rectangle in the pane's own coordinates.
+pub const Rect = struct { x: f32, y: f32, w: f32, h: f32 };
+
+/// The sheet split into the bands that are drawn: the whole pane at the
+/// glass tint, except a banner card's frame, which gets the banner tint.
+/// With no banner (or one with no area) it is one band. The bands never
+/// overlap, so no part of the pane is tinted twice.
+pub const Bands = struct {
+    /// Up to four rects around the banner, at `glass_tint`.
+    outer: [4]Rect = undefined,
+    outer_len: usize = 0,
+    /// The banner's frame, at `glass_banner_tint`.
+    banner: ?Rect = null,
+};
+
+pub fn sheetBands(pane: Rect, banner_: ?Rect) Bands {
+    var out: Bands = .{};
+    const b = clipRect(banner_ orelse {
+        out.outer[0] = pane;
+        out.outer_len = 1;
+        return out;
+    }, pane) orelse {
+        out.outer[0] = pane;
+        out.outer_len = 1;
+        return out;
+    };
+    out.banner = b;
+    const candidates = [4]Rect{
+        // above, below (full width), then left and right of the banner's rows
+        .{ .x = pane.x, .y = pane.y, .w = pane.w, .h = b.y - pane.y },
+        .{ .x = pane.x, .y = b.y + b.h, .w = pane.w, .h = (pane.y + pane.h) - (b.y + b.h) },
+        .{ .x = pane.x, .y = b.y, .w = b.x - pane.x, .h = b.h },
+        .{ .x = b.x + b.w, .y = b.y, .w = (pane.x + pane.w) - (b.x + b.w), .h = b.h },
+    };
+    for (candidates) |c| if (c.w > 0 and c.h > 0) {
+        out.outer[out.outer_len] = c;
+        out.outer_len += 1;
+    };
+    return out;
+}
+
+fn clipRect(r: Rect, to: Rect) ?Rect {
+    const x0 = @max(r.x, to.x);
+    const y0 = @max(r.y, to.y);
+    const x1 = @min(r.x + r.w, to.x + to.w);
+    const y1 = @min(r.y + r.h, to.y + to.h);
+    if (x1 <= x0 or y1 <= y0) return null;
+    return .{ .x = x0, .y = y0, .w = x1 - x0, .h = y1 - y0 };
+}
+
+test "T3622: glass is the elevated style's only" {
+    try testing.expect(hasGlass(.elevated, true));
+    try testing.expect(!hasGlass(.elevated, false));
+    try testing.expect(!hasGlass(.flat, true));
+}
+
+test "T3622: no unfocused wash on glass; flat and solid cards keep it" {
+    try testing.expect(!showsUnfocusedWash(true, false, false, true));
+    try testing.expect(showsUnfocusedWash(false, false, false, true));
+    // Upstream's own conditions still hold off glass.
+    try testing.expect(!showsUnfocusedWash(false, true, false, true));
+    try testing.expect(!showsUnfocusedWash(false, false, true, true));
+    try testing.expect(!showsUnfocusedWash(false, false, false, false));
+}
+
+test "T3622: the sheet is the terminal background at 40%, 25% under a banner" {
+    const c = sheetColor(.{ .r = 255, .g = 0, .b = 51 }, false);
+    try testing.expectEqual(@as(f32, 1.0), c.r);
+    try testing.expectEqual(@as(f32, 0.0), c.g);
+    try testing.expectApproxEqAbs(@as(f32, 0.2), c.b, 0.001);
+    try testing.expectEqual(glass_tint, c.a);
+    try testing.expectEqual(glass_banner_tint, sheetColor(.{ .r = 0, .g = 0, .b = 0 }, true).a);
+    try testing.expect(glass_banner_tint < glass_tint);
+}
+
+test "T3622: the sheet's bands cover the pane once, the banner at its own tint" {
+    const pane: Rect = .{ .x = 0, .y = 0, .w = 100, .h = 80 };
+    // No banner: one band, the pane.
+    const none = sheetBands(pane, null);
+    try testing.expectEqual(@as(usize, 1), none.outer_len);
+    try testing.expect(none.banner == null);
+
+    // A banner inset 6px at the top: above, below, left, right.
+    const b = sheetBands(pane, .{ .x = 6, .y = 6, .w = 88, .h = 20 });
+    try testing.expectEqual(@as(usize, 4), b.outer_len);
+    var area: f32 = b.banner.?.w * b.banner.?.h;
+    for (b.outer[0..b.outer_len]) |r| area += r.w * r.h;
+    try testing.expectEqual(pane.w * pane.h, area);
+
+    // A banner flush with the top and both sides: only the band below.
+    const flush = sheetBands(pane, .{ .x = 0, .y = 0, .w = 100, .h = 20 });
+    try testing.expectEqual(@as(usize, 1), flush.outer_len);
+    try testing.expectEqual(@as(f32, 20), flush.outer[0].y);
+
+    // A banner outside the pane (or empty) is no banner.
+    try testing.expect(sheetBands(pane, .{ .x = 200, .y = 0, .w = 10, .h = 10 }).banner == null);
+    try testing.expect(sheetBands(pane, .{ .x = 0, .y = 0, .w = 0, .h = 10 }).banner == null);
+}
+
 test "T3566: only the elevated style has a desk and cards" {
     try testing.expect(hasDesk(.elevated));
     try testing.expect(!hasDesk(.flat));

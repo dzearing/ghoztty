@@ -34,6 +34,15 @@ const Health = renderer.Health;
 const getConstraint = @import("../font/nerd_font_attributes.zig").getConstraint;
 
 const FileType = @import("../file_type.zig").FileType;
+const build_config = @import("../build_config.zig");
+
+/// Whether the apprt paints a glass pane's tinted sheet itself, so the
+/// renderer draws no terminal background under `macos-pane-glass`: Mac's
+/// `PaneGlass`, and GTK's pane card (T3622, `SurfaceScrolledWindow`). win32
+/// composites differently - it hands the renderer the desk's slice as a
+/// backdrop instead (T1833) - so it keeps drawing the background.
+const pane_glass_sheet_in_apprt = builtin.os.tag == .macos or
+    build_config.app_runtime == .gtk;
 
 const macos = switch (builtin.os.tag) {
     .macos => @import("macos"),
@@ -821,7 +830,7 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                     .colorspace = config.@"window-colorspace",
                     .blending = config.@"alpha-blending",
                     .background_blur = config.@"background-blur",
-                    .pane_glass = (comptime builtin.os.tag == .macos) and
+                    .pane_glass = pane_glass_sheet_in_apprt and
                         config.@"macos-pane-style" == .elevated and
                         config.@"macos-pane-glass",
                     .scroll_to_bottom_on_output = config.@"scroll-to-bottom".output,
@@ -2032,7 +2041,7 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
 
                 // Glass panes: the card behind the terminal is the
                 // background, tinted with this same color.
-                if (comptime builtin.os.tag == .macos) {
+                if (comptime pane_glass_sheet_in_apprt) {
                     if (self.config.pane_glass) self.uniforms.bg_color[3] = 0;
                 }
 

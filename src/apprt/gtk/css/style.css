@@ -273,6 +273,23 @@ label.resize-overlay {
   outline-offset: -1px;
 }
 
+/*
+ * On glass (T3622; pane-style.md "Banner card") the banner is a pane of
+ * glass of its own laid on the pane: no wash of its own - the pane's sheet
+ * thins under it instead (Surface.snapshotGlassSheet) - just its rim and a
+ * drop shadow. A white lift greyed the gradient into a flat slab on the Mac.
+ */
+.pane-glass .surface .pane-banner {
+  background-color: transparent;
+  outline-color: rgba(255, 255, 255, 0.18);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.28);
+}
+
+.pane-glass.pane-desk-light .surface .pane-banner {
+  outline-color: rgba(0, 0, 0, 0.12);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
+}
+
 .surface .pane-banner label {
   font-size: 0.95em;
 }

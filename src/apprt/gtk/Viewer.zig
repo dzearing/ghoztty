@@ -85,6 +85,7 @@ const wk = @import("webkit.zig");
 const scheme = @import("viewer_scheme.zig");
 const chrome = @import("viewer_chrome.zig");
 const content = @import("../win32/viewer_content.zig");
+const glass = @import("../win32/viewer_glass.zig");
 const document = @import("../win32/viewer_document.zig");
 const nav = @import("../win32/viewer_nav.zig");
 const view_arg = @import("../../cli/view_arg.zig");
@@ -118,6 +119,9 @@ view: *wk.WebView,
 box: *wk.GtkWidget,
 bar: Bar,
 mode: content.Mode,
+/// The pane sits on a glass sheet (T3622, `macos-pane-glass`): our own
+/// template pages then go see-through over it (`applyGlass`).
+on_glass: bool = false,
 /// What the viewer was opened on, as given: Home goes back here.
 location: [:0]u8,
 /// Where the viewer is NOW: the file it shows, else the page's URI. Read
@@ -2098,6 +2102,33 @@ pub fn finishRender(self: *Viewer, ok: bool, detail: []const u8) void {
     if (comptime build_config.is_debug) steps.onRendered(self, ok);
 }
 
+/// Put the pane on (or off) its glass sheet (T3622): the pane calls this
+/// whenever the window's pane style is synced.
+pub fn setOnGlass(self: *Viewer, on: bool) void {
+    if (self.on_glass == on) return;
+    self.on_glass = on;
+    self.applyGlass();
+}
+
+/// Mac's `ViewerView.drawsOnGlass` (win32 `viewer_glass`, T1885): on glass,
+/// our own pages - markdown, code, a diff, an image - are transparent, so the
+/// pane's tinted sheet is their background as it is a terminal's; a website
+/// or a rendered `.html` file keeps its own. Re-run on every commit and load,
+/// since a fresh document starts without the class and a link can move the
+/// pane from a template page to a website.
+fn applyGlass(self: *Viewer) void {
+    const draws = glass.drawsOnGlass(self.on_glass, self.mode);
+    const bg = glass.defaultBackground(draws);
+    const rgba: wk.GdkRGBA = .{
+        .red = @as(f32, @floatFromInt(bg.r)) / 255.0,
+        .green = @as(f32, @floatFromInt(bg.g)) / 255.0,
+        .blue = @as(f32, @floatFromInt(bg.b)) / 255.0,
+        .alpha = @as(f32, @floatFromInt(bg.a)) / 255.0,
+    };
+    wk.webkit_web_view_set_background_color(self.view, &rgba);
+    if (self.mode.usesTemplate()) self.runQuiet(glass.classToggleJs(draws));
+}
+
 fn onLoadChanged(view: *wk.WebView, event: wk.LoadEvent, ud: ?*anyopaque) callconv(.c) void {
     _ = view;
     const self: *Viewer = @ptrCast(@alignCast(ud orelse return));
@@ -2125,9 +2156,13 @@ fn onLoadChanged(view: *wk.WebView, event: wk.LoadEvent, ud: ?*anyopaque) callco
             self.page_live = false;
             self.toc.pageGone();
         },
-        .committed => self.syncCommitted(),
+        .committed => {
+            self.syncCommitted();
+            self.applyGlass();
+        },
         .finished => {
             self.page_live = true;
+            self.applyGlass();
             self.syncChrome();
             // Ahead of the template's render: the page's own observer picks
             // the rendered document up 200 ms later, so the count follows it.

@@ -53,6 +53,7 @@ const banner_markup = @import("../banner_markup.zig");
 const viewer_links = @import("../viewer_links.zig");
 // The pure tint math win32 uses (T67): hex parsing, the contrast scheme.
 const color_math = @import("../../win32/color_math.zig");
+const pane_style = @import("../pane_style.zig");
 const Tab = @import("tab.zig").Tab;
 const window_seen = @import("../window_seen.zig");
 
@@ -1087,6 +1088,8 @@ pub const Surface = extern struct {
         // The surface's own id buffer: a restore that adopts a saved id
         // rewrites it in place, so the borrow stays current (T3544).
         viewer.pane_id = self.paneId();
+        // Our own pages go see-through over a glass pane's sheet (T3622).
+        viewer.setOnGlass(self.isOnGlass());
 
         const gl = priv.gl_area.as(gtk.Widget);
         gl.setVisible(0);
@@ -1297,6 +1300,76 @@ pub const Surface = extern struct {
         if (priv.viewer != null) return;
         priv.background_tint = rgb;
         if (priv.core_surface) |cs| applyTintToCore(cs, rgb);
+        // A glass pane's sheet is this colour (T3622).
+        self.as(gtk.Widget).queueDraw();
+    }
+
+    // ---- Glass panes (T3622; docs/reference/pane-style.md) ------------------
+
+    /// Whether this pane is a glass sheet now: `macos-pane-glass` in the
+    /// elevated style. The renderer then draws no terminal background
+    /// (`generic.zig` `pane_glass`), so the sheet below is the background.
+    pub fn isOnGlass(_: *Self) bool {
+        const config_obj = Application.default().getConfig();
+        defer config_obj.unref();
+        const cfg = config_obj.get();
+        return pane_style.hasGlass(Window.paneStyleOf(cfg), cfg.@"macos-pane-glass");
+    }
+
+    /// Follow the window's pane style (a reload can turn glass on or off):
+    /// a viewer's own pages go see-through on glass. The split tree calls
+    /// this from `syncPaneStyle`.
+    pub fn syncGlass(self: *Self) void {
+        if (self.private().viewer) |v| v.setOnGlass(self.isOnGlass());
+    }
+
+    /// The terminal's background the sheet is tinted with: the pane's own
+    /// `--color` tint, else the configured background.
+    fn sheetBackground(self: *Self) color_math.Rgb {
+        if (self.private().background_tint) |rgb| return rgb;
+        const config_obj = Application.default().getConfig();
+        defer config_obj.unref();
+        const c = config_obj.get().background;
+        return .{ .r = c.r, .g = c.g, .b = c.b };
+    }
+
+    /// The pane's glass sheet (Mac `PaneGlass`): the terminal's background at
+    /// `glass_tint` over the desk the split tree drew, thinned to
+    /// `glass_banner_tint` under a banner card, which is a pane of glass of
+    /// its own. Drawn before the children, inside the card's rounded clip
+    /// (the scrolled window's `overflow: hidden`).
+    fn snapshotGlassSheet(self: *Self, snap: *wk.GtkSnapshot) void {
+        if (!self.isOnGlass()) return;
+        const widget = self.as(gtk.Widget);
+        const w = widget.getWidth();
+        const h = widget.getHeight();
+        if (w <= 0 or h <= 0) return;
+        const priv = self.private();
+        var banner_rect: ?pane_style.Rect = null;
+        if (priv.banner) |b| if (wk.gtk_widget_get_visible(b.box) != 0) {
+            var r: wk.GrapheneRect = .{};
+            if (wk.gtk_widget_compute_bounds(b.box, @ptrCast(widget), &r) != 0)
+                banner_rect = .{ .x = r.x, .y = r.y, .w = r.w, .h = r.h };
+        };
+        const bg = self.sheetBackground();
+        const bands = pane_style.sheetBands(.{ .x = 0, .y = 0, .w = @floatFromInt(w), .h = @floatFromInt(h) }, banner_rect);
+        const outer = pane_style.sheetColor(bg, false);
+        const outer_rgba: wk.GdkRGBA = .{ .red = outer.r, .green = outer.g, .blue = outer.b, .alpha = outer.a };
+        for (bands.outer[0..bands.outer_len]) |r| {
+            const rect: wk.GrapheneRect = .{ .x = r.x, .y = r.y, .w = r.w, .h = r.h };
+            wk.gtk_snapshot_append_color(snap, &outer_rgba, &rect);
+        }
+        if (bands.banner) |r| {
+            const c = pane_style.sheetColor(bg, true);
+            const rgba: wk.GdkRGBA = .{ .red = c.r, .green = c.g, .blue = c.b, .alpha = c.a };
+            const rect: wk.GrapheneRect = .{ .x = r.x, .y = r.y, .w = r.w, .h = r.h };
+            wk.gtk_snapshot_append_color(snap, &rgba, &rect);
+        }
+    }
+
+    fn snapshot(self: *Self, snap: *gtk.Snapshot) callconv(.c) void {
+        self.snapshotGlassSheet(@ptrCast(snap));
+        gtk.Widget.virtual_methods.snapshot.call(Class.parent, self.as(Parent), snap);
     }
 
     fn applyTintToCore(cs: *CoreSurface, rgb: color_math.Rgb) void {
@@ -1725,12 +1798,18 @@ pub const Surface = extern struct {
     /// Callback used to determine whether unfocused-split-fill / unfocused-split-opacity
     /// should be applied to the surface
     fn closureShouldUnfocusedSplitBeShown(
-        _: *Self,
+        self: *Self,
         search_active: c_int,
         focused: c_int,
         is_split: c_int,
     ) callconv(.c) c_int {
-        return @intFromBool(search_active == 0 and focused == 0 and is_split != 0);
+        // Not on glass (T3622): there focus changes only the rim and glow.
+        return @intFromBool(pane_style.showsUnfocusedWash(
+            self.isOnGlass(),
+            search_active != 0,
+            focused != 0,
+            is_split != 0,
+        ));
     }
 
     pub fn toggleFullscreen(self: *Self) void {
@@ -4813,6 +4892,7 @@ pub const Surface = extern struct {
             // Virtual methods
             gobject.Object.virtual_methods.dispose.implement(class, &dispose);
             gobject.Object.virtual_methods.finalize.implement(class, &finalize);
+            gtk.Widget.virtual_methods.snapshot.implement(class, &snapshot);
         }
 
         pub const as = C.Class.as;
