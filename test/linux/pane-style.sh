@@ -5,7 +5,10 @@
 # around the edge, the focused pane of several is backlit with a brighter rim,
 # `macos-pane-style = flat` (on a reload too) puts the panes back square, one
 # 6px flat gutter apart (Mac flatGap), and `+new-window --color=random` gives the window its own gradient
-# instead of tinting the terminal. Read from the window's OWN render through
+# instead of tinting the terminal. Glass panes (T3622, G1-G8): each pane is a
+# sheet of its terminal's background at 40% over the desk (25% under a banner
+# card), focused or not, with no unfocused wash; a markdown viewer's page is
+# see-through over it; flat stays solid. Read from the window's OWN render through
 # the debug-only capture-pane seam (T3359), so it is what the window draws.
 #
 # Run it ONLY through the wrapper, from this box:
@@ -230,9 +233,18 @@ hl_check "G5 under a banner card the sheet thins to 25% glass, and the card adds
 hl_check "G6 a markdown viewer's page is see-through over the pane's 40% sheet (not white)" $? "v=$v page $(pair 4)"
 cli +set-banner --target="$a" '' > /dev/null 2>&1
 cli +close --pane="${v:-x}" > /dev/null 2>&1
-read -r gr gg gb <<< "${before[0]}"
-! near "$gr" "$gg" "$gb" 32 48 64
-hl_check "G7 control: the glass pane is not its solid terminal colour" $? "a=${before[0]}"
+# Negative control for the oracle: with glass off, the same probe is solid
+# terminal and moves by the WHOLE background - so G2-G6 measured the sheet.
+printf "${base_cfg}" > "$cfg_dir/config.ghostty"
+cli +reload --config > /dev/null 2>&1
+sleep 1
+s0=$(probe ${pts[0]})
+printf "${base_cfg}background = #000000\n" > "$cfg_dir/config.ghostty"
+cli +reload --config > /dev/null 2>&1
+sleep 2
+s1=$(probe ${pts[0]})
+moved $s0 $s1 32 48 64 && ! moved ${before[0]} ${after[0]} 32 48 64
+hl_check "G7 control: with glass off the same probe moves by the whole background (solid), with glass on it did not" $? "solid ${s0// /,} -> ${s1// /,} | glass $(pair 0)"
 
 
 
