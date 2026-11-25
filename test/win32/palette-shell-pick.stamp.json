@@ -1,0 +1,18 @@
+{
+    "guard":  "palette-shell-pick",
+    "script":  "test/win32/palette-shell-pick.ps1",
+    "generated":  "2026-11-25T15:03:14-08:00",
+    "commit":  "56fbe9c18",
+    "uncommitted":  [
+                        "src/apprt/win32/commands.zig",
+                        "test/win32/palette-shell-pick.ps1"
+                    ],
+    "files":  {
+                  "src/apprt/win32/commands.zig":  "db6fe67c3f5a6f69520f855ceb87bef108d544d80505e04fcc5f8b6514293f29",
+                  "src/apprt/win32/settings_controls.zig":  "3a565a4958048a858cae38f1ad8619b6b67bc431da3401f070c506c9eb3b288b",
+                  "test/win32/palette-shell-pick.ps1":  "27fb59f9428fa25200a43c27e3f45ad1eb59e728f3be37095a13b5f92a2edd22"
+              },
+    "code":  {
+                 "test/win32/palette-shell-pick.ps1":  "code1:0d8644e1298f3a36e92b2eea5eabd3f9d40c3f25c19d074c6b8aca04ddaf0056"
+             }
+}

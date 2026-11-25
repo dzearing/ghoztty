@@ -1,8 +1,8 @@
 {
     "guard":  "unroll-count",
     "script":  "test/win32/unroll-count-audit.ps1",
-    "generated":  "2026-11-25T11:50:35-08:00",
-    "commit":  "0e6877a8c",
+    "generated":  "2026-11-25T14:23:40-08:00",
+    "commit":  "56fbe9c18",
     "uncommitted":  [
                         "scripts/guard-due.ps1"
                     ],
@@ -53,7 +53,7 @@
                   "scripts/go-loop-lock.ps1":  "eda6fc5f2bc851e11a9718ddbdd529d9fb9a5ce06637703e93800f37ccc0a2bb",
                   "scripts/go-loop-pane-probe.ps1":  "e491be3477c3236c4e10af70db2f40e9d632c45f83bf860f4b09fe6eeda5e2b7",
                   "scripts/go-loop-watchdog.ps1":  "37f19f9ce08a701645b7267fea8411125b9112d83ef5ff0cbddb8e380f058d67",
-                  "scripts/guard-due.ps1":  "e995f4f484b516ca3ea1be819fb5f0452f38639a7f711012a81d51a504abe4c6",
+                  "scripts/guard-due.ps1":  "252727c24b8c7dde3f8850128b046d5cafdfd4fffbbf9ecde2af4b9303d5d3ae",
                   "scripts/harness-floor.ps1":  "cfa23792d110d499fa4086697daa516d218d0d110e594a7452167a81220ee15e",
                   "scripts/hero-glide-onscreen.ps1":  "46d211f7ec7843d13506f4e3bd13933630339adb8aff13b5c97d69ae3fd248a7",
                   "scripts/hidden-windows-cpu.ps1":  "61551ac8760570d16a46ab2ef235c9792a2e29fb9e9d116ebbc23a5ce9051876",

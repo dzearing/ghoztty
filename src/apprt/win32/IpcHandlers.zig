@@ -317,6 +317,35 @@ fn execArgv(
     );
 }
 
+/// The overrides that open `spec`'s interactive shell in a new LOCAL pane
+/// (T3751): the command palette's "… with Shell" picks. Built from the same
+/// pieces `+new-window`/`+split --shell=<spec>` use with no command, so a
+/// shell chosen in a menu and one named on the CLI cannot open differently -
+/// a WSL spec opens `wsl.exe [-d <distro>] --cd ~`, anything else that
+/// program. `conn` is the window's local session-persistence agent, or null
+/// for a plain ConPTY pane; `cwd` is a WINDOWS folder for the process (a WSL
+/// pane still starts at `~` inside its distro), or null for the default.
+pub fn shellPaneOverrides(
+    app: *App,
+    arena: Allocator,
+    conn: ?*remote_connection.Connection,
+    spec: []const u8,
+    cwd: ?[]const u8,
+) Allocator.Error!Surface.Overrides {
+    const ctx: Context = .{ .app = app, .alloc = arena };
+    if (conn) |c| return .{ .remote = .{
+        .connection = c,
+        .working_directory = cwd,
+        .shell = agentShell(spec),
+        .command_argv = try localAgentArgv(ctx, arena, &.{}, spec, null, null),
+        .local_agent = true,
+    } };
+    return .{
+        .command_argv = try execArgv(ctx, arena, &.{}, null, spec, null),
+        .working_directory = cwd,
+    };
+}
+
 /// The LOCAL-agent half of `wrapCommandArgv` (T468): the same per-flavor
 /// keep-alive invocation, sent to the agent as `OPEN.argv` so it execs it
 /// verbatim instead of synthesizing `<shell> /c <cmd>` — which exits the moment

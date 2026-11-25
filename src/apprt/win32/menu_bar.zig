@@ -337,6 +337,23 @@ pub const omitted = [_]Omitted{
         .why = "scrolling is a keyboard/wheel gesture; no macOS menu row",
     },
     .{
+        .cmd = .new_tab_with_shell,
+        .why = "a palette second step (T3751); the menu's New Tab gets its " ++
+            "own submenu of shells with the + dropdown (T3753)",
+    },
+    .{
+        .cmd = .new_window_with_shell,
+        .why = "a palette second step (T3751); the menu's shell submenu is T3753",
+    },
+    .{
+        .cmd = .split_right_with_shell,
+        .why = "a palette second step (T3751); the menu's shell submenu is T3753",
+    },
+    .{
+        .cmd = .split_down_with_shell,
+        .why = "a palette second step (T3751); the menu's shell submenu is T3753",
+    },
+    .{
         .cmd = .viewer_open_file,
         .why = "palette-only on macOS too: TerminalCommandPalette.swift:195-219 " ++
             "registers the viewer entries and MainMenu.xib has no rows for them",

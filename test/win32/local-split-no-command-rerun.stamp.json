@@ -1,13 +1,13 @@
 {
     "guard":  "local-split-no-command-rerun",
     "script":  "test/win32/local-split-no-command-rerun.ps1",
-    "generated":  "2026-11-25T11:38:11-08:00",
-    "commit":  "0e6877a8c",
+    "generated":  "2026-11-25T14:12:20-08:00",
+    "commit":  "56fbe9c18",
     "uncommitted":  [
                         "src/apprt/win32/IpcHandlers.zig"
                     ],
     "files":  {
-                  "src/apprt/win32/IpcHandlers.zig":  "8791243c297d438589aa03657bfe4a4af39a437d1a9488324f8ad7f90feb5a7a",
+                  "src/apprt/win32/IpcHandlers.zig":  "83ab23a32de4e75f8456df5d8fa08bde87331775b1b6c65a6187ea60df68f941",
                   "test/win32/local-split-no-command-rerun.ps1":  "387f0d40afa9df08f2902f0f45c833b483cf93777eadef36fefd2d468cb5728f"
               },
     "code":  {

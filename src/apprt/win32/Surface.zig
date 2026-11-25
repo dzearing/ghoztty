@@ -80,6 +80,8 @@ const brush_cache = @import("brush_cache.zig");
 const panel_theme = @import("panel_theme.zig");
 const system_colors = @import("system_colors.zig");
 const IpcHandlers = @import("IpcHandlers.zig");
+const SettingsWindow = @import("SettingsWindow.zig");
+const settings_controls = @import("settings_controls.zig");
 const ProcessTree = @import("ProcessTree.zig");
 const clipboard_image = @import("clipboard_image.zig");
 const claude_image_paste = @import("claude_image_paste.zig");
@@ -581,6 +583,13 @@ palette_jump_arena: ?std.heap.ArenaAllocator = null,
 /// The snapshotted jump entries, one per live pane across every window.
 /// All slices are owned by `palette_jump_arena`.
 palette_jump_entries: []const JumpEntry = &.{},
+/// The palette's second step (T3751): set while it lists the installed
+/// shells for a "… with Shell" command, null on the ordinary command list.
+palette_shell_target: ?commands.ShellTarget = null,
+/// The shell list that step shows, snapshotted when it opens; every slice is
+/// owned by `palette_shell_arena`. Freed when the step ends.
+palette_shell_arena: ?std.heap.ArenaAllocator = null,
+palette_shell_entries: []const settings_controls.ShellEntry = &.{},
 
 /// Remote-machine backend for this surface (remote-machines design §3.2),
 /// or null for a local ConPTY surface. Set from `Overrides.remote` BEFORE
@@ -1556,6 +1565,7 @@ pub fn deinit(self: *Surface) void {
     }
     self.freePalettePaintFonts();
     self.freePaletteJumpEntries();
+    self.freePaletteShellStep();
 
     // Reap the child HWND, but not from this stack (T681). Calling
     // DestroyWindow here is what the first win32 commit found segfaulting
@@ -4115,6 +4125,22 @@ const JUMP_BASE: u16 = palette_entries.len + MAX_USER_PALETTE_ENTRIES;
 const MAX_PALETTE_ENTRIES: usize =
     palette_entries.len + MAX_USER_PALETTE_ENTRIES + palette_jump.max_entries;
 
+/// Palette indexes >= SHELL_BASE are rows of the "… with Shell" second step
+/// (T3751): the snapshotted shell list, which replaces every other row while
+/// it is up. Fixed past the jump range for the same reason JUMP_BASE is.
+const SHELL_BASE: u16 = JUMP_BASE + palette_jump.max_entries;
+
+/// Shells the second step lists at most (the catalog is a few Windows shells
+/// plus one row per WSL distro).
+const MAX_SHELL_ROWS: usize = 64;
+
+comptime {
+    // The shell step fills the same row array the command list does, and its
+    // indexes must stay clear of the header sentinels below.
+    std.debug.assert(MAX_SHELL_ROWS <= MAX_PALETTE_ENTRIES);
+    std.debug.assert(@as(usize, SHELL_BASE) + MAX_SHELL_ROWS < 0xFFFE);
+}
+
 /// …plus the two section headers (T891), which are rows of the same list.
 const MAX_PALETTE_ROWS: usize = MAX_PALETTE_ENTRIES + 2;
 
@@ -4158,6 +4184,11 @@ fn paletteEntryName(self: *const Surface, idx: u16) []const u8 {
         if (entry.quit_keep and self.app.config.@"session-persistence")
             return "Quit Ghoztty (keep sessions)";
         return entry.name;
+    }
+    if (idx >= SHELL_BASE) {
+        const sidx = idx - SHELL_BASE;
+        if (sidx >= self.palette_shell_entries.len) return "";
+        return self.palette_shell_entries[sidx].label;
     }
     if (idx >= JUMP_BASE) {
         const jidx = idx - JUMP_BASE;
@@ -4223,7 +4254,7 @@ fn paletteEntryAction(self: *const Surface, idx: u16) ?input.Binding.Action {
 /// The dimmed trailing text for a palette row — only jump entries carry one
 /// (the pane's abbreviated cwd, T555).
 fn paletteEntrySubtitle(self: *const Surface, idx: u16) ?[]const u8 {
-    if (idx < JUMP_BASE) return null;
+    if (idx < JUMP_BASE or idx >= SHELL_BASE) return null;
     const jidx = idx - JUMP_BASE;
     if (jidx >= self.palette_jump_entries.len) return null;
     return self.palette_jump_entries[jidx].subtitle;
@@ -4235,6 +4266,107 @@ fn freePaletteJumpEntries(self: *Surface) void {
     if (self.palette_jump_arena) |*arena| {
         arena.deinit();
         self.palette_jump_arena = null;
+    }
+}
+
+/// End the "… with Shell" second step (T3751): back to the command list.
+fn freePaletteShellStep(self: *Surface) void {
+    self.palette_shell_target = null;
+    self.palette_shell_entries = &.{};
+    if (self.palette_shell_arena) |*arena| {
+        arena.deinit();
+        self.palette_shell_arena = null;
+    }
+}
+
+/// Put the palette's search box cue back to what the current list holds.
+fn setPaletteCue(self: *Surface) void {
+    const edit = self.palette_edit orelse return;
+    // Static strings: the cue is handed over by pointer.
+    const text: [*:0]const u16 = if (self.palette_shell_target) |t| switch (t) {
+        inline else => |v| std.unicode.utf8ToUtf16LeStringLiteral(comptime v.prompt()),
+    } else std.unicode.utf8ToUtf16LeStringLiteral("Type a command...");
+    _ = w32.SendMessageW(edit, 0x1501, 1, @bitCast(@intFromPtr(text))); // EM_SETCUEBANNER
+}
+
+/// Open the palette's second step for a "… with Shell" command (T3751): the
+/// list becomes the installed shells (`SettingsWindow.installedShells`, the
+/// same list Settings > Shell offers), the search box empties and its cue
+/// names what the pick will open. Escape comes back to the command list.
+fn enterPaletteShellStep(self: *Surface, target: commands.ShellTarget) void {
+    self.freePaletteShellStep();
+    self.palette_shell_arena = std.heap.ArenaAllocator.init(self.app.core_app.alloc);
+    const arena = self.palette_shell_arena.?.allocator();
+    const all = SettingsWindow.installedShells(self.app.core_app.alloc, arena) catch &.{};
+    self.palette_shell_entries = all[0..@min(all.len, MAX_SHELL_ROWS)];
+    self.palette_shell_target = target;
+    log.info("palette: shell step for {s}, {d} shell(s)", .{ @tagName(target), self.palette_shell_entries.len });
+    self.setPaletteCue();
+    if (self.palette_edit) |edit| {
+        // Fires EN_CHANGE, which re-filters into the shell list.
+        _ = w32.SetWindowTextW(edit, std.unicode.utf8ToUtf16LeStringLiteral(""));
+    }
+    self.filterPaletteEntries("");
+}
+
+/// Open `target` on the shell `spec` names (T3751): the pick that ends the
+/// palette's shell step. The new pane is built the way `+new-window`/`+split
+/// --shell=<spec>` builds one (`IpcHandlers.shellPaneOverrides`), on the
+/// window's local agent when session persistence has one. A Windows shell
+/// starts in this pane's folder; a WSL one at `~` in its distro.
+pub fn openWithShell(self: *Surface, target: commands.ShellTarget, spec: []const u8) void {
+    const window = self.parent_window;
+    if (window.remote_dialed != null) {
+        // The list is this machine's shells; the rows are not offered here.
+        log.warn("open with shell refused: window is on a remote machine", .{});
+        return;
+    }
+    var arena_state = std.heap.ArenaAllocator.init(self.app.core_app.alloc);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const new_window = target == .new_window or (target == .new_tab and window.isWorkspace());
+    const conn: ?*remote_connection.Connection = if (new_window)
+        (if (self.app.config.@"session-persistence") self.app.local_agent.sharedConnection() else null)
+    else
+        window.local_agent_conn;
+
+    const cwd: ?[]const u8 = if (apprt.ipc.args.isWslShell(spec)) null else cwd: {
+        const here: ?[]const u8 = if (window.local_agent_conn) |c|
+            Window.inheritedCwd(arena, c, self)
+        else
+            null;
+        const folder = here orelse self.livePwd(arena) orelse self.pwd orelse break :cwd null;
+        // A Linux path (a WSL pane's OSC 7) means nothing to a Windows shell.
+        break :cwd if (std.fs.path.isAbsoluteWindows(folder)) folder else null;
+    };
+
+    var ov = IpcHandlers.shellPaneOverrides(self.app, arena, conn, spec, cwd) catch |err| {
+        log.warn("open with shell failed err={}", .{err});
+        return;
+    };
+    log.info("open with shell target={s} spec={s} agent={}", .{ @tagName(target), spec, conn != null });
+
+    if (new_window) {
+        _ = self.app.createWindow(.{ .surface_overrides = &ov }) catch |err| {
+            log.warn("open with shell: new window failed err={}", .{err});
+        };
+        return;
+    }
+    window.pending_surface_overrides = &ov;
+    defer window.pending_surface_overrides = null;
+    switch (target) {
+        .new_tab => _ = window.addTab() catch |err| {
+            log.warn("open with shell: new tab failed err={}", .{err});
+        },
+        .split_right, .split_down => {
+            const pv = self.pane_view orelse return;
+            const dir: Window.SplitDirection = if (target == .split_right) .right else .down;
+            _ = window.newSplitAt(pv, dir, 0.5) catch |err| {
+                log.warn("open with shell: split failed err={}", .{err});
+            };
+        },
+        .new_window => unreachable,
     }
 }
 
@@ -4335,6 +4467,9 @@ pub fn setCommandPaletteActive(self: *Surface, active: bool) void {
         }
         self.palette_active = true;
         self.ensureCommandPalette();
+        // Every open starts on the command list (T3751).
+        self.freePaletteShellStep();
+        self.setPaletteCue();
         // Snapshot the "Focus: <pane>" jump entries at open (T555) — the
         // moment Mac's jumpOptions computes.
         self.buildPaletteJumpEntries();
@@ -4350,6 +4485,7 @@ pub fn setCommandPaletteActive(self: *Surface, active: bool) void {
     } else {
         self.palette_active = false;
         self.freePaletteJumpEntries();
+        self.freePaletteShellStep();
         if (self.palette_hwnd) |popup| {
             _ = w32.ShowWindow(popup, 0); // SW_HIDE
         }
@@ -4469,6 +4605,22 @@ fn positionCommandPalette(self: *Surface) void {
 /// filter the two groups carry "Recent" / "All Commands" headers; with a
 /// filter the same order is shown flat, which is what Mac's query path does.
 fn filterPaletteEntries(self: *Surface, filter: []const u8) void {
+    // The "… with Shell" second step (T3751): only the shells, in the
+    // catalog's own order (the order Settings > Shell lists them), matched by
+    // a case-insensitive substring of their label. No sections, no history.
+    if (self.palette_shell_target != null) {
+        var count: u16 = 0;
+        for (self.palette_shell_entries, 0..) |entry, i| {
+            if (filter.len != 0 and std.ascii.indexOfIgnoreCase(entry.label, filter) == null) continue;
+            self.palette_filtered[count] = @intCast(SHELL_BASE + i);
+            count += 1;
+        }
+        self.palette_count = count;
+        self.palette_selected = 0;
+        if (self.palette_hwnd) |popup| _ = w32.InvalidateRect(popup, null, 1);
+        return;
+    }
+
     // The surviving candidates, in index order, with what ordering needs.
     var idxs: [MAX_PALETTE_ENTRIES]u16 = undefined;
     var items: [MAX_PALETTE_ENTRIES]palette_order.Item = undefined;
@@ -4483,6 +4635,7 @@ fn filterPaletteEntries(self: *Surface, filter: []const u8) void {
     const state: commands.State = .{
         .update_pending = self.app.pendingUpdate() != null,
         .agent_update_pending = self.app.pendingAgentUpdate() != null,
+        .local_window = self.parent_window.remote_dialed == null,
     };
     for (palette_entries, 0..) |entry, i| {
         if (!commands.available(entry, state)) continue;
@@ -4634,6 +4787,18 @@ pub fn clickPaletteRow(self: *Surface, row: u16) void {
 pub fn handlePaletteKey(self: *Surface, vk: u16) bool {
     switch (vk) {
         w32.VK_ESCAPE => {
+            // From the shell step, back to the command list (T3751); from
+            // the command list, close.
+            if (self.palette_shell_target != null) {
+                log.info("palette: shell step dismissed, back to the command list", .{});
+                self.freePaletteShellStep();
+                self.setPaletteCue();
+                if (self.palette_edit) |edit| {
+                    _ = w32.SetWindowTextW(edit, std.unicode.utf8ToUtf16LeStringLiteral(""));
+                }
+                self.filterPaletteEntries("");
+                return true;
+            }
             self.setCommandPaletteActive(false);
             return true;
         },
@@ -4734,6 +4899,13 @@ pub fn performCommand(self: *Surface, id: commands.Id) void {
         .viewer_open_url => RenameDialog.open(self.parent_window, .viewer_url, self),
         .viewer_open_browser => self.openViewerSplitBeside("about:blank", true),
 
+        // "… with Shell" (T3751): reached from anywhere but the palette, it
+        // opens the palette straight onto its shell step.
+        .with_shell => {
+            self.setCommandPaletteActive(true);
+            self.enterPaletteShellStep(cmd.shell_target);
+        },
+
         .binding => {
             // So the fullscreen log names the menu or palette, not a key
             // (T2011). The toggle consumes the hint.
@@ -4818,6 +4990,32 @@ pub fn executePaletteSelection(self: *Surface) void {
     const entry_idx = self.palette_filtered[self.palette_selected];
     // A section header is a label (T891), never a command.
     if (paletteRowIsHeader(entry_idx)) return;
+    log.debug("palette: run row {d} '{s}'", .{ entry_idx, self.paletteEntryName(entry_idx) });
+
+    // A shell in the "… with Shell" step (T3751). The spec is copied out
+    // before the close frees the snapshot that owns it.
+    if (entry_idx >= SHELL_BASE) {
+        const target = self.palette_shell_target orelse return;
+        const sidx = entry_idx - SHELL_BASE;
+        if (sidx >= self.palette_shell_entries.len) return;
+        var spec_buf: [std.fs.max_path_bytes]u8 = undefined;
+        const src = self.palette_shell_entries[sidx].spec;
+        if (src.len > spec_buf.len) return;
+        @memcpy(spec_buf[0..src.len], src);
+        self.setCommandPaletteActive(false);
+        self.openWithShell(target, spec_buf[0..src.len]);
+        return;
+    }
+
+    // A "… with Shell" command is a second step, not an action (T3751): the
+    // palette stays open and lists the shells. Remembered as used, like any
+    // command the user picked.
+    if (entry_idx < palette_entries.len and palette_entries[entry_idx].kind == .with_shell) {
+        var kb: [palette_order.max_key_len]u8 = undefined;
+        if (self.paletteEntryKey(entry_idx, &kb)) |key| self.app.recordPaletteUse(key);
+        self.enterPaletteShellStep(palette_entries[entry_idx].shell_target);
+        return;
+    }
 
     // Remember it as recently used BEFORE performing it: the command may
     // close this surface (Close Window, Quit), and a store written after

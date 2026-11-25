@@ -70,6 +70,29 @@ pub const Kind = enum {
     /// Explain the waiting background-process update and offer to install it
     /// now (T1068). Listed only while one is waiting.
     install_agent_update,
+    /// A second step (T3751): the palette swaps its list for the installed
+    /// shells (`SettingsWindow.installedShells`), and the pick opens
+    /// `Command.shell_target` on that shell, the way `--shell=<spec>` does.
+    with_shell,
+};
+
+/// Where a "… with Shell" command opens the shell the user picks (T3751).
+pub const ShellTarget = enum {
+    new_tab,
+    new_window,
+    split_right,
+    split_down,
+
+    /// The search box's cue while the shell list is up: says what the pick
+    /// will open, since the list itself is just shell names.
+    pub fn prompt(self: ShellTarget) []const u8 {
+        return switch (self) {
+            .new_tab => "New tab with which shell?",
+            .new_window => "New window with which shell?",
+            .split_right => "Split right with which shell?",
+            .split_down => "Split down with which shell?",
+        };
+    }
 };
 
 /// Stable identity for a command. The name is the identity — reordering
@@ -171,6 +194,10 @@ pub const Id = enum {
     restart_app_and_agent,
     install_agent_update,
     show_keyboard_shortcuts,
+    new_tab_with_shell,
+    new_window_with_shell,
+    split_right_with_shell,
+    split_down_with_shell,
 };
 
 /// Where "Ghoztty Help" goes. The docs are the same for every platform, so
@@ -214,6 +241,8 @@ pub const Command = struct {
     /// people look for by a word its title does not contain — "relaunch" for
     /// a row titled "Restart". Space-separated; never displayed.
     keywords: []const u8 = "",
+    /// What a `.with_shell` command opens on the picked shell (T3751).
+    shell_target: ShellTarget = .new_tab,
 };
 
 /// Whether the palette's search text `filter` finds `c`: a case-insensitive
@@ -251,6 +280,10 @@ pub const Condition = enum {
     /// quiet moment (T1068) — the state behind the menu's "Background Update
     /// Ready…" row.
     agent_update_pending,
+    /// Only in a window whose panes run on THIS machine (T3751): the shell
+    /// list is this machine's shells, which a pane on a remote machine
+    /// cannot run.
+    local_window,
 };
 
 /// What the palette knows about the app when it builds its rows. Kept to
@@ -258,6 +291,7 @@ pub const Condition = enum {
 pub const State = struct {
     update_pending: bool = false,
     agent_update_pending: bool = false,
+    local_window: bool = true,
 };
 
 /// Whether the palette should list `c` right now.
@@ -266,6 +300,7 @@ pub fn available(c: Command, state: State) bool {
         .always => true,
         .update_pending => state.update_pending,
         .agent_update_pending => state.agent_update_pending,
+        .local_window => state.local_window,
     };
 }
 
@@ -290,6 +325,10 @@ pub const registry = [_]Command{
     .{ .id = .viewer_open_url, .name = "Viewer: Open URL in Pane…", .action = .new_window, .kind = .viewer_open_url },
     .{ .id = .viewer_open_browser, .name = "Viewer: Open Browser Pane", .action = .new_window, .kind = .viewer_open_browser },
     .{ .id = .new_tab, .name = "New Tab", .action = .new_tab },
+    // T3751: the per-pane shell choice. Each opens a second step listing the
+    // installed shells; the keywords find them by a shell's name too.
+    .{ .id = .new_tab_with_shell, .name = "New Tab with Shell…", .action = .new_window, .kind = .with_shell, .shell_target = .new_tab, .when = .local_window, .keywords = shell_keywords },
+    .{ .id = .new_window_with_shell, .name = "New Window with Shell…", .action = .new_window, .kind = .with_shell, .shell_target = .new_window, .when = .local_window, .keywords = shell_keywords },
     .{ .id = .close_surface, .name = "Close Surface", .action = .close_surface },
     .{ .id = .close_tab, .name = "Close Tab", .action = .{ .close_tab = .this } },
     .{ .id = .close_window, .name = "Close Window", .action = .close_window },
@@ -299,6 +338,8 @@ pub const registry = [_]Command{
     .{ .id = .last_tab, .name = "Last Tab", .action = .last_tab },
     .{ .id = .split_right, .name = "Split Right", .action = .{ .new_split = .right } },
     .{ .id = .split_down, .name = "Split Down", .action = .{ .new_split = .down } },
+    .{ .id = .split_right_with_shell, .name = "Split Right with Shell…", .action = .new_window, .kind = .with_shell, .shell_target = .split_right, .when = .local_window, .keywords = shell_keywords },
+    .{ .id = .split_down_with_shell, .name = "Split Down with Shell…", .action = .new_window, .kind = .with_shell, .shell_target = .split_down, .when = .local_window, .keywords = shell_keywords },
     .{ .id = .split_left, .name = "Split Left", .action = .{ .new_split = .left } },
     .{ .id = .split_up, .name = "Split Up", .action = .{ .new_split = .up } },
     .{ .id = .focus_split_right, .name = "Focus Split Right", .action = .{ .goto_split = .right } },
@@ -401,6 +442,9 @@ pub const registry = [_]Command{
     .{ .id = .install_agent_update, .name = @import("agent_upgrade.zig").pending_palette_name, .action = .new_window, .kind = .install_agent_update, .when = .agent_update_pending, .keywords = "agent background session update" },
     .{ .id = .quit, .name = "Quit", .action = .quit, .quit_keep = true },
 };
+
+/// The words the "… with Shell" rows are also found by (T3751).
+const shell_keywords = "profile powershell pwsh cmd bash wsl linux ubuntu";
 
 /// Pixels a "Move Divider" command shifts a split by. Mac's menu items send
 /// `moveSplitDivider*` with a 10pt step; `resize_split` takes pixels.
@@ -610,6 +654,7 @@ test "only the local kinds carry a placeholder action" {
         .restart_app,
         .restart_app_and_agent,
         .install_agent_update,
+        .with_shell,
         => try std.testing.expectEqual(
             input.Binding.Action.new_window,
             c.action,
@@ -660,6 +705,7 @@ test "every other command is listed regardless of app state (T1676)" {
     for (registry) |c| {
         if (c.id == .install_update or c.id == .dismiss_update) continue;
         if (c.id == .install_agent_update) continue;
+        if (c.kind == .with_shell) continue; // local windows only (T3751)
         try std.testing.expectEqual(Condition.always, c.when);
         try std.testing.expect(available(c, .{}));
         try std.testing.expect(available(c, .{ .update_pending = true }));
@@ -741,4 +787,33 @@ test "help_url points at this fork, never at upstream (T714)" {
     try std.testing.expect(std.mem.indexOf(u8, help_url, "ghoztty") != null);
     // The Help item and the About box's Docs link are the SAME destination.
     try std.testing.expectEqualStrings(@import("about_links.zig").docs_url, help_url);
+}
+
+test "the four '… with Shell' rows: one per target, local windows only (T3751)" {
+    var seen = std.EnumSet(ShellTarget).initEmpty();
+    for (registry) |c| {
+        if (c.kind != .with_shell) continue;
+        try std.testing.expect(!seen.contains(c.shell_target));
+        seen.insert(c.shell_target);
+        try std.testing.expectEqual(Condition.local_window, c.when);
+        try std.testing.expect(available(c, .{}));
+        try std.testing.expect(!available(c, .{ .local_window = false }));
+        try std.testing.expect(std.mem.endsWith(u8, c.name, "with Shell…"));
+        // Found by a shell's name, behind every title match.
+        try std.testing.expect(keywordOnly(c, "wsl"));
+        try std.testing.expect(!pinned(c));
+    }
+    try std.testing.expectEqual(@as(usize, 4), seen.count());
+    // Every other command is listed in a remote window as before.
+    for (registry) |c| {
+        if (c.kind == .with_shell) continue;
+        try std.testing.expectEqual(available(c, .{}), available(c, .{ .local_window = false }));
+    }
+}
+
+test "ShellTarget.prompt names what the pick opens (T3751)" {
+    try std.testing.expect(std.mem.indexOf(u8, ShellTarget.new_tab.prompt(), "tab") != null);
+    try std.testing.expect(std.mem.indexOf(u8, ShellTarget.new_window.prompt(), "window") != null);
+    try std.testing.expect(std.mem.indexOf(u8, ShellTarget.split_right.prompt(), "right") != null);
+    try std.testing.expect(std.mem.indexOf(u8, ShellTarget.split_down.prompt(), "down") != null);
 }

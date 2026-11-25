@@ -1187,6 +1187,18 @@ $GuardTable = @(
             'src\apprt\win32\commands.zig'
         )
     },
+    # T3751: the palette's "... with Shell" rows open a second step listing the
+    # installed shells, and the pick opens a tab/window/split on that shell.
+    [pscustomobject]@{
+        Name   = 'palette-shell-pick'
+        Script = 'test\win32\palette-shell-pick.ps1'
+        Stamp  = 'test\win32\palette-shell-pick.stamp.json'
+        Covers = @(
+            'test\win32\palette-shell-pick.ps1',
+            'src\apprt\win32\commands.zig',
+            'src\apprt\win32\settings_controls.zig'
+        )
+    },
     # A broken config raises a visible, dark Configuration Errors dialog at
     # startup and on reload, and a clean one raises nothing (T69).
     [pscustomobject]@{

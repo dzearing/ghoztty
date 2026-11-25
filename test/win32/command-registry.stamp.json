@@ -1,13 +1,13 @@
 {
     "guard":  "command-registry",
     "script":  "test/win32/command-registry.ps1",
-    "generated":  "2026-11-22T05:12:39-08:00",
-    "commit":  "b4cb5eedc",
+    "generated":  "2026-11-25T14:11:58-08:00",
+    "commit":  "56fbe9c18",
     "uncommitted":  [
-                        "test/win32/command-registry.ps1"
+                        "src/apprt/win32/commands.zig"
                     ],
     "files":  {
-                  "src/apprt/win32/commands.zig":  "982cc6405ee3cd7bf21a4a0b9aafc642ac695ba24c780ff494ede18a7ce6785d",
+                  "src/apprt/win32/commands.zig":  "db6fe67c3f5a6f69520f855ceb87bef108d544d80505e04fcc5f8b6514293f29",
                   "test/win32/command-registry.ps1":  "f4cb7125410302bde2dcfeb1f14cbb662e3a5772d67686f8c0d9e33b0ce12278"
               },
     "code":  {
