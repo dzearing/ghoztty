@@ -33,6 +33,7 @@ const ChildExited = @import("surface_child_exited.zig").SurfaceChildExited;
 const ClipboardConfirmationDialog = @import("clipboard_confirmation_dialog.zig").ClipboardConfirmationDialog;
 const TitleDialog = @import("title_dialog.zig").TitleDialog;
 const Window = @import("window.zig").Window;
+const SplitTree = @import("split_tree.zig").SplitTree;
 const InspectorWindow = @import("inspector_window.zig").InspectorWindow;
 const i18n = @import("../../../os/i18n.zig");
 const media = @import("../media.zig");
@@ -1271,6 +1272,8 @@ pub const Surface = extern struct {
         banner.setText(text);
         // A banner's title names the pane's row in the sidebar (T3557).
         if (ext.getAncestor(Window, self.as(gtk.Widget))) |window| window.queueSidebarRefresh();
+        // ... and its strip, when the pane is minimized (T3629).
+        if (ext.getAncestor(SplitTree, self.as(gtk.Widget))) |tree| tree.relabelStrip(self);
     }
 
     pub fn getActivityState(self: *Self) terminal.osc.Command.ActivityState {

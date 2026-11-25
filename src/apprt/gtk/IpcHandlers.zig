@@ -609,6 +609,10 @@ fn paneStack(app: Context, request: Request) Allocator.Error![]u8 {
 /// cancel and the button make, and report as a drop (`target` new_window,
 /// `outcome` moved|refused|not_here; `none` when `--pop-out` met a disabled
 /// or missing button). Each header reports `pop_out`, its button enabled.
+/// `--blade` makes a `--drop-on`/`--drop-at` drop a STRIP drag's (T3629):
+/// the target pane's strip picked up, resolved with a strip's own targets
+/// (`pane_drop.resolveBlade`: `reorder` with its `side` and first `pane`,
+/// `top_level`, or nothing).
 fn paneDrag(app: Context, request: Request) Allocator.Error![]u8 {
     var target_arg: ?[]const u8 = null;
     var key_arg: ?[]const u8 = null;
@@ -620,6 +624,7 @@ fn paneDrag(app: Context, request: Request) Allocator.Error![]u8 {
     var hover_leave = false;
     var release_nowhere = false;
     var pop_out = false;
+    var blade = false;
     var ghost_arg = false;
     var ghost_png: ?[]const u8 = null;
     var fx: f64 = 0.5;
@@ -634,6 +639,7 @@ fn paneDrag(app: Context, request: Request) Allocator.Error![]u8 {
         if (std.mem.eql(u8, arg, "--hover-leave")) hover_leave = true;
         if (std.mem.eql(u8, arg, "--release-nowhere")) release_nowhere = true;
         if (std.mem.eql(u8, arg, "--pop-out")) pop_out = true;
+        if (std.mem.eql(u8, arg, "--blade")) blade = true;
         if (std.mem.startsWith(u8, arg, "--bar-of=")) bar_of_arg = arg["--bar-of=".len..];
         if (std.mem.eql(u8, arg, "--ghost")) ghost_arg = true;
         if (std.mem.startsWith(u8, arg, "--ghost-png=")) {
@@ -736,7 +742,7 @@ fn paneDrag(app: Context, request: Request) Allocator.Error![]u8 {
         }
         // The id is the pane's own buffer; copy it, the drop rebuilds the tree.
         const id = try arena.dupe(u8, surface.paneId());
-        const r = tree.dropPaneAt(id, x, y);
+        const r = tree.dropPaneAt(id, x, y, blade);
         drop = .{
             .target = r.target,
             .outcome = r.outcome,

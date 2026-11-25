@@ -71,6 +71,16 @@ var drop_seen: bool = false;
 var dragged_buf: [64]u8 = undefined;
 var dragged_len: usize = 0;
 
+/// Whether the drag in flight began on a STRIP (T3629): a minimized pane's
+/// face, whose drop has a strip's own targets (`pane_drop.resolveBlade`)
+/// rather than a pane's.
+var dragged_blade: bool = false;
+
+/// The drag in flight is a strip's (`dragged()` is its pane).
+pub fn draggingBlade() bool {
+    return dragged_len != 0 and dragged_blade;
+}
+
 /// The pane id being dragged right now, or null when no pane drag is up.
 pub fn dragged() ?[]const u8 {
     if (dragged_len == 0) return null;
@@ -252,6 +262,7 @@ pub const Header = struct {
 
     fn onDragBegin(_: *wk.GtkEventController, _: *wk.GdkDrag, self: *Header) callconv(.c) void {
         setDragged(self.pane_id);
+        dragged_blade = false;
         drop_seen = false;
         // The ghost card under the pointer, held by its title strip (Mac
         // `PaneDragGhost`); the drag source keeps its own reference.
@@ -266,6 +277,90 @@ pub const Header = struct {
     fn onDragEnd(_: *wk.GtkEventController, _: *wk.GdkDrag, _: c_int, self: *Header) callconv(.c) void {
         log.info("drag ended pane={s}", .{self.pane_id});
         setDragged(null);
+    }
+};
+
+// ---- A strip as a drag source (T3629) ----------------------------------------
+
+/// A strip's face - a minimized pane's label on the stage - as a drag source
+/// (docs/reference/stacked-panes.md "Dragging a strip", Mac `PaneBladeDrag`).
+/// Dragging it past GTK's drag threshold picks its pane up; the drop has a
+/// strip's own targets (`pane_drop.resolveBlade`: a slot in its row, a
+/// window's edge band), and a release over nothing settles the strip back -
+/// never a new window, unlike a header drag. A plain click stays the stage
+/// gesture's (it focuses the pane), which is why that gesture never claims a
+/// strip press.
+///
+/// The face is rebuilt with every stage, so the source names its pane by the
+/// stage's key and asks the owner (the split tree) for the pane id at
+/// drag-begin: a face never holds a surface pointer that a close could free.
+pub const StripSource = struct {
+    owner: *anyopaque,
+    key: u64,
+    source: *wk.GtkEventController,
+    /// The pane the strip stands for, or null when it has gone.
+    pane: *const fn (owner: *anyopaque, key: u64) ?[]const u8,
+    /// The card the drag carries (T3617), or null for GTK's own icon.
+    ghost: *const fn (owner: *anyopaque, key: u64) ?Ghost.Built,
+
+    /// Make `face` a strip drag source for the pane `key` of `owner`. Freed
+    /// with the face.
+    pub fn install(
+        face: *wk.GtkWidget,
+        owner: *anyopaque,
+        key: u64,
+        pane: *const fn (owner: *anyopaque, key: u64) ?[]const u8,
+        ghost: *const fn (owner: *anyopaque, key: u64) ?Ghost.Built,
+    ) void {
+        const self = std.heap.c_allocator.create(StripSource) catch return;
+        const source = wk.gtk_drag_source_new();
+        self.* = .{ .owner = owner, .key = key, .source = source, .pane = pane, .ghost = ghost };
+        wk.gtk_drag_source_set_actions(source, wk.gdk_action_move);
+        // The destroy notify on `prepare` frees the struct with the source.
+        _ = wk.g_signal_connect_data(source, "prepare", @ptrCast(&onPrepare), self, @ptrCast(&onFree), 0);
+        _ = wk.g_signal_connect_data(source, "drag-begin", @ptrCast(&onDragBegin), self, null, 0);
+        _ = wk.g_signal_connect_data(source, "drag-cancel", @ptrCast(&onDragCancel), self, null, 0);
+        _ = wk.g_signal_connect_data(source, "drag-end", @ptrCast(&onDragEnd), self, null, 0);
+        wk.gtk_widget_add_controller(face, source);
+    }
+
+    fn onFree(data: ?*anyopaque, _: ?*anyopaque) callconv(.c) void {
+        const self: *StripSource = @ptrCast(@alignCast(data orelse return));
+        std.heap.c_allocator.destroy(self);
+    }
+
+    fn onPrepare(_: *wk.GtkEventController, _: f64, _: f64, self: *StripSource) callconv(.c) ?*wk.GdkContentProvider {
+        const id = self.pane(self.owner, self.key) orelse return null;
+        const bytes = wk.g_bytes_new(id.ptr, id.len);
+        defer wk.g_bytes_unref(bytes);
+        return wk.gdk_content_provider_new_for_bytes(mime.ptr, bytes);
+    }
+
+    fn onDragBegin(_: *wk.GtkEventController, _: *wk.GdkDrag, self: *StripSource) callconv(.c) void {
+        const id = self.pane(self.owner, self.key) orelse return;
+        setDragged(id);
+        dragged_blade = true;
+        drop_seen = false;
+        const g = self.ghost(self.owner, self.key);
+        if (g) |b| {
+            defer b.deinit();
+            wk.gtk_drag_source_set_icon(self.source, b.paintable, b.plan.hot_x, b.plan.hot_y);
+        }
+        log.info("strip drag began pane={s} ghost={}", .{ id, g != null });
+    }
+
+    /// A strip let go over nothing settles back where it was (Mac
+    /// `resolveBlade`: "anywhere else, nothing - not a new window"), so the
+    /// cancel is GTK's to animate.
+    fn onDragCancel(_: *wk.GtkEventController, _: *wk.GdkDrag, reason: c_int, _: *StripSource) callconv(.c) c_int {
+        log.info("strip drag cancelled reason={d} drop_seen={}: the strip settles back", .{ reason, drop_seen });
+        return 0;
+    }
+
+    fn onDragEnd(_: *wk.GtkEventController, _: *wk.GdkDrag, _: c_int, _: *StripSource) callconv(.c) void {
+        log.info("strip drag ended", .{});
+        setDragged(null);
+        dragged_blade = false;
     }
 };
 

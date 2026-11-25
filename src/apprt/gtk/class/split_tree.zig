@@ -40,6 +40,8 @@ const PaneSidebar = @import("../PaneSidebar.zig");
 const pane_sidebar_rows = @import("../pane_sidebar_rows.zig");
 const homedir = @import("../../../os/homedir.zig");
 const wk = @import("../webkit.zig");
+const pane_id = @import("../../ipc/pane_id.zig");
+const PaneDragGhost = @import("../PaneDragGhost.zig");
 
 const log = std.log.scoped(.gtk_ghostty_split_tree);
 
@@ -340,22 +342,138 @@ pub const SplitTree = extern struct {
 
     fn dropFromTarget(owner: *anyopaque, dragged_id: []const u8, x: f64, y: f64) PaneDrag.DropResult {
         const self: *Self = @ptrCast(@alignCast(owner));
-        return self.dropPaneAt(dragged_id, x, y);
+        return self.dropPaneAt(dragged_id, x, y, PaneDrag.draggingBlade());
+    }
+
+    /// The stage's top-left in the split area's coordinates (the drop
+    /// space), or null when there is no stage on show.
+    fn stageOffset(self: *Self, space: *wk.GtkWidget) ?[2]i32 {
+        const stage = self.private().stage orelse return null;
+        const zero: wk.GraphenePoint = .{};
+        var out: wk.GraphenePoint = .{};
+        if (wk.gtk_widget_compute_point(stage, space, &zero, &out) == 0) return null;
+        return .{ @intFromFloat(@round(out.x)), @intFromFloat(@round(out.y)) };
+    }
+
+    fn offsetRect(r: pane_stack_grid.PxRect, o: [2]i32) pane_drop.Rect {
+        return .{ .left = r.left + o[0], .top = r.top + o[1], .right = r.right + o[0], .bottom = r.bottom + o[1] };
+    }
+
+    /// Scratch for `bladeGeometry`.
+    const BladeBuffers = struct {
+        items: [pane_drop.max_row_items]pane_drop.RowItem = undefined,
+        item_ids: [pane_drop_apply.max_leaves][]const u8 = undefined,
+        slots: [pane_drop.max_row_items + 1]pane_drop.Slot = undefined,
+        slot_ids: [pane_drop_apply.max_leaves][]const u8 = undefined,
+    };
+
+    /// A strip drag's own geometry (T3629, win32 `bladeGeometry`, Mac
+    /// `PaneDragSession.bladeGeometry`): the slots of the row the pane is
+    /// folded into, read off the cards and strips as laid out, in the drop
+    /// space. No screens: Wayland tells a client nothing about the monitors
+    /// or where its window sits on them, so a strip has no screen-edge tile
+    /// here. Null when the pane is not folded into a row on show - the drag
+    /// then has a pane's targets. `on_show` says whether each slot's item is
+    /// in the run on show (by slot index), so a drop knows whether the pane
+    /// lands among cards (and takes focus) or among strips (and stays one).
+    fn bladeGeometry(
+        self: *Self,
+        surface: *Surface,
+        space: *wk.GtkWidget,
+        metrics: pane_drop.Metrics,
+        buf: *BladeBuffers,
+    ) ?pane_drop.BladeDrag {
+        const priv = self.private();
+        const grid = &(priv.grid orelse return null);
+        const o = self.stageOffset(space) orelse return null;
+        const stack = self.stackState().stackMinimizing(paneKey(surface)) orelse return null;
+        var n_items: usize = 0;
+        var n_ids: usize = 0;
+        for (stack.items) |item| {
+            if (n_items >= buf.items.len) break;
+            var rect: ?pane_drop.Rect = null;
+            const start = n_ids;
+            for (item) |id| {
+                const p = grid.placement(id) orelse continue;
+                const on_screen: pane_stack_grid.PxRect = p.tab orelse if (p.is_tucked) continue else p.rect;
+                const r = offsetRect(on_screen, o);
+                rect = if (rect) |u| .{
+                    .left = @min(u.left, r.left),
+                    .top = @min(u.top, r.top),
+                    .right = @max(u.right, r.right),
+                    .bottom = @max(u.bottom, r.bottom),
+                } else r;
+                if (n_ids >= buf.item_ids.len) return null;
+                const s = self.surfaceByKey(id) orelse return null;
+                buf.item_ids[n_ids] = s.paneId();
+                n_ids += 1;
+            }
+            buf.items[n_items] = .{ .rect = rect orelse return null, .panes = buf.item_ids[start..n_ids] };
+            n_items += 1;
+        }
+        const slots = pane_drop.bladeSlots(
+            buf.items[0..n_items],
+            if (stack.direction == .horizontal) .horizontal else .vertical,
+            surface.paneId(),
+            metrics,
+            &buf.slots,
+            &buf.slot_ids,
+        );
+        return .{ .window = @intFromPtr(self), .slots = slots, .screens = &.{}, .dragged = surface.paneId() };
+    }
+
+    /// Whether the row item made of exactly `beside` is in the run on show
+    /// of the row `surface` is folded into: a strip dropped beside it lands
+    /// among the cards.
+    fn besideOnShow(self: *Self, surface: *Surface, beside: []const []const u8) bool {
+        const stack = self.stackState().stackMinimizing(paneKey(surface)) orelse return false;
+        for (stack.items, 0..) |item, i| {
+            if (!stack.run.contains(i)) continue;
+            var n: usize = 0;
+            for (item) |id| {
+                if (id == paneKey(surface)) continue;
+                const s = self.surfaceByKey(id) orelse continue;
+                for (beside) |b| {
+                    if (pane_id.eql(s.paneId(), b)) {
+                        n += 1;
+                        break;
+                    }
+                }
+            }
+            if (n == beside.len) return true;
+        }
+        return false;
     }
 
     /// Drop the pane `dragged_id` at (x, y) in the split area's coordinates:
     /// resolve the point against this tab's panes and dividers, then make the
     /// move. A drag's release and the `pane-drag` seam both come here.
-    pub fn dropPaneAt(self: *Self, dragged_id: []const u8, x: f64, y: f64) PaneDrag.DropResult {
+    /// `blade` is a drag that began on the pane's strip (T3629): it has a
+    /// strip's own targets - a slot in its row, a window's edge band - and
+    /// nothing anywhere else.
+    pub fn dropPaneAt(self: *Self, dragged_id: []const u8, x: f64, y: f64, blade: bool) PaneDrag.DropResult {
         const priv = self.private();
         const tree = priv.tree orelse return .{};
         const space: *wk.GtkWidget = @ptrCast(priv.tree_bin);
+        const offset = self.stageOffset(space);
 
         var rects_buf: [pane_drop_apply.max_leaves]pane_drop.PaneRect = undefined;
         var n: usize = 0;
         var it = tree.iterator();
         while (it.next()) |entry| {
             if (n == rects_buf.len) break;
+            // A minimized pane is a target by its strip, and only a strip
+            // that shows (docs/reference/stacked-panes.md "Dragging a strip";
+            // Mac `PaneDragSession`): its card is out of sight at its last
+            // size on show.
+            if (priv.grid) |*grid| if (offset) |o| if (grid.placement(paneKey(entry.view))) |p| {
+                if (p.is_tucked or p.is_sliver) {
+                    const tab = p.tab orelse continue;
+                    rects_buf[n] = .{ .id = entry.view.paneId(), .rect = offsetRect(tab, o) };
+                    n += 1;
+                    continue;
+                }
+            };
             const leaf: *gtk.Widget = if (ext.getAncestor(SurfaceScrolledWindow, entry.view.as(gtk.Widget))) |w|
                 w.as(gtk.Widget)
             else
@@ -376,7 +494,20 @@ pub const SplitTree = extern struct {
             .dividers = pane_drop_apply.dividers(Surface.Tree, tree, surfaceId, rects, metrics, &ids, &divs),
         };
         const point: pane_drop.Point = .{ .x = @intFromFloat(@round(x)), .y = @intFromFloat(@round(y)) };
-        const target = pane_drop.resolve(point, &.{candidate}, dragged_id, metrics) orelse return .{};
+        var blade_buf: BladeBuffers = .{};
+        const home_surface: ?*Surface = if (pane_drop_apply.handleOf(Surface.Tree, tree, surfaceId, dragged_id)) |h| tree.nodes[h.idx()].leaf else null;
+        // A strip folded into a row of THIS tab has its row's slots; one
+        // over another tab or window has only that window's edge band
+        // (`resolveBlade` with no slots and a window that is not this one).
+        const blade_drag: ?pane_drop.BladeDrag = if (!blade) null else if (home_surface) |s|
+            self.bladeGeometry(s, space, metrics, &blade_buf)
+        else
+            .{ .window = 0, .slots = &.{}, .screens = &.{}, .dragged = dragged_id };
+        const resolved = if (blade_drag) |b|
+            pane_drop.resolveBlade(point, &.{candidate}, b, metrics)
+        else
+            pane_drop.resolve(point, &.{candidate}, dragged_id, metrics);
+        const target = resolved orelse return .{};
 
         var result: PaneDrag.DropResult = .{ .target = @tagName(target) };
         switch (target) {
@@ -386,8 +517,19 @@ pub const SplitTree = extern struct {
             },
             .swap => |s| result.pane = s.pane,
             .top_level => |s| result.side = @tagName(s.side),
+            .reorder => |s| {
+                result.side = @tagName(s.side);
+                if (s.beside.len > 0) result.pane = s.beside[0];
+            },
             else => {},
         }
+        // A strip dropped among the cards on show takes focus; one dropped
+        // among the strips stays one and the caret stays where it was (Mac
+        // `PaneMoveCoordinator.reorder`, win32 `commitReorderDrop`).
+        const takes_focus = switch (target) {
+            .reorder => |s| if (home_surface) |hs| self.besideOnShow(hs, s.beside) else false,
+            else => true,
+        };
 
         // A pane from another tab of this window - the tab a 500ms dwell
         // on the tab bar switched away from (T3615).
@@ -413,10 +555,10 @@ pub const SplitTree = extern struct {
                     break :dragged t.nodes[h.idx()].leaf;
                 };
                 self.rearrange(&t);
-                if (dragged_surface) |s| {
+                if (dragged_surface) |s| if (takes_focus) {
                     priv.last_focused.set(s);
                     self.as(gobject.Object).notifyByPspec(properties.@"active-surface".impl.param_spec);
-                }
+                };
                 result.outcome = "moved";
             },
             .in_place => result.outcome = "in_place",
@@ -639,10 +781,15 @@ pub const SplitTree = extern struct {
             wk.gtk_widget_set_child_visible(face, 0);
             wk.gtk_box_append(stage, face);
             priv.faces.put(alloc, paneKey(entry.view), face) catch {};
+            // Dragging a strip picks its pane up (T3629).
+            PaneDrag.StripSource.install(face, self, paneKey(entry.view), &stripPane, &stripGhost);
         }
 
         // Every gutter and every strip answers one drag gesture on the stage;
-        // a press anywhere else is denied and left to the pane under it.
+        // a press anywhere else is denied and left to the pane under it. A
+        // strip press is left unclaimed: its face's drag source takes it once
+        // it travels past the drag threshold, and a release short of that is
+        // still this gesture's click.
         const drag = wk.gtk_gesture_drag_new();
         _ = wk.g_signal_connect_data(@ptrCast(drag), "drag-begin", @ptrCast(&stageDragBegin), self, null, 0);
         _ = wk.g_signal_connect_data(@ptrCast(drag), "drag-update", @ptrCast(&stageDragUpdate), self, null, 0);
@@ -895,9 +1042,9 @@ pub const SplitTree = extern struct {
         wk.gtk_widget_allocate(card, @max(a.width(), min_w), @max(a.height(), min_h), -1, tr);
     }
 
-    /// Show `f`, a strip's face, over `fr`, named by the sidebar row's rule
-    /// and turned to run down a vertical strip.
-    fn placeFace(f: *wk.GtkWidget, fr: pane_stack_grid.PxRect, axis: pane_stack_layout.Direction, view: *Surface, home: ?[]const u8) void {
+    /// Name `f`, a strip's face, by the sidebar row's rule
+    /// (`pane_sidebar_rows.text`, Mac `PaneSidebarText.label`).
+    fn labelFace(f: *wk.GtkWidget, view: *Surface, home: ?[]const u8) void {
         var lb: [pane_sidebar_rows.TEXT_BUF_LEN]u8 = undefined;
         var sb: [pane_sidebar_rows.TEXT_BUF_LEN]u8 = undefined;
         const t = pane_sidebar_rows.text(PaneSidebar.paneOf(view), home, &lb, &sb);
@@ -906,6 +1053,50 @@ pub const SplitTree = extern struct {
         @memcpy(zbuf[0..n], t.label[0..n]);
         zbuf[n] = 0;
         wk.gtk_label_set_text(f, @ptrCast(&zbuf));
+    }
+
+    /// A pane's name changed - its title, title override or directory, or
+    /// its banner (`Surface.setPaneBanner`) - so a strip showing it is
+    /// renamed at once (T3629; docs/reference/stacked-panes.md "Strip
+    /// labels": live), not at the next layout.
+    pub fn relabelStrip(self: *Self, surface: *Surface) void {
+        const f = self.private().faces.get(paneKey(surface)) orelse return;
+        if (wk.gtk_widget_get_child_visible(f) == 0) return;
+        var home_buf: [std.fs.max_path_bytes]u8 = undefined;
+        labelFace(f, surface, homedir.home(&home_buf) catch null);
+        // A longer or shorter name measures differently: lay it out again.
+        self.relayoutStage();
+    }
+
+    fn propSurfaceLabel(surface: *Surface, _: *gobject.ParamSpec, self: *Self) callconv(.c) void {
+        self.relabelStrip(surface);
+    }
+
+    /// The strip drag source's view of a pane (T3629): its id and its card.
+    fn stripPane(owner: *anyopaque, key: u64) ?[]const u8 {
+        const self: *Self = @ptrCast(@alignCast(owner));
+        const s = self.surfaceByKey(key) orelse return null;
+        return s.paneId();
+    }
+
+    fn stripGhost(owner: *anyopaque, key: u64) ?PaneDragGhost.Built {
+        const self: *Self = @ptrCast(@alignCast(owner));
+        const s = self.surfaceByKey(key) orelse return null;
+        return s.dragGhost();
+    }
+
+    /// The label a strip's face shows now (the `pane-stack` seam), or null
+    /// when the pane has no face on show.
+    fn stripLabel(self: *Self, surface: *Surface) ?[]const u8 {
+        const f = self.private().faces.get(paneKey(surface)) orelse return null;
+        if (wk.gtk_widget_get_child_visible(f) == 0) return null;
+        return std.mem.span(wk.gtk_label_get_text(f));
+    }
+
+    /// Show `f`, a strip's face, over `fr`, named by the sidebar row's rule
+    /// and turned to run down a vertical strip.
+    fn placeFace(f: *wk.GtkWidget, fr: pane_stack_grid.PxRect, axis: pane_stack_layout.Direction, view: *Surface, home: ?[]const u8) void {
+        labelFace(f, view, home);
         wk.gtk_widget_set_child_visible(f, 1);
         const lp = pane_stage.labelPlacement(fr, axis);
         var min_w: c_int = 0;
@@ -1614,6 +1805,9 @@ pub const SplitTree = extern struct {
 
     fn stageDragBegin(gesture: *wk.GtkEventController, x: f64, y: f64, self: *Self) callconv(.c) void {
         const held = self.stagePress(x, y);
+        // A strip press stays unclaimed (T3629): its face's drag source
+        // claims it past the drag threshold, and cancels this gesture.
+        if (held == .strip) return;
         _ = wk.gtk_gesture_set_state(gesture, if (held == .none) wk.sequence_denied else wk.sequence_claimed);
     }
 
@@ -1649,6 +1843,9 @@ pub const SplitTree = extern struct {
             /// changes so far: a glide resizes each terminal once, after it.
             content_w: c_int,
             resizes: u32,
+            /// The label its strip face shows now (T3629), null when no face
+            /// is on show.
+            label: ?[]const u8 = null,
         };
         pub const Gutter = struct { kind: []const u8, direction: []const u8, rect: [4]i32 };
         /// The gutter bar (T3626): the gutter it is lit in as laid out, the
@@ -1713,6 +1910,7 @@ pub const SplitTree = extern struct {
                 .fade = fade,
                 .content_w = wk.gtk_widget_get_width(cardContent(card)),
                 .resizes = entry.view.sizeChanges(),
+                .label = if (self.stripLabel(entry.view)) |l| try arena.dupe(u8, l) else null,
             });
         }
         var gutters: std.ArrayList(StageReport.Gutter) = .empty;
@@ -2193,6 +2391,10 @@ pub const SplitTree = extern struct {
                 self,
                 .{ .detail = "focused" },
             );
+            // A pane's name is its strip's label, live (T3629).
+            inline for (.{ "title", "title-override", "pwd" }) |detail| {
+                _ = gobject.Object.signals.notify.connect(surface, *Self, propSurfaceLabel, self, .{ .detail = detail });
+            }
         }
     }
 

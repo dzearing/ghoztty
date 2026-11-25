@@ -112,7 +112,24 @@ pub fn apply(
             defer leaf.deinit();
             return .{ .moved = try rest.insertInGap(alloc, gap, @floatCast(pane_drop.insert_share), &leaf) };
         },
-        .new_tab, .new_window, .stash, .sidebar_order, .join_window, .reorder, .tile => return .not_here,
+        // A strip moved along the row it is folded into (T3629, Mac
+        // `PaneMoveCoordinator.reorder`, win32 `commitReorderDrop`): out of
+        // where it is, and in beside the row's item made of exactly the
+        // panes `beside`, on `side`, halving that item's space.
+        .reorder => |s| {
+            if (s.beside.len == 0) return .not_here;
+            const view = tree.nodes[at.idx()].leaf;
+            var leaf = try Tree.init(alloc, view);
+            defer leaf.deinit();
+            var rest = try @constCast(tree).remove(alloc, at);
+            defer rest.deinit();
+            // Found in the tree WITHOUT the pane: a column the strip was one
+            // pane of is named by the panes left in it.
+            const index = pane_relocate.nodeWithPanes(&rest, s.beside, idOf) orelse return .not_here;
+            const item: Tree.Node.Handle = @enumFromInt(index);
+            return .{ .moved = try rest.split(alloc, item, direction(Tree, s.side), split_ratio, &leaf) };
+        },
+        .new_tab, .new_window, .stash, .sidebar_order, .join_window, .tile => return .not_here,
     }
 }
 
@@ -409,6 +426,70 @@ test "a divider drop inserts the pane in that gap" {
         },
         else => return error.TestUnexpectedResult,
     }
+}
+
+test "a strip reorder moves the pane beside the named item, halving it (T3629)" {
+    // a | b | c, the strip c dropped before a: the item a is halved and c
+    // sits on its left.
+    var views = [_]TestView{ .{ .id = "a" }, .{ .id = "b" }, .{ .id = "c" } };
+    var tree = try threeAcross(&views);
+    defer tree.deinit();
+    const beside = [_][]const u8{"a"};
+    var out = try apply(TestTree, testing.allocator, &tree, testId, "c", .{ .reorder = .{
+        .window = 1,
+        .beside = &beside,
+        .side = .left,
+        .caret = .{ .left = 0, .top = 0, .right = 1, .bottom = 1 },
+    } });
+    switch (out) {
+        .moved => |*t| {
+            defer t.deinit();
+            try expectShape(t, "H(H(c,a),b)");
+            // The very view moved, not a copy.
+            const h = handleOf(TestTree, t, testId, "c").?;
+            try testing.expect(t.nodes[h.idx()].leaf == &views[2]);
+        },
+        else => return error.TestUnexpectedResult,
+    }
+}
+
+test "a strip reorder beside a column names the column by its panes (T3629)" {
+    // a | V(b, c): the strip a dropped after the column b,c.
+    const alloc = testing.allocator;
+    var views = [_]TestView{ .{ .id = "a" }, .{ .id = "b" }, .{ .id = "c" } };
+    var a = try TestTree.init(alloc, &views[0]);
+    defer a.deinit();
+    var b = try TestTree.init(alloc, &views[1]);
+    defer b.deinit();
+    var c = try TestTree.init(alloc, &views[2]);
+    defer c.deinit();
+    var bc = try b.split(alloc, .root, .down, 0.5, &c);
+    defer bc.deinit();
+    var tree = try a.split(alloc, .root, .right, 0.5, &bc);
+    defer tree.deinit();
+    const beside = [_][]const u8{ "b", "c" };
+    var out = try apply(TestTree, alloc, &tree, testId, "a", .{ .reorder = .{
+        .window = 1,
+        .beside = &beside,
+        .side = .right,
+        .caret = .{ .left = 0, .top = 0, .right = 1, .bottom = 1 },
+    } });
+    switch (out) {
+        .moved => |*t| {
+            defer t.deinit();
+            try expectShape(t, "H(V(b,c),a)");
+        },
+        else => return error.TestUnexpectedResult,
+    }
+    // An item that is not in the tree is no drop.
+    const gone = [_][]const u8{"z"};
+    const none = try apply(TestTree, alloc, &tree, testId, "a", .{ .reorder = .{
+        .window = 1,
+        .beside = &gone,
+        .side = .right,
+        .caret = .{ .left = 0, .top = 0, .right = 1, .bottom = 1 },
+    } });
+    try testing.expect(none == .not_here);
 }
 
 test "a drop that would leave the pane where it is does nothing" {
