@@ -2054,14 +2054,25 @@ made once for both seats.
   controller's enter/leave call; the harness has no seat, so a real pointer
   hover is NOT RUN. `shot` renders the whole window from
   its own render; a content-box shot comes out transparent behind white text.
+- **The other two ways in** (T3640) have seams of their own, both general:
+  `hl_ipc main-menu --target=<pane> [--activate=<label>]` lists the window's
+  main menu (`items[]`: label, action, section - window.blp's `main_menu`,
+  bound as a template child) and activates an item's action from the window
+  (`gtk_widget_activate_action`, the muxer path the open popover takes; the
+  popover itself needs a seat, NOT RUN). `hl_ipc command-palette
+  --target=<pane> [--op=state|open|close|run] [--query=] [--title=]` toggles
+  the palette through `win.toggle-command-palette`, types into its search and
+  clicks the shown row with that title through the palette's own `activated`.
+  The palette's filter is **incremental**: a reply with `pending: true` is not
+  the final list, so poll until it is false.
 
 ```powershell
 powershell -NoProfile -File scripts\linux\wsl-run.ps1 -CommandFile test\linux\shortcut-guide.sh
 ```
 
-Ends `SHORTCUT GUIDE: ALL PASS` (32 checks); `NEGATIVE=1` presses Ctrl+/ and
-must go red; `SHOT_OUT=<dir>` keeps two PNGs. Still open: a check through the
-menu item and the palette T3640.
+Ends `SHORTCUT GUIDE: ALL PASS` (38 checks; G27-G32 are the menu item and the
+palette entry); `NEGATIVE=1` presses Ctrl+/ and must go red; `SHOT_OUT=<dir>`
+keeps two PNGs.
 
 ## Background windows: what stops when no one is looking (T3571)
 

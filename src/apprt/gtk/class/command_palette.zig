@@ -363,6 +363,48 @@ pub const CommandPalette = extern struct {
         );
     }
 
+    //---------------------------------------------------------------
+    // Debug-only seam hooks (T3640): the `command-palette` IPC seam
+    // (IpcHandlers.commandPaletteSeam) drives the palette through these, the
+    // same calls typing in the search field and clicking a row make.
+
+    /// Whether the palette dialog is on screen.
+    pub fn seamIsOpen(self: *CommandPalette) bool {
+        return self.private().dialog.as(gtk.Widget).getMapped() != 0;
+    }
+
+    /// Type `text` into the search field (the filter is bound to it).
+    pub fn seamSetQuery(self: *CommandPalette, text: [:0]const u8) void {
+        self.private().search.as(gtk.Editable).setText(text);
+    }
+
+    /// True while the incremental filter is still working through the list,
+    /// so what `seamVisibleAt` reads is not yet the final answer.
+    pub fn seamFilterPending(self: *CommandPalette) bool {
+        const inner = self.private().model.getModel() orelse return false;
+        const filtered = gobject.ext.cast(gtk.FilterListModel, inner) orelse return false;
+        return filtered.getPending() != 0;
+    }
+
+    /// How many rows the list shows right now.
+    pub fn seamVisibleCount(self: *CommandPalette) usize {
+        return @intCast(self.private().model.as(gio.ListModel).getNItems());
+    }
+
+    /// The title and action key of the shown row at `pos`.
+    pub fn seamVisibleAt(self: *CommandPalette, pos: usize) ?struct { title: [:0]const u8, action_key: ?[:0]const u8 } {
+        const object = self.private().model.as(gio.ListModel).getObject(@intCast(pos)) orelse return null;
+        // The list store keeps its own reference, so the strings outlive this.
+        defer object.unref();
+        const cmd = gobject.ext.cast(Command, object) orelse return null;
+        return .{ .title = cmd.propGetTitle() orelse return null, .action_key = cmd.propGetActionKey() };
+    }
+
+    /// Activate the shown row at `pos`: what a click on it does.
+    pub fn seamActivate(self: *CommandPalette, pos: usize) void {
+        self.activated(@intCast(pos));
+    }
+
     const C = Common(Self, Private);
     pub const as = C.as;
     pub const ref = C.ref;

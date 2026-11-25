@@ -219,6 +219,8 @@ pub fn handleSeam(app: Context, request: Request) Allocator.Error!server.SeamRep
     if (std.mem.eql(u8, request.action, "pane-seen")) return .{ .reply = try paneSeenSeam(app, request) };
     if (std.mem.eql(u8, request.action, "close-dialog")) return .{ .reply = try closeDialogSeam(app, request) };
     if (std.mem.eql(u8, request.action, "window-size")) return .{ .reply = try windowSizeSeam(app, request) };
+    if (std.mem.eql(u8, request.action, "main-menu")) return .{ .reply = try mainMenuSeam(app, request) };
+    if (std.mem.eql(u8, request.action, "command-palette")) return .{ .reply = try commandPaletteSeam(app, request) };
     if (!std.mem.eql(u8, request.action, "capture-pane")) return .unhandled;
     return .{ .reply = try capturePane(app, request) };
 }
@@ -968,6 +970,173 @@ fn windowSizeSeam(app: Context, request: Request) Allocator.Error![]u8 {
         .success = true,
         .width = wk.gtk_widget_get_width(w),
         .height = wk.gtk_widget_get_height(w),
+    }, .{}, &out.writer) catch return error.OutOfMemory;
+    return c_alloc.dupe(u8, out.written());
+}
+
+/// The target pane's window for a seam that acts on a window, or the error
+/// reply to send instead.
+fn seamWindow(arena: Allocator, app: Context, target_arg: ?[]const u8, verb: []const u8) Allocator.Error!union(enum) { window: *Window, reply: []u8 } {
+    const target_name = target_arg orelse
+        return .{ .reply = try server.errorResponse(c_alloc, "--target is required for {s}", .{verb}) };
+    return switch (try resolve(arena, app, target_name)) {
+        .found => |t| .{ .window = t.window_() },
+        .ambiguous => |windows| .{ .reply = try server.errorResponse(c_alloc, "{s}", .{
+            try target_lookup.ambiguityError(arena, target_name, windows),
+        }) },
+        .not_found => .{ .reply = try server.errorResponse(c_alloc, "pane '{s}' not found in registry", .{target_name}) },
+    };
+}
+
+const MenuEntry = struct { label: []const u8, action: ?[]const u8, section: usize };
+
+/// Every item of `menu`, sections flattened in order (`section` counts them).
+fn collectMenu(arena: Allocator, menu: *gio.MenuModel, out: *std.ArrayList(MenuEntry), section: *usize) Allocator.Error!void {
+    const n: usize = @intCast(@max(menu.getNItems(), 0));
+    for (0..n) |i| {
+        const idx: c_int = @intCast(i);
+        if (menu.getItemLink(idx, "section")) |sub| {
+            defer sub.unref();
+            section.* += 1;
+            try collectMenu(arena, sub, out, section);
+            continue;
+        }
+        const label = menu.getItemAttributeValue(idx, "label", null) orelse continue;
+        defer label.unref();
+        const action: ?[]const u8 = if (menu.getItemAttributeValue(idx, "action", null)) |a| a: {
+            defer a.unref();
+            break :a try arena.dupe(u8, std.mem.span(a.getString(null)));
+        } else null;
+        try out.append(arena, .{ .label = try arena.dupe(u8, std.mem.span(label.getString(null))), .action = action, .section = section.* });
+    }
+}
+
+/// `main-menu --target=<pane> [--activate=<label>]` (T3640): the target
+/// window's main menu (window.blp's `main_menu`, which both its menu buttons
+/// show) as `items[]` of label, action and section, and with `--activate`
+/// the item with that label activated the way the open menu activates it:
+/// its action name resolved from the window (`gtk_widget_activate_action`),
+/// so an `app.` item reaches the application's action group through the
+/// window's muxer exactly as a click does. The harness has no seat to open
+/// the popover itself.
+fn mainMenuSeam(app: Context, request: Request) Allocator.Error![]u8 {
+    var target_arg: ?[]const u8 = null;
+    var activate_arg: ?[]const u8 = null;
+    for (request.arguments orelse &.{}) |arg| {
+        if (std.mem.startsWith(u8, arg, "--target=")) target_arg = arg["--target=".len..];
+        if (std.mem.startsWith(u8, arg, "--activate=")) activate_arg = arg["--activate=".len..];
+    }
+    var arena_state = std.heap.ArenaAllocator.init(c_alloc);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const window = switch (try seamWindow(arena, app, target_arg, "main-menu")) {
+        .window => |w| w,
+        .reply => |r| return r,
+    };
+
+    var items: std.ArrayList(MenuEntry) = .{};
+    var section: usize = 0;
+    try collectMenu(arena, window.seamMainMenu(), &items, &section);
+
+    var activated: ?bool = null;
+    if (activate_arg) |want| {
+        const item = for (items.items) |it| {
+            if (std.mem.eql(u8, it.label, want)) break it;
+        } else return server.errorResponse(c_alloc, "the main menu has no item '{s}'", .{want});
+        const action = item.action orelse
+            return server.errorResponse(c_alloc, "main menu item '{s}' has no action", .{want});
+        activated = window.as(gtk.Widget).activateAction(try arena.dupeZ(u8, action), null) != 0;
+    }
+
+    var out: std.Io.Writer.Allocating = .init(c_alloc);
+    defer out.deinit();
+    std.json.Stringify.value(.{
+        .success = true,
+        .data = .{ .items = items.items, .activated = activated },
+    }, .{}, &out.writer) catch return error.OutOfMemory;
+    return c_alloc.dupe(u8, out.written());
+}
+
+/// `command-palette --target=<pane> [--op=state|open|close|run]
+/// [--query=<text>] [--title=<row title>]` (T3640): the target window's
+/// command palette. `open`/`close` toggle it through `win.toggle-command-
+/// palette` (its keybind's and menu item's action); `--query` types into its
+/// search field; `run` activates the shown row titled `--title` the way a
+/// click on it does (the palette closes and emits `trigger`). The reply is
+/// `open`, `pending` (the incremental filter has not finished: read again)
+/// and the shown rows' `title`/`action_key`.
+fn commandPaletteSeam(app: Context, request: Request) Allocator.Error![]u8 {
+    var target_arg: ?[]const u8 = null;
+    var op: []const u8 = "state";
+    var query: ?[]const u8 = null;
+    var title: ?[]const u8 = null;
+    for (request.arguments orelse &.{}) |arg| {
+        if (std.mem.startsWith(u8, arg, "--target=")) target_arg = arg["--target=".len..];
+        if (std.mem.startsWith(u8, arg, "--op=")) op = arg["--op=".len..];
+        if (std.mem.startsWith(u8, arg, "--query=")) query = arg["--query=".len..];
+        if (std.mem.startsWith(u8, arg, "--title=")) title = arg["--title=".len..];
+    }
+    var arena_state = std.heap.ArenaAllocator.init(c_alloc);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const window = switch (try seamWindow(arena, app, target_arg, "command-palette")) {
+        .window => |w| w,
+        .reply => |r| return r,
+    };
+    const widget = window.as(gtk.Widget);
+
+    const is_open = struct {
+        fn f(w: *Window) bool {
+            const p = w.seamCommandPalette() orelse return false;
+            defer p.unref();
+            return p.seamIsOpen();
+        }
+    }.f;
+    var ran: ?bool = null;
+    if (std.mem.eql(u8, op, "open")) {
+        if (!is_open(window)) _ = widget.activateAction("win.toggle-command-palette", null);
+    } else if (std.mem.eql(u8, op, "close")) {
+        if (is_open(window)) _ = widget.activateAction("win.toggle-command-palette", null);
+    } else if (!std.mem.eql(u8, op, "state") and !std.mem.eql(u8, op, "run")) {
+        return server.errorResponse(c_alloc, "unknown --op '{s}'", .{op});
+    }
+
+    const palette = window.seamCommandPalette() orelse
+        return server.errorResponse(c_alloc, "this window's command palette was never opened", .{});
+    defer palette.unref();
+    if (query) |q| palette.seamSetQuery(try arena.dupeZ(u8, q));
+
+    if (std.mem.eql(u8, op, "run")) {
+        const want = title orelse return server.errorResponse(c_alloc, "--title=<row title> is required for --op=run", .{});
+        if (!palette.seamIsOpen()) return server.errorResponse(c_alloc, "the command palette is not open", .{});
+        if (palette.seamFilterPending()) return server.errorResponse(c_alloc, "the palette is still filtering; read again", .{});
+        const pos = for (0..palette.seamVisibleCount()) |i| {
+            const row = palette.seamVisibleAt(i) orelse continue;
+            if (std.mem.eql(u8, row.title, want)) break i;
+        } else return server.errorResponse(c_alloc, "the palette shows no row titled '{s}'", .{want});
+        palette.seamActivate(pos);
+        ran = true;
+    }
+
+    const Row = struct { title: []const u8, action_key: ?[]const u8 };
+    var rows: std.ArrayList(Row) = .{};
+    for (0..palette.seamVisibleCount()) |i| {
+        const row = palette.seamVisibleAt(i) orelse continue;
+        try rows.append(arena, .{
+            .title = try arena.dupe(u8, row.title),
+            .action_key = if (row.action_key) |k| try arena.dupe(u8, k) else null,
+        });
+    }
+    var out: std.Io.Writer.Allocating = .init(c_alloc);
+    defer out.deinit();
+    std.json.Stringify.value(.{
+        .success = true,
+        .data = .{
+            .open = palette.seamIsOpen(),
+            .pending = palette.seamFilterPending(),
+            .ran = ran,
+            .rows = rows.items,
+        },
     }, .{}, &out.writer) catch return error.OutOfMemory;
     return c_alloc.dupe(u8, out.written());
 }

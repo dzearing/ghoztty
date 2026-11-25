@@ -328,6 +328,8 @@ pub const Window = extern struct {
         toolbar: *adw.ToolbarView,
         toast_overlay: *adw.ToastOverlay,
         sidebar_row: *gtk.Box,
+        /// The main menu both menu buttons show (T3640's seam reads it).
+        main_menu: *gio.Menu,
 
         pub var offset: c_int = 0;
     };
@@ -3322,6 +3324,18 @@ pub const Window = extern struct {
         command_palette.toggle(self);
     }
 
+    /// Debug-only seam hook (T3640): this window's command palette, or null
+    /// when none was ever opened (or it was freed). The caller owns a ref.
+    pub fn seamCommandPalette(self: *Window) ?*CommandPalette {
+        return self.private().command_palette.get();
+    }
+
+    /// Debug-only seam hook (T3640): the main menu's model, as its two menu
+    /// buttons show it (the `main_menu` object of window.blp).
+    pub fn seamMainMenu(self: *Window) *gio.MenuModel {
+        return self.private().main_menu.as(gio.MenuModel);
+    }
+
     // React to a signal from a command palette asking an action to be performed.
     fn signalCommandPaletteTrigger(_: *CommandPalette, action: *const input.Binding.Action, self: *Self) callconv(.c) void {
         // If the activation actually has an action, perform it.
@@ -3402,6 +3416,7 @@ pub const Window = extern struct {
             class.bindTemplateChildPrivate("toolbar", .{});
             class.bindTemplateChildPrivate("toast_overlay", .{});
             class.bindTemplateChildPrivate("sidebar_row", .{});
+            class.bindTemplateChildPrivate("main_menu", .{});
 
             // Template Callbacks
             class.bindTemplateCallback("realize", &windowRealize);

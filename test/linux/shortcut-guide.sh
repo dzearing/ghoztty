@@ -215,4 +215,39 @@ o=$(sg --op=state)
 printf '%s' "$o" | grep -q 'not open' && kill -0 "$APP" 2>/dev/null
 hl_check "G26 closing the guide leaves the app running" $? "$o"
 
+# ---- the main menu's item and the command palette's entry (T3640) -----------
+# `main-menu` reads window.blp's main_menu and activates an item's action from
+# the window, as the open popover does; `command-palette` types into the
+# palette's search and clicks a row through the palette's own code. The
+# harness has no seat for a real pointer, so the popover itself is NOT RUN.
+mm() { hl_ipc main-menu --target="$pane" "$@"; }
+o=$(mm)
+a=$(jget "$o" 'next((i["action"] for i in d["items"] if i["label"]=="Keyboard Shortcuts"), "<no item>")')
+[ "$a" = app.show-keyboard-shortcuts ]
+hl_check "G27 the main menu has a Keyboard Shortcuts item on app.show-keyboard-shortcuts" $? "action=$a items=$(jget "$o" '[i["label"] for i in d["items"]]')"
+o=$(mm --activate='Keyboard Shortcuts')
+hl_wait_for 5 is_open
+r=$?
+[ "$(jget "$o" 'd["activated"]')" = true ] && [ $r = 0 ]
+hl_check "G28 choosing it opens the guide" $? "activated=$(jget "$o" 'd["activated"]') reply=$(printf '%s' "$o" | head -c 160)"
+sg --op=close > /dev/null
+o=$(sg --op=state)
+printf '%s' "$o" | grep -q 'not open'
+hl_check "G29 (the guide is closed again before the palette)" $? "$o"
+
+pal() { hl_ipc command-palette --target="$pane" "$@"; }
+o=$(pal --op=open --query='keyboard shortcuts')
+listed() { o=$(pal); [ "$(jget "$o" 'd["pending"]')" = false ] && [ "$(jget "$o" 'any(r["title"]=="Show Keyboard Shortcuts" for r in d["rows"])')" = true ]; }
+hl_wait_for 5 listed
+hl_check "G30 the command palette opens and lists Show Keyboard Shortcuts for 'keyboard shortcuts'" $? "open=$(jget "$o" 'd["open"]') rows=$(jget "$o" '[r["title"] for r in d["rows"]]')"
+o=$(pal --op=run --title='Show Keyboard Shortcuts')
+hl_wait_for 5 is_open
+r=$?
+[ "$(jget "$o" 'd["ran"]')" = true ] && [ $r = 0 ]
+hl_check "G31 running that entry opens the guide" $? "ran=$(jget "$o" 'd["ran"]') reply=$(printf '%s' "$o" | head -c 160)"
+closed() { [ "$(jget "$(pal)" 'd["open"]')" = false ]; }
+hl_wait_for 5 closed
+hl_check "G32 and the palette closes behind it" $?
+sg --op=close > /dev/null
+
 hl_finish "$L"
