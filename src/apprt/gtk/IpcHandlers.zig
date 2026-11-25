@@ -2261,6 +2261,27 @@ fn paneSeenSeam(app: Context, request: Request) Allocator.Error![]u8 {
                 try j.write(p.surface.isSeen());
                 try j.objectField("mapped");
                 try j.write(p.surface.as(gtk.Widget).getMapped() != 0);
+                // A viewer pane (T3643): whether it is on show, whether its
+                // web view is mapped (what WebKit reads as the page being
+                // visible), and its working-tree poll's counters.
+                if (p.surface.getViewer()) |v| {
+                    const wkv = @import("webkit.zig");
+                    try j.objectField("viewer");
+                    try j.beginObject();
+                    try j.objectField("on_show");
+                    try j.write(v.isOnShow());
+                    try j.objectField("page_mapped");
+                    try j.write(wkv.gtk_widget_get_mapped(wkv.asWidget(v.view)) != 0);
+                    try j.objectField("polling");
+                    try j.write(v.diff.poll_id != 0);
+                    try j.objectField("skipped_polls");
+                    try j.write(v.diff.skipped_polls);
+                    try j.objectField("catch_ups");
+                    try j.write(v.diff.catch_ups);
+                    try j.objectField("git");
+                    try j.write(if (v.diff.probe) |*pr| pr.git_processes else 0);
+                    try j.endObject();
+                }
                 try j.endObject();
             }
             try j.endArray();

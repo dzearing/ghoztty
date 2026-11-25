@@ -3,8 +3,10 @@
 # looking" on the GTK debug app (docs/reference/background-windows.md; Linux
 # L11i): a pane nobody can see - a background tab, a minimized or suspended
 # window - stops building frames and catches up once when it shows; a hidden
-# window holds a changing title and lands it when it shows, or within 5s; and
-# state (+set-state, +list) never pauses.
+# window holds a changing title and lands it when it shows, or within 5s;
+# state (+set-state, +list) never pauses; and a git-status: viewer pane in a
+# minimized or suspended window skips its poll and unmaps its page, then
+# catches up once when shown (T3643, V1-V8).
 #
 # Keys reach the app through the debug-only `press-key` seam, and the
 # compositor's toplevel state through the debug-only `pane-seen` seam's
@@ -183,6 +185,64 @@ hl_check "B12 a suspended (covered) window hides every pane in it" $? "$r"
 r=$(seen --toplevel=real)
 [ "$(q "$r" 'W["seen"] and P["'"$p1"'"]["seen"]')" = True ]
 hl_check "B13 back to the compositor's own state, the window is seen again" $? "$r"
+
+# ---- 6. a viewer pane in a hidden window (T3643) ----------------------------
+# A git-status: pane's box stays MAPPED in a minimized window, so its poll
+# must read the window too: hidden, it skips every tick and its web view is
+# unmapped (WebKit's page-hidden, which holds a GIF still); shown, it asks
+# git once at once (a catch-up) and the page maps again.
+repo="$HL_RUNTIME/repo"
+mkdir -p "$repo"
+g() { env -u GIT_DIR -u GIT_WORK_TREE git -C "$repo" -c user.name=t -c user.email=t@example.invalid "$@" > /dev/null 2>&1; }
+g init -q -b main
+echo one > "$repo/a.txt"
+g add a.txt
+g commit -q -m one
+echo two >> "$repo/a.txt"
+o=$(cli +split --target="$p1" --direction=right --view=git-status: --working-directory="$repo" 2>&1)
+vp=""
+for _ in $(seq 1 100); do
+    r=$(seen)
+    vp=$(q "$r" '[p["pane"] for p in r["panes"] if "viewer" in p][0] if any("viewer" in p for p in r["panes"]) else ""')
+    [ -n "$vp" ] && [ "$(q "$r" 'P["'"$vp"'"]["viewer"]["git"] > 0 and P["'"$vp"'"]["viewer"]["polling"]')" = True ] && break
+    sleep 0.2
+done
+[ -n "$vp" ] && [ "$(q "$r" 'P["'"$vp"'"]["viewer"]["on_show"] and P["'"$vp"'"]["viewer"]["page_mapped"] and P["'"$vp"'"]["viewer"]["git"] > 0')" = True ]
+hl_check "V1 a git-status: viewer split opens on show, its page mapped, polling git" $? "split: $o | $r"
+v() { q "$(seen)" 'P["'"$vp"'"]["viewer"]["'"$1"'"]'; }
+g0=$(v git); sleep 5; g1=$(v git)
+[ -n "$vp" ] && [ "${g1:-0}" -gt "${g0:-0}" ]
+hl_check "V2 shown, the pane keeps asking git (git processes $g0 -> $g1 over 5s)" $? "g0=$g0 g1=$g1"
+
+r=$(seen --toplevel=minimized)
+[ -n "$vp" ] && [ "$(q "$r" 'not P["'"$vp"'"]["viewer"]["on_show"] and not P["'"$vp"'"]["viewer"]["page_mapped"] and P["'"$vp"'"]["mapped"]')" = True ]
+hl_check "V3 minimized: the viewer is off show and its web view unmapped, though its pane stays mapped" $? "$r"
+sleep 0.5
+g0=$(v git); s0=$(v skipped_polls); c0=$(v catch_ups)
+echo three >> "$repo/a.txt"
+sleep 5
+g1=$(v git); s1=$(v skipped_polls)
+[ -n "$vp" ] && [ "${g1:--1}" = "${g0:--2}" ] && [ $(( ${s1:-0} - ${s0:-0} )) -ge 2 ]
+hl_check "V4 minimized: every poll tick is skipped and no git runs (git $g0 -> $g1, skipped $s0 -> $s1 over 5s)" $? "g0=$g0 g1=$g1 s0=$s0 s1=$s1"
+
+r=$(seen --toplevel=shown)
+c1=""; g2=""
+for _ in $(seq 1 10); do
+    c1=$(v catch_ups); g2=$(v git)
+    [ "${c1:-0}" -gt "${c0:-0}" ] && [ "${g2:-0}" -gt "${g1:-0}" ] && break
+    sleep 0.1
+done
+[ -n "$vp" ] && [ "${c1:-0}" = $(( ${c0:-0} + 1 )) ] && [ "${g2:-0}" -gt "${g1:-0}" ] && [ "$(v page_mapped)" = True ] && [ "$(v on_show)" = True ]
+hl_check "V5 shown again: one catch-up asks git at once (catch-ups $c0 -> $c1, git $g1 -> $g2 within 1s) and the page maps" $? "c0=$c0 c1=$c1 g1=$g1 g2=$g2 $(seen)"
+grep -q "viewer: pane=$vp window seen=false" "$APP_LOG" && grep -q "viewer diff: pane=$vp shown again; catching up" "$APP_LOG"
+hl_check "V6 the app logs the viewer hidden and its catch-up" $? "$(grep -m4 "viewer: pane=\|catching up" "$APP_LOG" | tr '\n' '|')"
+
+r=$(seen --toplevel=suspended)
+[ -n "$vp" ] && [ "$(q "$r" 'not P["'"$vp"'"]["viewer"]["on_show"] and not P["'"$vp"'"]["viewer"]["page_mapped"]')" = True ]
+hl_check "V7 suspended: the viewer is off show and its web view unmapped" $? "$r"
+r=$(seen --toplevel=real)
+[ -n "$vp" ] && [ "$(q "$r" 'P["'"$vp"'"]["viewer"]["on_show"] and P["'"$vp"'"]["viewer"]["page_mapped"]')" = True ]
+hl_check "V8 back to the compositor's own state, the viewer is on show again" $? "$r"
 
 rm -f "$busy_py" "$shot"
 hl_finish "$L"

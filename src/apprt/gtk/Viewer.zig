@@ -151,6 +151,10 @@ page_live: bool = false,
 /// pane is unmapped is owed until it maps).
 watch: Watch = .{},
 file_gate: reload_gate.Gate = .{},
+/// The pane's window cannot be seen - minimized or suspended (T3643,
+/// docs/reference/background-windows.md). The box stays mapped then, so
+/// mapped alone cannot tell; the hosting Surface pushes this in.
+window_hidden: bool = false,
 /// Restarts spent on a dying web process (Mac: 3 in 60 s).
 restarts: reload_policy.Budget = .{},
 /// How many times a dead web process was reloaded; the tests read it.
@@ -613,7 +617,7 @@ fn onFileSaved(ctx: *anyopaque) void {
 /// The watcher's debounced save landed, through the T3037 gate.
 fn fileSaved(self: *Viewer) void {
     const path = self.file_path orelse return;
-    const shown = wk.gtk_widget_get_mapped(self.box) != 0;
+    const shown = self.isOnShow();
     // An unmapped pane does not even stat: a writer saving ten times a
     // second must cost a hidden pane nothing but this branch.
     const now = if (shown) fileStamp(path) else null;
@@ -629,7 +633,38 @@ fn fileSaved(self: *Viewer) void {
 
 fn onMapped(_: *wk.GtkWidget, ud: ?*anyopaque) callconv(.c) void {
     const self: *Viewer = @ptrCast(@alignCast(ud orelse return));
+    self.caughtUp();
+}
+
+/// Whether anyone can see this pane (Mac's `isOnShow`): its box is mapped
+/// (not stashed, not in a background tab) and its window is seen.
+pub fn isOnShow(self: *const Viewer) bool {
+    return !self.window_hidden and wk.gtk_widget_get_mapped(self.box) != 0;
+}
+
+/// The pane just came on show: one catch-up, not a replay - a save owed
+/// while hidden renders, a working-tree diff re-asks git now rather than at
+/// its next tick.
+fn caughtUp(self: *Viewer) void {
+    if (!self.isOnShow()) return;
     if (self.file_gate.reveal()) self.fileSaved();
+    self.diff.catchUp(self);
+}
+
+/// The hosting pane's window became seen or stopped being seen (T3643;
+/// docs/reference/background-windows.md rows "git-status: pane poll" and
+/// "Animated image"). Hidden, the web view is taken off screen with
+/// `gtk_widget_set_child_visible`, which unmaps it without touching the
+/// layout: WebKit then reads the page as hidden (`document.visibilityState`)
+/// and stops its animations - a GIF holds its frame - whatever the
+/// compositor told WebKit about the toplevel. Shown again it maps, repaints
+/// and catches up once.
+pub fn setWindowSeen(self: *Viewer, seen: bool) void {
+    if (self.window_hidden == !seen) return;
+    self.window_hidden = !seen;
+    wk.gtk_widget_set_child_visible(wk.asWidget(self.view), @intFromBool(seen));
+    log.info("viewer: pane={s} window seen={}", .{ self.pane_id orelse "?", seen });
+    if (seen) self.caughtUp();
 }
 
 // -------------------------------------------------------------------------

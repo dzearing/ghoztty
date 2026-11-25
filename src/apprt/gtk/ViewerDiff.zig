@@ -78,6 +78,10 @@ collapsed: std.ArrayList([]u8) = .empty,
 filter: std.ArrayList(u8) = .empty,
 /// The working-tree poll's timer, 0 when none runs.
 poll_id: c_uint = 0,
+/// Poll ticks skipped because nobody could see the pane, and catch-ups run
+/// as it came back on show (T3643); the tests read both.
+skipped_polls: u32 = 0,
+catch_ups: u32 = 0,
 /// Counters the steps runner reports.
 listings: u32 = 0,
 patches: u32 = 0,
@@ -326,13 +330,28 @@ fn onPollTick(data: ?*anyopaque) callconv(.c) c_int {
         self.poll_id = 0;
         return 0;
     }
-    // Nobody can see it (stashed, in a hidden tab, minimized): skip the turn
-    // rather than spawn git for nothing (Mac's `isOnShow`). A tick that lands
-    // while git is still out is dropped by the probe itself.
-    if (wk.gtk_widget_get_mapped(v.box) == 0 or !v.page_live) return 1;
+    // Nobody can see it (stashed, in a hidden tab, its window minimized or
+    // suspended - T3643): skip the turn rather than spawn git for nothing
+    // (Mac's `isOnShow`). A tick that lands while git is still out is dropped
+    // by the probe itself.
+    if (!v.isOnShow() or !v.page_live) {
+        self.skipped_polls +|= 1;
+        return 1;
+    }
     const probe = if (self.probe) |*p| p else return 1;
     probe.pollListing(v.current, self.origin_dir);
     return 1;
+}
+
+/// The pane came on show (Viewer.caughtUp): a working-tree diff asks git
+/// once now, so what changed while it was hidden shows at once rather than
+/// at the next tick (Mac `ViewerDiffPaneTests.aHiddenWorkingTreeDiffCatchesUpWhenShown`).
+pub fn catchUp(self: *ViewerDiff, v: *Viewer) void {
+    if (self.poll_id == 0 or !v.page_live or !v.isOnShow()) return;
+    const probe = if (self.probe) |*p| p else return;
+    self.catch_ups +|= 1;
+    log.info("viewer diff: pane={s} shown again; catching up", .{v.pane_id orelse "?"});
+    probe.pollListing(v.current, self.origin_dir);
 }
 
 // -------------------------------------------------------------------------
