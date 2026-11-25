@@ -3372,6 +3372,7 @@ test {
     _ = @import("../run_key.zig");
     _ = @import("descendants.zig");
     _ = @import("proc.zig");
+    _ = @import("viewer_grants.zig");
     // The shared test-wait helpers. Their own tests ran in NO lane until T436:
     // the re-export in `test_util.zig` references the decls, which is not the
     // same as referencing the container, so the file's `test` blocks were

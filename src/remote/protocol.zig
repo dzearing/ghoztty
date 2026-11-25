@@ -59,6 +59,7 @@
 //! | v1 | `holder_lost` | `EXIT.lost` for a bound session whose host died; `RELAUNCH.fresh_shell` / `.replay_from` | the pane closes as if its program finished |
 //! | v1 | `session_taken` | `DETACHED{taken}` on a session's own channel when another viewer attaches it | the losing pane is not told (its stream just stops) |
 //! | v1 | `app_ipc` | `APP_REQUEST` 0x80 / `APP_RESPONSE` 0x81: a session's `+verb` reaches the app showing it | no proxy; the child keeps the baked local `GHOZTTY_IPC_SOCKET` |
+//! | v1 | `viewer_fetch` | `VIEWER_OPEN`..`VIEWER_CHANGED` 0x82-0x87: a viewer reads a file on the agent's machine, scoped to a granted directory | a remote `--view` cannot be shown (the app says so) |
 //!
 //! Two rules make that table load-bearing rather than decorative:
 //!
@@ -260,6 +261,21 @@ pub const FrameType = enum(u8) {
     // a peer that does not know them).
     app_request = 0x80, // A→C  {session_id, req_id, request}
     app_response = 0x81, // C→A  {session_id, req_id, response?, error?}
+
+    // Tunnelled file viewers (T2219; docs/design/remote-viewer-tunnel.md
+    // decisions 1 and 4). A viewer showing a file that lives on the agent's
+    // machine reads it through the agent instead of from local disk. OPEN
+    // grants the file's directory and answers with a grant id; every FETCH
+    // names a grant and a path relative to its root, so the page can load its
+    // relative pictures and linked `.md` files but nothing outside that
+    // directory. Same-channel replies, like `proc_list`. Gated on
+    // `capability.viewer_fetch`.
+    viewer_open = 0x82, // C→A  {path}
+    viewer_opened = 0x83, // A→C  {ok, grant?, root?, name?, size?, error?}
+    viewer_fetch = 0x84, // C→A  {grant, path, offset, max_len}
+    viewer_data = 0x85, // A→C  {ok, size, offset, data, eof, error?}
+    viewer_close = 0x86, // C→A  {grant}
+    viewer_changed = 0x87, // A→C  push on control: {grant, path}
 };
 
 /// True for the frame types that ride the DATA lane (§4.3). Everything else
@@ -323,6 +339,9 @@ pub fn isRpcReply(t: FrameType) bool {
         .proc_kill_result,
         .proc_spawn_result,
         .close_session_result,
+        // Tunnelled viewer reads (T2219), answered on the request channel.
+        .viewer_opened,
+        .viewer_data,
         => true,
 
         // Requests (C→A), pushes (A→C), and the stream/heartbeat/flow
@@ -377,6 +396,11 @@ pub fn isRpcReply(t: FrameType) bool {
         // `app_response` is parked on by the AGENT's proxy, not by `rpcCall`.
         .app_request,
         .app_response,
+        // Tunnelled viewer requests (C→A) and the live-reload push (A→C).
+        .viewer_open,
+        .viewer_fetch,
+        .viewer_close,
+        .viewer_changed,
         => false,
     };
 }
@@ -948,6 +972,21 @@ pub const capability = struct {
     /// the child's env exactly as the app baked it; against an older agent the
     /// app keeps baking its local endpoint, as before.
     pub const app_ipc = "app_ipc";
+
+    /// **A viewer can show a file that lives on the agent's machine** (T2219;
+    /// docs/design/remote-viewer-tunnel.md decisions 1 and 4). The client sends
+    /// `VIEWER_OPEN` for a path on the agent's machine; the agent grants that
+    /// file's directory and answers `VIEWER_OPENED` with a grant id. Every
+    /// `VIEWER_FETCH` names a grant and a path RELATIVE to its root, and the
+    /// agent refuses anything that resolves outside it (`..`, an absolute
+    /// path, a link pointing out) or that is larger than
+    /// `max_viewer_file_bytes`. `VIEWER_CHANGED` is the live-reload push for a
+    /// granted file.
+    ///
+    /// Gated because all six are new opcodes. Without it the app cannot show a
+    /// remote file at all and says so; nothing falls back to local disk, which
+    /// would show a DIFFERENT file under the same name.
+    pub const viewer_fetch = "viewer_fetch";
 };
 
 /// The kind of pseudo-terminal a peer spawns its children on. Wire-visible
@@ -1185,6 +1224,10 @@ pub const Negotiated = struct {
     /// may host a per-session IPC proxy and send `APP_REQUEST`, and the app
     /// answers it. False against either older peer: no proxy, no rewrite.
     app_ipc: bool = false,
+
+    /// True iff BOTH peers advertised `capability.viewer_fetch` (T2219) — the
+    /// client may read files on the agent's machine through granted roots.
+    viewer_fetch: bool = false,
 };
 
 /// True iff `caps` contains the capability string `name`.
@@ -1245,6 +1288,8 @@ pub fn negotiate(local: Hello, remote: Hello) ProtocolError!Negotiated {
             hasCapability(remote.capabilities, capability.session_taken),
         .app_ipc = hasCapability(local.capabilities, capability.app_ipc) and
             hasCapability(remote.capabilities, capability.app_ipc),
+        .viewer_fetch = hasCapability(local.capabilities, capability.viewer_fetch) and
+            hasCapability(remote.capabilities, capability.viewer_fetch),
     };
 }
 
@@ -1710,6 +1755,108 @@ pub const AppResponse = struct {
     pub fn isWellFormed(self: AppResponse) bool {
         return (self.response == null) != (self.@"error" == null);
     }
+};
+
+/// The largest file a tunnelled viewer will fetch (T2219). The SAME 32 MiB the
+/// local win32 viewer renders at most (`apprt/win32/viewer_content.zig`
+/// `max_file_bytes`), so a file is never viewable from one machine and refused
+/// from another. The agent refuses a larger one before reading a byte.
+pub const max_viewer_file_bytes: u64 = 32 * 1024 * 1024;
+
+/// The most raw file bytes one `VIEWER_DATA` carries (T2219). Base64 makes it
+/// about 1.4 MiB on the wire - far under `max_frame_len` - and keeps one big
+/// file from holding the control lane long enough to delay a ping or another
+/// pane's reply. The client pulls a file in pieces of at most this.
+pub const max_viewer_chunk_bytes: u32 = 1024 * 1024;
+
+/// The most grants one connection may hold open at once (T2219). A grant is
+/// one directory path in the agent's memory; the bound keeps a client that
+/// opens and never closes from growing it without limit. Nothing is evicted:
+/// an over-limit OPEN is refused, so a live viewer never loses its root.
+pub const max_viewer_grants: usize = 64;
+
+/// Why the agent refused a viewer request (T2219). Wire strings; a client that
+/// meets one it does not know shows the bare string.
+pub const ViewerError = struct {
+    /// Nothing at that path, or the path names a directory.
+    pub const not_found = "not_found";
+    /// The path resolves outside the grant's root (`..`, an absolute path, a
+    /// drive-relative path, or a link that points out of it).
+    pub const outside_root = "outside_root";
+    /// Bigger than `max_viewer_file_bytes`.
+    pub const too_large = "too_large";
+    /// The grant id is not open on this connection (closed, or never granted).
+    pub const no_grant = "no_grant";
+    /// This connection already holds `max_viewer_grants` grants.
+    pub const too_many_grants = "too_many_grants";
+    /// `VIEWER_OPEN` with a path that is not absolute on the agent's machine.
+    pub const not_absolute = "not_absolute";
+    /// The request did not parse.
+    pub const bad_request = "bad_request";
+    /// The OS refused the read (permissions, a sharing violation).
+    pub const read_failed = "read_failed";
+};
+
+/// `VIEWER_OPEN` (0x82, C→A; T2219).
+pub const ViewerOpen = struct {
+    /// Absolute path of the file on the AGENT's machine, in that machine's
+    /// own spelling.
+    path: []const u8,
+};
+
+/// `VIEWER_OPENED` (0x83, A→C; T2219), on the request channel.
+pub const ViewerOpened = struct {
+    ok: bool,
+    /// Names the grant in later `VIEWER_FETCH` / `VIEWER_CLOSE`. Set iff `ok`.
+    grant: ?u64 = null,
+    /// The granted directory, resolved on the agent's machine (links
+    /// followed). Informational: the client never builds a path from it.
+    root: ?[]const u8 = null,
+    /// The opened file's name inside `root` - what the client passes as
+    /// `VIEWER_FETCH.path` to read the file itself.
+    name: ?[]const u8 = null,
+    /// The opened file's size in bytes.
+    size: ?u64 = null,
+    /// A `ViewerError` string when `!ok`.
+    @"error": ?[]const u8 = null,
+};
+
+/// `VIEWER_FETCH` (0x84, C→A; T2219).
+pub const ViewerFetch = struct {
+    grant: u64,
+    /// Relative to the grant's root, `/`-separated (a page's own link, decoded).
+    path: []const u8,
+    offset: u64 = 0,
+    /// Capped at `max_viewer_chunk_bytes` by the agent whatever is asked.
+    max_len: u32 = max_viewer_chunk_bytes,
+};
+
+/// `VIEWER_DATA` (0x85, A→C; T2219), on the request channel.
+pub const ViewerData = struct {
+    ok: bool,
+    /// The whole file's size, so the client knows how many pulls remain.
+    size: u64 = 0,
+    /// Where `data` starts in the file.
+    offset: u64 = 0,
+    /// The bytes, base64 (standard alphabet, padded): JSON strings cannot
+    /// carry arbitrary bytes.
+    data: []const u8 = "",
+    /// True when `offset` plus the decoded length of `data` reaches `size`.
+    eof: bool = false,
+    @"error": ?[]const u8 = null,
+};
+
+/// `VIEWER_CLOSE` (0x86, C→A; T2219). No reply: closing an unknown grant is
+/// a no-op, so a pane closing twice cannot fail.
+pub const ViewerClose = struct {
+    grant: u64,
+};
+
+/// `VIEWER_CHANGED` (0x87, A→C push on the control channel; T2219): a file
+/// under a grant changed on disk; the viewer showing it re-fetches.
+pub const ViewerChanged = struct {
+    grant: u64,
+    path: []const u8,
 };
 
 /// `META` (0x21). All fields optional; `listening_ports` powers auto-forward
@@ -3699,6 +3846,64 @@ test "T2217 app_ipc negotiates on the intersection; APP_REQUEST/APP_RESPONSE fra
 
     try testing.expect(!(AppResponse{ .session_id = "s", .req_id = 1 }).isWellFormed());
     try testing.expect(!(AppResponse{ .session_id = "s", .req_id = 1, .response = "a", .@"error" = "b" }).isWellFormed());
+}
+
+test "T2219 viewer_fetch negotiates on the intersection; viewer frames lane, reply set and round-trip" {
+    const alloc = testing.allocator;
+    const both = [_][]const u8{capability.viewer_fetch};
+    const other = [_][]const u8{capability.app_ipc};
+
+    try testing.expect((try negotiate(
+        .{ .transfer_encoding = .raw, .capabilities = &both },
+        .{ .transfer_encoding = .raw, .capabilities = &both },
+    )).viewer_fetch);
+    try testing.expect(!(try negotiate(
+        .{ .transfer_encoding = .raw, .capabilities = &both },
+        .{ .transfer_encoding = .raw, .capabilities = &other },
+    )).viewer_fetch);
+    try testing.expect(!(try negotiate(
+        .{ .transfer_encoding = .raw, .capabilities = &other },
+        .{ .transfer_encoding = .raw, .capabilities = &both },
+    )).viewer_fetch);
+
+    // All ride control; only the two answers are parked-on replies.
+    for ([_]FrameType{ .viewer_open, .viewer_opened, .viewer_fetch, .viewer_data, .viewer_close, .viewer_changed }) |t| {
+        try testing.expect(!onDataLane(t));
+    }
+    try testing.expect(isRpcReply(.viewer_opened));
+    try testing.expect(isRpcReply(.viewer_data));
+    try testing.expect(!isRpcReply(.viewer_open));
+    try testing.expect(!isRpcReply(.viewer_fetch));
+    try testing.expect(!isRpcReply(.viewer_close));
+    try testing.expect(!isRpcReply(.viewer_changed));
+
+    // A full chunk, base64'd, still fits one frame with room to spare.
+    try testing.expect(std.base64.standard.Encoder.calcSize(max_viewer_chunk_bytes) + 512 < max_frame_len);
+
+    // FETCH defaults: offset 0, one full chunk.
+    var f = try parseJson(ViewerFetch, alloc,
+        \\{"grant":3,"path":"img/a b.png"}
+    );
+    defer f.deinit();
+    try testing.expectEqual(@as(u64, 3), f.value.grant);
+    try testing.expectEqualStrings("img/a b.png", f.value.path);
+    try testing.expectEqual(@as(u64, 0), f.value.offset);
+    try testing.expectEqual(max_viewer_chunk_bytes, f.value.max_len);
+
+    // OPENED / DATA round-trip, unknown fields tolerated (additive evolution).
+    const enc = try encodeJson(alloc, ViewerOpened{ .ok = true, .grant = 9, .root = "/home/me/docs", .name = "README.md", .size = 12 });
+    defer alloc.free(enc);
+    var o = try parseJson(ViewerOpened, alloc, enc);
+    defer o.deinit();
+    try testing.expectEqual(@as(?u64, 9), o.value.grant);
+    try testing.expectEqualStrings("README.md", o.value.name.?);
+
+    var d = try parseJson(ViewerData, alloc,
+        \\{"ok":false,"error":"outside_root","later":true}
+    );
+    defer d.deinit();
+    try testing.expect(!d.value.ok);
+    try testing.expectEqualStrings(ViewerError.outside_root, d.value.@"error".?);
 }
 
 test "T1793 holder_lost negotiates on the intersection; EXIT.lost and the RELAUNCH fields are additive" {

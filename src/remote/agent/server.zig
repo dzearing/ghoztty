@@ -65,6 +65,7 @@ const protocol = @import("../protocol.zig");
 const session = @import("session.zig");
 const metrics = @import("metrics.zig");
 const proc = @import("proc.zig");
+const viewer_grants = @import("viewer_grants.zig");
 const descendants = @import("descendants.zig");
 const proc_control = @import("proc_control.zig");
 const relay_perf = @import("relay_perf.zig");
@@ -434,6 +435,10 @@ pub const Server = struct {
     /// Owned by the Server; init in `create`, freed in `destroy`.
     proc_sampler: proc.ProcSampler = undefined,
 
+    /// The directories this connection's tunnelled viewers were granted
+    /// (T2219). Touched only from the control reader; freed in `destroy`.
+    viewer_grants: viewer_grants.Grants = undefined,
+
     /// Per-session ring size (from Options), read by `create`'s table inserts.
     ring_bytes: usize = session.default_ring_bytes,
 
@@ -611,6 +616,9 @@ pub const Server = struct {
         // A viewer whose bound session another connection ATTACHes is told so
         // with a per-channel `DETACHED{taken}` (T1506).
         protocol.capability.session_taken,
+        // A viewer on the client can show a file on THIS machine, read through
+        // a granted directory and never outside it (T2219).
+        protocol.capability.viewer_fetch,
     };
 
     pub const Options = struct {
@@ -690,6 +698,7 @@ pub const Server = struct {
         self.local_hello.capabilities = self.advertised_caps[0..n];
 
         self.proc_sampler = proc.ProcSampler.init(alloc);
+        self.viewer_grants = viewer_grants.Grants.init(alloc);
         return self;
     }
 
@@ -829,6 +838,7 @@ pub const Server = struct {
         // A still-linked listener would leave the store notifying freed memory.
         assert(!self.roster_listener.linked);
         self.proc_sampler.deinit();
+        self.viewer_grants.deinit();
         self.bound_channels.deinit(self.alloc);
         for (self.write_queue.items) |f| self.alloc.free(f.payload);
         self.write_queue.deinit(self.alloc);
@@ -1325,6 +1335,9 @@ pub const Server = struct {
             .proc_list => self.handleProcList(frame.channel, frame.payload),
             .proc_kill => self.handleProcKill(frame.channel, frame.payload),
             .proc_spawn => self.handleProcSpawn(frame.channel, frame.payload),
+            .viewer_open => self.handleViewerOpen(frame.channel, frame.payload),
+            .viewer_fetch => self.handleViewerFetch(frame.channel, frame.payload),
+            .viewer_close => self.handleViewerClose(frame.payload),
             // The remaining types are agent→client replies (the agent produces
             // them) or out of scope: ignore.
             else => {},
@@ -3032,6 +3045,111 @@ pub const Server = struct {
     ///
     /// All proc strings are owned by `self.alloc`; we free them (and the list) after
     /// `sendJson` has encoded the snapshot to JSON. On any error we reply `ok=false`.
+    /// Whether this connection negotiated tunnelled viewers (T2219). The
+    /// replies are new opcodes, which an older peer would read as a fatal
+    /// framing error, so nothing is answered without it.
+    fn viewerFetchNegotiated(self: *Server) bool {
+        return if (self.negotiated) |n| n.viewer_fetch else |_| false;
+    }
+
+    /// `VIEWER_OPEN` (T2219): grant the named file's directory and answer
+    /// `VIEWER_OPENED` on the request channel. Policy: `viewer_grants.zig`.
+    fn handleViewerOpen(self: *Server, channel: u128, payload: []const u8) void {
+        if (!self.viewerFetchNegotiated()) return;
+        var parsed = protocol.parseJson(protocol.ViewerOpen, self.alloc, payload) catch {
+            self.sendJson(.viewer_opened, channel, protocol.ViewerOpened{
+                .ok = false,
+                .@"error" = protocol.ViewerError.bad_request,
+            }) catch {};
+            return;
+        };
+        defer parsed.deinit();
+
+        const result = self.viewer_grants.open(parsed.value.path) catch {
+            self.sendJson(.viewer_opened, channel, protocol.ViewerOpened{
+                .ok = false,
+                .@"error" = protocol.ViewerError.read_failed,
+            }) catch {};
+            return;
+        };
+        switch (result) {
+            .ok => |o| {
+                defer self.alloc.free(o.name);
+                self.sendJson(.viewer_opened, channel, protocol.ViewerOpened{
+                    .ok = true,
+                    .grant = o.grant,
+                    .root = o.root,
+                    .name = o.name,
+                    .size = o.size,
+                }) catch {
+                    // The client never learns the id, so nothing could ever
+                    // close it: drop the grant rather than leak it.
+                    self.viewer_grants.close(o.grant);
+                };
+            },
+            .refused => |why| self.sendJson(.viewer_opened, channel, protocol.ViewerOpened{
+                .ok = false,
+                .@"error" = why,
+            }) catch {},
+        }
+    }
+
+    /// `VIEWER_FETCH` (T2219): one piece of a file under a grant, base64'd,
+    /// answered `VIEWER_DATA` on the request channel.
+    fn handleViewerFetch(self: *Server, channel: u128, payload: []const u8) void {
+        if (!self.viewerFetchNegotiated()) return;
+        var parsed = protocol.parseJson(protocol.ViewerFetch, self.alloc, payload) catch {
+            self.sendJson(.viewer_data, channel, protocol.ViewerData{
+                .ok = false,
+                .@"error" = protocol.ViewerError.bad_request,
+            }) catch {};
+            return;
+        };
+        defer parsed.deinit();
+        const req = parsed.value;
+
+        const result = self.viewer_grants.read(req.grant, req.path, req.offset, req.max_len) catch {
+            self.sendJson(.viewer_data, channel, protocol.ViewerData{
+                .ok = false,
+                .@"error" = protocol.ViewerError.read_failed,
+            }) catch {};
+            return;
+        };
+        switch (result) {
+            .ok => |c| {
+                defer self.alloc.free(c.bytes);
+                const enc = std.base64.standard.Encoder;
+                const b64 = self.alloc.alloc(u8, enc.calcSize(c.bytes.len)) catch {
+                    self.sendJson(.viewer_data, channel, protocol.ViewerData{
+                        .ok = false,
+                        .@"error" = protocol.ViewerError.read_failed,
+                    }) catch {};
+                    return;
+                };
+                defer self.alloc.free(b64);
+                _ = enc.encode(b64, c.bytes);
+                self.sendJson(.viewer_data, channel, protocol.ViewerData{
+                    .ok = true,
+                    .size = c.size,
+                    .offset = c.offset,
+                    .data = b64,
+                    .eof = c.eof,
+                }) catch {};
+            },
+            .refused => |why| self.sendJson(.viewer_data, channel, protocol.ViewerData{
+                .ok = false,
+                .@"error" = why,
+            }) catch {},
+        }
+    }
+
+    /// `VIEWER_CLOSE` (T2219): drop a grant. No reply; unknown ids are a no-op.
+    fn handleViewerClose(self: *Server, payload: []const u8) void {
+        var parsed = protocol.parseJson(protocol.ViewerClose, self.alloc, payload) catch return;
+        defer parsed.deinit();
+        self.viewer_grants.close(parsed.value.grant);
+    }
+
     fn handleProcList(self: *Server, channel: u128, payload: []const u8) void {
         var parsed = protocol.parseJson(protocol.ProcList, self.alloc, payload) catch {
             self.sendJson(.proc_snapshot, channel, protocol.ProcSnapshot{ .ok = false }) catch {};
@@ -5019,6 +5137,111 @@ test "PROC_LIST→PROC_SNAPSHOT: agent enumerates real processes on the request 
     try testing.expect(saw_named);
     // ncpu is read directly each host sample → > 0 on a real machine.
     try testing.expect(parsed.value.host.ncpu >= 1);
+}
+
+test "T2219 VIEWER_OPEN/FETCH/CLOSE: a granted file reads in pieces on the request channel; out-of-root is refused" {
+    const alloc = testing.allocator;
+    var clock: TestClock = .{};
+    var sp: FakeSpawner = .{ .children = &.{} };
+    var prng = std.Random.DefaultPrng.init(2219);
+
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.makePath("site");
+    {
+        var f = try tmp.dir.createFile("site/README.md", .{});
+        defer f.close();
+        try f.writeAll("hello, remote");
+    }
+    const base = try tmp.dir.realpathAlloc(alloc, ".");
+    defer alloc.free(base);
+    const readme = try std.fs.path.join(alloc, &.{ base, "site", "README.md" });
+    defer alloc.free(readme);
+
+    var h = try Harness.init(alloc, .raw, &clock, &sp, 4096, prng.random());
+    defer h.deinit();
+    try h.server.start();
+    try h.client.handshakeCaps(&.{protocol.capability.viewer_fetch});
+    try testing.expect((try h.server.waitHandshake()).viewer_fetch);
+
+    const ch: u128 = 0x2219_0001;
+    try h.client.sendControlJson(.viewer_open, ch, protocol.ViewerOpen{ .path = readme });
+    const opened_f = try h.client.waitControl(.viewer_opened);
+    try testing.expectEqual(ch, opened_f.channel);
+    var opened = try protocol.parseJson(protocol.ViewerOpened, alloc, opened_f.payload);
+    defer opened.deinit();
+    try testing.expect(opened.value.ok);
+    try testing.expectEqualStrings("README.md", opened.value.name.?);
+    try testing.expectEqual(@as(?u64, 13), opened.value.size);
+    const grant = opened.value.grant.?;
+
+    // Two pieces: 5 bytes, then the rest with eof.
+    try h.client.sendControlJson(.viewer_fetch, ch, protocol.ViewerFetch{ .grant = grant, .path = "README.md", .max_len = 5 });
+    {
+        const f = try h.client.waitControl(.viewer_data);
+        var d = try protocol.parseJson(protocol.ViewerData, alloc, f.payload);
+        defer d.deinit();
+        try testing.expect(d.value.ok and !d.value.eof);
+        var raw: [16]u8 = undefined;
+        const n = try std.base64.standard.Decoder.calcSizeForSlice(d.value.data);
+        try std.base64.standard.Decoder.decode(raw[0..n], d.value.data);
+        try testing.expectEqualStrings("hello", raw[0..n]);
+    }
+    try h.client.sendControlJson(.viewer_fetch, ch, protocol.ViewerFetch{ .grant = grant, .path = "README.md", .offset = 5 });
+    {
+        const f = try h.client.waitControl(.viewer_data);
+        var d = try protocol.parseJson(protocol.ViewerData, alloc, f.payload);
+        defer d.deinit();
+        try testing.expect(d.value.ok and d.value.eof);
+        var raw: [16]u8 = undefined;
+        const n = try std.base64.standard.Decoder.calcSizeForSlice(d.value.data);
+        try std.base64.standard.Decoder.decode(raw[0..n], d.value.data);
+        try testing.expectEqualStrings(", remote", raw[0..n]);
+    }
+
+    // Outside the root: refused, and the reason says so.
+    try h.client.sendControlJson(.viewer_fetch, ch, protocol.ViewerFetch{ .grant = grant, .path = "../site/../../x" });
+    {
+        const f = try h.client.waitControl(.viewer_data);
+        var d = try protocol.parseJson(protocol.ViewerData, alloc, f.payload);
+        defer d.deinit();
+        try testing.expect(!d.value.ok);
+        try testing.expectEqualStrings(protocol.ViewerError.outside_root, d.value.@"error".?);
+    }
+
+    // Closed: the grant reads nothing.
+    try h.client.sendControlJson(.viewer_close, protocol.control_channel, protocol.ViewerClose{ .grant = grant });
+    try h.client.sendControlJson(.viewer_fetch, ch, protocol.ViewerFetch{ .grant = grant, .path = "README.md" });
+    {
+        const f = try h.client.waitControl(.viewer_data);
+        var d = try protocol.parseJson(protocol.ViewerData, alloc, f.payload);
+        defer d.deinit();
+        try testing.expectEqualStrings(protocol.ViewerError.no_grant, d.value.@"error".?);
+    }
+}
+
+test "T2219 VIEWER_OPEN from a peer that did not negotiate viewer_fetch is never answered" {
+    const alloc = testing.allocator;
+    var clock: TestClock = .{};
+    var sp: FakeSpawner = .{ .children = &.{} };
+    var prng = std.Random.DefaultPrng.init(22190);
+
+    var h = try Harness.init(alloc, .raw, &clock, &sp, 4096, prng.random());
+    defer h.deinit();
+    try h.server.start();
+    try h.client.handshake();
+    try testing.expect(!(try h.server.waitHandshake()).viewer_fetch);
+
+    // An older peer must never see the new opcode (a fatal framing error to
+    // it). The PROC_LIST behind it is answered, so the control reader has
+    // passed the OPEN by the time its answer arrives.
+    try h.client.sendControlJson(.viewer_open, 0x2219_0002, protocol.ViewerOpen{ .path = "/x" });
+    try h.client.sendControlJson(.proc_list, 0x2219_0003, protocol.ProcList{ .limit = 1 });
+    while (true) {
+        const f = (try h.client.nextControl()) orelse return error.Eof;
+        try testing.expect(f.type != .viewer_opened);
+        if (f.type == .proc_snapshot) break;
+    }
 }
 
 test "PROC_SPAWN→PROC_SPAWN_RESULT then PROC_KILL→PROC_KILL_RESULT round-trip" {
