@@ -153,48 +153,48 @@ pub fn evenFor(kind: Kind) Even {
 
 // ---------------------------------------------------------------------------
 
-fn r(l: i32, t: i32, rt: i32, b: i32) PxRect {
+fn px(l: i32, t: i32, rt: i32, b: i32) PxRect {
     return .{ .left = l, .top = t, .right = rt, .bottom = b };
 }
 
 test "a divider still laid out keeps its bar, wherever it went" {
     const gs = [_]Gutter{
-        .{ .kind = .grip, .direction = .horizontal, .rect = r(300, 0, 310, 400) },
-        .{ .kind = .divider, .direction = .horizontal, .rect = r(700, 0, 710, 400), .node = 4 },
+        .{ .kind = .grip, .direction = .horizontal, .rect = px(300, 0, 310, 400) },
+        .{ .kind = .divider, .direction = .horizontal, .rect = px(700, 0, 710, 400), .node = 4 },
     };
-    const i = place(&gs, .{ .kind = .divider, .direction = .horizontal, .node = 4 }, r(300, 0, 310, 400)).?;
+    const i = place(&gs, .{ .kind = .divider, .direction = .horizontal, .node = 4 }, px(300, 0, 310, 400)).?;
     try testing.expectEqual(@as(usize, 1), i);
 }
 
 test "a divider folded into a stack hands its bar to the grip nearest where it was" {
     const gs = [_]Gutter{
-        .{ .kind = .edge, .direction = .horizontal, .rect = r(36, 0, 46, 400) },
-        .{ .kind = .grip, .direction = .horizontal, .rect = r(500, 0, 510, 400) },
-        .{ .kind = .edge, .direction = .horizontal, .rect = r(900, 0, 910, 400) },
+        .{ .kind = .edge, .direction = .horizontal, .rect = px(36, 0, 46, 400) },
+        .{ .kind = .grip, .direction = .horizontal, .rect = px(500, 0, 510, 400) },
+        .{ .kind = .edge, .direction = .horizontal, .rect = px(900, 0, 910, 400) },
     };
-    const i = place(&gs, .{ .kind = .divider, .direction = .horizontal, .node = 9 }, r(480, 0, 490, 400)).?;
+    const i = place(&gs, .{ .kind = .divider, .direction = .horizontal, .node = 9 }, px(480, 0, 490, 400)).?;
     try testing.expectEqual(@as(usize, 1), i);
 }
 
 test "a grip's bar follows the gutter nearest where it was, not one in another row" {
     const gs = [_]Gutter{
         // Same x, but in the row below: not this drag's.
-        .{ .kind = .grip, .direction = .horizontal, .rect = r(410, 500, 420, 900) },
-        .{ .kind = .grip, .direction = .horizontal, .rect = r(440, 0, 450, 400) },
+        .{ .kind = .grip, .direction = .horizontal, .rect = px(410, 500, 420, 900) },
+        .{ .kind = .grip, .direction = .horizontal, .rect = px(440, 0, 450, 400) },
         // Running the other way: never.
-        .{ .kind = .divider, .direction = .vertical, .rect = r(0, 400, 900, 410), .node = 1 },
+        .{ .kind = .divider, .direction = .vertical, .rect = px(0, 400, 900, 410), .node = 1 },
     };
-    const i = place(&gs, .{ .kind = .grip, .direction = .horizontal }, r(405, 0, 415, 400)).?;
+    const i = place(&gs, .{ .kind = .grip, .direction = .horizontal }, px(405, 0, 415, 400)).?;
     try testing.expectEqual(@as(usize, 1), i);
-    try testing.expect(place(gs[2..], .{ .kind = .grip, .direction = .horizontal }, r(405, 0, 415, 400)) == null);
+    try testing.expect(place(gs[2..], .{ .kind = .grip, .direction = .horizontal }, px(405, 0, 415, 400)) == null);
 }
 
 test "a tie goes to the gutter of the held kind" {
     const gs = [_]Gutter{
-        .{ .kind = .divider, .direction = .horizontal, .rect = r(390, 0, 400, 400), .node = 2 },
-        .{ .kind = .edge, .direction = .horizontal, .rect = r(410, 0, 420, 400) },
+        .{ .kind = .divider, .direction = .horizontal, .rect = px(390, 0, 400, 400), .node = 2 },
+        .{ .kind = .edge, .direction = .horizontal, .rect = px(410, 0, 420, 400) },
     };
-    const i = place(&gs, .{ .kind = .edge, .direction = .horizontal }, r(400, 0, 410, 400)).?;
+    const i = place(&gs, .{ .kind = .edge, .direction = .horizontal }, px(400, 0, 410, 400)).?;
     try testing.expectEqual(@as(usize, 1), i);
 }
 
@@ -213,10 +213,10 @@ test "one bar at a time: a drag's outranks the hover, and a lost gutter lights n
 }
 
 test "the bar is 4px down the middle of its gutter, its whole length" {
-    try testing.expectEqual(r(103, 0, 107, 400), barIn(r(100, 0, 110, 400), .horizontal));
-    try testing.expectEqual(r(0, 51, 800, 55), barIn(r(0, 50, 800, 56), .vertical));
+    try testing.expectEqual(px(103, 0, 107, 400), barIn(px(100, 0, 110, 400), .horizontal));
+    try testing.expectEqual(px(0, 51, 800, 55), barIn(px(0, 50, 800, 56), .vertical));
     // A gutter thinner than the bar keeps it inside.
-    const thin = barIn(r(10, 0, 12, 30), .horizontal);
+    const thin = barIn(px(10, 0, 12, 30), .horizontal);
     try testing.expect(thin.left >= 10 and thin.right <= 12);
 }
 
