@@ -816,3 +816,11 @@ as the digest that showed them.
 - Settings follows your own edits (a hand edit of the config file while Settings is open updates the window and points at the changed line)
 - Choose what a dropped file becomes (new angle on drag-and-drop: Shift+drop offers path, an @path agent mention, or the file's text)
 - Opening and closing panes all day leaves the session service light (new angle on "stays light after days open": the background service, measured per release over a thousand open/close cycles)
+
+## 2026-11-25
+
+- See what you missed while the link was down (new angle on remote panes that reconnect visibly: the pane's history marks where the connection dropped and came back, with the time away, and flags output that arrived in between)
+- Updates that change nothing you would see wait quietly (new angle on holding an update: a release carrying only test or Linux work rides along with the next Windows-visible one instead of being offered alone)
+- A page from another machine says whose localhost it is (a viewer showing a page fetched through another machine leads its address bar with that machine's name)
+- A new window opens on the screen your pointer is on (new windows from the keyboard or a script land on the monitor you are working on)
+- A page from another machine reloads from what it already has (unchanged pictures and scripts of a remote page are kept on this PC, so a reload over a slow link fetches only what changed)
