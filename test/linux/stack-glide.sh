@@ -222,7 +222,7 @@ sum(1 for p in A["panes"] if p["minimized"]) > sum(1 for p in B["panes"] if p["m
 and len(G) >= 3 and not A["gliding"]
 and all(p["drawn"] == p["frame"] for p in A["panes"] if not p["minimized"])')" = True ]
 hl_check "G17 a drag that folds a pane away glides it into its strip and settles after the release" $? \
-    "gutter=$gx,$gy $(judge "$samples" "$before" '[(t, s["gliding"], sum(p["minimized"] for p in s["panes"])) for t, s in S[:6]]')"
+    "gutter=$gx,$gy $(judge "$samples" "$before" '(sum(p["minimized"] for p in B["panes"]), [(t, s["gliding"], sum(p["minimized"] for p in s["panes"])) for t, s in S[:4]], len(G), A["gliding"], [(p["minimized"], p["drawn"], p["frame"]) for p in A["panes"]])')"
 
 # ---- 4. a pane mid-glide still renders, at the size it is held at ------------
 settle

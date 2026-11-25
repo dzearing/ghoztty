@@ -939,6 +939,22 @@ pub const SplitTree = extern struct {
             };
             n += 1;
         }
+        // A pane that closed while minimized holds nothing any more.
+        {
+            var stale: [pane_stack_slide.max_cards]pane_stack_layout.Id = undefined;
+            var k: usize = 0;
+            var hit = priv.held.keyIterator();
+            while (hit.next()) |key| {
+                const live = for (now[0..n]) |pl| {
+                    if (pl.id == key.*) break true;
+                } else false;
+                if (!live and k < stale.len) {
+                    stale[k] = key.*;
+                    k += 1;
+                }
+            }
+            for (stale[0..k]) |key| _ = priv.held.remove(key);
+        }
         const same_view = before.len > 0 and std.meta.eql(priv.placed_grid, rect);
         const gesturing = self.stackGesturing();
         if (!same_view) {
