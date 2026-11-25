@@ -253,29 +253,67 @@ function Get-HeroHwnd([IntPtr]$top) {
 
 # ---- capture helpers -------------------------------------------------------
 
-# Sampled pixel signature of the top window's region right of client x
-# $xMin - i.e. the carousel column. Screen coordinates are resolved to the
-# capture's own window coordinates once, then the grid is read straight off
-# the bitmap (a per-pixel Get-TestPixel over this many points is minutes, not
-# seconds). Returns @{ Sig = <hash>; Colors = <distinct colors sampled> } so
-# the caller can score "the capture held real content" as its own assertion -
-# a flat fill must never satisfy a pixel oracle (T216).
-function Get-RegionSignature([IntPtr]$top, [int]$xMin) {
+# Where hero_math.zig puts carousel tile `$index` while tile `$selected` is the
+# centered one (tileLayout + stripTop + tileRect, mirrored), in CLIENT
+# coordinates of the top window. Also returns the carousel's left side padding
+# - the outer 6% of the column that no tile reaches - as a static-chrome strip.
+# $hero is the hero pane's Get-Panes row; the column runs from one rim + the
+# divider right of it to the glass margin.
+function Get-HeroTileRect([IntPtr]$top, $hero, $client, [int]$selected, [int]$index) {
+    $dpi = Get-TestWindowDpi -Window $top
+    $rim = Get-HeroRimPx $dpi
+    $margin = Get-HeroMarginPx $dpi
+    $colLeft = $hero.Right + $rim + 8
+    $colTop = $hero.Top - $rim
+    $colW = $client[0] - $margin - $colLeft
+    $colH = $client[1] - $margin - $colTop
+    $ar = $hero.Width / [double]$hero.Height
+    $tw = 0.88 * $colW; $th = $tw / $ar
+    if ($th -gt 0.7 * $colH) { $th = 0.7 * $colH; $tw = $th * $ar; if ($tw -gt 0.88 * $colW) { $tw = 0.88 * $colW; $th = $tw / $ar } }
+    $tw = [int][math]::Round($tw); $th = [int][math]::Round($th)
+    $gap = [math]::Max([int][math]::Round(8.0 * $dpi / 96.0, [MidpointRounding]::AwayFromZero), 1)
+    $top0 = $colTop + [math]::Truncate($colH / 2) - ($selected * ($th + $gap) + [math]::Truncate($th / 2))
+    $x = $colLeft + [math]::Truncate(($colW - $tw) / 2)
+    $y = $top0 + $index * ($th + $gap)
+    return @{
+        Tile = @{ Left = $x; Top = $y; Right = $x + $tw; Bottom = $y + $th }
+        Pad  = @{ Left = $colLeft + 1; Top = $colTop + 40; Right = $x - 2; Bottom = $colTop + $colH - 40 }
+    }
+}
+
+# Sampled pixel signatures of client-coordinate rects of the top window, all
+# read off ONE synchronous capture so they describe the same frame. Each rect
+# is inset by $insetPct of its size on every side, so the mirrored geometry's
+# rounding and a tile's border / hover treatment never land in the sample.
+# Returns one @{ Sig = <hash>; Colors = <distinct colors>; Sampled = <n> } per
+# rect - a flat fill must never satisfy a pixel oracle (T216), so the caller
+# scores Colors as its own assertion. Screen coordinates are resolved to the
+# capture's own coordinates once, then the grid is read straight off the bitmap
+# (a per-pixel Get-TestPixel over this many points is minutes, not seconds).
+function Get-RectSignatures([IntPtr]$top, $rects, [double]$insetPct = 0.12, [int]$step = 4) {
     $shot = Get-TestWindowPixels -Window $top -Sync
     try {
-        $s = To-Screen $top $xMin 0
-        $x0 = [int]($s[0] - $shot.Left)
-        if ($x0 -lt 0) { $x0 = 0 }
-        $sb = New-Object System.Text.StringBuilder
-        $seen = @{}
-        for ($y = 40; $y -lt $shot.Height - 10; $y += 7) {
-            for ($x = $x0; $x -lt $shot.Width - 4; $x += 7) {
-                $c = $shot.Bitmap.GetPixel($x, $y)
-                [void]$sb.Append($c.ToArgb())
-                $seen["$($c.R),$($c.G),$($c.B)"] = 1
+        $origin = To-Screen $top 0 0
+        $dx = $origin[0] - $shot.Left; $dy = $origin[1] - $shot.Top
+        $out = @()
+        foreach ($r in $rects) {
+            $ix = [int](($r.Right - $r.Left) * $insetPct); $iy = [int](($r.Bottom - $r.Top) * $insetPct)
+            $x0 = [math]::Max(0, $r.Left + $ix + $dx); $x1 = [math]::Min($shot.Width - 1, $r.Right - $ix + $dx)
+            $y0 = [math]::Max(0, $r.Top + $iy + $dy); $y1 = [math]::Min($shot.Height - 1, $r.Bottom - $iy + $dy)
+            $sb = New-Object System.Text.StringBuilder
+            $seen = @{}
+            $n = 0
+            for ($y = $y0; $y -lt $y1; $y += $step) {
+                for ($x = $x0; $x -lt $x1; $x += $step) {
+                    $c = $shot.Bitmap.GetPixel($x, $y).ToArgb()
+                    [void]$sb.Append($c).Append(',')
+                    $seen[$c] = 1
+                    $n++
+                }
             }
+            $out += , @{ Sig = $sb.ToString().GetHashCode(); Colors = $seen.Count; Sampled = $n }
         }
-        return @{ Sig = $sb.ToString().GetHashCode(); Colors = $seen.Count }
+        return , $out
     } finally { Close-TestWindowPixels $shot }
 }
 
@@ -508,18 +546,34 @@ if ($haveLog) {
     Assert $snapSeen 'renderer committed hero snapshots (debug log)'
 }
 # The busy ping in HIDDEN pane "herob" adds a line every ~1s; with two
-# tiles both are fully on-screen, so the carousel signature must change
-# within a few refresh cycles.
-$sigX = $big1.Right + 10
-$sig1 = Get-RegionSignature $top $sigX
-Assert ($sig1.Colors -ge 4) "carousel capture holds real content ($($sig1.Colors) distinct colors, floor 4)"
+# tiles both are fully on-screen, so the hidden pane's OWN tile must change
+# within a few refresh cycles (T2210). Scored on that tile's rect alone:
+# the whole column also holds the hero's own tile, whose live snapshot a
+# blinking cursor refreshes on its own schedule, so a column hash could
+# change while the hidden pane's tile never did. The carousel's side padding
+# - chrome with nothing live in it - is read from the SAME frames as the
+# control: a change there means the frame moved, not that a tile refreshed.
+# Tree order is [leaf 0, herob] and the hero seeded from leaf 0, so the
+# centered tile is index 0 and herob's is index 1, one step below it.
+$geo1 = Get-HeroTileRect $top $big1 $client 0 1
+$hidRect = $geo1.Tile
+Assert (($hidRect.Top -ge 0) -and ($hidRect.Bottom -le $client[1]) -and ($hidRect.Right -le $client[0])) `
+    "hidden pane's carousel tile lies inside the window (tile=$($hidRect.Left),$($hidRect.Top)-$($hidRect.Right),$($hidRect.Bottom))"
+$sig1 = Get-RectSignatures $top @($hidRect, $geo1.Pad)
+Assert ($sig1[0].Colors -ge 4) "hidden pane's tile capture holds real content ($($sig1[0].Colors) distinct colors, floor 4)"
+Assert ($sig1[1].Sampled -gt 0) "carousel side-padding control was sampled ($($sig1[1].Sampled) points)"
 $sigChanged = $false
+$padMoved = 0
+$prev = $sig1
 for ($t = 0; $t -lt 5 -and -not $sigChanged; $t++) {
     Start-Sleep -Milliseconds 1500
-    $sig2 = Get-RegionSignature $top $sigX
-    if ($sig1.Sig -ne $sig2.Sig) { $sigChanged = $true }
+    $sig2 = Get-RectSignatures $top @($hidRect, $geo1.Pad)
+    if ($prev[1].Sig -ne $sig2[1].Sig) { $padMoved++ }
+    elseif ($prev[0].Sig -ne $sig2[0].Sig) { $sigChanged = $true }
+    $prev = $sig2
 }
-Assert $sigChanged 'carousel thumbnails visibly update while a busy TUI runs in a hidden pane'
+Write-Host "INFO  hidden-tile refresh: changed=$sigChanged pad-control-moved=$padMoved"
+Assert $sigChanged "the HIDDEN pane's own carousel tile visibly updates while a busy TUI runs in it, with the static side padding unchanged across the same frames (pad moved in $padMoved pairs)"
 
 # --- Phase 1b (T1423): interaction in the HERO pane pauses thumbnail capture --
 # A capture is a synchronous GPU readback on the pane's own renderer thread

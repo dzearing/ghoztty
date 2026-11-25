@@ -1,10 +1,10 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-11-24T23:11:54-08:00",
-    "commit":  "d9f698eec",
+    "generated":  "2026-11-24T23:22:40-08:00",
+    "commit":  "bd4189d54",
     "uncommitted":  [
-
+                        "test/win32/hero-mode.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "cfa23792d110d499fa4086697daa516d218d0d110e594a7452167a81220ee15e",
@@ -215,7 +215,7 @@
                   "test/win32/harness-process-leak.ps1":  "ad32ee47966c8b6e7467d6ca16442c6927b3f59b9c64a3ecd95115b6ec999bb9",
                   "test/win32/harness-scope.ps1":  "47e7a59a24119049c22c6b222d7d609242a710e8142ba8053123694b378ebf24",
                   "test/win32/hero-carousel-ratio.ps1":  "518320e6011f5e4afa18118d9b72ad889ad9f0338447e02221418dde0ee29c9b",
-                  "test/win32/hero-mode.ps1":  "432c9aae1b7b318598f54ecb4ca444a22831eb0f6d863a1c18e896b7f3f3bb6c",
+                  "test/win32/hero-mode.ps1":  "d2f55fa8543d212d5f870198dff6bda513bc36e8f1b2fd725ef3dd627cf47857",
                   "test/win32/hero-nav.ps1":  "339030f72107a485bb293bbf6ab48916eea1de709d8fc9cb83f71454c5b76d63",
                   "test/win32/hero-viewer-tile.ps1":  "6bef1acf28d0e1c9645deab7ffc6935a35ebdd1b867eee00a9f5f6d14898332a",
                   "test/win32/hidden-new-pane.ps1":  "5f12c8912a7fded420286713a1349614717b14fd5a56bd4517f10bafe3294ae1",
@@ -594,7 +594,7 @@
                   "test/win32/test-binary-soak.ps1":  "e9c98bf87a0216e367b8bdde320fc7c01253286b7f6be286914ec378bb016a16",
                   "test/win32/test-client-build.ps1":  "d827e9b68c6124ad3ce866640b212afa5dcd311813cc8bff5f9a1da5c5195ca1",
                   "test/win32/test-desktop-harness.ps1":  "77b29a9f5741d272c22dccc0bc161cf1808e0b500f8e047ce0a246be877ef321",
-                  "test/win32/test-desktop-spike.ps1":  "944be5351a06c8b1f269a802b3d0c919c243ecfd71b2b29345553e10bb23e734",
+                  "test/win32/test-desktop-spike.ps1":  "cb0cea6c903e7aefa74c909908d3d6375c15dc1aa8de2d599ad60ea4818ee62a",
                   "test/win32/test-filter-guard.ps1":  "8804ee177e925a2cdfbc14a75f80ec01b217378a80025b55c80d7831c2beec00",
                   "test/win32/test-reach-audit.ps1":  "a7881ca22ad27300fab2af130c191a89d443460ec4d55fb51964e9929a27ff92",
                   "test/win32/test-wait-oracle.ps1":  "63ccef37878450ba45a00998c1d19974c42da08ece7b4160305becb11549ec3d",
