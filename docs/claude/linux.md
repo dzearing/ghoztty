@@ -1815,6 +1815,9 @@ there, once, for both seats.
   `--page=`/`--filter=` on any op; each moves the row's real widget and lets
   its own signal write, then `flush()`es the idle redraw so the reply reads
   the widgets back (`key.curated.display` beside the model's `expected`).
+  List keys add `--op=add|remove` (All Settings' row; `--op=search` for it
+  first) and `--op=list-add|list-remove` (a curated list row), with
+  `--index=<i>` naming the chip.
 
 ### The curated pages (T3631)
 
@@ -1843,12 +1846,28 @@ Traps found here:
 powershell -NoProfile -File scripts\linux\wsl-run.ps1 -CommandFile test\linux\settings-window.sh
 ```
 
-Ends `SETTINGS WINDOW: ALL PASS` (43 checks: W1-W20 for the window and
-All Settings, P1-P23 for the pages). Left off the pages for their own cards:
-the preview and themes T3636, the agent status and Remote Machines T3635,
-list keys (shown, not edited) T3632, color wells and the folder picker T3759,
-search across the pages T3760. Also still to port: Config file/backups/undo
-T3633, the file-mode and local-time fix T3634.
+Ends `SETTINGS WINDOW: ALL PASS` (53 checks: W1-W20 for the window and
+All Settings, P1-P23 for the pages, L1-L10 for list keys). Left off the pages
+for their own cards: the preview and themes T3636, the agent status and
+Remote Machines T3635, color wells and the folder picker T3759, search across
+the pages T3760, Mac's installed-font picker on the Font row T3765. Also
+still to port: Config file/backups/undo T3633, the file-mode and local-time
+fix T3634.
+
+### List keys (T3632)
+
+A repeatable key is Mac's `ListControl`: Font features and the Font row
+(font-family) on their page, and every list key under All Settings, show the
+user's FILE's values as chips (each with an x) and an "add a value" field.
+Both write through `SettingsModel.setList` (the kept run of lines and its
+comments stay put), so `keybind`, `palette` and `env` take an entry exactly
+like a plain list - Mac's UI never calls `setKeyed`; that waits for the
+Keyboard page's binding editor. An add re-reads the file first, so a line an
+editor saved a moment ago is kept. A value Ghostty refuses is not written,
+the row shows why, and the typed text stays in the field (`draft_key`/
+`draft_text`, re-applied when All Settings rebuilds). All Settings adds Mac's
+`In effect:` line (first four effective values, then the count). A key a
+later file owns gets inert chips and field.
 
 ## The keyboard shortcut guide (T3570)
 
