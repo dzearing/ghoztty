@@ -9,6 +9,9 @@
 # L1-L10 (T3632; L5 became F1-F8) cover list keys: chips and an "add a
 # value" field, curated and under All Settings. F1-F8 (T3765) cover the Font
 # row, Mac's installed-font picker, against fc-list's monospaced families.
+# C1-C13 (T3633) cover Advanced > Config file and the change toast: the
+# file row, the other files, Restore... and its confirmation, the current
+# file, a link, and the toast's Show Change / Undo / x / timed exit.
 #
 # Run it ONLY through the wrapper, from this box:
 #
@@ -45,6 +48,9 @@ printf '# my settings\nfont-size = 12\n\n# colours\nbackground = #203040\nwindow
 printf 'cursor-style = underline\n' > "$later"
 shared_before=$(cat "$shared")
 export GHOZTTY_SETTINGS_BACKUP_DIR="$HL_RUNTIME/settings-backups"
+# Open in Editor / Show in Folder / Open record what they would launch
+# instead of launching it (the seam's "last_shell").
+export GHOZTTY_SETTINGS_SHELL_DRY=1
 
 # jget <json> <python expr over d>: one field of a seam reply.
 jget() { printf '%s' "$1" | python3 -I -c 'import json,sys; d=json.load(sys.stdin); v=eval(sys.argv[1]); print(json.dumps(v) if isinstance(v,(dict,list,bool)) or v is None else v)' "$2" 2>/dev/null; }
@@ -337,6 +343,127 @@ st --op=add --key=palette --value='3=#112233' > /dev/null
 [ "$(lines_of palette)" = '3=#112233|' ] && [ "$(jget "$(st --op=state --key=palette)" 'd["key"]["list"]["chips"]')" = '["3=#112233"]' ]
 hl_check "L10 a keyed list (palette) takes an entry the same way" $? "lines=$(lines_of palette)"
 st --op=search --value= > /dev/null
+
+# ---- Advanced > Config file and the change toast (T3633) --------------------
+adv() { jget "$(st --op=state)" "d[\"advanced\"]$1"; }
+toast() { jget "$(st --op=state)" "d[\"toast\"]$1"; }
+case "$dev" in "$HOME"/*) dev_disp="~${dev#"$HOME"}" ;; *) dev_disp="$dev" ;; esac
+st --op=dismiss > /dev/null
+[ "$(adv '["title"]')" = config-debug.ghostty ] && [ "$(adv '["display"]')" = "$dev_disp" ] && [ "$(adv '["link"]')" = null ] && [ "$(adv '["error"]')" = null ]
+hl_check "C1 the file row names config-debug.ghostty and its path (~ for home); no link, no problem" $? "title=$(adv '["title"]') display=$(adv '["display"]') link=$(adv '["link"]')"
+srcs=$(adv '["sources"]')
+[ "$(jget "$srcs" '"|".join(s["name"]+":"+s["kind"] for s in d)')" = 'config.ghostty:also loaded|later.ghostty:included' ] \
+  && [ "$(jget "$srcs" 'all(s["drawn"]==s["name"] for s in d)')" = true ] \
+  && [ "$(jget "$srcs" 'd[0]["note"]')" = 'Loaded before your config; your settings override it.' ] \
+  && [ "$(jget "$srcs" 'd[1]["note"]')" = 'Loaded after your config through config-file, so the keys it sets win. Settings shows those keys read-only.' ]
+hl_check "C2 every other file Ghostty loads is listed in load order, with Mac's pill and sentence" $? "$srcs"
+st --op=open_editor > /dev/null; e1=$(adv '["last_shell"]')
+st --op=reveal_file > /dev/null; e2=$(adv '["last_shell"]')
+st --op=open_source --index=1 > /dev/null; e3=$(adv '["last_shell"]')
+[ "$e1" = "editor $dev" ] && [ "$e2" = "reveal $dev" ] && [ "$e3" = "open $later" ]
+hl_check "C3 Open in Editor, Show in Folder and a file's Open launch the right files" $? "editor=[$e1] reveal=[$e2] open=[$e3]"
+bk=$(adv '["backups"]'); menu=$(adv '["menu"]')
+lab=$(jget "$bk" 'd[0]["label"]')
+[ "$(jget "$bk" 'len(d)')" = 1 ] && printf '%s' "$lab" | grep -Eq '^[A-Z][a-z]{2} [0-9]{1,2}, [0-9]{4} at [0-9]{1,2}:[0-9]{2} [AP]M$' \
+  && [ "$(jget "$menu" '"|".join(d)')" = "$lab|-|Show Backups in Folder" ] \
+  && [ "$(adv '["backups_note"]')" = 'Saved a copy before this session’s first change.' ]
+hl_check "C4 Backups: the session's backup is listed as a date, then Show Backups in Folder" $? "backups=$bk menu=$menu note=$(adv '["backups_note"]')"
+st --op=backups_folder > /dev/null
+[ "$(adv '["last_shell"]')" = "folder $GHOZTTY_SETTINGS_BACKUP_DIR" ]
+hl_check "C4b Show Backups in Folder opens the backups folder" $? "$(adv '["last_shell"]')"
+
+st --op=toast_ms --value=600000 > /dev/null
+st --op=set --key=font-size --value=13 > /dev/null
+o=$(st --op=state)
+[ "$(jget "$o" 'd["toast"]["shown"]')" = true ] && [ "$(jget "$o" 'd["toast"]["drawn"]["message"]==d["toast"]["message"]')" = true ] \
+  && [ "$(jget "$o" '"font-size" in d["toast"]["message"]')" = true ] \
+  && [ "$(jget "$o" 'd["toast"]["drawn"]["detail"]')" = 'applied live · backed up first' ] && [ "$(jget "$o" 'd["toast"]["drawn"]["show"]')" = 'Show Change' ]
+hl_check "C5 a write raises the toast: its change, 'applied live · backed up first', Show Change" $? "$(jget "$o" 'd["toast"]')"
+st --op=show_change > /dev/null
+o=$(st --op=state)
+[ "$(jget "$o" 'd["toast"]["drawn"]["diff"]==["\u2212 "+l for l in d["toast"]["removed"]]+["+ "+l for l in d["toast"]["added"]]')" = true ] \
+  && [ "$(jget "$o" '"+ font-size = 13" in d["toast"]["drawn"]["diff"]')" = true ] && [ "$(jget "$o" 'd["toast"]["drawn"]["show"]')" = 'Hide Change' ]
+hl_check "C6 Show Change lists the removed and added lines; the link reads Hide Change" $? "$(jget "$o" 'd["toast"]["drawn"]')"
+before_undo=$(grep -c '^font-size' "$dev")
+st --op=undo > /dev/null
+o=$(st --op=state)
+! grep -q '^font-size' "$dev" && [ "$before_undo" = 1 ] && [ "$(jget "$o" 'd["toast"]')" = null ] && [ "$(jget "$o" 'd["advanced"]["undo"]')" = undone ] && [ "$(jget "$o" 'd["toast_motion"]["shown"]')" = false ]
+hl_check "C7 Undo puts the file back and takes the toast away at once" $? "undo=$(jget "$o" 'd["advanced"]["undo"]') lines=$(grep -c '^font-size' "$dev") toast=$(jget "$o" 'd["toast"]')"
+st --op=set --key=font-size --value=14 > /dev/null
+printf '# typed in an editor\n' >> "$dev"
+edited=$(cat "$dev")
+st --op=undo > /dev/null
+o=$(st --op=state)
+cs='The config file changed since — open it to undo by hand.'
+[ "$(cat "$dev")" = "$edited" ] && [ "$(jget "$o" 'd["advanced"]["undo"]')" = changed_since ] && [ "$(jget "$o" 'd["toast"]["drawn"]["refused"]')" = "$cs" ] \
+  && [ "$(jget "$o" 'd["advanced"]["error"]')" = "⚠ $cs" ] && [ "$(jget "$o" 'd["toast"]["shown"]')" = true ]
+hl_check "C8 Undo after an editor changed the file is refused: the file is kept, the toast and the section say why" $? "undo=$(jget "$o" 'd["advanced"]["undo"]') refused=$(jget "$o" 'd["toast"]["drawn"]["refused"]') error=$(jget "$o" 'd["advanced"]["error"]')"
+st --op=dismiss > /dev/null
+o=$(st --op=state)
+[ "$(jget "$o" 'd["toast"]')" = null ] && [ "$(jget "$o" 'd["toast_motion"]["shown"]')" = false ]
+hl_check "C9 the toast's x takes it away" $? "$(jget "$o" 'd["toast"]')"
+
+# Restore...: a pick asks first; Cancel keeps the file, Restore replaces it.
+before_restore=$(cat "$dev")
+st --op=restore-ask --index=0 > /dev/null
+o=$(st --op=state)
+lab=$(jget "$o" 'd["advanced"]["backups"][0]["label"]')
+[ "$(jget "$o" 'd["advanced"]["confirm"]["heading"]')" = 'Restore this backup?' ] \
+  && [ "$(jget "$o" 'd["advanced"]["confirm"]["body"]')" = "Your config file will be replaced with the copy from $lab. The current file is backed up first." ]
+hl_check "C10 picking a backup asks first, in Mac's words" $? "$(jget "$o" 'd["advanced"]["confirm"]')"
+st --op=restore-answer --value=cancel > /dev/null
+o=$(st --op=state)
+[ "$(cat "$dev")" = "$before_restore" ] && [ "$(jget "$o" 'd["advanced"]["confirm"]')" = null ]
+r1=$?
+backup_text=$(cat "$(jget "$o" 'd["advanced"]["backups"][-1]["path"]')")
+st --op=restore-ask --index="$(jget "$o" 'len(d["advanced"]["backups"])-1')" > /dev/null
+st --op=restore-answer --value=restore > /dev/null
+o=$(st --op=state)
+[ $r1 = 0 ] && [ "$(cat "$dev")" = "$backup_text" ] && grep -q '^font-size = 12$' "$dev" && [ "$(jget "$o" 'd["toast"]["message"].startswith("Restored config-debug.ghostty.")')" = true ] && [ "$(jget "$o" 'd["advanced"]["confirm"]')" = null ]
+hl_check "C11 Cancel keeps the file; Restore puts the backup back and the toast says so" $? "cancel=$r1 toast=$(jget "$o" 'd["toast"]["message"]') file=$(tr '\n' '|' < "$dev")"
+st --op=undo > /dev/null
+[ "$(cat "$dev")" = "$before_restore" ]
+hl_check "C11b the restore is itself a change Undo takes back" $? "file=$(tr '\n' '|' < "$dev")"
+st --op=current_file > /dev/null
+o=$(st --op=state)
+[ "$(jget "$o" 'd["advanced"]["show_file"]')" = true ] && [ "$(jget "$o" 'd["advanced"]["current_file"]')" = "$(cat "$dev")" ]
+hl_check "C12 Current file opens on the file's text" $? "show=$(jget "$o" 'd["advanced"]["show_file"]')"
+
+# The timed exit: untouched, the toast slides down and fades; expanded, it stays.
+st --op=toast_ms --value=400 > /dev/null
+st --op=set --key=font-size --value=16 > /dev/null
+gone() { [ "$(jget "$(st --op=state)" 'd["toast"] is None and not d["toast_motion"]["leaving"]')" = true ]; }
+hl_wait_for 8 gone
+r=$?
+o=$(st --op=state); tm=$(jget "$o" 'd["toast_motion"]')
+if [ "$(jget "$tm" 'd["animates"]')" = true ]; then
+    [ $r = 0 ] && [ "$(jget "$tm" 'd["completed"] and len(d["frames"])>=3 and d["frames"][-1]==0 and all(a>=b for a,b in zip(d["frames"],d["frames"][1:]))')" = true ] && [ "$(jget "$tm" 'd["shown"]')" = false ]
+else
+    [ $r = 0 ] && [ "$(jget "$tm" 'd["instant"]')" = true ]
+fi
+hl_check "C13 untouched, the toast leaves on its own, fading to nothing frame by frame" $? "gone=$r motion=$tm"
+st --op=set --key=font-size --value=17 > /dev/null
+st --op=show_change > /dev/null
+sleep 1.2
+o=$(st --op=state)
+[ "$(jget "$o" 'd["toast"]["shown"]')" = true ] && [ "$(jget "$o" 'd["toast"]["expanded"]')" = true ]
+hl_check "C13b an expanded toast stays past its time until dismissed" $? "$(jget "$o" 'd["toast"]')"
+st --op=dismiss > /dev/null
+st --op=reset --key=font-size > /dev/null
+st --op=dismiss > /dev/null
+
+# A link: Settings names the target and writes through it.
+real="$cfg_dir/real-config.ghostty"
+st --op=close > /dev/null
+mv "$dev" "$real" && ln -s "$real" "$dev"
+st --op=action > /dev/null
+case "$real" in "$HOME"/*) real_disp="~${real#"$HOME"}" ;; *) real_disp="$real" ;; esac
+o=$(st --op=state)
+[ "$(jget "$o" 'd["advanced"]["title"]')" = real-config.ghostty ] && [ "$(jget "$o" 'd["advanced"]["link"]')" = "A link to $real_disp — Settings writes through it." ]
+r1=$?
+st --op=set --key=font-size --value=18 > /dev/null
+[ $r1 = 0 ] && [ -L "$dev" ] && grep -q '^font-size = 18$' "$real"
+hl_check "C14 a linked config names its target, says Settings writes through it, and does" $? "title=$(jget "$o" 'd["advanced"]["title"]') link=$(jget "$o" 'd["advanced"]["link"]') symlink=$([ -L "$dev" ] && echo yes || echo no)"
 
 # ---- close ------------------------------------------------------------------
 st --op=close > /dev/null

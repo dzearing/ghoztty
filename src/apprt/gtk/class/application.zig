@@ -2487,6 +2487,13 @@ pub const Application = extern struct {
     pub fn openHtmlFile(self: *Application, path: []const u8) void {
         Action.openUrl(self, .{ .kind = .html, .url = path });
     }
+
+    /// Settings > Advanced's "Open in Editor" and a loaded file's "Open"
+    /// (T3633): the file in the desktop's text editor, the way the
+    /// open_config action hands over the config file.
+    pub fn openTextFile(self: *Application, path: []const u8) void {
+        Action.openUrl(self, .{ .kind = .text, .url = path });
+    }
 };
 
 /// All apprt action handlers

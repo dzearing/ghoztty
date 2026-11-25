@@ -54,6 +54,12 @@
 //! value Ghostty refuses is not written and stays in the field with the
 //! reason. All Settings adds Mac's "In effect:" line under a list row.
 //!
+//! **Advanced > Config file and the change toast (T3633)** are
+//! `SettingsConfigFile.zig`: the file with Open in Editor / Show in Folder,
+//! where it links to, every other file Ghostty loads, Backups with
+//! Restore..., the current file, and the "Saved - Show Change - Undo" toast
+//! over the foot of the window after every write.
+//!
 //! Rows are built once and refreshed in place after every write (a rebuild
 //! would lose the page's scroll), from the same reader the seam reports.
 //! Sections with their own UI that are their own cards are left off for
@@ -78,6 +84,7 @@ const controls = @import("../win32/settings_controls.zig");
 const Application = @import("class/application.zig").Application;
 const ShortcutGuideWindow = @import("ShortcutGuideWindow.zig");
 const font_families = @import("font_families.zig");
+const ConfigFile = @import("SettingsConfigFile.zig");
 
 const log = std.log.scoped(.gtk_settings);
 
@@ -186,6 +193,8 @@ draft_text: std.ArrayListUnmanaged(u8) = .empty,
 /// `build_arena`; and the Font row's current items, in `font_arena`.
 fonts: font_families.Families = .{ .mono = &.{}, .all = &.{} },
 font_arena: std.heap.ArenaAllocator,
+/// Advanced > Config file and the change toast (T3633).
+config_file: ConfigFile = .{},
 
 const Group = struct { page: PageId, title: ?[]const u8, widget: *wk.GtkWidget };
 
@@ -215,6 +224,7 @@ pub fn open(app: *Application) void {
     self.rebuild();
     self.refreshCurated();
     self.refreshCounts();
+    self.config_file.refresh(self);
     wk.gtk_window_present(self.window);
     log.info("settings: opened keys={d} curated={d} file={s}", .{ self.catalog.entries.len, self.curated.items.len, self.main_path });
 }
@@ -338,7 +348,14 @@ fn buildChrome(self: *SettingsWindow) !void {
 
     wk.gtk_widget_set_hexpand(self.stack, 1);
     wk.gtk_widget_set_vexpand(self.stack, 1);
-    wk.gtk_box_append(outer, self.stack);
+    // The change toast floats over the foot of the pages (Mac's
+    // `.overlay(alignment: .bottom)`).
+    const overlay = wk.gtk_overlay_new();
+    wk.gtk_widget_set_hexpand(overlay, 1);
+    wk.gtk_widget_set_vexpand(overlay, 1);
+    wk.gtk_overlay_set_child(overlay, self.stack);
+    wk.gtk_overlay_add_overlay(overlay, self.config_file.buildToast(self));
+    wk.gtk_box_append(outer, overlay);
 
     for (pages.all) |p| {
         if (!pageShown(p)) continue;
@@ -432,35 +449,25 @@ fn addCustom(self: *SettingsWindow, group: *wk.GtkWidget, c: pages.Custom) !void
             wk.adw_action_row_set_subtitle(row, (try arena.dupeZ(u8, build_config.version_string)).ptr);
             wk.adw_preferences_group_add(group, row);
         },
-        .config_file => {
-            const row = wk.adw_action_row_new();
-            plainTitle(row, "Config file");
-            wk.adw_action_row_set_subtitle(row, (try arena.dupeZ(u8, self.main_path)).ptr);
-            const button = wk.gtk_button_new_with_label("Open File");
-            wk.gtk_widget_set_valign(button, 3);
-            wk.gtk_widget_set_tooltip_text(button, "Open the config file in your text editor");
-            self.connect(button, "clicked", @ptrCast(&onOpenFileClicked));
-            wk.adw_action_row_add_suffix(row, button);
-            wk.adw_preferences_group_add(group, row);
-        },
-        .all_settings, .preview, .theme, .agent_status, .remote_machines => {},
+        // Advanced draws its own (buildAdvanced, SettingsConfigFile.zig).
+        .config_file, .all_settings, .preview, .theme, .agent_status, .remote_machines => {},
     }
 }
 
-/// Advanced: the config file, then All Settings - its filter and the
-/// generated list.
+/// Advanced: the config file (T3633), then All Settings - its filter and
+/// the generated list. The page scrolls as one, as Mac's form does.
 fn buildAdvanced(self: *SettingsWindow) !*wk.GtkWidget {
     const column = wk.gtk_box_new(1, 8);
     wk.gtk_widget_set_margin_start(column, 16);
     wk.gtk_widget_set_margin_end(column, 16);
     wk.gtk_widget_set_margin_top(column, 12);
-    wk.gtk_widget_set_margin_bottom(column, 12);
+    // Room under the last row for the toast.
+    wk.gtk_widget_set_margin_bottom(column, 72);
 
-    const file_group = wk.adw_preferences_group_new();
-    wk.adw_preferences_group_set_title(file_group, "Config file");
+    const file_group = self.config_file.build(self);
     try self.groups.append(self.gpa, .{ .page = .advanced, .title = "Config file", .widget = file_group });
-    try self.addCustom(file_group, .config_file);
     wk.gtk_box_append(column, file_group);
+    wk.gtk_box_append(column, self.config_file.buildBackups());
 
     const head = wk.gtk_box_new(0, 8);
     const heading = wk.gtk_label_new("All Settings");
@@ -482,12 +489,12 @@ fn buildAdvanced(self: *SettingsWindow) !*wk.GtkWidget {
 
     wk.gtk_list_box_set_selection_mode(self.list, 0); // none
     wk.gtk_widget_add_css_class(self.list, "boxed-list");
+    wk.gtk_box_append(column, self.list);
     const scroller = wk.gtk_scrolled_window_new();
     wk.gtk_scrolled_window_set_policy(scroller, 2, 0); // never, automatic
     wk.gtk_widget_set_vexpand(scroller, 1);
-    wk.gtk_scrolled_window_set_child(scroller, self.list);
-    wk.gtk_box_append(column, scroller);
-    return column;
+    wk.gtk_scrolled_window_set_child(scroller, column);
+    return scroller;
 }
 
 /// One curated row: its control, dot and reset button, tagged with its
@@ -802,7 +809,7 @@ fn isExecutable(_: void, path: []const u8) bool {
 // ---------------------------------------------------------------------
 
 /// Read the file, the other config files and the live config again.
-fn reloadData(self: *SettingsWindow) void {
+pub fn reloadData(self: *SettingsWindow) void {
     if (self.store.read(self.gpa)) |t| {
         self.file.deinit();
         self.file = t;
@@ -822,6 +829,8 @@ fn reloadData(self: *SettingsWindow) void {
         if (self.effective) |*old| old.deinit();
         self.effective = e;
     } else |err| log.warn("settings: describing the live config failed err={}", .{err});
+
+    self.config_file.reload(self);
 }
 
 fn reader(self: *const SettingsWindow) ?SettingsSources.Reader {
@@ -1570,7 +1579,7 @@ pub fn chooseShell(self: *SettingsWindow, key: []const u8, command: []const u8) 
 /// A write (or a refusal) changed what the rows show: read everything again
 /// and redraw on idle - never under the signal of a widget the All Settings
 /// rebuild is about to destroy.
-fn afterChange(self: *SettingsWindow) void {
+pub fn afterChange(self: *SettingsWindow) void {
     self.reloadData();
     if (self.refresh_source == 0) self.refresh_source = wk.g_idle_add(@ptrCast(&onIdleRefresh), self);
 }
@@ -1593,6 +1602,7 @@ fn redraw(self: *SettingsWindow) void {
     self.rebuild();
     self.refreshCurated();
     self.refreshCounts();
+    self.config_file.refresh(self);
 }
 
 fn onIdleRefresh(self: *SettingsWindow) callconv(.c) c_int {
@@ -1757,6 +1767,7 @@ pub fn gestureReset(self: *SettingsWindow, key: []const u8) GestureError!void {
 
 /// Close the window: the button in its title bar, and the seam's `close`.
 pub fn close(self: *SettingsWindow) void {
+    self.config_file.teardown();
     wk.gtk_window_destroy(self.window);
     self.destroy();
 }
@@ -1767,6 +1778,7 @@ fn destroy(self: *SettingsWindow) void {
     if (self.refresh_source != 0) _ = wk.g_source_remove(self.refresh_source);
     if (self.slide_source != 0) _ = wk.g_source_remove(self.slide_source);
     const gpa = self.gpa;
+    self.config_file.deinit(gpa);
     self.rows.deinit(gpa);
     self.curated.deinit(gpa);
     self.groups.deinit(gpa);
@@ -1794,12 +1806,9 @@ fn destroy(self: *SettingsWindow) void {
 // ---------------------------------------------------------------------
 
 fn onCloseRequest(_: *wk.GtkWidget, self: *SettingsWindow) callconv(.c) c_int {
+    self.config_file.teardown();
     self.destroy();
     return 0; // let GTK destroy the window
-}
-
-fn onOpenFileClicked(_: *wk.GtkWidget, self: *SettingsWindow) callconv(.c) void {
-    self.app.openConfigFile();
 }
 
 fn onShortcutGuideClicked(_: *wk.GtkWidget, self: *SettingsWindow) callconv(.c) void {

@@ -4,6 +4,7 @@
 //! 9287de0ff). Pure, so the none-runtime lane tests every string the window
 //! paints; `settings_advanced_view.zig` draws them.
 const std = @import("std");
+const builtin = @import("builtin");
 const Allocator = std.mem.Allocator;
 
 const SettingsSources = @import("SettingsSources.zig");
@@ -109,7 +110,7 @@ pub fn otherSources(alloc: Allocator, sources: *const SettingsSources, main_path
     errdefer out.deinit(alloc);
     for (sources.sources.items, 0..) |*s, i| {
         if (sources.main_index != null and sources.main_index.? == i) continue;
-        if (samePath(s.path, main_path) or samePath(s.path, target_path)) continue;
+        if (sameNativePath(s.path, main_path) or sameNativePath(s.path, target_path)) continue;
         try out.append(alloc, s);
     }
     return out.toOwnedSlice(alloc);
@@ -124,6 +125,23 @@ pub fn samePath(a: []const u8, b: []const u8) bool {
         if (nx != ny) return false;
     }
     return true;
+}
+
+/// The same file on this platform: the Windows rule on Windows, byte for
+/// byte on Linux (T3633: case matters there, and `\` is a file name
+/// character, not a separator).
+pub fn sameNativePath(a: []const u8, b: []const u8) bool {
+    return if (comptime builtin.os.tag == .windows) samePath(a, b) else std.mem.eql(u8, a, b);
+}
+
+/// `path` with a leading `home` written as `~` (Mac's
+/// `replacingOccurrences(of: home, with: "~")`, anchored to the start and
+/// to a whole directory). Caller frees.
+pub fn tildePath(alloc: Allocator, path: []const u8, home: []const u8) Allocator.Error![]u8 {
+    const h = std.mem.trimRight(u8, home, "/");
+    if (h.len == 0 or path.len <= h.len or !std.mem.startsWith(u8, path, h) or path[h.len] != '/')
+        return alloc.dupe(u8, path);
+    return std.fmt.allocPrint(alloc, "~{s}", .{path[h.len..]});
 }
 
 const months = [_][]const u8{ "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec" };
@@ -230,6 +248,33 @@ test "settings_advanced: paths compare the Windows way" {
     try testing.expect(samePath("C:\\Users\\Me\\config", "c:/users/me/CONFIG"));
     try testing.expect(!samePath("C:\\a", "C:\\b"));
     try testing.expect(!samePath("C:\\a", "C:\\ab"));
+}
+
+test "settings_advanced: a POSIX home reads as ~ (T3633)" {
+    const a = testing.allocator;
+    const cases = [_][3][]const u8{
+        .{ "/home/me/.config/ghostty/config", "/home/me", "~/.config/ghostty/config" },
+        .{ "/home/me/.config/ghostty/config", "/home/me/", "~/.config/ghostty/config" },
+        // A sibling whose name starts with the home's is not under it.
+        .{ "/home/meg/config", "/home/me", "/home/meg/config" },
+        .{ "/etc/ghostty/config", "/home/me", "/etc/ghostty/config" },
+        .{ "/home/me", "/home/me", "/home/me" },
+        .{ "/x/config", "", "/x/config" },
+    };
+    for (cases) |c| {
+        const got = try tildePath(a, c[0], c[1]);
+        defer a.free(got);
+        try testing.expectEqualStrings(c[2], got);
+    }
+}
+
+test "settings_advanced: the native path rule (T3633)" {
+    if (comptime builtin.os.tag == .windows) {
+        try testing.expect(sameNativePath("C:\\a\\Config", "c:/a/config"));
+    } else {
+        try testing.expect(sameNativePath("/a/config", "/a/config"));
+        try testing.expect(!sameNativePath("/a/Config", "/a/config"));
+    }
 }
 
 test "settings_advanced: other sources skip the user's own file, in load order" {

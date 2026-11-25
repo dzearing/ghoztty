@@ -1281,6 +1281,27 @@ fn readClipboard(app: Context, request: Request) Allocator.Error![]u8 {
 ///   All Settings list row as drawn, and a curated list row "field"; the
 ///   Font row adds "fallback" ("+N fallback" or null), "fallback_tooltip"
 ///   and "fallback_chips"
+/// Advanced > Config file and the change toast (T3633), win32's op names;
+/// each clicks the button the window draws:
+///
+///   --op=open_editor / reveal_file     the file row's two buttons
+///   --op=open_source --index=<i>       the i-th other file's Open
+///   --op=backups_folder                Restore...'s "Show Backups in Folder"
+///   --op=current_file                  open / close the Current file row
+///   --op=restore-ask --index=<i>       pick Restore...'s i-th backup: the
+///                                      confirmation opens ("confirm" in state)
+///   --op=restore-answer --value=restore|cancel   answer it
+///   --op=restore --index=<i>           the confirmed half, directly
+///   --op=undo / show_change / dismiss  the toast's Undo, Show Change, x
+///   --op=toast_ms --value=<ms>         the toast's untouched lifetime
+///   state adds "advanced":{path,display,title,target,link,error,file_error,
+///   sources:[{path,name,kind,drawn,note}],backups:[{path,label}],menu[],
+///   backed_up,backups_note,show_file,current_file,last_shell,confirm,undo},
+///   "toast" ({message,detail,removed,added,expanded,refused,leaving,shown,
+///   drawn:{message,detail,show,diff[],refused}} or null) and "toast_motion"
+///   ({animates,leaving,shown,completed,instant,frames[]}: the alphas the
+///   last timed exit painted)
+///
 ///   state adds "page", "visible_page", "filter", "pages":[{id,title,count}],
 ///   "groups":[{page,title,drawn}] and, with --key, "key.curated":
 ///   {page,label,kind,display,expected,dot,reset,sensitive,enabled,subtitle,
@@ -1359,6 +1380,37 @@ fn settingsSeam(app: Context, request: Request) Allocator.Error![]u8 {
         // The write (and its redraw) run now, so the reply reads the result.
         w.flush();
         ok = w.problem(k) == null;
+    } else if (configFileOp(op)) {
+        const w = SettingsWindow.current() orelse
+            return server.errorResponse(c_alloc, "the Settings window is not open", .{});
+        const cf = &w.config_file;
+        if (std.mem.eql(u8, op, "open_editor")) {
+            cf.click(.editor);
+        } else if (std.mem.eql(u8, op, "reveal_file")) {
+            cf.click(.reveal);
+        } else if (std.mem.eql(u8, op, "open_source")) {
+            ok = cf.clickIndexed(.source, index_arg);
+        } else if (std.mem.eql(u8, op, "backups_folder")) {
+            cf.click(.folder);
+        } else if (std.mem.eql(u8, op, "current_file")) {
+            cf.toggleCurrentFile();
+        } else if (std.mem.eql(u8, op, "restore-ask")) {
+            ok = cf.clickIndexed(.backup, index_arg);
+        } else if (std.mem.eql(u8, op, "restore-answer")) {
+            const v = val orelse return server.errorResponse(c_alloc, "--value=restore|cancel is required", .{});
+            ok = cf.answerRestore(if (std.mem.eql(u8, v, "restore")) "restore" else "cancel");
+        } else if (std.mem.eql(u8, op, "restore")) {
+            ok = cf.restoreBackupAt(w, index_arg);
+        } else if (std.mem.eql(u8, op, "undo")) {
+            cf.click(.undo);
+        } else if (std.mem.eql(u8, op, "show_change")) {
+            cf.click(.show);
+        } else if (std.mem.eql(u8, op, "dismiss")) {
+            cf.click(.dismiss);
+        } else if (std.mem.eql(u8, op, "toast_ms")) {
+            const v = val orelse return server.errorResponse(c_alloc, "--value=<ms> is required for --op=toast_ms", .{});
+            cf.toast_ms = std.fmt.parseInt(u32, v, 10) catch return server.errorResponse(c_alloc, "--value must be a number of milliseconds", .{});
+        }
     } else if (!std.mem.eql(u8, op, "state")) {
         const w = SettingsWindow.current() orelse
             return server.errorResponse(c_alloc, "the Settings window is not open", .{});
@@ -1388,6 +1440,152 @@ fn settingsSeam(app: Context, request: Request) Allocator.Error![]u8 {
     var jws: std.json.Stringify = .{ .writer = &out.writer };
     writeSettingsState(&jws, arena, SettingsWindow.current(), key, ok) catch return error.OutOfMemory;
     return out.toOwnedSlice();
+}
+
+fn configFileOp(op: []const u8) bool {
+    const ops = [_][]const u8{ "open_editor", "reveal_file", "open_source", "backups_folder", "current_file", "restore-ask", "restore-answer", "restore", "undo", "show_change", "dismiss", "toast_ms" };
+    for (ops) |o| if (std.mem.eql(u8, op, o)) return true;
+    return false;
+}
+
+fn rowSubtitle(row: *wk.GtkWidget) []const u8 {
+    return std.mem.span(wk.adw_action_row_get_subtitle(row) orelse "");
+}
+
+/// Advanced > Config file and the toast (T3633): the model's words beside
+/// what each widget draws.
+fn writeConfigFileState(jws: *std.json.Stringify, arena: Allocator, w: anytype) !void {
+    const adv = @import("../win32/settings_advanced.zig");
+    const W = @TypeOf(w.*);
+    const cf = &w.config_file;
+    try jws.objectField("advanced");
+    try jws.beginObject();
+    try jws.objectField("path");
+    try jws.write(w.mainPath());
+    try jws.objectField("display");
+    try jws.write(rowSubtitle(cf.file_row));
+    try jws.objectField("title");
+    try jws.write(W.firstLabelText(cf.file_row));
+    try jws.objectField("target");
+    try jws.write(cf.target_display);
+    try jws.objectField("link");
+    try jws.write(if (wk.gtk_widget_get_visible(cf.link_row) != 0) rowSubtitle(cf.link_row) else null);
+    try jws.objectField("error");
+    try jws.write(if (wk.gtk_widget_get_visible(cf.error_row) != 0) W.firstLabelText(cf.error_row) else null);
+    try jws.objectField("file_error");
+    try jws.write(w.model.file_error);
+    try jws.objectField("sources");
+    try jws.beginArray();
+    for (cf.sources.items, 0..) |*src, i| {
+        try jws.beginObject();
+        try jws.objectField("path");
+        try jws.write(src.path);
+        try jws.objectField("name");
+        try jws.write(src.name());
+        try jws.objectField("kind");
+        try jws.write(src.kind.tag());
+        const row: ?*wk.GtkWidget = if (i < cf.source_rows.items.len) cf.source_rows.items[i] else null;
+        try jws.objectField("drawn");
+        try jws.write(if (row) |r| W.firstLabelText(r) else null);
+        try jws.objectField("note");
+        try jws.write(if (row) |r| rowSubtitle(r) else null);
+        try jws.endObject();
+    }
+    try jws.endArray();
+    try jws.objectField("backups");
+    try jws.beginArray();
+    var label_buf: [64]u8 = undefined;
+    for (cf.backups()) |b| {
+        try jws.beginObject();
+        try jws.objectField("path");
+        try jws.write(b);
+        try jws.objectField("label");
+        try jws.write(adv.backupLabel(&label_buf, b));
+        try jws.endObject();
+    }
+    try jws.endArray();
+    try jws.objectField("menu");
+    try jws.write(try cf.menuLabels(arena));
+    try jws.objectField("backed_up");
+    try jws.write(w.store.backup_path != null);
+    try jws.objectField("backups_note");
+    try jws.write(rowSubtitle(cf.backups_row));
+    try jws.objectField("show_file");
+    try jws.write(cf.showFile());
+    try jws.objectField("current_file");
+    try jws.write(std.mem.span(wk.gtk_label_get_text(cf.current_label)));
+    try jws.objectField("last_shell");
+    try jws.write(cf.last_shell);
+    try jws.objectField("confirm");
+    if (cf.confirm) |d| {
+        try jws.beginObject();
+        try jws.objectField("heading");
+        try jws.write(std.mem.span(wk.adw_alert_dialog_get_heading(d) orelse ""));
+        try jws.objectField("body");
+        try jws.write(std.mem.span(wk.adw_alert_dialog_get_body(d) orelse ""));
+        try jws.endObject();
+    } else try jws.write(null);
+    try jws.objectField("undo");
+    try jws.write(if (cf.last_undo) |u| @tagName(u) else null);
+    try jws.endObject();
+
+    try jws.objectField("toast");
+    if (w.model.last_change) |c| {
+        try jws.beginObject();
+        try jws.objectField("message");
+        try jws.write(c.message);
+        try jws.objectField("detail");
+        try jws.write(adv.toastDetail(c.backed_up_to != null));
+        try jws.objectField("removed");
+        try jws.write(c.removed);
+        try jws.objectField("added");
+        try jws.write(c.added);
+        try jws.objectField("expanded");
+        try jws.write(cf.expanded);
+        try jws.objectField("refused");
+        try jws.write(cf.refused);
+        try jws.objectField("leaving");
+        try jws.write(cf.leaving());
+        try jws.objectField("shown");
+        try jws.write(cf.shown());
+        try jws.objectField("drawn");
+        try jws.beginObject();
+        try jws.objectField("message");
+        try jws.write(std.mem.span(wk.gtk_label_get_text(cf.toast_message)));
+        try jws.objectField("detail");
+        try jws.write(std.mem.span(wk.gtk_label_get_text(cf.toast_detail)));
+        try jws.objectField("show");
+        try jws.write(std.mem.span(wk.gtk_button_get_label(cf.show_button) orelse ""));
+        try jws.objectField("diff");
+        try jws.beginArray();
+        if (wk.gtk_widget_get_visible(cf.diff_box) != 0) {
+            var child = wk.gtk_widget_get_first_child(cf.diff_box);
+            while (child) |ch| : (child = wk.gtk_widget_get_next_sibling(ch)) try jws.write(std.mem.span(wk.gtk_label_get_text(ch)));
+        }
+        try jws.endArray();
+        try jws.objectField("refused");
+        try jws.write(if (wk.gtk_widget_get_visible(cf.refused_label) != 0) std.mem.span(wk.gtk_label_get_text(cf.refused_label)) else null);
+        try jws.endObject();
+        try jws.endObject();
+    } else try jws.write(null);
+
+    try jws.objectField("toast_motion");
+    try jws.beginObject();
+    try jws.objectField("animates");
+    try jws.write(cf.animates());
+    try jws.objectField("leaving");
+    try jws.write(cf.leaving());
+    try jws.objectField("shown");
+    try jws.write(cf.shown());
+    try jws.objectField("completed");
+    try jws.write(cf.trace.completed);
+    try jws.objectField("instant");
+    try jws.write(cf.trace.instant);
+    try jws.objectField("frames");
+    try jws.beginArray();
+    for (cf.trace.frames()) |a| try jws.write(a);
+    try jws.endArray();
+    try jws.endObject();
 }
 
 fn writeSettingsState(jws: *std.json.Stringify, arena: Allocator, w_opt: anytype, key: ?[]const u8, ok: ?bool) !void {
@@ -1448,6 +1646,7 @@ fn writeSettingsState(jws: *std.json.Stringify, arena: Allocator, w_opt: anytype
         try jws.endArray();
         try jws.objectField("curated");
         try jws.write(w.curated.items.len);
+        try writeConfigFileState(jws, arena, w);
         if (key) |k| {
             try jws.objectField("key");
             try jws.beginObject();

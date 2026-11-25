@@ -773,6 +773,33 @@ pub extern fn g_type_check_instance_is_a(instance: *anyopaque, iface_type: usize
 pub extern fn gtk_label_get_type() usize;
 /// `GTK_INVALID_LIST_POSITION`.
 pub const invalid_list_position: c_uint = 0xFFFF_FFFF;
+// Settings > Advanced's Config file section and the change toast (T3633).
+pub extern fn gtk_revealer_new() *GtkWidget;
+pub extern fn gtk_revealer_set_child(revealer: *GtkWidget, child: ?*GtkWidget) void;
+pub extern fn gtk_revealer_set_reveal_child(revealer: *GtkWidget, reveal: c_int) void;
+pub extern fn gtk_revealer_get_reveal_child(revealer: *GtkWidget) c_int;
+pub extern fn gtk_revealer_set_transition_type(revealer: *GtkWidget, transition: c_int) void;
+pub extern fn gtk_revealer_set_transition_duration(revealer: *GtkWidget, duration: c_uint) void;
+/// `GTK_REVEALER_TRANSITION_TYPE_SLIDE_UP`: hiding drops the child down
+/// through the revealer's bottom edge.
+pub const revealer_slide_up: c_int = 4;
+pub extern fn gtk_menu_button_new() *GtkWidget;
+pub extern fn gtk_menu_button_set_label(button: *GtkWidget, label: [*:0]const u8) void;
+pub extern fn gtk_menu_button_set_popover(button: *GtkWidget, popover: ?*GtkWidget) void;
+pub extern fn gtk_menu_button_popup(button: *GtkWidget) void;
+pub extern fn gtk_menu_button_popdown(button: *GtkWidget) void;
+pub extern fn gtk_popover_new() *GtkWidget;
+pub extern fn gtk_popover_set_child(popover: *GtkWidget, child: ?*GtkWidget) void;
+pub extern fn gtk_label_set_selectable(label: *GtkWidget, selectable: c_int) void;
+pub extern fn gtk_button_get_label(button: *GtkWidget) ?[*:0]const u8;
+pub extern fn gtk_button_set_label(button: *GtkWidget, label: [*:0]const u8) void;
+pub extern fn adw_expander_row_set_expanded(row: *GtkWidget, expanded: c_int) void;
+pub extern fn adw_expander_row_get_expanded(row: *GtkWidget) c_int;
+pub extern fn adw_preferences_group_remove(group: *GtkWidget, child: *GtkWidget) void;
+/// `ADW_RESPONSE_DESTRUCTIVE`.
+pub const adw_response_destructive: c_int = 2;
+pub extern fn adw_alert_dialog_get_heading(dialog: *GtkWidget) ?[*:0]const u8;
+pub extern fn adw_alert_dialog_get_body(dialog: *GtkWidget) ?[*:0]const u8;
 
 /// `GtkEventSequenceState`.
 pub const sequence_claimed: c_int = 1;
