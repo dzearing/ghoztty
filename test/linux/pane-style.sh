@@ -43,7 +43,7 @@ cli() { env -u GHOZTTY_IPC_SOCKET -u GHOZTTY_PANE_ID "$app" "$@"; }
 # (G1-G8, T3622) turns glass on with a reload.
 cfg_dir="$XDG_CONFIG_HOME/ghostty"
 mkdir -p "$cfg_dir"
-base_cfg='background = #203040\nforeground = #e0e0e0\nbackground-opacity = 1\nwindow-padding-color = background\nunfocused-split-opacity = 1\nmacos-window-gradient = ocean\nmacos-pane-glass = false\nmacos-pane-sidebar = expanded\n'
+base_cfg='background = #203040\nforeground = #e0e0e0\nbackground-opacity = 1\nwindow-padding-color = background\nunfocused-split-opacity = 1\nmacos-window-gradient = ocean\nmacos-pane-glass = false\n'
 printf "$base_cfg" > "$cfg_dir/config.ghostty"
 
 export SHELL=/bin/sh
@@ -126,7 +126,7 @@ hl_check "S9 a card's corner is rounded: its corner pixel shows the desk, not th
 
 # ---- the desk under the whole window (T3623; pane-style.md "Titlebar") -----
 # The window paints it, so the ocean (blue leads red) shows in the header
-# bar above the cards and through the expanded pane sidebar to their left.
+# bar above the cards and through the pane sidebar's card to their left.
 # The stock header bar and window background are grey (blue == red), which
 # is what both probes read before T3623 and what the flat style keeps (D4).
 hdr_x=$(( ax + aw / 4 )); hdr_y=4
@@ -135,8 +135,8 @@ read -r hr hg hb <<< "$(px "$a" "$hdr_x" "$hdr_y")"
 hl_check "D1 the desk runs up under the header bar (ocean at its top edge, above pane a)" $? "header($hdr_x,$hdr_y)=$hr,$hg,$hb ay=$ay"
 sb_x=$(( ax / 2 )); sb_y=$(( ay + ah - 30 ))
 read -r qr qg qb <<< "$(px "$a" "$sb_x" "$sb_y")"
-[ "$ax" -ge 60 ] && [ $(( qb - qr )) -ge 8 ]
-hl_check "D2 the expanded pane sidebar is translucent over the desk (ocean through it)" $? "sidebar($sb_x,$sb_y)=$qr,$qg,$qb ax=$ax"
+[ "$ax" -ge 40 ] && [ $(( qb - qr )) -ge 8 ]
+hl_check "D2 the pane sidebar's card (the rail, its default) is translucent over the desk (ocean through it)" $? "sidebar($sb_x,$sb_y)=$qr,$qg,$qb ax=$ax"
 
 # ---- focus: the focused card of several is backlit with a brighter rim -----
 lit_edge=$(sum $lr $lg $lb)
