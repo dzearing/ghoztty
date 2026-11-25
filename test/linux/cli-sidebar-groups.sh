@@ -126,7 +126,7 @@ hl_check "G2 a lone window's menu: Create Group..., Move to Group with the one g
 is wa '(m.get("items"), m.get("groups"))' "(['Create Group…', 'Remove from Group'], [])" "--menu=$k1"
 hl_check "G3 a grouped window's: no Move (its own group is the only one), and Remove from Group" $? "$(sb wa)"
 grep -q 'pane sidebar window menu open title=grp: one groups=0 remove=true' "$APP_LOG"
-hl_check "G3b the live menu was popped (logged)" $?
+hl_check "G3b the live menu was popped (logged)" $? "$(grep -a 'window menu' "$APP_LOG" | tail -3 | tr '\n' ' ')"
 
 # ---- 2. Move to Group, Remove from Group -------------------------------------
 sb wa "--menu=$kb" --menu-pick=move:grp > /dev/null

@@ -1049,10 +1049,9 @@ fn onToolRename(_: *wk.GtkWidget, r: *Row) callconv(.c) void {
 //
 // Not ported: the list keeping its place across the move (win32
 // `keepWindowPlace`, Mac `renameWindowKeepingPlace`) - the GTK list has no
-// order of its own for windows and groups yet (dragging them is T3607's
-// remainder), so a regrouped window sorts by name as every window does; and
-// a group title outranking a script's later `+rename` (win32's `.user`
-// provenance), filed as its own task.
+// order of its own for windows and groups yet (dragging them is T3697), so a
+// regrouped window sorts by name as every window does; and a group title
+// outranking a script's later `+rename` (win32's `.user` provenance, T3702).
 
 const gdk_button_secondary: c_uint = 3;
 const gdk_key_escape: c_uint = 0xff1b;
@@ -1140,14 +1139,18 @@ fn editField(self: *PaneSidebar) *wk.GtkWidget {
 
 /// After a draw: a field whose row is no longer listed (its window closed,
 /// or the Ungrouped header went with the last group) is dropped; one that
-/// is drawn gets the caret on the next idle turn, once it is mapped.
+/// is drawn takes the caret at once - every redraw builds the field anew -
+/// or, not yet able to (a first draw), on the next idle turn.
 fn settleEdit(self: *PaneSidebar) void {
     const e = if (self.edit) |*x| x else return;
-    if (e.entry == null) {
+    const entry = e.entry orelse {
         log.info("pane sidebar group field dropped: row={s} no longer listed", .{e.rowId()});
         self.edit = null;
         return;
-    }
+    };
+    _ = wk.gtk_widget_grab_focus(entry);
+    wk.gtk_editable_set_position(entry, -1);
+    if (entryFocused(entry)) return;
     if (self.edit_focus_idle == 0) self.edit_focus_idle = wk.g_idle_add(@ptrCast(&onEditFocusIdle), self);
 }
 
@@ -1440,6 +1443,8 @@ pub fn pickMenu(self: *PaneSidebar, cmd: row_menu.WindowCmd) bool {
         .remove_from_group => moveWindowToGroup(key, null),
     };
     if (self.menu_pop) |p| wk.gtk_popover_popdown(p);
+    // Picked: the menu is spent.
+    self.freeMenuState();
     Window.queueAllSidebarRefresh();
     return ok;
 }
@@ -1452,9 +1457,12 @@ pub fn menuGroupIndex(self: *const PaneSidebar, group: []const u8) ?usize {
     return null;
 }
 
-/// Whether the menu is up and offers `cmd`.
+/// Whether the menu last opened, and not yet picked from, offers `cmd`. The
+/// popover being up is not asked: a compositor with no seat (the headless
+/// harness) closes it at once for want of a grab, and what was offered is
+/// the same either way.
 pub fn menuOffers(self: *const PaneSidebar, cmd: WindowCmd) bool {
-    if (self.menu_pop == null) return false;
+    if (self.menu_row == null) return false;
     return switch (cmd) {
         .create_group => true,
         .move_to_group => |i| i < self.menu_groups.items.len,
@@ -1462,9 +1470,9 @@ pub fn menuOffers(self: *const PaneSidebar, cmd: WindowCmd) bool {
     };
 }
 
-/// The seam's report of the menu while it is up.
+/// The seam's report of the menu last opened and not yet picked from.
 fn menuReport(self: *PaneSidebar, arena: Allocator) Allocator.Error!?rows.Report.Menu {
-    if (self.menu_pop == null) return null;
+    if (self.menu_row == null) return null;
     var items: std.ArrayListUnmanaged([]const u8) = .empty;
     try items.append(arena, rows.create_group_label);
     if (self.menu_groups.items.len > 0) try items.append(arena, rows.move_to_group_label);
@@ -1475,6 +1483,7 @@ fn menuReport(self: *PaneSidebar, arena: Allocator) Allocator.Error!?rows.Report
         .row = try arena.dupe(u8, self.menu_row orelse ""),
         .items = items.items,
         .groups = groups,
+        .popped = self.menu_pop != null,
     };
 }
 

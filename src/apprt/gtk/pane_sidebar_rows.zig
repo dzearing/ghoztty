@@ -230,6 +230,9 @@ pub const Report = struct {
         /// Its items, top to bottom; Move to Group's are `groups`.
         items: []const []const u8,
         groups: []const []const u8,
+        /// The popover is on screen now. A compositor with no seat (the
+        /// headless harness) closes it at once for want of a grab.
+        popped: bool = false,
     };
 
     pub const Editing = struct {
