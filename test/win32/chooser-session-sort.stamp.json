@@ -1,13 +1,16 @@
 {
     "guard":  "chooser-session-sort",
     "script":  "test/win32/chooser-session-sort.ps1",
-    "generated":  "2026-10-22T00:01:20-07:00",
-    "commit":  "006c2dc16",
+    "generated":  "2026-11-25T00:00:13-08:00",
+    "commit":  "ac1593e8f",
     "uncommitted":  [
                         "test/win32/chooser-session-sort.ps1"
                     ],
     "files":  {
                   "src/apprt/win32/chooser_session_sort.zig":  "1316bcd3df281a34b77aeeb86ca107e651f41702b6d16df8422cd878d2c0b7a3",
-                  "test/win32/chooser-session-sort.ps1":  "fba7952496c289ffc4b4e5583ccae49ab0e22daf42c2d2f3acf9447c97547b87"
-              }
+                  "test/win32/chooser-session-sort.ps1":  "1f650e0f01b18dc8f2312f8eef5f1a9a35c0429e9fa1789bc94eb707da289c8c"
+              },
+    "code":  {
+                 "test/win32/chooser-session-sort.ps1":  "code1:e052dae3a407741bdec5afcdf2471472e95db2357d6c49b45ec598268cb8229f"
+             }
 }

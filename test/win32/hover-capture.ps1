@@ -170,7 +170,7 @@ $cornY = $m.StripTop + $sqTop + $inset
 
 function Probe($shot, [int]$edgeX, [int]$cornX) {
     if ($null -eq $shot) { return $null }
-    if ((Get-TestDistinctColors -Shot $shot) -lt 8) { return $null }
+    if ((Get-TestDistinctColors -Shot $shot -Whole) -lt 8) { return $null }
     $e = $shot.Bitmap.GetPixel($edgeX, $edgeY)
     $c = $shot.Bitmap.GetPixel($cornX, $cornY)
     return [pscustomobject]@{ Edge = [int]$e.R; Corner = [int]$c.R }
@@ -187,8 +187,8 @@ Assert ($hotPlus.Bitmap.Width -eq $hotPlus.Width -and $hotPlus.Bitmap.Height -eq
     "decoded PNG matches the reported size ($($hotPlus.Bitmap.Width)x$($hotPlus.Bitmap.Height) vs $($hotPlus.Width)x$($hotPlus.Height))"
 Assert ($hotPlus.Width -eq $wr.Width -and $hotPlus.Height -eq $wr.Height) `
     "the capture is the WINDOW rect, like Get-TestWindowPixels ($($hotPlus.Width)x$($hotPlus.Height) vs $($wr.Width)x$($wr.Height))"
-Assert ((Get-TestDistinctColors -Shot $hotPlus) -ge 8) `
-    "the capture has real chrome in it ($(Get-TestDistinctColors -Shot $hotPlus) distinct colors)"
+Assert ((Get-TestDistinctColors -Shot $hotPlus -Whole) -ge 8) `
+    "the capture has real chrome in it ($(Get-TestDistinctColors -Shot $hotPlus -Whole) distinct colors)"
 
 # --- 2. The ROUTE is reported, and it is the client one for the strip ------
 # A probe that landed on the wrong route and a probe that landed on a control

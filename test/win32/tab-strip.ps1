@@ -317,7 +317,7 @@ try {
     function Get-Shot {
         for ($t = 0; $t -lt 20; $t++) {
             $s = Get-TestWindowPixels -Window $top -Sync
-            if ((Get-TestDistinctColors -Shot $s) -ge 8) { return $s }
+            if ((Get-TestDistinctColors -Shot $s -Whole) -ge 8) { return $s }
             Close-TestWindowPixels $s
             Start-Sleep -Milliseconds 150
         }
@@ -1206,7 +1206,7 @@ try {
         $ibInset = Get-TestChromeDip -Dip 2.0 -Scale $scale
         function Probe-Fill($shot, $sqL, [int]$cx, [int]$y0) {
             if ($null -eq $shot) { return $null }
-            if ((Get-TestDistinctColors -Shot $shot) -lt 8) { return $null }
+            if ((Get-TestDistinctColors -Shot $shot -Whole) -lt 8) { return $null }
             $e = $shot.Bitmap.GetPixel($offX + $cx, $stripTop + $y0 + $ibInset + 1)
             $c = $shot.Bitmap.GetPixel($offX + $sqL + $ibInset, $stripTop + $y0 + $ibInset)
             return [pscustomobject]@{ Edge = [int]$e.R; Corner = [int]$c.R }

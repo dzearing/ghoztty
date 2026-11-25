@@ -161,7 +161,7 @@ function Measure-BannerBand([int]$procId, [IntPtr]$top, [string]$target) {
     try {
         return @{
             Px = (Get-ShotPx $shot 2 2)
-            Colors = (Get-TestDistinctColors -Shot $shot -Inset 2)
+            Colors = (Get-TestDistinctColors -Shot $shot -Whole -Inset 2)
         }
     } finally { Close-TestWindowPixels $shot }
 }

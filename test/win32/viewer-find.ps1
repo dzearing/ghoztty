@@ -355,7 +355,7 @@ try {
             Skip 'the card paints (PrintWindow returned nothing)'
         } else {
             try {
-                $colors = Get-TestDistinctColors -Shot $shot
+                $colors = Get-TestDistinctColors -Shot $shot -Whole
                 Assert ($colors -ge 3) "the card paints real chrome, not a flat fill ($colors distinct colors)"
             } finally { Close-TestWindowPixels -Shot $shot }
         }

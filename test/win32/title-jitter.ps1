@@ -135,7 +135,7 @@ function Get-PaintedShot {
     param([IntPtr]$Window)
     for ($t = 0; $t -lt 20; $t++) {
         $s = Get-TestWindowPixels -Window $Window -Sync
-        if ((Get-TestDistinctColors -Shot $s) -ge 8) { return $s }
+        if ((Get-TestDistinctColors -Shot $s -Whole) -ge 8) { return $s }
         Close-TestWindowPixels $s
         Start-Sleep -Milliseconds 150
     }

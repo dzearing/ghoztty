@@ -88,7 +88,7 @@ function Stripe-HasColor([IntPtr]$top, [int]$x, [int]$stripeTop, [int]$stripeH, 
     for ($t = 0; $t -lt 20; $t++) {
         $shot = Get-TestWindowPixels -Window $top -Sync
         try {
-            if ((Get-TestDistinctColors -Shot $shot) -lt 8) { Start-Sleep -Milliseconds 150; continue }
+            if ((Get-TestDistinctColors -Shot $shot -Whole) -lt 8) { Start-Sleep -Milliseconds 150; continue }
             for ($y = $stripeTop; $y -lt ($stripeTop + $stripeH); $y++) {
                 $c = Get-TestPixel -Shot $shot -X $x -Y $y
                 if ($null -eq $c) { continue }

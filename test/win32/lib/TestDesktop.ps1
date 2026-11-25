@@ -4805,21 +4805,23 @@ a few thousand of them is milliseconds where 8M is a visible pause in every run.
 function Get-TestCaptureContent {
     param(
         [Parameter(Mandatory = $true)]$Shot,
+        [int[]]$Rect,
+        [switch]$Whole,
         [int]$Inset = 8,
         [int]$Samples = 48,
         [int]$MaxStep = 16
     )
-    $x1 = $Shot.Width - $Inset
-    $y1 = $Shot.Height - $Inset
-    if ($x1 -le $Inset -or $y1 -le $Inset) {
+    $b = Resolve-TestShotRegion -Shot $Shot -Rect $Rect -Whole:$Whole -Inset $Inset -Helper 'Get-TestCaptureContent'
+    if ($null -eq $b) {
         return [pscustomobject]@{ Distinct = 0; TopShare = 1.0; Sampled = 0 }
     }
-    $stepX = [math]::Min($MaxStep, [math]::Max(1, [int](($x1 - $Inset) / $Samples)))
-    $stepY = [math]::Min($MaxStep, [math]::Max(1, [int](($y1 - $Inset) / $Samples)))
+    $x0 = $b[0]; $y0 = $b[1]; $x1 = $b[2]; $y1 = $b[3]
+    $stepX = [math]::Min($MaxStep, [math]::Max(1, [int](($x1 - $x0) / $Samples)))
+    $stepY = [math]::Min($MaxStep, [math]::Max(1, [int](($y1 - $y0) / $Samples)))
     $hist = @{}
     $n = 0
-    for ($y = $Inset; $y -lt $y1; $y += $stepY) {
-        for ($x = $Inset; $x -lt $x1; $x += $stepX) {
+    for ($y = $y0; $y -lt $y1; $y += $stepY) {
+        for ($x = $x0; $x -lt $x1; $x += $stepX) {
             $c = $Shot.Bitmap.GetPixel($x, $y).ToArgb()
             $n++
             if ($hist.ContainsKey($c)) { $hist[$c]++ } else { $hist[$c] = 1 }
@@ -5012,22 +5014,79 @@ function Get-TestPixel {
     return $Shot.Bitmap.GetPixel($lx, $ly)
 }
 
-# Mean luminance (0-255) over a screen rect of a capture, matching the
-# Get-RectBrightness helpers the pixel-probe scripts already use.
+<#
+THE REGION IS ALWAYS NAMED (T2212). Get-TestBrightness, Get-TestDistinctColors
+and Get-TestCaptureContent score the region the caller names - `-Rect @(l, t,
+r, b)` in SCREEN coordinates, like every other reader here - or the whole
+capture, which the caller must ask for by name with `-Whole`. Neither is a
+throw, and so is both.
+
+Why there is no default: the whole window is the region chrome alone can
+satisfy. T1115 measured it - a "did the content render?" check scored over the
+whole window passed on the caption, the tab strip and the borders with the
+content area blank. A whole-capture call is right when the window IS the
+subject (a menu, a dialog, a card) or the check is the lenient "this capture is
+not a dead flat fill" guard; it is wrong the moment the claim is about one part
+of the window. Writing `-Whole` is the one-word statement that the caller made
+that call, and a reviewer can grep for it.
+
+Returns the scan bounds in CAPTURE-LOCAL pixels, inset and clamped to the
+bitmap, as @(x0, y0, x1, y1) with x1/y1 exclusive - or $null when nothing is
+left to scan.
+#>
+function Resolve-TestShotRegion {
+    param(
+        [Parameter(Mandatory = $true)]$Shot,
+        [int[]]$Rect,
+        [switch]$Whole,
+        [int]$Inset = 0,
+        [Parameter(Mandatory = $true)][string]$Helper
+    )
+    if ($Whole -and $Rect) {
+        throw "${Helper}: -Rect and -Whole contradict each other - name one region. (T2212)"
+    }
+    if (-not $Whole -and -not $Rect) {
+        throw ("${Helper}: no -Rect and no -Whole. The whole capture is the region chrome alone can " +
+               "satisfy (T1115), so it is never scored by default (T2212). Pass -Rect @(left, top, " +
+               "right, bottom) in screen coordinates for the part of the window the check is about, " +
+               "or -Whole when the window itself is the subject or the check is only 'this capture " +
+               "is not a dead flat fill'.")
+    }
+    if ($Rect -and $Rect.Count -ne 4) {
+        throw "${Helper}: -Rect needs 4 values (left, top, right, bottom), got $($Rect.Count). (T2212)"
+    }
+    # Parenthesised on purpose: in a PowerShell array literal the comma binds
+    # tighter than `+`, so `@($a, $b, $c + $d)` concatenates arrays instead of
+    # adding - it silently yields a 4-element list and every probe reads -1.
+    if ($Whole) {
+        $Rect = @($Shot.Left, $Shot.Top, ($Shot.Left + $Shot.Width), ($Shot.Top + $Shot.Height))
+    }
+    $x0 = $Rect[0] + $Inset - $Shot.Left
+    $y0 = $Rect[1] + $Inset - $Shot.Top
+    $x1 = $Rect[2] - $Inset - $Shot.Left
+    $y1 = $Rect[3] - $Inset - $Shot.Top
+    if ($x0 -lt 0) { $x0 = 0 }
+    if ($y0 -lt 0) { $y0 = 0 }
+    if ($x1 -gt $Shot.Width) { $x1 = $Shot.Width }
+    if ($y1 -gt $Shot.Height) { $y1 = $Shot.Height }
+    if ($x1 -le $x0 -or $y1 -le $y0) { return $null }
+    return @($x0, $y0, $x1, $y1)
+}
+
+# Mean luminance (0-255) over a region of a capture, matching the
+# Get-RectBrightness helpers the pixel-probe scripts already use. The region is
+# -Rect or -Whole, never implied (T2212 - see Resolve-TestShotRegion).
 function Get-TestBrightness {
     param(
         [Parameter(Mandatory = $true)]$Shot,
         [int[]]$Rect,
+        [switch]$Whole,
         [int]$Inset = 8,
         [int]$Step = 4,
         [switch]$ChildOk
     )
-    # Parenthesised on purpose: in a PowerShell array literal the comma binds
-    # tighter than `+`, so `@($a, $b, $c + $d)` concatenates arrays instead of
-    # adding - it silently yields a 4-element list and every probe reads -1.
-    if (-not $Rect) {
-        $Rect = @($Shot.Left, $Shot.Top, ($Shot.Left + $Shot.Width), ($Shot.Top + $Shot.Height))
-    } elseif (-not $ChildOk -and $Shot.Children) {
+    $b = Resolve-TestShotRegion -Shot $Shot -Rect $Rect -Whole:$Whole -Inset $Inset -Helper 'Get-TestBrightness'
+    if ($Rect -and -not $ChildOk -and $Shot.Children) {
         # An explicit rect is a claim about one region, so one that a child
         # covers a real share of is measuring pixels the capture does not
         # reliably hold (T1404). A quarter is the line: a dialog's whole-client
@@ -5043,15 +5102,8 @@ function Get-TestBrightness {
             }
         }
     }
-    $x0 = $Rect[0] + $Inset - $Shot.Left
-    $y0 = $Rect[1] + $Inset - $Shot.Top
-    $x1 = $Rect[2] - $Inset - $Shot.Left
-    $y1 = $Rect[3] - $Inset - $Shot.Top
-    if ($x0 -lt 0) { $x0 = 0 }
-    if ($y0 -lt 0) { $y0 = 0 }
-    if ($x1 -gt $Shot.Width) { $x1 = $Shot.Width }
-    if ($y1 -gt $Shot.Height) { $y1 = $Shot.Height }
-    if ($x1 -le $x0 -or $y1 -le $y0) { return -1 }
+    if ($null -eq $b) { return -1 }
+    $x0 = $b[0]; $y0 = $b[1]; $x1 = $b[2]; $y1 = $b[3]
     $sum = 0.0; $n = 0
     for ($y = $y0; $y -lt $y1; $y += $Step) {
         for ($x = $x0; $x -lt $x1; $x += $Step) {
@@ -5078,19 +5130,25 @@ and meanLum 52 / 53 colors at 400ms.
 So a brightness probe should require real content before believing its own
 number. Real GDI chrome (text, borders, separators) is always well into the
 double digits.
+
+The region is -Rect or -Whole, never implied (T2212 - see
+Resolve-TestShotRegion): chrome alone clears the floor over a whole window.
 #>
 function Get-TestDistinctColors {
     param(
         [Parameter(Mandatory = $true)]$Shot,
+        [int[]]$Rect,
+        [switch]$Whole,
         [int]$Inset = 8,
         [int]$Step = 3,
         [int]$Max = 64
     )
     $seen = @{}
-    $x1 = $Shot.Width - $Inset
-    $y1 = $Shot.Height - $Inset
-    for ($y = $Inset; $y -lt $y1; $y += $Step) {
-        for ($x = $Inset; $x -lt $x1; $x += $Step) {
+    $b = Resolve-TestShotRegion -Shot $Shot -Rect $Rect -Whole:$Whole -Inset $Inset -Helper 'Get-TestDistinctColors'
+    if ($null -eq $b) { return 0 }
+    $x0 = $b[0]; $y0 = $b[1]; $x1 = $b[2]; $y1 = $b[3]
+    for ($y = $y0; $y -lt $y1; $y += $Step) {
+        for ($x = $x0; $x -lt $x1; $x += $Step) {
             $c = $Shot.Bitmap.GetPixel($x, $y)
             $seen["$($c.R),$($c.G),$($c.B)"] = 1
             if ($seen.Count -ge $Max) { return $seen.Count }

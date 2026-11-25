@@ -632,7 +632,7 @@ try {
     $fr = Get-TestWindowRect -Window $filterEdit
     $shot = Get-TestWindowPixels -Window $panel -Sync
     try {
-        $colors = Get-TestDistinctColors -Shot $shot
+        $colors = Get-TestDistinctColors -Shot $shot -Whole
         Assert ($colors -ge 8) "B2 the panel painted a real surface, not a flat fill ($colors distinct colors)"
         # The two gauges split the band 50/50, so the CPU chart is in its left
         # half and the Memory chart in its right half.

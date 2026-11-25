@@ -289,7 +289,7 @@ function Save-Shot($sb, [string]$Name) {
         $shot = Get-TestWindowPixels -Window ([IntPtr]$sb.Hwnd) -Sync
         $path = Join-Path $env:TEMP "t1828-$Name.png"
         $shot.Bitmap.Save($path, [System.Drawing.Imaging.ImageFormat]::Png)
-        $c = Get-TestCaptureContent -Shot $shot
+        $c = Get-TestCaptureContent -Shot $shot -Whole
         Close-TestWindowPixels -Shot $shot
         "  (saved $path; distinct=$($c.Distinct) top=$([math]::Round($c.TopShare,2)))"
         return $c

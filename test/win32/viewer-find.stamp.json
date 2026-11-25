@@ -1,19 +1,19 @@
 {
     "guard":  "viewer-find",
     "script":  "test/win32/viewer-find.ps1",
-    "generated":  "2026-11-24T06:42:34-08:00",
-    "commit":  "93a5c8839",
+    "generated":  "2026-11-25T00:02:58-08:00",
+    "commit":  "ac1593e8f",
     "uncommitted":  [
-
+                        "test/win32/viewer-find.ps1"
                     ],
     "files":  {
                   "src/apprt/win32/viewer_accel.zig":  "07d6f44e59f931c2c1caa5db167ffb7c099bb0684ae386a15260f6b46c5c1d2e",
                   "src/apprt/win32/viewer_find.zig":  "2d1018fde968a349c12070c0c51b34590cd495f70b7000cc639e2627a118efc0",
                   "src/apprt/win32/ViewerFindBar.zig":  "6ee907004fb2b44c09adbb581f154b4066299fd389391a8379fab8758387760b",
                   "src/viewer/find.js":  "59dffe968a2a082a728d0e46549dea1a66f6fe059464d69833a4a9ed68eacbc3",
-                  "test/win32/viewer-find.ps1":  "1c91b74ae75373354a59c2c35607ba444781de367929bc0fbe758f95d7260c75"
+                  "test/win32/viewer-find.ps1":  "dc38ceba52b38131be672af6c79c763f9a7180a17655b92b5010dcc81d9e0330"
               },
     "code":  {
-                 "test/win32/viewer-find.ps1":  "code1:066b54631e2544c4494c3921d4ddf48f5f5c1902cbbedb2ddb87060900cb0e10"
+                 "test/win32/viewer-find.ps1":  "code1:1be43ddf21dbce0a0657be643278c054ed68a39d96b6af362f535944ccdd8c67"
              }
 }

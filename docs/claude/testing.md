@@ -1620,6 +1620,18 @@ narrows its rect or says why the whole capture is the region:
 `# pixel-region: <reason>` (`// pixel-region:` in C#) on the walk's line or one
 of the two above.
 
+The library's own aggregates hold the same line (T2212): `Get-TestBrightness`,
+`Get-TestDistinctColors` and `Get-TestCaptureContent` take `-Rect @(l, t, r, b)`
+(screen coordinates) or `-Whole`, and THROW when given neither. `-Whole` is
+right when the captured window is itself the subject (a menu, a dialog, a card)
+or the read is only the "not a dead flat fill" guard; anything that claims one
+region of a window passes that region. `Get-TestHoverCapture`'s `.Changed` is
+the one whole-window answer with no region argument (the app computes it):
+treat it as "the hover landed somewhere", and read the control's own pixels
+for "this control lit". Section C of `test\win32\test-desktop-harness.ps1`
+demonstrates both refusals and the chrome-passes-whole / content-fails-rect
+shape.
+
 **A test sandbox can have an agent of its own** (T167). The local agent's
 single-instance guard is per-user and per-LINEAGE, and the lineage is a
 compile-time fact (`local-debug` for every debug build), so a debug agent

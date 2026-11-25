@@ -117,7 +117,7 @@ try {
     # At rest the slab is bare band - the control that says the fill below is
     # the lit state and not something painted there all along.
     $restShot = Get-TestWindowPixels -Window $h -Sync
-    if ((Get-TestDistinctColors $restShot) -lt 3) { throw 'SETUP FAIL: captured a mid-paint frame' }
+    if ((Get-TestDistinctColors -Shot $restShot -Whole) -lt 3) { throw 'SETUP FAIL: captured a mid-paint frame' }
     $rest = Get-TestPixel -Shot $restShot -X ($win.Left + $borderX + $closeL + 3) -Y $cy
     # T363: "bare chrome" is a claim about WHICH SURFACE this pixel is, so it is
     # scored against the band itself. The literal it replaces (R < 80) restated

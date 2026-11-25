@@ -521,7 +521,7 @@ function Get-TestTabExtents {
     if (-not $shot) {
         for ($t = 0; $t -lt 20; $t++) {
             $s = Get-TestWindowPixels -Window $Window -Desktop $Desktop -Sync
-            if ((Get-TestDistinctColors -Shot $s) -ge 8) { $shot = $s; $owned = $true; break }
+            if ((Get-TestDistinctColors -Shot $s -Whole) -ge 8) { $shot = $s; $owned = $true; break }
             Close-TestWindowPixels $s
             Start-Sleep -Milliseconds 150
         }

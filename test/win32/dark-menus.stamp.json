@@ -1,16 +1,16 @@
 {
     "guard":  "dark-menus",
     "script":  "test/win32/dark-menus.ps1",
-    "generated":  "2026-11-22T13:10:28-08:00",
-    "commit":  "412ba5a0c",
+    "generated":  "2026-11-24T23:56:46-08:00",
+    "commit":  "ac1593e8f",
     "uncommitted":  [
                         "test/win32/dark-menus.ps1"
                     ],
     "files":  {
                   "src/apprt/win32/DarkMode.zig":  "10598fdfee82caad14311d5f087eb83064e3bb593e0ea6504486d0ee09cef207",
-                  "test/win32/dark-menus.ps1":  "15c2c0c17b2e5ab161a88c79cb27c0fb18f4f59986ce769b848998b249cd625d"
+                  "test/win32/dark-menus.ps1":  "ff95db79cd0ac8bc9cd9c7def98d112d129127759b3c084a1f5f5e087e3e9502"
               },
     "code":  {
-                 "test/win32/dark-menus.ps1":  "code1:4fd96e6aac2d1b6898d1e1860c001a6e72a806fd82ad128fc4d67e379086e0aa"
+                 "test/win32/dark-menus.ps1":  "code1:e707ff820160ca9c5b61909f4f9fb5d59fa9f6b8c37fccf77b8e141e2358c73b"
              }
 }

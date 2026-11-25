@@ -750,7 +750,7 @@ try {
 
     $shot = Get-TestWindowPixels -Window $panel -Sync
     try {
-        Assert ((Get-TestDistinctColors -Shot $shot) -ge 8) "B the panel capture holds real content ($(Get-TestDistinctColors -Shot $shot) distinct colors)"
+        Assert ((Get-TestDistinctColors -Shot $shot -Whole) -ge 8) "B the panel capture holds real content ($(Get-TestDistinctColors -Shot $shot -Whole) distinct colors)"
         Assert (Test-ShotHasColor $shot $ACCENT_A) "B1 the panel paints the system accent $(Format-Rgb $ACCENT_A)"
         Assert (-not (Test-ShotHasColor $shot $ACCENT_B)) "B1 and nothing on it is $(Format-Rgb $ACCENT_B) yet"
     } finally { Close-TestWindowPixels -Shot $shot }
@@ -1057,8 +1057,8 @@ try {
 
         $shot = Get-TestWindowPixels -Window $toc -Sync
         try {
-            Assert ((Get-TestDistinctColors -Shot $shot) -ge 8) `
-                "F the card capture holds real content ($(Get-TestDistinctColors -Shot $shot) distinct colors)"
+            Assert ((Get-TestDistinctColors -Shot $shot -Whole) -ge 8) `
+                "F the card capture holds real content ($(Get-TestDistinctColors -Shot $shot -Whole) distinct colors)"
             # T930: the accent is the selected row's indicator BAR, floored
             # against the fill it sits on - so it is found by shape and scored
             # by hue, not by the registry RGB (lib\SelectionBar.ps1).

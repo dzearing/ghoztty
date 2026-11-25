@@ -275,7 +275,7 @@ try {
     Write-Host "  dpi=$dpi scale=$scale window=$($win.Width)x$($win.Height) client=$($cli.Width)x$($cli.Height) borderX=$borderX expectCapH=$expectCapH"
 
     $shot = Get-TestWindowPixels -Window $h -Sync
-    $distinct = Get-TestDistinctColors $shot
+    $distinct = Get-TestDistinctColors -Shot $shot -Whole
     if ($distinct -lt 3) { throw "SETUP FAIL: captured a mid-paint frame (distinct=$distinct)" }
 
     # --- 1. the band is ours, and it is exactly the native 32 DIP ------------
@@ -674,7 +674,7 @@ try {
         } finally { $gfx.Dispose() }
         $mPng = Join-Path $env:TEMP 'caption-bar-maximized.png'
         $mshot.Bitmap.Save($mPng, [System.Drawing.Imaging.ImageFormat]::Png)
-        $mContent = Get-TestCaptureContent -Shot $mshot
+        $mContent = Get-TestCaptureContent -Shot $mshot -Whole
         Close-TestWindowPixels $mshot
         Check ($mContent.Distinct -ge 8) `
             "maximized: the capture content score sees the caption band ($($mContent.Distinct) distinct >= 8, top $([math]::Round($mContent.TopShare, 3)); saved $mPng)"

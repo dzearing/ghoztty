@@ -254,7 +254,7 @@ try {
 
     $bgShot = Get-TestWindowPixels -Window $panel -Sync
     try {
-        $distinct = Get-TestDistinctColors -Shot $bgShot
+        $distinct = Get-TestDistinctColors -Shot $bgShot -Whole
         Assert ($distinct -gt 3) "the capture is a real frame, not a black mid-paint one ($distinct colors)"
     } finally { Close-TestWindowPixels -Shot $bgShot }
 

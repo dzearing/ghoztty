@@ -92,12 +92,12 @@ function Measure-Menu([int]$gpid, [IntPtr]$top, [IntPtr]$target, [int]$sx, [int]
         # gate above the brightness read is what keeps the torn frame honest.
         $shot = Get-TestWindowPixels -Window $menu -TornReason 'user32 popup menu (#32768): the WndProc is not ours and does not answer WM_PRINTCLIENT'
         try {
-            $colors = Get-TestDistinctColors -Shot $shot
+            $colors = Get-TestDistinctColors -Shot $shot -Whole
             if ($colors -ge 8) {
                 # Default rect = the whole capture, inset 8px to skip the shadow
                 # and the rounded border - the same inset the pre-migration
                 # screen-grab used.
-                $b = Get-TestBrightness -Shot $shot
+                $b = Get-TestBrightness -Shot $shot -Whole
                 break
             }
         } finally {

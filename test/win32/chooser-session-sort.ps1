@@ -247,7 +247,7 @@ try {
     Write-Host '4. the cards and the header line are painted at their T602 positions'
     $shot = Get-TestWindowPixels -Window $chooser -Sync
     try {
-        $distinct = Get-TestDistinctColors -Shot $shot
+        $distinct = Get-TestDistinctColors -Shot $shot -Whole
         Assert ($distinct -gt 3) "the capture is a real frame ($distinct colors)"
         $cardPx = Get-TestPixel -Shot $shot -X ($cr.Left + $geo.CardX) -Y ($cr.Top + $geo.CardY)
         $bgPx = Get-TestPixel -Shot $shot -X ($cr.Left + $geo.Left) -Y ($cr.Top + $geo.Bottom - 2)

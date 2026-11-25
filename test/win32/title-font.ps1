@@ -186,7 +186,7 @@ function Get-Signature($g) {
     for ($t = 0; $t -lt 20; $t++) {
         $shot = Get-TestWindowPixels -Window $g.Top -Sync
         try {
-            if ((Get-TestDistinctColors -Shot $shot) -ge 8) {
+            if ((Get-TestDistinctColors -Shot $shot -Whole) -ge 8) {
                 return [pscustomobject]@{
                     Label = [int[]](Get-ColSig $shot ([int]$lx0) ([int]$lx1) ([int]$y0) ([int]$y1) 2)
                     Plus = [int[]](Get-ColSig $shot ([int]$px0) ([int]$px1) ([int]$y0) ([int]$y1) 2)

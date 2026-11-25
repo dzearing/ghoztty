@@ -311,7 +311,7 @@ try {
     Write-Host 'B. at open the selection is unemphasized, and its mark is neutral'
     $shot = Get-TestWindowPixels -Window $chooser -Sync
     try {
-        $distinct = Get-TestDistinctColors -Shot $shot
+        $distinct = Get-TestDistinctColors -Shot $shot -Whole
         Assert ($distinct -gt 3) "the capture is a real frame, not a black mid-paint one ($distinct colors)"
         Measure-Row $shot 'unfocused' $SELECTION_WASH_UNFOCUSED $false
     } finally { Close-TestWindowPixels -Shot $shot }

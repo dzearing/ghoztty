@@ -83,6 +83,19 @@ is a weaker test than asking the app whether anything moved. A probe hovering
 dead space asserts $false and gets a sharper oracle than "these two pixels are
 close".
 
+Changed is scored over the WHOLE WINDOW, always (T2212) - the app compares the
+before and after photographs of the entire window and there is no region
+argument. So $true says "something somewhere moved", never "the control at
+(X, Y) lit": a caption button's own hover, a tab's, or a caret blink anywhere
+in the chrome all satisfy it (the T1115 shape - chrome alone answering a
+question about one part of the window). Use it as the coarse "the hover
+landed at all" gate, and prove the specific control lit by reading ITS pixels
+with Get-TestPixel or a -Rect read against its own rect. A $false is the
+stronger, region-free claim: nothing in the whole window changed.
+
+Get-TestBrightness / Get-TestDistinctColors / Get-TestCaptureContent against
+this shot need -Rect or -Whole like any other capture (T2212).
+
 -Client forces the client message even where the point hit-tests non-client,
 the twin of Send-TestMouse -Client.
 

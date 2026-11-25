@@ -449,7 +449,7 @@ function Test-Floor($c) { return ($c.Distinct -ge $floorD -and $c.TopShare -le $
 $flat = New-Object System.Drawing.Bitmap 400, 300
 $g = [System.Drawing.Graphics]::FromImage($flat)
 $g.Clear([System.Drawing.Color]::FromArgb(32, 34, 40)); $g.Dispose()
-$flatC = Get-TestCaptureContent -Shot (New-FakeShot $flat)
+$flatC = Get-TestCaptureContent -Shot (New-FakeShot $flat) -Whole
 Write-Host "  flat fill: distinct=$($flatC.Distinct) topShare=$([math]::Round($flatC.TopShare,3))"
 Assert ($flatC.Distinct -eq 1 -and $flatC.TopShare -eq 1.0) `
     "a flat fill scores 1 distinct / 1.0 top share (got $($flatC.Distinct) / $($flatC.TopShare))"
@@ -473,7 +473,7 @@ foreach ($c in @([System.Drawing.Color]::Red, [System.Drawing.Color]::Lime, [Sys
 }
 $g.Dispose()
 $nearShot = New-FakeShot $near
-$nearC = Get-TestCaptureContent -Shot $nearShot
+$nearC = Get-TestCaptureContent -Shot $nearShot -Whole
 Write-Host "  near-uniform: distinct=$($nearC.Distinct) topShare=$([math]::Round($nearC.TopShare,3))"
 Assert (-not (Test-TestCaptureUniform -Shot $nearShot)) `
     'the binary uniform check passes a near-uniform capture through (which is why the floor exists)'
@@ -493,7 +493,7 @@ for ($y = 0; $y -lt 300; $y += 4) {
     }
 }
 $g.Dispose()
-$busyC = Get-TestCaptureContent -Shot (New-FakeShot $busy)
+$busyC = Get-TestCaptureContent -Shot (New-FakeShot $busy) -Whole
 Write-Host "  busy: distinct=$($busyC.Distinct) topShare=$([math]::Round($busyC.TopShare,3))"
 Assert (Test-Floor $busyC) `
     "a bitmap with real content clears the floor ($($busyC.Distinct) distinct, top $([math]::Round($busyC.TopShare * 100))%)"
@@ -503,7 +503,7 @@ Assert (Test-Floor $busyC) `
 $refPng = Join-Path $PSScriptRoot 'artifacts\hero-mode-t59b.png'
 if (Test-Path -LiteralPath $refPng) {
     $refBmp = [System.Drawing.Bitmap]::FromFile($refPng)
-    $refC = Get-TestCaptureContent -Shot (New-FakeShot $refBmp)
+    $refC = Get-TestCaptureContent -Shot (New-FakeShot $refBmp) -Whole
     Write-Host "  committed hero screenshot: distinct=$($refC.Distinct) topShare=$([math]::Round($refC.TopShare,3))"
     Assert (Test-Floor $refC) `
         "the committed hero screenshot clears the floor ($($refC.Distinct) distinct, top $([math]::Round($refC.TopShare * 100))%)"
@@ -555,8 +555,8 @@ for ($i = 0; $i -lt 10; $i++) {
 }
 $g.Dispose()
 $bandShot = New-FakeShot $band
-$bandC = Get-TestCaptureContent -Shot $bandShot
-$bandOld = Get-TestCaptureContent -Shot $bandShot -MaxStep 100000
+$bandC = Get-TestCaptureContent -Shot $bandShot -Whole
+$bandOld = Get-TestCaptureContent -Shot $bandShot -Whole -MaxStep 100000
 Write-Host "  maximized caption-band shot: distinct=$($bandC.Distinct) topShare=$([math]::Round($bandC.TopShare,3)) (count-bounded grid: $($bandOld.Distinct) / $([math]::Round($bandOld.TopShare,3)))"
 Assert ($bandC.Distinct -ge $floorD) `
     "the content score sees a maximized window's caption band ($($bandC.Distinct) distinct >= the $floorD floor)"
@@ -564,6 +564,34 @@ Assert ($bandOld.Distinct -lt $floorD) `
     "and the count-bounded grid it replaced called that same capture collapsed ($($bandOld.Distinct) distinct)"
 Assert ($bandC.TopShare -gt $floorT) `
     "TopShare stays an AREA fraction however dense the grid ($([math]::Round($bandC.TopShare,3)) > $floorT): floor big windows on Distinct"
+
+# --- the region is always NAMED (T2212) -------------------------------------
+# That same shot is the T1115 shape: the caption band is busy, the content
+# area under it is blank. Scored whole it clears the floor on chrome alone;
+# scored over the content rect it does not. So the three helpers refuse to
+# pick the whole capture for a caller that named nothing, and -Rect really
+# narrows what they read.
+$contentRect = @(9, 60, 3849, 2109)   # screen coords; New-FakeShot origin is 0,0
+foreach ($h in @('Get-TestCaptureContent', 'Get-TestDistinctColors', 'Get-TestBrightness')) {
+    $threw = $null
+    try { [void](& $h -Shot $bandShot) } catch { $threw = "$($_.Exception.Message)" }
+    Assert ($threw -match 'no -Rect and no -Whole') "T2212 $h with no region THROWS (got: $threw)"
+    $threw = $null
+    try { [void](& $h -Shot $bandShot -Whole -Rect $contentRect) } catch { $threw = "$($_.Exception.Message)" }
+    Assert ($threw -match 'contradict') "T2212 $h with both -Rect and -Whole THROWS (got: $threw)"
+}
+$wholeD = Get-TestDistinctColors -Shot $bandShot -Whole -Step 8
+$regionD = Get-TestDistinctColors -Shot $bandShot -Rect $contentRect -Step 8
+$regionC = Get-TestCaptureContent -Shot $bandShot -Rect $contentRect
+$captionC = Get-TestCaptureContent -Shot $bandShot -Rect @(9, 9, 3849, 49) -Inset 0
+Write-Host "  T2212 region scoring: whole=$wholeD distinct, content rect=$regionD distinct / content $($regionC.Distinct), caption rect content $($captionC.Distinct)"
+Assert ($wholeD -ge $floorD) "T2212 scored WHOLE, chrome alone clears the floor ($wholeD distinct) - the T1115 shape"
+Assert ($regionD -eq 1 -and $regionC.Distinct -eq 1) `
+    "T2212 scored over the content -Rect, the blank content area reads 1 distinct (Distinct=$regionD, Content=$($regionC.Distinct))"
+Assert ($captionC.Distinct -ge $floorD) "T2212 and a -Rect over the caption band sees the band ($($captionC.Distinct) distinct)"
+$lumWhole = Get-TestBrightness -Shot $bandShot -Whole -Step 16
+$lumContent = Get-TestBrightness -Shot $bandShot -Rect $contentRect -Step 16
+Assert ($lumContent -eq 0 -and $lumWhole -ge 0) "T2212 Get-TestBrightness -Rect reads only the black content area ($lumContent; whole $lumWhole)"
 $band.Dispose()
 
 $flat.Dispose(); $near.Dispose(); $busy.Dispose()
@@ -765,7 +793,7 @@ try {
     $chromeErr = ''
     try {
         $chromeShot = Get-TestWindowPixels -Window $top -Sync
-        try { $chromeOk = ((Get-TestDistinctColors -Shot $chromeShot) -ge 8) }
+        try { $chromeOk = ((Get-TestDistinctColors -Shot $chromeShot -Whole) -ge 8) }
         finally { Close-TestWindowPixels $chromeShot }
     } catch { $chromeErr = $_.Exception.Message }
     if ($chromeErr) { Write-Host "capture: chrome window threw - $chromeErr" }
@@ -871,7 +899,7 @@ try {
 
             $ps.ChildWarned.Clear()
             $w = $null
-            [void](Get-TestBrightness -Shot $ps -WarningVariable w -WarningAction SilentlyContinue)
+            [void](Get-TestBrightness -Shot $ps -Whole -WarningVariable w -WarningAction SilentlyContinue)
             Assert (@($w).Count -eq 0) 'the whole-shot brightness average is not warned'
 
             $hit = Get-TestCaptureChild -Shot $ps -X $inX -Y $inY
@@ -885,8 +913,8 @@ try {
 
     $shot = Get-TestWindowPixels -Window $pane -AllowTerminalSurface -AllowUniform -TornReason $surfaceLimit
     try {
-        $surfColors = Get-TestDistinctColors -Shot $shot
-        $surfLum = Get-TestBrightness -Shot $shot
+        $surfColors = Get-TestDistinctColors -Shot $shot -Whole
+        $surfLum = Get-TestBrightness -Shot $shot -Whole
     } finally { Close-TestWindowPixels $shot }
     Write-Host "capture: terminal surface distinct=$surfColors meanLum=$surfLum"
     Assert ($surfColors -le 2) `
@@ -920,8 +948,8 @@ try {
     Assert $rendered "positive control: the pane rendered the new output before the capture (after $([int]$renderSw.ElapsedMilliseconds)ms)"
     $shot2 = Get-TestWindowPixels -Window $pane -AllowTerminalSurface -AllowUniform -TornReason $surfaceLimit
     try {
-        $surfColors2 = Get-TestDistinctColors -Shot $shot2
-        $surfLum2 = Get-TestBrightness -Shot $shot2
+        $surfColors2 = Get-TestDistinctColors -Shot $shot2 -Whole
+        $surfLum2 = Get-TestBrightness -Shot $shot2 -Whole
     } finally { Close-TestWindowPixels $shot2 }
     Write-Host "capture: terminal surface after more output distinct=$surfColors2 meanLum=$surfLum2"
     Assert (($surfColors2 -le 2) -and ([math]::Abs($surfLum2 - $surfLum) -le 1)) `

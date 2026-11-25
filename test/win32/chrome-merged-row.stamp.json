@@ -1,17 +1,17 @@
 {
     "guard":  "chrome-merged-row",
     "script":  "test/win32/chrome-merged-row.ps1",
-    "generated":  "2026-11-22T13:06:22-08:00",
-    "commit":  "412ba5a0c",
+    "generated":  "2026-11-25T00:00:25-08:00",
+    "commit":  "ac1593e8f",
     "uncommitted":  [
                         "test/win32/chrome-merged-row.ps1"
                     ],
     "files":  {
                   "src/apprt/win32/caption_layout.zig":  "39e4484c2478bd4b72a4053f80aaf39c50510637ab9b63f70a5b21ff67744603",
                   "src/apprt/win32/tab_strip_layout.zig":  "ef2d2f198cdba5186e0f8f0f4447be77dcba4e4df38fad5825a245ee10a5bbbe",
-                  "test/win32/chrome-merged-row.ps1":  "a28806968c34922947664bc184965e0e1d257d4b9330296c91e707be6bc00968"
+                  "test/win32/chrome-merged-row.ps1":  "92d45d3450de2902b84b97cbff07c187b2a02f12177f0493f80c95ba9e55b10a"
               },
     "code":  {
-                 "test/win32/chrome-merged-row.ps1":  "code1:47491a8b6970e6c1bb08112960ee38cb9345dd9d7c796f1a9e769a832a92ed56"
+                 "test/win32/chrome-merged-row.ps1":  "code1:af5cac49f426e253d30b6c148f48473d395fd578671b9de4fbbc73de214d88b9"
              }
 }

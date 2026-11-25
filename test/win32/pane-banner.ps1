@@ -295,7 +295,7 @@ function Measure-T377Band($Shot, $Geometry) {
 # so every probe below can score the guard as its own assertion.
 function Get-OverlayShot($overlay) {
     $shot = Get-TestWindowPixels -Window ([IntPtr]$overlay.Hwnd) -Sync
-    return @{ Shot = $shot; Colors = (Get-TestDistinctColors -Shot $shot -Inset 2) }
+    return @{ Shot = $shot; Colors = (Get-TestDistinctColors -Shot $shot -Whole -Inset 2) }
 }
 
 # A pixel in OVERLAY-window coordinates as "r,g,b" (the capture is already in
@@ -1014,7 +1014,7 @@ try {
         $chTop = $chCy - [int][Math]::Truncate($side / 2)
         function Probe-Chev($shot) {
             if ($null -eq $shot) { return $null }
-            if ((Get-TestDistinctColors -Shot $shot) -lt 8) { return $null }
+            if ((Get-TestDistinctColors -Shot $shot -Whole) -lt 8) { return $null }
             $e = $shot.Bitmap.GetPixel($chCx, $chTop + $inset + 1)
             $c = $shot.Bitmap.GetPixel($chL + $inset, $chTop + $inset)
             return [pscustomobject]@{ Edge = [int]$e.R; Corner = [int]$c.R }
@@ -1327,7 +1327,7 @@ try {
         # -Sync: through the overlay's own WM_PRINTCLIENT, so the bitmap is the
         # frame the app painted. Without it this measurement is a coin flip.
         $shot745 = Get-TestWindowPixels -Window ([IntPtr]$ov745.Hwnd) -Sync
-        $t745Colors += (Get-TestDistinctColors -Shot $shot745 -Inset 2)
+        $t745Colors += (Get-TestDistinctColors -Shot $shot745 -Whole -Inset 2)
         $inkR = Measure-InkRight $shot745 $cLeft $cRight
         Close-TestWindowPixels $shot745
         $span = $cRight - $cLeft
@@ -1418,7 +1418,7 @@ try {
         $g0 = Get-T377Geometry -Overlay $ovPre
         $shot0 = Get-TestWindowPixels -Window ([IntPtr]$ovPre.Hwnd) -Sync
         try {
-            if ((Get-TestDistinctColors -Shot $shot0) -ge 8) {
+            if ((Get-TestDistinctColors -Shot $shot0 -Whole) -ge 8) {
                 $preBand = Measure-T377Band -Shot $shot0 -Geometry $g0
             }
         } finally { Close-TestWindowPixels -Shot $shot0 }
@@ -1449,7 +1449,7 @@ try {
         for ($att = 1; $att -le 8; $att++) {
             $shotW = Get-TestWindowPixels -Window ([IntPtr]$ovW.Hwnd) -Sync
             try {
-                if ((Get-TestDistinctColors -Shot $shotW) -lt 8) {
+                if ((Get-TestDistinctColors -Shot $shotW -Whole) -lt 8) {
                     $seq += 'blank'
                     $prev = $null
                     $stall = 'the capture held no content'
@@ -1547,7 +1547,7 @@ try {
         # foot of the text box, under every (capital) glyph.
         function Measure-RuleRow($s) {
             if ($null -eq $s) { return $null }
-            if ((Get-TestDistinctColors -Shot $s) -lt 8) { return $null }
+            if ((Get-TestDistinctColors -Shot $s -Whole) -lt 8) { return $null }
             $rows = Measure-LinkRows $s
             if ($rows.Count -eq 0) { return $null }
             $last = ($rows.Keys | Sort-Object)[-1]

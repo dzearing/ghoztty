@@ -1,9 +1,10 @@
 {
     "guard":  "tab-strip",
     "script":  "test/win32/tab-strip.ps1",
-    "generated":  "2026-11-24T15:31:17-08:00",
-    "commit":  "39a2a3e16",
+    "generated":  "2026-11-25T00:03:56-08:00",
+    "commit":  "ac1593e8f",
     "uncommitted":  [
+                        "test/win32/lib/ChromeGeometry.ps1",
                         "test/win32/tab-strip.ps1"
                     ],
     "files":  {
@@ -11,11 +12,11 @@
                   "src/apprt/win32/icon_button.zig":  "6a3a4f1eb1abe83ec20e99cf0bac21916ffc1de249530f199ba65cab4c421c08",
                   "src/apprt/win32/tab_shape.zig":  "e464dc2c2802550de94229051e1576e343b175039010ba8ae6ea537a9643a837",
                   "src/apprt/win32/tab_strip_layout.zig":  "ef2d2f198cdba5186e0f8f0f4447be77dcba4e4df38fad5825a245ee10a5bbbe",
-                  "test/win32/lib/ChromeGeometry.ps1":  "11e3f40112d2fa342a6715d8bf78f3f4eaf9ac9bc8f7714f2bc91feb5555ff9f",
-                  "test/win32/tab-strip.ps1":  "353230f800e330f171386007eef5780fba3463eb720d9792d25e73c40f3d65ba"
+                  "test/win32/lib/ChromeGeometry.ps1":  "af0f9beb1d17af0f8d021d5ee3178d4b34748857f7a87bf65387d3ee65677380",
+                  "test/win32/tab-strip.ps1":  "7821267a2371e4ad42bfbe6d9cee7c01d56b4f839d38cb13370473c798db05ac"
               },
     "code":  {
-                 "test/win32/lib/ChromeGeometry.ps1":  "code1:0013e38e8a7cd4ffabc58bdaaa29c383f1cbf8b1e5bbd6be7cc1eebf3219a60b",
-                 "test/win32/tab-strip.ps1":  "code1:cb19b3bdb2d87d7aa06ad43f10bbabd831d8d183c8e556f78475423c4c171bc5"
+                 "test/win32/lib/ChromeGeometry.ps1":  "code1:f4244cf6c9f86e7abfc3087541d95efd973a0b1f106d840ae81628723b469306",
+                 "test/win32/tab-strip.ps1":  "code1:d9377454ad950c2622f8f43bb283ad342cf7be096eb95742eca82febceeb0f29"
              }
 }

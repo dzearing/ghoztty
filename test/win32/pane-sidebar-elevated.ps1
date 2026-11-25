@@ -173,7 +173,7 @@ function Wait-SidebarWidth($top, [int]$Want, [int]$Ms = 4000) {
 # capture came back empty.
 function Get-Shot($top, [string]$Name) {
     $shot = Get-TestWindowPixels -Window $top -Sync
-    $distinct = Get-TestDistinctColors -Shot $shot
+    $distinct = Get-TestDistinctColors -Shot $shot -Whole
     if ($distinct -lt 4) {
         Close-TestWindowPixels $shot
         "  capture for $Name came back empty ($distinct colors)"

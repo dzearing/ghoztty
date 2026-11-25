@@ -738,7 +738,7 @@ $shot = Get-TestWindowPixels -Window $g.Top -Sync
 try {
     # A capture with nothing in it satisfies "no ink" for entirely the wrong
     # reason, so real content is a precondition, not an assumption (T216).
-    $colors = Get-TestDistinctColors -Shot $shot
+    $colors = Get-TestDistinctColors -Shot $shot -Whole
     Assert ($colors -ge 8) "A: the window capture holds real content ($colors distinct colors)"
 
     $cr = Get-TestWindowRect -Window $g.Top -Client

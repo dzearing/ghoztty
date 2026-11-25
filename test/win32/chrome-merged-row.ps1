@@ -343,7 +343,7 @@ try {
         function Get-BandInk {
             for ($t = 0; $t -lt 20; $t++) {
                 $shot = Get-TestWindowPixels -Window $h -Sync
-                $real = ((Get-TestDistinctColors -Shot $shot) -ge 8)
+                $real = ((Get-TestDistinctColors -Shot $shot -Whole) -ge 8)
                 if ($real) {
                     $bg = $shot.Bitmap.GetPixel($m7.OffX + $tL - [int]($m7.PadMd / 2), $midY7)
                     $n = 0

@@ -208,7 +208,7 @@ try {
     # origin plus the client offset the layout is expressed in.
     $shot = Get-TestWindowPixels -Window $chooser -Sync
     try {
-        $distinct = Get-TestDistinctColors -Shot $shot
+        $distinct = Get-TestDistinctColors -Shot $shot -Whole
         Assert ($distinct -gt 3) "the capture is a real frame, not a black mid-paint one ($distinct colors)"
 
         $client = Get-TestWindowRect -Window $chooser -Client

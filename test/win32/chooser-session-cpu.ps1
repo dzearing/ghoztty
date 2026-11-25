@@ -328,7 +328,7 @@ try {
     # covers the capsule's rounded ends and one pixel of rounding at each edge.
     $wantRun = [int](($geo.MeterRight - $geo.MeterLeft) * 2 / 3)
     try {
-        $distinct = Get-TestDistinctColors -Shot $shot
+        $distinct = Get-TestDistinctColors -Shot $shot -Whole
         Assert ($distinct -gt 3) "E the capture is a real frame, not a black mid-paint one ($distinct colors)"
         $meterRun = Get-MeterBarRun $shot $client $geo
         Assert ($meterRun -ge $wantRun) `
@@ -466,7 +466,7 @@ try {
         $client2 = Get-TestWindowRect -Window $g2.Chooser -Client
         $shot2 = Get-TestWindowPixels -Window $g2.Chooser -Sync
         try {
-            $distinct2 = Get-TestDistinctColors -Shot $shot2
+            $distinct2 = Get-TestDistinctColors -Shot $shot2 -Whole
             Assert ($distinct2 -gt 3) "F the control capture is a real frame ($distinct2 colors)"
             $run2 = Get-MeterBarRun $shot2 $client2 $geo2
             # A couple of pixels is a ClearType fringe on the title, which now

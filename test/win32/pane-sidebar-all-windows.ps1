@@ -410,7 +410,7 @@ try {
         $shot = Get-TestWindowPixels -Window ([IntPtr]$sb.Hwnd) -Sync
         $path = Join-Path $env:TEMP 't1829-all-windows.png'
         $shot.Bitmap.Save($path, [System.Drawing.Imaging.ImageFormat]::Png)
-        $c = Get-TestCaptureContent -Shot $shot
+        $c = Get-TestCaptureContent -Shot $shot -Whole
         Close-TestWindowPixels -Shot $shot
         "  (saved $path; distinct=$($c.Distinct))"
         Assert "the outline paints content" ($c.Distinct -ge 3)

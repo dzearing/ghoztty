@@ -195,7 +195,7 @@ function Get-DeskProbe([IntPtr]$top) {
     $cs = Get-TestWindowRect -Window $top -Client
     $shot = Get-TestWindowPixels -Window $top -Sync
     try {
-        if ((Get-TestDistinctColors -Shot $shot) -lt 4) { return $null }
+        if ((Get-TestDistinctColors -Shot $shot -Whole) -lt 4) { return $null }
         $rx = [int](($p.Right + $cs.Right) / 2)
         $ry = [int](($p.Top + $p.Bottom) / 2)
         $bx = [int](($p.Left + $p.Right) / 2)

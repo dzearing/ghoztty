@@ -371,7 +371,7 @@ function Get-HeroDividerStrip([IntPtr]$top, $hero, [int]$grab, [int]$pad = 4, $S
     $shot = if ($null -ne $Shot) { $Shot } else { Get-TestWindowPixels -Window $top -Sync }
     if ($null -eq $shot) { return $null }
     try {
-        if ((Get-TestDistinctColors -Shot $shot) -lt 8) { return $null }
+        if ((Get-TestDistinctColors -Shot $shot -Whole) -lt 8) { return $null }
         $midY = [int](($hero.Top + $hero.Bottom) / 2)
         $s = To-Screen $top ($hero.Right - $pad) $midY
         $x0 = [int]($s[0] - $shot.Left)
@@ -416,7 +416,7 @@ function Save-WindowShot([IntPtr]$top, [string]$path) {
     $shot = Get-TestWindowPixels -Window $top -Sync
     try {
         $shot.Bitmap.Save($path, [System.Drawing.Imaging.ImageFormat]::Png)
-        return (Get-TestCaptureContent -Shot $shot)
+        return (Get-TestCaptureContent -Shot $shot -Whole)
     } finally { Close-TestWindowPixels $shot }
 }
 

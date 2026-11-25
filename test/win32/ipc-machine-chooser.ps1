@@ -172,7 +172,7 @@ function Get-Shot([IntPtr]$h) {
         $shot = $null
         Start-Sleep -Milliseconds 200
         try { $shot = Get-TestWindowPixels -Window $h -Sync } catch { continue }
-        if ((Get-TestDistinctColors -Shot $shot) -ge 8) { break }
+        if ((Get-TestDistinctColors -Shot $shot -Whole) -ge 8) { break }
     }
     return $shot
 }
@@ -485,7 +485,7 @@ try {
     $scale = Get-ChooserScale $chooser
 
     $shot = Get-Shot $chooser
-    Assert ((Get-TestDistinctColors -Shot $shot) -ge 8) "the chooser capture holds real content ($(Get-TestDistinctColors -Shot $shot) distinct colors)"
+    Assert ((Get-TestDistinctColors -Shot $shot -Whole) -ge 8) "the chooser capture holds real content ($(Get-TestDistinctColors -Shot $shot -Whole) distinct colors)"
 
     $rowH = 0
     if ($list -ne [IntPtr]::Zero) {
@@ -875,7 +875,7 @@ try {
             # on.
             $mid = $hr2.Top + [int]($hintH2 / 2)
             $shot2 = Get-Shot $chooser2
-            Assert ((Get-TestDistinctColors -Shot $shot2) -ge 8) "the signed-out capture holds real content ($(Get-TestDistinctColors -Shot $shot2) distinct colors)"
+            Assert ((Get-TestDistinctColors -Shot $shot2 -Whole) -ge 8) "the signed-out capture holds real content ($(Get-TestDistinctColors -Shot $shot2 -Whole) distinct colors)"
             $tail = Measure-DrawnPixels $shot2 $hr2.Left $mid $hr2.Right $hr2.Bottom 40 40 40 12
             Close-TestWindowPixels $shot2
             Assert ($tail -ge 20) "the wrapped tail of the strip is rendered ($tail drawn pixels below the first line)"
@@ -962,7 +962,7 @@ try {
             $avT = $org3Y + (Get-TestChromeDip -Dip 10.0 -Scale $scale3)
             $avB = $org3Y + (Get-TestChromeDip -Dip 42.0 -Scale $scale3)
             $shot3 = Get-Shot $chooser3
-            Assert ((Get-TestDistinctColors -Shot $shot3) -ge 8) "the signed-in capture holds real content ($(Get-TestDistinctColors -Shot $shot3) distinct colors)"
+            Assert ((Get-TestDistinctColors -Shot $shot3 -Whole) -ge 8) "the signed-in capture holds real content ($(Get-TestDistinctColors -Shot $shot3 -Whole) distinct colors)"
             # Sample INSIDE the disc but off its center line, where the letter
             # is: the fill is what the ring reads.
             $ring = Get-ShotPixel $shot3 ($avL + [int](($avR - $avL) * 0.12)) ($avT + [int](($avB - $avT) * 0.5))

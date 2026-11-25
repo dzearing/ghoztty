@@ -1,8 +1,8 @@
 {
     "guard":  "hero-mode",
     "script":  "test/win32/hero-mode.ps1",
-    "generated":  "2026-11-24T23:18:22-08:00",
-    "commit":  "bd4189d54",
+    "generated":  "2026-11-25T00:02:15-08:00",
+    "commit":  "ac1593e8f",
     "uncommitted":  [
                         "test/win32/hero-mode.ps1"
                     ],
@@ -10,9 +10,9 @@
                   "src/apprt/win32/hero_math.zig":  "8ad9c3c4d9a953d7ee37c2fdc930eaef3de769209325b18391c15f5b439ed932",
                   "src/apprt/win32/hero_snap_schedule.zig":  "c1eb3f178e825a6f7003d0e4cb92bc32492fe91aab289390f970e5b15ac4883f",
                   "src/apprt/win32/HeroCarousel.zig":  "b6a6247d3b4d94c4df3e9b9c52b4ad645229a54b546a68e9f6039cdb9cc00135",
-                  "test/win32/hero-mode.ps1":  "d2f55fa8543d212d5f870198dff6bda513bc36e8f1b2fd725ef3dd627cf47857"
+                  "test/win32/hero-mode.ps1":  "49160c3ec9b898ad8ee60020e19e8160ca3cc8037e50327503ee94afc2c051ef"
               },
     "code":  {
-                 "test/win32/hero-mode.ps1":  "code1:02e69ec152f15965270e98207d3bfb167ec25928012a10ebe8b0985313fd2009"
+                 "test/win32/hero-mode.ps1":  "code1:aedb7e27c9c5b1321d093a29ca2da01641790942f5cdb08e9bbcf928edbcdacf"
              }
 }

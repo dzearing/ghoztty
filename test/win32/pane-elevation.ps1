@@ -261,7 +261,7 @@ if ($null -ne $hits) {
 # The desk: the right margin, halfway down the pane.
 $shot = Get-TestWindowPixels -Window $top -Sync
 try {
-    $distinct = Get-TestDistinctColors -Shot $shot
+    $distinct = Get-TestDistinctColors -Shot $shot -Whole
     if ($distinct -lt 4) {
         $script:skipped++; Write-Host "SKIP  elevated desk probe: empty capture ($distinct colors)"
     } else {
@@ -292,7 +292,7 @@ if ($panes.Count -eq 2) {
         $gy = [int](($A.Bottom + $B.Top) / 2)
         $c = Get-TestPixel -Shot $shot -X $gx -Y $gy
         Write-Host "      mid-gap pixel ($gx,$gy) = $($c.R),$($c.G),$($c.B)"
-        if ((Get-TestDistinctColors -Shot $shot) -lt 4) {
+        if ((Get-TestDistinctColors -Shot $shot -Whole) -lt 4) {
             $script:skipped++; Write-Host 'SKIP  gap probe: empty capture'
         } else {
             Assert (Test-DeskPixel $c) 'elevated: the gap between the cards is the desk, not a divider line'
@@ -584,7 +584,7 @@ function Get-ChromeProbe([IntPtr]$top, $pane, [double]$scale) {
     $w = $cs.Right - $cs.Left
     $shot = Get-TestWindowPixels -Window $top -Sync
     try {
-        if ((Get-TestDistinctColors -Shot $shot) -lt 4) { return $null }
+        if ((Get-TestDistinctColors -Shot $shot -Whole) -lt 4) { return $null }
         $ys = @(([int]$cs.Top + 1), ($chromeBottom - 2))
         # Left of the caption buttons, right of where tabs and the title run.
         $xs = @(([int]$cs.Left + [int]($w * 0.45)), ([int]$cs.Left + [int]($w * 0.55)), ([int]$cs.Left + [int]($w * 0.62)), ([int]$cs.Left + [int]($w * 0.68)))
@@ -693,7 +693,7 @@ function Get-BandProbes([string]$label, [string[]]$extra) {
     $r = [pscustomobject]@{ Head = $null; HeadDesk = $null; Margin = $null; MarginDesk = $null; Card = $null; CardTop = $null }
     $shot = Get-TestWindowPixels -Window $top -Sync
     try {
-        if ((Get-TestDistinctColors -Shot $shot) -ge 4) {
+        if ((Get-TestDistinctColors -Shot $shot -Whole) -ge 4) {
             # Half a 24 DIP band above the pane, three quarters across it: past
             # the title, short of the pop-out button. Not measured from the
             # pane's old top - entering the mode moves the card too.
@@ -886,7 +886,7 @@ function Get-GlowState([string]$label) {
     $panes = @(Get-Panes $top | Sort-Object Top)
     $shot = Get-TestWindowPixels -Window $top -Sync
     try {
-        if ((Get-TestDistinctColors -Shot $shot) -lt 4) { return $null }
+        if ((Get-TestDistinctColors -Shot $shot -Whole) -lt 4) { return $null }
         $lifts = @($panes | ForEach-Object { Get-GlowLift $shot $_ })
         # The first desk pixel past the card (T2112).
         $edgeLifts = @($panes | ForEach-Object { Get-GlowLift $shot $_ -OutDip 0 })
@@ -1115,7 +1115,7 @@ $p = (Get-Panes $top)[0]
 $bandL = [int]$p.Left; $bandT = [int]$p0.Top; $bandR = [int]$p.Right
 $shot = Get-TestWindowPixels -Window $top -Sync
 try {
-    if ((Get-TestDistinctColors -Shot $shot) -lt 4) {
+    if ((Get-TestDistinctColors -Shot $shot -Whole) -lt 4) {
         $script:skipped++; Write-Host 'SKIP  header corner probes: empty capture'
     } else {
         $bar = Get-TestPixel -Shot $shot -X ([int](($bandL + $bandR) / 2)) -Y ($bandT + 1)

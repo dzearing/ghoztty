@@ -376,7 +376,7 @@ try {
     $rowA = $null
     $shotA = Get-TestWindowPixels -Window $toc -Sync
     try {
-        $distinct = Get-TestDistinctColors -Shot $shotA
+        $distinct = Get-TestDistinctColors -Shot $shotA -Whole
         Assert ($distinct -ge 8) "A the card capture holds real content ($distinct distinct colours)"
         # The card's own fill, MEASURED: it is derived from the document
         # background the page posts up, so pasting it here would be pinning a
@@ -443,7 +443,7 @@ try {
     }
     $shotB = Get-TestWindowPixels -Window $toc -Sync
     try {
-        Assert ((Get-TestDistinctColors -Shot $shotB) -ge 8) `
+        Assert ((Get-TestDistinctColors -Shot $shotB -Whole) -ge 8) `
             'B the card is still painting real content (positive control for the two assertions below)'
         $barB = Find-SaturatedBar $shotB
         if ($barB) { Write-Host "      saturated bar still present = $(Format-Rgb $barB.Rgb)" }

@@ -1,18 +1,18 @@
 {
     "guard":  "chooser-shape",
     "script":  "test/win32/ipc-machine-chooser.ps1",
-    "generated":  "2026-11-20T13:12:53-08:00",
-    "commit":  "a3661155f",
+    "generated":  "2026-11-25T00:08:39-08:00",
+    "commit":  "ac1593e8f",
     "uncommitted":  [
-                        "src/apprt/win32/MachineChooser.zig"
+                        "test/win32/ipc-machine-chooser.ps1"
                     ],
     "files":  {
                   "src/apprt/win32/chooser_layout.zig":  "a76bcd60ab3371f126e7873989c7b2a1f9060fe4b72d1a12d7ef89490d19639e",
                   "src/apprt/win32/chooser_rows.zig":  "3330e8e24d9f5230132d39061de1c306af1504c892b972d17bc5ed136a984f61",
                   "src/apprt/win32/MachineChooser.zig":  "7829560bfc2d4e6be520b86a83bd5639a92076fb3fff2a6c8db1d8c7b9c5bfa1",
-                  "test/win32/ipc-machine-chooser.ps1":  "55d47c45b91f34c432079fcaa66266edef26d1dca59acb06ac74c2581349b1d3"
+                  "test/win32/ipc-machine-chooser.ps1":  "06335e89e47df0a4ace0cc9d25ce0f8ed5943cc29165b59034dda827e4dbff6f"
               },
     "code":  {
-                 "test/win32/ipc-machine-chooser.ps1":  "code1:9984c9b6d6d6d26cc624c38c8146e95ee61a0aa8b15e9daa6b4d62ac37e0f971"
+                 "test/win32/ipc-machine-chooser.ps1":  "code1:3d85f2412c7cd876ebb91641f02a01d87f23226b13b2c9e9a93dfcf28a99977c"
              }
 }

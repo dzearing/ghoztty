@@ -93,7 +93,7 @@ function Get-DialogDark([IntPtr]$dlg) {
         try { $shot = Get-TestWindowPixels -Window $dlg -Sync } catch { continue }
         try {
             $c = Get-TestWindowRect -Window $dlg -Client
-            $colors = Get-TestDistinctColors -Shot $shot
+            $colors = Get-TestDistinctColors -Shot $shot -Whole
             $lum = Get-TestBrightness -Shot $shot -Rect @($c.Left, $c.Top, $c.Right, $c.Bottom)
         } finally { Close-TestWindowPixels $shot }
         if ($colors -ge 8) { break }

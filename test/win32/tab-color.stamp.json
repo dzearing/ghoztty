@@ -1,16 +1,16 @@
 {
     "guard":  "tab-color",
     "script":  "test/win32/tab-color.ps1",
-    "generated":  "2026-11-22T13:06:35-08:00",
-    "commit":  "412ba5a0c",
+    "generated":  "2026-11-24T23:56:31-08:00",
+    "commit":  "ac1593e8f",
     "uncommitted":  [
                         "test/win32/tab-color.ps1"
                     ],
     "files":  {
                   "src/apprt/win32/tab_color.zig":  "ee99fbcd94d862893aa21d4bcd3c3f7f393bcb56efd94d9061a4697971973063",
-                  "test/win32/tab-color.ps1":  "07f0f69e190399c852b04c37e07666927a6f9f19dbfb31f4c920ee81e697febc"
+                  "test/win32/tab-color.ps1":  "6c8ad6d3c06d6afbd67bc1afdc8686274e19dd5b5c9c2f80f80f546d2a214d0e"
               },
     "code":  {
-                 "test/win32/tab-color.ps1":  "code1:c9879bc2d4b1a4c91c849a75c6f9968056c7856a3df54092292cc151605df149"
+                 "test/win32/tab-color.ps1":  "code1:44dd478d15f9b79a8512977fb961914e54cb1f21ca06ee78017708448c9c0f6d"
              }
 }

@@ -131,7 +131,7 @@ try {
     function Read-Probes {
         $shot = Get-TestWindowPixels -Window $top -Sync
         try {
-            if ((Get-TestDistinctColors -Shot $shot) -lt 4) { return $null }
+            if ((Get-TestDistinctColors -Shot $shot -Whole) -lt 4) { return $null }
             $out = [ordered]@{}
             foreach ($k in $probes.Keys) {
                 $xy = $probes[$k]

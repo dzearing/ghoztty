@@ -1,19 +1,19 @@
 {
     "guard":  "config-errors",
     "script":  "test/win32/config-errors.ps1",
-    "generated":  "2026-11-24T20:13:33-08:00",
-    "commit":  "fe9b21c28",
+    "generated":  "2026-11-25T00:03:05-08:00",
+    "commit":  "ac1593e8f",
     "uncommitted":  [
-
+                        "test/win32/config-errors.ps1"
                     ],
     "files":  {
                   "src/apprt/win32/confirm_dialog_layout.zig":  "17e33492e711719692c1628bb6a72d8934eebc8e666b40fdb517e65469874708",
                   "src/apprt/win32/confirm_dialog_window.zig":  "d8c2e7ee21bfa93507d2f09ad06f79faa743cdb290444231ad7273dbe140b6c0",
                   "src/apprt/win32/ConfirmDialog.zig":  "2ca1b50613e150804e35bcf9754a120724fbe199b9676f3717abb63f89ff4008",
                   "src/config/file_load.zig":  "4eb4e37b6cb6a6d614d2a7b978972c06590d3683f205eef29f5418930f3b7072",
-                  "test/win32/config-errors.ps1":  "d1b95d1f6f709444491d148f99f41d39b785155da8ecadf6eac2ff8ddc5fa33b"
+                  "test/win32/config-errors.ps1":  "63f39d05ae2b8bf1a0f5b31bed618f7d5ac44f4cbc42532666a7831deb4cc19b"
               },
     "code":  {
-                 "test/win32/config-errors.ps1":  "code1:90d0f99059e5e9507646f0d9b2788d72eac2afde093d95961a15b81746c2070c"
+                 "test/win32/config-errors.ps1":  "code1:8b8c50b85e4657ba693181c129d33b7ea85f5b00a12609db99391e617008a2be"
              }
 }

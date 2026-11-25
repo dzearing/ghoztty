@@ -230,7 +230,7 @@ function Get-TestStrips {
     )
     $shot = if ($Shot) { $Shot } else { Get-TestWindowPixels -Window $Window -Sync }
     try {
-        if ((Get-TestDistinctColors -Shot $shot) -lt 8) { return $null }
+        if ((Get-TestDistinctColors -Shot $shot -Whole) -lt 8) { return $null }
         $strips = New-Object System.Collections.Generic.List[object]
         foreach ($f in $Fixed) {
             $out = New-Object System.Collections.Generic.List[string]

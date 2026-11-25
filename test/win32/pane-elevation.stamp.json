@@ -1,11 +1,10 @@
 {
     "guard":  "pane-elevation",
     "script":  "test/win32/pane-elevation.ps1",
-    "generated":  "2026-11-23T10:02:05-08:00",
-    "commit":  "7ae87964f",
+    "generated":  "2026-11-25T00:18:48-08:00",
+    "commit":  "ac1593e8f",
     "uncommitted":  [
-                        "src/apprt/win32/pane_elevation.zig",
-                        "src/apprt/win32/PaneDesk.zig"
+                        "test/win32/pane-elevation.ps1"
                     ],
     "files":  {
                   "src/apprt/win32/desk_palette.zig":  "4f8f2fe7c1e442e280ac18c0e3923ac6bba9a8e73fa4b052f452e2c479fd2484",
@@ -13,10 +12,10 @@
                   "src/apprt/win32/PaneDesk.zig":  "6ae44d4c6d7339a88ed2c02c2c5bac3c4f1393a530ba582fc4262fe5a4d927f6",
                   "src/apprt/win32/split_geometry.zig":  "89ed9cf26dd83d946f1fd48fa73cf2dedde6de7b3e3920ac907e3d509d3d5e17",
                   "test/win32/lib/PaintWait.ps1":  "7203cb0ebfc11c1b3379e37f667d6d35cacf64be48f87818a427ec65322d832f",
-                  "test/win32/pane-elevation.ps1":  "1ce883da682acda669c88bc4749efd271e9260f2b823b85f4613c35beba69427"
+                  "test/win32/pane-elevation.ps1":  "b42db73ae79459ead9ed46dcfe748280bd038f0819246948e828bcf64f667a56"
               },
     "code":  {
                  "test/win32/lib/PaintWait.ps1":  "code1:c8a832515a989312650aae929c8aba68d015fbfec704b315fa5ce260b595e00a",
-                 "test/win32/pane-elevation.ps1":  "code1:f77695a5a290bc91290d20d34c031b492fa750e51063e934b25405d9fc4fab60"
+                 "test/win32/pane-elevation.ps1":  "code1:77beafface12c1304b23f59a5b8d507425a39ff0763ed321c151d33a08380c6d"
              }
 }
