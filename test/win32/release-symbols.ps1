@@ -116,10 +116,10 @@ try {
     Assert 'F1 build-release-artifacts.sh runs the packager' ($bra -match 'build-symbols-zip\.py')
     Assert 'F2 ... over all three shipped images' `
         (($bra -match 'ghoztty\.exe" "\$BIN/ghoztty\.pdb') -and ($bra -match 'ghoztty\.com" "\$BIN/ghoztty\.pdb') -and ($bra -match 'ghoztty-agent\.exe" "\$BIN/ghoztty-agent\.pdb'))
-    Assert 'F3 ... and fails the build when the zip is missing' ($bra -match 'for f in "\$MSI" "\$ZIP" "\$SYMBOLS"')
+    Assert 'F3 ... and fails the build when the zip is missing' ($bra -match 'for f in "\$MSI"( "\$SETUP")? "\$ZIP" "\$SYMBOLS"')
     $wf = Get-Content -Raw (Join-Path $repo '.github\workflows\release-windows.yml')
-    Assert 'F4 release-windows.yml uploads it onto an existing release' ($wf -match 'gh release upload "\$TAG" "\$MSI" "\$ZIP" "\$SYMBOLS"')
-    Assert 'F5 ... and attaches it to a new one' ($wf -match '"\$MSI" "\$ZIP" "\$SYMBOLS"\s*\r?\n\s*fi')
+    Assert 'F4 release-windows.yml uploads it onto an existing release' ($wf -match 'gh release upload "\$TAG" "\$MSI"( "\$SETUP")? "\$ZIP" "\$SYMBOLS"')
+    Assert 'F5 ... and attaches it to a new one' ($wf -match '"\$MSI"( "\$SETUP")? "\$ZIP" "\$SYMBOLS"\s*\r?\n\s*fi')
     # F6: the release workflow is the ONLY publisher that attaches assets. The
     # on-box -Local publish used to attach the symbols zip too; it was retired in
     # T1328, so there is no second upload list left to fall out of step with F4/F5.

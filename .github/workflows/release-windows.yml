@@ -44,7 +44,8 @@ name: Release (Windows)
 
 # The Windows half of a release (T38). It builds the Windows terminal at the
 # version a release carries, so one release produces both platforms'
-# artifacts at the same version -- Ghoztty-<version>-x64.msi and
+# artifacts at the same version -- Ghoztty-Setup-<version>-x64.exe (T2198,
+# which embeds the MSI), Ghoztty-<version>-x64.msi and
 # Ghoztty-portable-<version>-x64.zip alongside Ghoztty-<version>-arm64.dmg.
 # Until the cutover that is two tag pushes rather than one, for the reason
 # spelled out on the triggers above; the version number is what ties them.
@@ -134,6 +135,7 @@ jobs:
           echo "PUBLISH=$PUBLISH" >> $GITHUB_ENV
           echo "TAG=win-v$VERSION" >> $GITHUB_ENV
           echo "MSI=zig-out/Ghoztty-$VERSION-x64.msi" >> $GITHUB_ENV
+          echo "SETUP=zig-out/Ghoztty-Setup-$VERSION-x64.exe" >> $GITHUB_ENV
           echo "ZIP=zig-out/Ghoztty-portable-$VERSION-x64.zip" >> $GITHUB_ENV
           echo "SYMBOLS=zig-out/Ghoztty-symbols-$VERSION-x64.zip" >> $GITHUB_ENV
 
@@ -183,7 +185,9 @@ jobs:
           # The point of the release is the PAIR, at one version. Assert both
           # exist under their versioned names before anything is published --
           # a missing half is how a "successful" release ships one platform.
-          for f in "$MSI" "$ZIP" "$SYMBOLS"; do
+          # The setup exe (T2198) embeds the MSI; the shared script has already
+          # proven that it carries the published package byte for byte.
+          for f in "$MSI" "$SETUP" "$ZIP" "$SYMBOLS"; do
             [ -f "$f" ] || { echo "::error::$f was not produced"; exit 1; }
             echo "$(du -h "$f")"
           done
@@ -193,6 +197,7 @@ jobs:
           name: ghoztty-windows-${{ env.VERSION }}
           path: |
             ${{ env.MSI }}
+            ${{ env.SETUP }}
             ${{ env.ZIP }}
             ${{ env.SYMBOLS }}
 
@@ -206,8 +211,13 @@ jobs:
           Windows build of Ghoztty $VERSION (commit $(git rev-parse --short HEAD)),
           published alongside the macOS v$VERSION release.
 
-          **Install:** download \`Ghoztty-$VERSION-x64.msi\` and run it (per-user, no
-          admin). Upgrades an existing install in place -- close Ghoztty first.
+          **Install:** download \`Ghoztty-Setup-$VERSION-x64.exe\` and run it (per-user,
+          no admin). Upgrades an existing install in place -- close Ghoztty first. If
+          Windows cannot install right now (another installation is still running, say),
+          it tells you why and what to do.
+
+          **MSI:** \`Ghoztty-$VERSION-x64.msi\` is the same package without the setup
+          front door, for managed deployment (\`msiexec /i\`).
 
           **Portable:** \`Ghoztty-portable-$VERSION-x64.zip\` needs no installer --
           unzip it and run \`Ghoztty\ghoztty.exe\`.
@@ -224,7 +234,7 @@ jobs:
 
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             echo "release $TAG exists -- replacing its assets"
-            gh release upload "$TAG" "$MSI" "$ZIP" "$SYMBOLS" --repo "$GITHUB_REPOSITORY" --clobber
+            gh release upload "$TAG" "$MSI" "$SETUP" "$ZIP" "$SYMBOLS" --repo "$GITHUB_REPOSITORY" --clobber
           else
             # --target names the commit a NEW tag should be created at, and is
             # meaningless once the tag exists -- which it does whenever this
@@ -237,7 +247,7 @@ jobs:
               "${TARGET[@]}" \
               --title "Ghoztty for Windows v$VERSION" \
               --latest=false --notes-file "$NOTES" \
-              "$MSI" "$ZIP" "$SYMBOLS"
+              "$MSI" "$SETUP" "$ZIP" "$SYMBOLS"
           fi
           echo "published $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/tag/$TAG"
 

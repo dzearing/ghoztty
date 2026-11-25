@@ -1,21 +1,24 @@
 {
     "guard":  "release-artifacts",
     "script":  "test/win32/release-artifacts.ps1",
-    "generated":  "2026-11-24T04:14:09-08:00",
-    "commit":  "432c1fb7a",
+    "generated":  "2026-11-24T20:40:55-08:00",
+    "commit":  "18d8d609a",
     "uncommitted":  [
-                        ".github/workflows/fork-ci.yml",
+                        ".github/workflows/release-windows.yml",
+                        "dist/windows-installer/build-release-artifacts.sh",
+                        "dist/windows-installer/verify-setup-embed.py",
                         "test/win32/release-artifacts.ps1"
                     ],
     "files":  {
                   ".github/workflows/fork-ci.yml":  "9b05043cfab7688d8a095ff1e138fd2f2da5024deee1f6d9838ac2a89a34bac8",
-                  ".github/workflows/release-windows.yml":  "d3fecedfcef2b13b3aff7f2d739ddd3ca51520254644d0d0823cb6c7a08896fe",
-                  "dist/windows-installer/build-release-artifacts.sh":  "0e1f38f77a2655a038c775bb8e4508f9db74ed019b1a28862f3ffa909a5940c3",
+                  ".github/workflows/release-windows.yml":  "f91ddd7f307d1ca5e5e2526e289e4c880f201852c5bea0bcc0e84b30faa27226",
+                  "dist/windows-installer/build-release-artifacts.sh":  "08ff3eb917384baadac17bae6b91a99d0e76a49c2c9b6c102ef9250df86068db",
                   "dist/windows-installer/install-msitools.sh":  "cb4fdb384cf3a87e514ae12f59ef7a3b05a271d18c236eed030b04544ca6fb6c",
                   "dist/windows-installer/sign-artifacts.sh":  "fc8baac16a2f6b699aa3deb79ab0782e5646a2b19e6961bd423d4fab47213404",
-                  "test/win32/release-artifacts.ps1":  "ec4e88695f7da29d7b81fee0f0bc8deb1ba6ff920f3871469ab241f0872cb11a"
+                  "dist/windows-installer/verify-setup-embed.py":  "af14f0110816b7a3148b3b0ef009163f7e8d1f8c1f692810a704813edcb57b27",
+                  "test/win32/release-artifacts.ps1":  "6685a849bb304818362f43f96a08c7245facb2cc9b0e81718f021d2447f1cf1c"
               },
     "code":  {
-                 "test/win32/release-artifacts.ps1":  "code1:0fdf53254a8978fcfdb1d11e6c77875c5b02d5bf3c42a547009ac1eaffd384c7"
+                 "test/win32/release-artifacts.ps1":  "code1:2d8e81a7ae2c02a68a56e18dd5046746dc63877f7decbbcf2d5feff7abe1bfd0"
              }
 }

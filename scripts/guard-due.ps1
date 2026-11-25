@@ -3946,6 +3946,7 @@ $GuardTable = @(
             'dist\windows-installer\build-release-artifacts.sh',
             'dist\windows-installer\install-msitools.sh',
             'dist\windows-installer\sign-artifacts.sh',
+            'dist\windows-installer\verify-setup-embed.py',
             'test\win32\release-artifacts.ps1'
         )
     },

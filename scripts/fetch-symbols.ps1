@@ -117,7 +117,14 @@ if (-not $Version) {
         Write-Host "fetch-symbols: cannot tell the version (no $twin to ask); pass -Version X.Y.Z"
         exit 2
     }
-    $out = (& $twin +version 2>&1 | Out-String)
+    # Continue, not Stop, around the native call: a debug twin run from a
+    # Ghoztty pane writes a stderr note about the inherited GHOZTTY_IPC_SOCKET
+    # (T1402), and under Stop PowerShell 5.1 turns that line into a terminating
+    # error before the version is ever read (the T1215 class).
+    $eap = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try { $out = (& $twin +version 2>&1 | ForEach-Object { "$_" } | Out-String) }
+    finally { $ErrorActionPreference = $eap }
     if ($out -match '- version:\s*(\d+\.\d+\.\d+)\+') {
         $Version = $Matches[1]
     } else {

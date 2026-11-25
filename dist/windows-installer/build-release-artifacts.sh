@@ -16,6 +16,8 @@
 #
 # Produces, in --out-dir (default zig-out):
 #   Ghoztty-<semver>-x64.msi           per-user installer (build-msi.sh)
+#   Ghoztty-Setup-<semver>-x64.exe     the installer's front door: embeds that
+#                                      MSI and runs it (T2197/T2198)
 #   Ghoztty-portable-<semver>-x64.zip  no-installer layout (build-portable-zip.sh)
 #   Ghoztty-symbols-<semver>-x64.zip   PDBs + images as a symbol store
 #                                      (build-symbols-zip.py, T1936)
@@ -38,8 +40,8 @@
 #                 command either way; the split is in when it runs, not what
 #                 it does.
 #
-# Requires: wixl + msiinfo + python3 (packaging), and zig unless
-# --skip-build. Everything runs on Linux/macOS -- no Windows box needed.
+# Requires: wixl + msiinfo + python3 (packaging), and zig (the exe unless
+# --skip-build; the setup exe, which embeds the MSI, always). Everything runs on Linux/macOS -- no Windows box needed.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -91,12 +93,25 @@ mkdir -p "$OUT_DIR"
 MSI="$OUT_DIR/Ghoztty-$SEMVER-x64.msi"
 ZIP="$OUT_DIR/Ghoztty-portable-$SEMVER-x64.zip"
 SYMBOLS="$OUT_DIR/Ghoztty-symbols-$SEMVER-x64.zip"
+SETUP="$OUT_DIR/Ghoztty-Setup-$SEMVER-x64.exe"
 
 # The FILEVERSION rule lives in build-msi.sh; ask for it (see its
 # --print-file-version) instead of keeping a second copy of the formula.
 FILE_VERSION="$(bash "$SCRIPT_DIR/build-msi.sh" --print-file-version --build-num "$BUILD_NUM")"
 
 echo "== windows release artifacts: $SEMVER+$HASH (stamp $STAMP, FILEVERSION $FILE_VERSION) =="
+
+# The one set of build flags. Both builds below use it -- the exe here and
+# the setup exe after the MSI (step 2a) -- so the setup is compiled for the
+# same target, mode and FILEVERSION as the payload it carries.
+ZIG_ARGS=(
+  -Dapp-runtime=win32 -Dtarget=x86_64-windows-gnu -Doptimize=ReleaseFast
+  -Dstrip=false
+  "-Dwindows-file-version=$FILE_VERSION"
+  "-Dversion-string=$SEMVER+$HASH"
+  "-Dagent-semver=$SEMVER"
+  "-Dwindows-update-check=true"
+)
 
 # -- 1. the exe ----------------------------------------------------------
 if [[ "$SKIP_BUILD" -eq 0 ]]; then
@@ -128,12 +143,7 @@ if [[ "$SKIP_BUILD" -eq 0 ]]; then
       "falling back to google-client-id.txt if this tree has one, else this" \
       "build ships with sign-in unavailable"
   fi
-  zig build -Dapp-runtime=win32 -Dtarget=x86_64-windows-gnu -Doptimize=ReleaseFast \
-    -Dstrip=false \
-    "-Dwindows-file-version=$FILE_VERSION" \
-    "-Dversion-string=$SEMVER+$HASH" \
-    "-Dagent-semver=$SEMVER" \
-    "-Dwindows-update-check=true" \
+  zig build "${ZIG_ARGS[@]}" \
     "${GOOGLE_CLIENT_ID_ARGS[@]+"${GOOGLE_CLIENT_ID_ARGS[@]}"}"
 fi
 
@@ -193,6 +203,33 @@ bash "$SCRIPT_DIR/build-msi.sh" --skip-build \
 # inside it were signed before it was built.
 bash "$SCRIPT_DIR/sign-artifacts.sh" "$MSI" || exit 1
 
+# -- 2a. the setup exe (T2198) -------------------------------------------
+# Ghoztty-Setup-<semver>-x64.exe is the installer's front door (T2197): it
+# runs the MSI itself, so a refusal is explained in Ghoztty's own dialog
+# instead of a window that flashes and vanishes. It EMBEDS the package, so it
+# is built only now, from the MSI exactly as published -- signed. The MSI stays
+# a release asset: it is the in-app updater's payload (T1178) and the
+# managed-deployment download.
+#
+# `zig build setup`, never a bare `zig build`: the named step installs ONLY
+# the setup exe. ghoztty.exe, the twin and the agent in zig-out/bin are signed
+# by now, and a full install would copy the unsigned cached images back over
+# them, under the portable ZIP and the symbol store built below.
+echo "==> setup exe"
+command -v zig >/dev/null || { echo "error: zig not found (the setup exe is built after the MSI, even under --skip-build)" >&2; exit 1; }
+SETUP_BUILT="$REPO_ROOT/zig-out/bin/ghoztty-setup.exe"
+rm -f "$SETUP_BUILT"
+zig build setup "${ZIG_ARGS[@]}" "-Dsetup-msi=$MSI"
+[[ -f "$SETUP_BUILT" ]] || { echo "error: zig build setup produced no $SETUP_BUILT" >&2; exit 1; }
+cp "$SETUP_BUILT" "$SETUP"
+# The one assertion that makes the pair one install: the setup carries the
+# published MSI's bytes, unaltered. Checked before the setup is signed, and
+# again after (a signature appends to the image and must not touch the
+# payload), so the file that ships is the file that was checked.
+python3 "$SCRIPT_DIR/verify-setup-embed.py" "$SETUP" "$MSI"
+bash "$SCRIPT_DIR/sign-artifacts.sh" "$SETUP" || exit 1
+python3 "$SCRIPT_DIR/verify-setup-embed.py" "$SETUP" "$MSI"
+
 echo "==> portable ZIP"
 bash "$SCRIPT_DIR/build-portable-zip.sh" \
   --semver "$SEMVER" --stamp "$STAMP" --out "$ZIP"
@@ -210,9 +247,9 @@ BIN="$REPO_ROOT/zig-out/bin"
 python3 "$SCRIPT_DIR/build-symbols-zip.py" --out "$SYMBOLS"   --semver "$SEMVER" --commit "$HASH"   --pair "$BIN/ghoztty.exe" "$BIN/ghoztty.pdb"   --pair "$BIN/ghoztty.com" "$BIN/ghoztty.pdb"   --pair "$BIN/ghoztty-agent.exe" "$BIN/ghoztty-agent.pdb"
 
 # -- 3. report ------------------------------------------------------------
-for f in "$MSI" "$ZIP" "$SYMBOLS"; do
+for f in "$MSI" "$SETUP" "$ZIP" "$SYMBOLS"; do
   [[ -f "$f" ]] || { echo "error: $f missing after build" >&2; exit 1; }
 done
 echo ""
 echo "== windows release artifacts for $SEMVER =="
-ls -lh "$MSI" "$ZIP" "$SYMBOLS" | sed 's/^/    /'
+ls -lh "$MSI" "$SETUP" "$ZIP" "$SYMBOLS" | sed 's/^/    /'

@@ -388,6 +388,14 @@ pub fn build(b: *std.Build) !void {
                 const setup = buildpkg.GhosttySetup.init(b, &config);
                 setup.install();
                 install_unlock.guardArtifact(setup.install_step);
+
+                // T2198: `zig build setup -Dsetup-msi=<msi>` installs ONLY the
+                // setup exe. The release builds it after the MSI is signed,
+                // and by then the exe, twin and agent in zig-out/bin are
+                // signed too: a full `zig build` would copy the unsigned
+                // cached images back over them.
+                b.step("setup", "Build ghoztty-setup.exe alone (T2198; embeds -Dsetup-msi)")
+                    .dependOn(&setup.install_step.step);
             }
 
             // Linux (T3337): the GTK app finds ghoztty-agent beside itself

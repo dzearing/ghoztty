@@ -26,6 +26,9 @@
 #      ZIP really contains the MSI's payload under a single Ghoztty/ root, twin
 #      included (ZIP half - needs only bash + python3, so it runs here).
 #   C  the documented process points at the automated one.
+#   H  Ghoztty-Setup-<version>-x64.exe ships beside the MSI and carries THAT
+#      MSI, built after it is signed (T2198); a real setup is built around a
+#      fixture package here and the embed check is shown to fail.
 #   (D, the on-box -DryRun publish end to end, went with that publish in T1328.)
 #
 # Read-only apart from zig-out artifact files and a temp dir; never launches
@@ -1105,6 +1108,126 @@ if (-not $bash) {
         ($r.Code -eq 1 -and $r.Text -match 'are alternatives' -and $r.Untouched)
 
     Remove-Item -LiteralPath $signWork -Recurse -Force -ErrorAction SilentlyContinue
+}
+
+# ============================================================================
+"== H: the release ships Ghoztty-Setup beside the MSI, carrying THAT MSI (T2198)"
+# ============================================================================
+# The setup exe (T2197) embeds the package it installs, so it can only be
+# built once the MSI exists - and once it is SIGNED, or the setup would carry
+# bytes nobody can download. H1-H6 pin the order and the publish; H7-H11 build
+# a real setup around a fixture package on this box (no wixl needed: the
+# embed does not care what the bytes are) and prove the embed check both
+# passes and FAILS, and that `zig build setup` installs nothing but the setup
+# exe - a full install would copy unsigned images over the signed payload.
+$wfSetupOk = ($wf -match 'SETUP=zig-out/Ghoztty-Setup-\$VERSION-x64\.exe')
+Assert "H1 workflow names Ghoztty-Setup-<version>-x64.exe" $wfSetupOk
+Assert "H2 workflow verifies, uploads and publishes it (create AND re-upload)" (
+    ($wf -match 'for f in "\$MSI" "\$SETUP" "\$ZIP" "\$SYMBOLS"') -and
+    ($wf -match '\$\{\{ env\.SETUP \}\}') -and
+    ($wf -match 'gh release upload "\$TAG" "\$MSI" "\$SETUP"') -and
+    ($wf -match '"\$MSI" "\$SETUP" "\$ZIP" "\$SYMBOLS"\s*\r?\n\s*fi'))
+Assert "H3 shared script names it" ($shared -match 'SETUP="\$OUT_DIR/Ghoztty-Setup-\$SEMVER-x64\.exe"')
+$iMsiSign = $shared.IndexOf('bash "$SCRIPT_DIR/sign-artifacts.sh" "$MSI"')
+$iSetupBuild = $shared.IndexOf('zig build setup "${ZIG_ARGS[@]}" "-Dsetup-msi=$MSI"')
+$iSetupSign = $shared.IndexOf('bash "$SCRIPT_DIR/sign-artifacts.sh" "$SETUP"')
+$iZip = $shared.IndexOf('bash "$SCRIPT_DIR/build-portable-zip.sh"')
+Assert "H4 the setup is built from the MSI only AFTER the MSI is signed ($iMsiSign < $iSetupBuild)" (
+    $iMsiSign -ge 0 -and $iSetupBuild -gt $iMsiSign)
+$verifyCalls = [regex]::Matches($shared, 'verify-setup-embed\.py" "\$SETUP" "\$MSI"').Count
+$iVerifyLast = $shared.LastIndexOf('verify-setup-embed.py" "$SETUP" "$MSI"')
+Assert "H5 the setup is signed, and its embed checked before AND after signing ($verifyCalls checks)" (
+    $iSetupSign -gt $iSetupBuild -and $verifyCalls -ge 2 -and $iVerifyLast -gt $iSetupSign)
+Assert "H6 the setup is built with the named step (never a bare zig build) and the release flags" (
+    $iSetupBuild -ge 0 -and $iSetupBuild -lt $iZip -and
+    ((Get-Content -LiteralPath (Join-Path $Repo 'build.zig') -Raw) -match 'b\.step\("setup",'))
+
+$zigH = Get-Command zig -ErrorAction SilentlyContinue
+$verifyPy = Join-Path $Repo 'dist\windows-installer\verify-setup-embed.py'
+if (-not $pyExe) {
+    foreach ($n in 'H7 zig build setup installs ONLY the setup exe', 'H8 the setup embeds the package byte for byte',
+                   'H9 negative control: a package that differs by one byte is NOT embedded',
+                   'H10 negative control: a setup built with no package is refused',
+                   'H11 negative control: a package embedded twice is refused') {
+        Skip $n 'no python interpreter on PATH'
+    }
+} elseif (-not $zigH) {
+    foreach ($n in 'H7 zig build setup installs ONLY the setup exe', 'H8 the setup embeds the package byte for byte',
+                   'H9 negative control: a package that differs by one byte is NOT embedded',
+                   'H10 negative control: a setup built with no package is refused',
+                   'H11 negative control: a package embedded twice is refused') {
+        Skip $n 'zig is not on PATH'
+    }
+} else {
+    if (-not $env:ZIG_GLOBAL_CACHE_DIR) {
+        $env:ZIG_GLOBAL_CACHE_DIR = (Split-Path -Qualifier $Repo) + '\zig-global-cache'
+    }
+    $hWork = Join-Path ([IO.Path]::GetTempPath()) "release-artifacts-setup-$PID"
+    $hPrefix = Join-Path $hWork 'prefix'
+    New-Item -ItemType Directory -Path $hWork -Force | Out-Null
+    # A fixture package: random bytes, so it cannot occur in the exe by chance.
+    $fixture = New-Object byte[] 65536
+    (New-Object Random 2198).NextBytes($fixture)
+    $fixturePath = Join-Path $hWork 'fixture.msi'
+    [IO.File]::WriteAllBytes($fixturePath, $fixture)
+    $hLog = Join-Path $hWork 'zig-build-setup.log'
+    Push-Location $Repo
+    try {
+        # Same redirect shape as build-locked-artifact.ps1: zig's stderr as
+        # strings, never ErrorRecords, and the exit code read straight after.
+        & zig build setup -Dapp-runtime=win32 -Doptimize=Debug "-Dsetup-msi=$fixturePath" --prefix $hPrefix 2>&1 |
+            ForEach-Object { $_.ToString() } | Set-Content -LiteralPath $hLog -Encoding UTF8
+        $hRc = $LASTEXITCODE
+    } finally { Pop-Location }
+    $hSetup = Join-Path $hPrefix 'bin\ghoztty-setup.exe'
+    $hFiles = @()
+    if (Test-Path -LiteralPath $hPrefix) {
+        $hFiles = @(Get-ChildItem -LiteralPath $hPrefix -Recurse -File | ForEach-Object { $_.Name } | Sort-Object)
+    }
+    $hOthers = @($hFiles | Where-Object { $_ -notmatch '^ghoztty-setup\.(exe|pdb)$' })
+    if ($hRc -ne 0 -or -not (Test-Path -LiteralPath $hSetup)) {
+        $tail = (Get-Content -LiteralPath $hLog -ErrorAction SilentlyContinue | Select-Object -Last 8) -join ' | '
+        Assert "H7 zig build setup installs ONLY the setup exe (rc=$($hRc): $tail)" $false
+    } else {
+        Assert "H7 zig build setup installs ONLY the setup exe (others: $($hOthers -join ','))" ($hOthers.Count -eq 0)
+    }
+    function Invoke-VerifyEmbed($exePath, $msiPath) {
+        $out = & $pyExe $verifyPy $exePath $msiPath 2>&1 | ForEach-Object { $_.ToString() }
+        [pscustomobject]@{ Code = $LASTEXITCODE; Text = ($out -join ' ') }
+    }
+    if (Test-Path -LiteralPath $hSetup) {
+        $r = Invoke-VerifyEmbed $hSetup $fixturePath
+        Assert "H8 the setup embeds the package byte for byte (rc=$($r.Code) - $($r.Text))" (
+            $r.Code -eq 0 -and $r.Text -match 'byte for byte')
+        $flipped = [byte[]]$fixture.Clone()
+        $flipped[32768] = $flipped[32768] -bxor 0xFF
+        $flippedPath = Join-Path $hWork 'flipped.msi'
+        [IO.File]::WriteAllBytes($flippedPath, $flipped)
+        $r = Invoke-VerifyEmbed $hSetup $flippedPath
+        Assert "H9 negative control: a package that differs by one byte is NOT embedded (rc=$($r.Code))" (
+            $r.Code -eq 1 -and $r.Text -match '0 time\(s\)')
+        # The setup exe a plain dev build installs carries no package at all.
+        $emptySetup = Join-Path $Repo 'zig-out\bin\ghoztty-setup.exe'
+        if (Test-Path -LiteralPath $emptySetup) {
+            $r = Invoke-VerifyEmbed $emptySetup $fixturePath
+            Assert "H10 negative control: a setup built with no package is refused (rc=$($r.Code))" ($r.Code -eq 1)
+        } else {
+            Skip "H10 negative control: a setup built with no package is refused" "no $emptySetup (dev build not built)"
+        }
+        $twice = Join-Path $hWork 'twice.exe'
+        [IO.File]::Copy($hSetup, $twice, $true)
+        $fs = [IO.File]::Open($twice, 'Append')
+        try { $fs.Write($fixture, 0, $fixture.Length) } finally { $fs.Close() }
+        $r = Invoke-VerifyEmbed $twice $fixturePath
+        Assert "H11 negative control: a package embedded twice is refused (rc=$($r.Code))" (
+            $r.Code -eq 1 -and $r.Text -match '2 time\(s\)')
+    } else {
+        Assert "H8 the setup embeds the package byte for byte" $false
+        Assert "H9 negative control: a package that differs by one byte is NOT embedded" $false
+        Assert "H10 negative control: a setup built with no package is refused" $false
+        Assert "H11 negative control: a package embedded twice is refused" $false
+    }
+    Remove-Item -LiteralPath $hWork -Recurse -Force -ErrorAction SilentlyContinue
 }
 
 # A clean green run stamps the covered files (T783) so scripts\guard-due.ps1

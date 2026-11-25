@@ -1,17 +1,23 @@
 {
     "guard":  "release-symbols",
     "script":  "test/win32/release-symbols.ps1",
-    "generated":  "2026-10-26T22:29:29-07:00",
-    "commit":  "3834f812f",
+    "generated":  "2026-11-24T21:28:03-08:00",
+    "commit":  "18d8d609a",
     "uncommitted":  [
                         ".github/workflows/release-windows.yml",
-                        "dist/windows-installer/build-release-artifacts.sh"
+                        "dist/windows-installer/build-release-artifacts.sh",
+                        "scripts/fetch-symbols.ps1",
+                        "test/win32/release-symbols.ps1"
                     ],
     "files":  {
-                  ".github/workflows/release-windows.yml":  "d3fecedfcef2b13b3aff7f2d739ddd3ca51520254644d0d0823cb6c7a08896fe",
-                  "dist/windows-installer/build-release-artifacts.sh":  "0e1f38f77a2655a038c775bb8e4508f9db74ed019b1a28862f3ffa909a5940c3",
+                  ".github/workflows/release-windows.yml":  "f91ddd7f307d1ca5e5e2526e289e4c880f201852c5bea0bcc0e84b30faa27226",
+                  "dist/windows-installer/build-release-artifacts.sh":  "08ff3eb917384baadac17bae6b91a99d0e76a49c2c9b6c102ef9250df86068db",
                   "dist/windows-installer/build-symbols-zip.py":  "b03fd147943cfcdaa8adb366d3e00e831e796ee21e70b73f68439622bbe377a5",
-                  "scripts/fetch-symbols.ps1":  "ef40b9f0b393b5662331bb7fdca267fe87d2dcf64f6ce9b83e99a3d7cc39c35a",
-                  "test/win32/release-symbols.ps1":  "7c1a87e8cf563ea02c3f1e97d098729af03ddafd75144ce221afb945fc0fb862"
-              }
+                  "scripts/fetch-symbols.ps1":  "33ea1e1fcef7c475b9aa9757da23487b01ee54257ab03f1601e03bc242128a6e",
+                  "test/win32/release-symbols.ps1":  "28d5679628b3048afebc61b849709c190bf058db784bfec585fc8228e1eefd2d"
+              },
+    "code":  {
+                 "scripts/fetch-symbols.ps1":  "code1:9e2c0a76982c9376028056ebbe9f2afcea805c08e5ef3436abef1a843b7b446b",
+                 "test/win32/release-symbols.ps1":  "code1:e1868f0fdd40ac20dff172ab5877fa8683dab934c75f7ab09e27b18eb3d7e471"
+             }
 }
