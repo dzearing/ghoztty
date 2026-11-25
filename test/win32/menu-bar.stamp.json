@@ -1,18 +1,18 @@
 {
     "guard":  "menu-bar",
     "script":  "test/win32/menu-bar.ps1",
-    "generated":  "2026-11-25T14:18:58-08:00",
-    "commit":  "56fbe9c18",
+    "generated":  "2026-11-25T15:24:02-08:00",
+    "commit":  "2d40b2a37",
     "uncommitted":  [
-                        "src/apprt/win32/commands.zig",
-                        "src/apprt/win32/menu_bar.zig"
+                        "src/apprt/win32/menu_bar.zig",
+                        "test/win32/menu-bar.ps1"
                     ],
     "files":  {
-                  "src/apprt/win32/commands.zig":  "db6fe67c3f5a6f69520f855ceb87bef108d544d80505e04fcc5f8b6514293f29",
-                  "src/apprt/win32/menu_bar.zig":  "dcdc0ba75790dadc60d7ddf6952769660dd7e100a0d47d30292c41713e0b2cb9",
-                  "test/win32/menu-bar.ps1":  "9f3aca6f12d718b23b6cfe252dded1d9a4e5d62c709d0d344a11e82a40b4d9ff"
+                  "src/apprt/win32/commands.zig":  "982cc6405ee3cd7bf21a4a0b9aafc642ac695ba24c780ff494ede18a7ce6785d",
+                  "src/apprt/win32/menu_bar.zig":  "79d20afb3b3a75592c8f03a091ba4eee938296858e3db01221724e7ed1bb3004",
+                  "test/win32/menu-bar.ps1":  "49960cb0e7d84f55d16771f049a424080cd789fc1a93bdaa64934cd8262da77e"
               },
     "code":  {
-                 "test/win32/menu-bar.ps1":  "code1:6902e3cdf44b0e63556dde6ea9ec2fb045ba1c9431365cc01367d59e467e5abe"
+                 "test/win32/menu-bar.ps1":  "code1:ded051041c0df75b4c54bff271b74c44afd31153d72d816a790393a4310584cf"
              }
 }

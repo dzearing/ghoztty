@@ -9,9 +9,10 @@
 //! The list is the installed shells the Settings Shell menu already finds
 //! (`settings_controls.common_shells`, filtered to the ones on PATH) with the
 //! one generic `wsl.exe` entry replaced by one entry per installed distro,
-//! because "WSL" alone does not say which Linux you get. T3750 grows the
-//! shared catalog (Git Bash, ...); when it lands, `pane_restart` hands its
-//! list here instead of the common shells.
+//! because "WSL" alone does not say which Linux you get. Since T3753 the
+//! picker itself reads the shared catalog (`SettingsWindow.installedShells`,
+//! T3750: Git Bash too), which applies the same one-entry-per-distro rule;
+//! `choices` keeps that rule's unit tests.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;

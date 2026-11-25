@@ -1,7 +1,7 @@
 {
     "guard":  "remote-pill-relay-name",
     "script":  "test/win32/remote-pill-relay-name.ps1",
-    "generated":  "2026-11-25T13:54:01-08:00",
+    "generated":  "2026-11-25T14:18:56-08:00",
     "commit":  "2d40b2a37",
     "uncommitted":  [
 

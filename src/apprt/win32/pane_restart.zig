@@ -33,11 +33,11 @@ const Window = @import("Window.zig");
 const Surface = @import("Surface.zig");
 const PaneView = @import("PaneView.zig");
 const ConfirmDialog = @import("ConfirmDialog.zig");
-const controls = @import("settings_controls.zig");
-const wsl_distros = @import("wsl_distros.zig");
+const SettingsWindow = @import("SettingsWindow.zig");
 const restart_shell = @import("restart_shell.zig");
 const verb_args = @import("../ipc/args.zig");
 const pane_id_mod = @import("../ipc/pane_id.zig");
+const remote_connection = @import("../../remote/connection.zig");
 
 const log = std.log.scoped(.pane_restart);
 
@@ -69,25 +69,17 @@ pub const Mode = enum {
     force,
 };
 
-/// The installed shells a picker offers, strings in `arena`. Reads the PATH
-/// and the WSL registry key only, so building the list never starts WSL.
+/// The installed shells a picker offers, strings in `arena`: the catalog
+/// Settings > Shell and the new-tab menus read (`SettingsWindow.installedShells`,
+/// T3750 - Git Bash included), so every shell picker lists the same shells in
+/// the same order (T3753). Reads PATH, the Git install folders and the WSL
+/// registry key only, so building the list never starts WSL.
 pub fn installedChoices(arena: Allocator) Allocator.Error![]Choice {
-    var installed: std.ArrayList(restart_shell.Installed) = .empty;
-    const path = std.process.getEnvVarOwned(arena, "PATH") catch try arena.dupe(u8, "");
-    const pathext = std.process.getEnvVarOwned(arena, "PATHEXT") catch try arena.dupe(u8, ".COM;.EXE;.BAT;.CMD");
-    const Fs = struct {
-        fn exists(_: void, p: []const u8) bool {
-            const st = std.fs.cwd().statFile(p) catch return false;
-            return st.kind == .file;
-        }
-    };
-    var buf: [std.fs.max_path_bytes + 64]u8 = undefined;
-    for (controls.common_shells) |s| {
-        if (controls.shellProblem(&buf, s.program, path, pathext, {}, Fs.exists) != null) continue;
-        try installed.append(arena, .{ .program = s.program, .label = s.label });
-    }
-    const distros = try wsl_distros.listInstalled(arena);
-    return restart_shell.choices(arena, installed.items, distros);
+    const entries = try SettingsWindow.installedShells(arena, arena);
+    const n = @min(entries.len, restart_shell.max_choices);
+    const out = try arena.alloc(Choice, n);
+    for (entries[0..n], out) |e, *c| c.* = .{ .spec = e.spec, .label = e.label };
+    return out;
 }
 
 /// Whether `pane` can be restarted from a picker at all: a terminal in a
@@ -150,33 +142,8 @@ pub fn restart(app: *App, pane: *PaneView, spec: []const u8, mode: Mode) Outcome
     if (window.ipc_name) |wn| env.append(arena, .{ .key = "GHOZTTY_WINDOW_NAME", .value = wn }) catch return .failed;
     if (name) |n| env.append(arena, .{ .key = "GHOZTTY_PANE_NAME", .value = n }) catch return .failed;
 
-    const wsl = verb_args.isWslShell(spec);
-    const exec_argv: []const [:0]const u8 = if (wsl)
-        verb_args.wslInteractiveArgv(arena, spec, null) catch return .failed
-    else argv: {
-        const one = arena.alloc([:0]const u8, 1) catch return .failed;
-        one[0] = arena.dupeZ(u8, spec) catch return .failed;
-        break :argv one;
-    };
-
-    var ov: Surface.Overrides = if (window.local_agent_conn) |conn| .{
-        .pane_id = id,
-        .env = env.items,
-        .remote = .{
-            .connection = conn,
-            .working_directory = cwd,
-            // The program, never `wsl:<distro>`: an older agent would try to
-            // run that as a file name (T3749's `agentShell`).
-            .shell = verb_args.shellProgram(spec),
-            .command_argv = if (wsl) widen(arena, exec_argv) catch return .failed else null,
-            .local_agent = true,
-        },
-    } else .{
-        .pane_id = id,
-        .env = env.items,
-        .command_argv = exec_argv,
-        .working_directory = cwd,
-    };
+    var ov = shellOverrides(arena, window.local_agent_conn, spec, cwd, id, env.items) catch
+        return .failed;
 
     // A restart ENDS the old session. Marked before the swap releases the
     // surface; un-marked if the swap fails, so the pane the user still has is
@@ -200,6 +167,50 @@ pub fn restart(app: *App, pane: *PaneView, spec: []const u8, mode: Mode) Outcome
     app.markLayoutDirty();
     log.info("restarted pane {s} with {s} (cwd={s})", .{ id, spec, cwd orelse "<shell default>" });
     return .restarted;
+}
+
+/// The overrides that open a pane on the shell `spec` (a program, a path, or
+/// `wsl:<distro>`) with no command: what a restart (above) and a new tab on a
+/// chosen shell (`new_tab_shell.zig`, T3753) both hand the new surface, so the
+/// two cannot open one choice two ways. `conn` is the window's local agent, or
+/// null for a plain ConPTY pane. A WSL spec opens `wsl.exe [-d <distro>] --cd
+/// ~` (T3749); `cwd` is the folder a Windows shell starts in (null: its
+/// default). Strings are borrowed or allocated in `arena`.
+pub fn shellOverrides(
+    arena: Allocator,
+    conn: ?*remote_connection.Connection,
+    spec: []const u8,
+    cwd: ?[]const u8,
+    pane_id: ?[]const u8,
+    env: []const Surface.Overrides.EnvVar,
+) Allocator.Error!Surface.Overrides {
+    const wsl = verb_args.isWslShell(spec);
+    const exec_argv: []const [:0]const u8 = if (wsl)
+        try verb_args.wslInteractiveArgv(arena, spec, null)
+    else argv: {
+        const one = try arena.alloc([:0]const u8, 1);
+        one[0] = try arena.dupeZ(u8, spec);
+        break :argv one;
+    };
+    if (conn) |c| return .{
+        .pane_id = pane_id,
+        .env = env,
+        .remote = .{
+            .connection = c,
+            .working_directory = cwd,
+            // The program, never `wsl:<distro>`: an older agent would try to
+            // run that as a file name (T3749's `agentShell`).
+            .shell = verb_args.shellProgram(spec),
+            .command_argv = if (wsl) try widen(arena, exec_argv) else null,
+            .local_agent = true,
+        },
+    };
+    return .{
+        .pane_id = pane_id,
+        .env = env,
+        .command_argv = exec_argv,
+        .working_directory = cwd,
+    };
 }
 
 fn widen(arena: Allocator, argv: []const [:0]const u8) Allocator.Error![]const []const u8 {

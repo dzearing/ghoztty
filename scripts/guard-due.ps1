@@ -5898,6 +5898,21 @@ $GuardTable = @(
             'test\win32\restart-pane.ps1'
         )
     },
+    # A new tab on a chosen shell (T3753, child of T3735). `new-tab-shell.ps1`
+    # is the only harness that opens the "+" dropdown and File > New Tab's
+    # submenu, reads their rows against the shell catalog, and reads back the
+    # shell process of the tab a pick opens, with persistence off and on.
+    [pscustomobject]@{
+        Name   = 'new-tab-shell'
+        Script = 'test\win32\new-tab-shell.ps1'
+        Stamp  = 'test\win32\new-tab-shell.stamp.json'
+        Covers = @(
+            'src\apprt\win32\new_tab_shell.zig',
+            'src\apprt\win32\shell_menu.zig',
+            'src\apprt\win32\pane_restart.zig',
+            'test\win32\new-tab-shell.ps1'
+        )
+    },
     # Settings > Remote Machines (T2686). `settings-remote-machines.ps1` is
     # the only harness that seeds the page from the device cache with the
     # relay held, lands presence, and saves Host Settings... from the page.

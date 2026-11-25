@@ -263,6 +263,9 @@ const host_defaults = @import("host_defaults.zig");
 const machine_cache = @import("machine_cache.zig");
 const commands = @import("commands.zig");
 const menu_bar = @import("menu_bar.zig");
+const shell_menu = @import("shell_menu.zig");
+const new_tab_shell = @import("new_tab_shell.zig");
+const settings_controls = @import("settings_controls.zig");
 const update_badge = @import("update_badge.zig");
 const agent_upgrade = @import("agent_upgrade.zig");
 const menu_label = @import("menu_label.zig");
@@ -22022,7 +22025,17 @@ pub fn openMenuBarAt(self: *Window, anchor: MenuAnchor) void {
         _ = w32.AppendMenuW(menu, w32.MF_SEPARATOR, 0, null);
     }
 
-    self.buildMenuNodes(menu, &menu_bar.root, state);
+    // File > New Tab is a submenu of the installed shells (T3753) on a window
+    // on this machine. Read per open, like everything else the menu shows, so
+    // a shell installed while the app runs is in the next one.
+    var shells_arena = std.heap.ArenaAllocator.init(self.app.core_app.alloc);
+    defer shells_arena.deinit();
+    const shells: []const settings_controls.ShellEntry = if (new_tab_shell.offered(self))
+        new_tab_shell.catalog(shells_arena.allocator())
+    else
+        &.{};
+
+    self.buildMenuNodes(menu, &menu_bar.root, state, shells);
 
     // Keep the button lit for the life of the popup (Windows menu-button
     // idiom) and repaint immediately — TrackPopupMenuEx blocks below.
@@ -22050,6 +22063,10 @@ pub fn openMenuBarAt(self: *Window, anchor: MenuAnchor) void {
     self.invalidateCaption();
 
     if (cmd <= 0) return; // 0 = dismissed without choosing
+    if (shell_menu.indexOf(@intCast(cmd), shells.len)) |i| {
+        log.debug("menu new tab on shell {s}", .{shells[i].spec});
+        return new_tab_shell.open(self, shells[i].spec);
+    }
     const id = menu_bar.fromMenuCommandId(@intCast(cmd)) orelse {
         log.warn("menu returned an unknown command id={}", .{cmd});
         return;
@@ -22159,11 +22176,23 @@ fn buildMenuNodes(
     menu: w32.HMENU,
     nodes: []const menu_bar.Node,
     state: menu_bar.State,
+    shells: []const settings_controls.ShellEntry,
 ) void {
     for (nodes) |node| switch (node) {
         .separator => _ = w32.AppendMenuW(menu, w32.MF_SEPARATOR, 0, null),
 
         .item => |item| {
+            // T3753: New Tab opens onto the shell list - the default shell
+            // first, under the New Tab chord, then one row per shell. With no
+            // list (a remote window, or nothing found) it stays one row.
+            if (item.cmd == .new_tab and shells.len > 0) {
+                if (w32.CreatePopupMenu()) |child| {
+                    self.appendNewTabShellRows(child, shells);
+                    _ = w32.AppendMenuW(menu, w32.MF_POPUP, @intFromPtr(child), item.title);
+                    continue;
+                }
+                log.warn("new tab shell submenu creation failed", .{});
+            }
             const f = menu_bar.flags(item.cmd, state);
             var mf: u32 = w32.MF_STRING;
             if (!f.enabled) mf |= w32.MF_GRAYED;
@@ -22184,7 +22213,7 @@ fn buildMenuNodes(
                 log.warn("submenu creation failed", .{});
                 continue;
             };
-            self.buildMenuNodes(child, sub.items, state);
+            self.buildMenuNodes(child, sub.items, state, shells);
             // Ownership passes to `menu`: DestroyMenu on the parent frees
             // every popup attached with MF_POPUP.
             _ = w32.AppendMenuW(menu, w32.MF_POPUP, @intFromPtr(child), sub.title);
@@ -22212,11 +22241,85 @@ fn menuItemLabel(
     );
 }
 
+/// The new-tab shell rows (T3753), the same in both menus that carry them:
+/// the default shell first, labelled with the live New Tab chord and sent as
+/// the `new_tab` command itself, a separator, then one row per `shells` entry
+/// (ids from `shell_menu.commandId`).
+fn appendNewTabShellRows(self: *Window, menu: w32.HMENU, shells: []const settings_controls.ShellEntry) void {
+    var label: menu_label.Buf = undefined;
+    _ = w32.AppendMenuW(
+        menu,
+        w32.MF_STRING,
+        menu_bar.menuCommandId(.new_tab),
+        self.menuItemLabel(.new_tab, std.unicode.utf8ToUtf16LeStringLiteral(shell_menu.default_label), &label),
+    );
+    if (shells.len == 0) return;
+    _ = w32.AppendMenuW(menu, w32.MF_SEPARATOR, 0, null);
+    for (shells, 0..) |entry, i| {
+        if (i >= shell_menu.max_entries) break;
+        var esc: [256]u8 = undefined;
+        var wide: [257]u16 = undefined;
+        const n = std.unicode.utf8ToUtf16Le(wide[0 .. wide.len - 1], shell_menu.escapeMnemonics(&esc, entry.label)) catch continue;
+        wide[n] = 0;
+        _ = w32.AppendMenuW(menu, w32.MF_STRING, shell_menu.commandId(i), @ptrCast(&wide));
+    }
+}
+
+/// The "+" button's dropdown (T3753): a right-click on "+" hangs the shell
+/// list from the button, the way Windows Terminal's new-tab dropdown does. A
+/// left-click still opens a tab on the default shell at once.
+fn openNewTabShellMenu(self: *Window) void {
+    const hwnd = self.hwnd orelse return;
+    if (self.menu_open) return;
+    if (!new_tab_shell.offered(self)) return self.newTab();
+
+    var arena_state = std.heap.ArenaAllocator.init(self.app.core_app.alloc);
+    defer arena_state.deinit();
+    const shells = new_tab_shell.catalog(arena_state.allocator());
+
+    const menu = w32.CreatePopupMenu() orelse return;
+    defer _ = w32.DestroyMenu(menu);
+    self.appendNewTabShellRows(menu, shells);
+
+    // Bottom-left of the "+", strip-local -> client as `openMenuBarAt` does.
+    var pt = w32.POINT{
+        .x = self.new_tab_rect.left,
+        .y = self.tabBarTop() + if (self.new_tab_rect.bottom > 0)
+            self.new_tab_rect.bottom
+        else
+            self.tabBarHeight(),
+    };
+    _ = w32.ClientToScreen(hwnd, &pt);
+
+    self.menu_open = true;
+    const cmd = w32.TrackPopupMenuEx(
+        menu,
+        w32.TPM_LEFTALIGN | w32.TPM_TOPALIGN | w32.TPM_RETURNCMD,
+        pt.x,
+        pt.y,
+        hwnd,
+        null,
+    );
+    self.menu_open = false;
+
+    if (cmd <= 0) return;
+    if (shell_menu.indexOf(@intCast(cmd), shells.len)) |i| {
+        log.debug("+ dropdown new tab on shell {s}", .{shells[i].spec});
+        return new_tab_shell.open(self, shells[i].spec);
+    }
+    if (menu_bar.fromMenuCommandId(@intCast(cmd)) == .new_tab) self.newTab();
+}
+
 /// Handle a right-button click in the tab bar region.
 /// Shows a context menu for the clicked tab.
 fn handleTabBarRightClick(self: *Window, x: i16, y: i16) void {
     if (!self.tab_bar_visible) return;
     if (y >= self.tabBarHeight()) return;
+
+    // T3753: the "+" has its own menu - the shells a new tab can open on.
+    if (x >= self.new_tab_rect.left and x < self.new_tab_rect.right) {
+        return self.openNewTabShellMenu();
+    }
 
     // Hit-test to find which tab was right-clicked.
     var clicked_tab: ?usize = null;

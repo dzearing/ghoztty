@@ -125,6 +125,10 @@ pub const Flags = struct {
 const file_menu = [_]Node{
     .{ .item = .{ .cmd = .new_window, .title = u16lit("&New Window") } },
     .{ .item = .{ .cmd = .new_remote_window, .title = u16lit("New &Remote Window") } },
+    // T3753: the host expands this row into a submenu of the installed shells
+    // (`shell_menu.zig`): Default Shell under the New Tab chord, then one row
+    // per shell - the list the "+" dropdown shows. A remote window keeps the
+    // single row: its shells are another machine's.
     .{ .item = .{ .cmd = .new_tab, .title = u16lit("New &Tab") } },
     .separator,
     .{ .item = .{ .cmd = .split_right, .title = u16lit("Split R&ight") } },

@@ -289,6 +289,8 @@ test {
     // Restart Pane with Shell (T3752): the picker list, the carried folder
     // and the submenu id range. Pure.
     _ = @import("win32/restart_shell.zig");
+    // T3753: the new-tab shell menu's row ids and label escaping. Pure.
+    _ = @import("win32/shell_menu.zig");
 
     // Claude plugin → app migration (T870): manifest-driven uninstall via
     // Claude's own CLI (injected), banner-state carry-over, stale-script

@@ -1,7 +1,7 @@
 {
     "guard":  "settings-remote-machines",
     "script":  "test/win32/settings-remote-machines.ps1",
-    "generated":  "2026-11-25T13:53:51-08:00",
+    "generated":  "2026-11-25T14:21:31-08:00",
     "commit":  "2d40b2a37",
     "uncommitted":  [
 

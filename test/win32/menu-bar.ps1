@@ -527,6 +527,12 @@ function Split-Conditional([string[]]$paths) {
     }
     [pscustomobject]@{ Conditional = $found; Static = @($paths[$i..($paths.Count - 1)]) }
 }
+# T3753: the shell rows of File > New Tab - everything in that submenu after
+# its Default Shell row - are the box's installed shells, not the model.
+function Drop-ShellRows([string[]]$paths) {
+    $prefix = '&File/New &Tab/'
+    @($paths | Where-Object { -not $_.StartsWith($prefix) -or $_ -eq ($prefix + '&Default Shell') })
+}
 function Row($tree, [string]$path) {
     $r = @(Rows $tree | Where-Object { $_.Path -eq $path })
     if ($r.Count -eq 0) { return $null }
@@ -543,7 +549,12 @@ $expectedTree = @(
     '&File >'
     "&File/&New Window"
     "&File/New &Remote Window"
-    "&File/New &Tab"
+    # T3753: New Tab opens onto the installed shells. Only its first row is
+    # static (Default Shell); the shell rows below it are the box's catalog,
+    # asserted row-for-row against that catalog by new-tab-shell.ps1, so they
+    # are taken out of this comparison (`Drop-ShellRows`).
+    "&File/New &Tab >"
+    "&File/New &Tab/&Default Shell"
     '&File/---'
     "&File/Split R&ight"
     "&File/Split &Left"
@@ -828,7 +839,7 @@ Assert ($null -ne $tree) 'B: menu opens for the tree walk'
 if ($null -ne $tree) {
     $split = Split-Conditional @(Rows $tree | ForEach-Object { $_.Path })
     foreach ($c in $split.Conditional) { Write-Host "  NOTE  B: conditional root row present (box state, not the model): '$c'" }
-    $paths = $split.Static
+    $paths = @(Drop-ShellRows $split.Static)
     Assert ($paths.Count -eq $expectedTree.Count) "B: tree has $($expectedTree.Count) rows (got $($paths.Count))"
     $bad = @()
     for ($i = 0; $i -lt [Math]::Min($paths.Count, $expectedTree.Count); $i++) {
@@ -849,8 +860,8 @@ if ($null -ne $tree) {
     # Accelerators come from the live keybind set, menu-wide.
     $withAccel = @(Rows $tree | Where-Object { $_.Accel -ne '' })
     Assert ($withAccel.Count -ge 10) "B: bound rows carry their chord ($($withAccel.Count) labeled rows)"
-    $newTab = Row $tree "&File/New &Tab"
-    Assert ($null -ne $newTab -and $newTab.Accel -eq 'Ctrl+T') "B: File>New Tab is labeled Ctrl+T (got '$($newTab.Accel)')"
+    $newTab = Row $tree "&File/New &Tab/&Default Shell"
+    Assert ($null -ne $newTab -and $newTab.Accel -eq 'Ctrl+T') "B: File>New Tab>Default Shell is labeled Ctrl+T (got '$($newTab.Accel)')"
     # A command with no binding behind it must show a bare label, never the
     # placeholder action's chord.
     $remote = Row $tree "&File/New &Remote Window"
@@ -947,8 +958,10 @@ $m = Wait-Menu $g.Pid 3000
 Assert ($m -ne [IntPtr]::Zero) 'C: menu opens for the New Tab dispatch'
 Send-MenuKey $g.Top 'F'  # File submenu
 Start-Sleep -Milliseconds 300
-Send-MenuKey $g.Top 'T'  # New Tab
-Assert (Test-MenuGone $g.Pid 2500) 'C: choosing New Tab closes the menu'
+Send-MenuKey $g.Top 'T'  # New Tab (T3753: a submenu, Default Shell selected)
+for ($t = 0; $t -lt 3000 -and @(Get-TestWindows -ProcessId $g.Pid -Class '#32768').Count -lt 3; $t += 50) { Start-Sleep -Milliseconds 50 }
+Send-MenuKey $g.Top 'D'  # &Default Shell
+Assert (Test-MenuGone $g.Pid 2500) 'C: choosing New Tab > Default Shell closes the menu'
 $grew = Wait-TabCount ($before + 1)
 Assert ($grew.Count -gt $before) "C: File>New Tab opened a tab ($before -> $($grew.Count), $($grew.Ms)ms)"
 
@@ -1180,7 +1193,7 @@ Assert ((Get-TestChromeMetrics -Window $g.Top -StripVisible $true).CaptionH -eq 
 $tree = Open-Menu $g 4000
 Assert ($null -ne $tree) 'H: the strip menu button opens the menu there'
 if ($null -ne $tree) {
-    Assert ((Split-Conditional @(Rows $tree | ForEach-Object { $_.Path })).Static.Count -eq $expectedTree.Count) `
+    Assert (@(Drop-ShellRows (Split-Conditional @(Rows $tree | ForEach-Object { $_.Path })).Static).Count -eq $expectedTree.Count) `
         'H: ...and it is the same menu, not a stub'
     Close-Menu $g
 }
