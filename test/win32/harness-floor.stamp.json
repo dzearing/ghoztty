@@ -1,11 +1,10 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-11-25T12:51:35-08:00",
-    "commit":  "0e6877a8c",
+    "generated":  "2026-11-25T13:15:15-08:00",
+    "commit":  "44cdd1089",
     "uncommitted":  [
-                        "test/win32/context-menu.ps1",
-                        "test/win32/restart-pane.ps1"
+
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "cfa23792d110d499fa4086697daa516d218d0d110e594a7452167a81220ee15e",
@@ -126,7 +125,7 @@
                   "test/win32/confirm-dialogs.ps1":  "418be175865abaad2bacd882d7507f158d95ed2fba11689563ea3e5c53290950",
                   "test/win32/conformance.ps1":  "967bda84b6004011c79ed51857454d16f3309bec872455509b24c720ed0e52af",
                   "test/win32/conpty-sync-hold.ps1":  "c35c5319c5f9a7dfcbad49e519d19f9af4a0c0a68dcf303aae1717a6d47eb18c",
-                  "test/win32/context-menu.ps1":  "1a06b726baed91f0efb378b3bb3b414318086329819db55e8d4f7fd3ddecaed1",
+                  "test/win32/context-menu.ps1":  "ffc98eef410b22843234f60fbfe8c97d4221cfb08a025fc93eeedce352e1c900",
                   "test/win32/context-menu-real-input.ps1":  "074ab4299489d9934aecc6799483a9a6ebf296fc5549997d1bc45b93e4ea9609",
                   "test/win32/control-char-scan.ps1":  "70a206b8794ccbf250ac349adbb5a2303e850c9370117b31afbad1541c9692a9",
                   "test/win32/count-or-zero.ps1":  "569947be0dd433056f05a38d16eae3c81cf3a5a02e0710669458650ea6e5e0ad",
@@ -208,7 +207,7 @@
                   "test/win32/go-loop-uptime.ps1":  "7c2ceea601e716ffba45f0054228e1925a0932a14a100dd7f0a34f4765e12a20",
                   "test/win32/goto-window.ps1":  "46d315222e373a99e41e10787bf31cbd847e3cd8c383da93e902008f549627a1",
                   "test/win32/guard-due.ps1":  "f32bba80075ab29f3f54a393efa8bce66ebff065c30d52d03cbc4c40338d7d1e",
-                  "test/win32/gui-launch-command.ps1":  "6ed1eae90a8b1666e3b78835bf09a3d79d6f2133495382ac8ff15d3ecd1ba39e",
+                  "test/win32/gui-launch-command.ps1":  "ae1b5135ab76c9262ffd63808f6448588ac33f6b897fbf3b47c23725631c3044",
                   "test/win32/gui-postmortem.ps1":  "b9cce844222cd55e667a85aedba38109eeacdc8576524998be403b558b782ba4",
                   "test/win32/hard-delete-sites.ps1":  "f0e6c5b18f1e786cab6acf996e3bcb9d8b1da46d99c9bfbc7f5664a12dacd71c",
                   "test/win32/harness-exitcode-audit.ps1":  "9568a9718f2cfba7d2bc2b8f9813a74ba8767a062a20dea8f236fc56fa3ee4e5",
@@ -512,7 +511,6 @@
                   "test/win32/resize-debounce.ps1":  "2e44a1b8cfe58c0ef286df245380afc6abbb1e11d691ef4ac3820d1d683a531d",
                   "test/win32/resize-flicker.ps1":  "f524c81c21fe503a6f572e179c4cb33c0d12b0180772402b3622774370d99ae1",
                   "test/win32/resolve-window-persist.ps1":  "1e4386ee3b89a7e8ebb39eb53263a8c596ca2d405c2ccc9ed8716e013fad5958",
-                  "test/win32/restart-pane.ps1":  "190f6da70f3e7b7d7b097958fa632852bbcbc2240defce082a1e3845a9a79479",
                   "test/win32/restore-dead-sessions.ps1":  "95e0b3b6d0e2c2c6cd9c02e0823c715a4eff72e8ac7d12a70a50976d5baf25ce",
                   "test/win32/restore-dpi-frame.ps1":  "d108aa2a21aa785326a2f845906c3d9a7f252f1dd5711cb9d33f28a7fb6fdcbe",
                   "test/win32/restore-late-agent.ps1":  "e6bd4e7d1f5af84e8bc0ce9103fe7ad45dc47ef65a00eab9b4580e61e8cce670",
