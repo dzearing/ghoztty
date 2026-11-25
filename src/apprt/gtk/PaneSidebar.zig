@@ -40,7 +40,18 @@
 //! close from here asks nothing and raises nothing, and runs on the next
 //! main-loop turn; every + takes focus, as its keybind does.
 //!
-//! Not here yet: drag to reorder and the stash tray (T3607), group editing
+//! A pane row drags up and down to reorder its window's list (T3607): the
+//! LIST only, never the grid - the order is the sidebar's own, one per
+//! window (`orders`, win32 `pane_sidebar_order.moving` and `arranged`),
+//! read against the tree at every draw, so a split lands beside its parent
+//! and a closed pane drops out. The drag offers a private mime type of its
+//! own, so a row never drops into a split tree, and it lands among its own
+//! window's rows whichever window's list it is let go over. GTK draws its
+//! own drag icon; the row following the pointer and the others sliding are
+//! not ported (parity is behavior here, not the glide).
+//!
+//! Not here yet: dragging windows and groups, a row dropped into another
+//! window, and the stash tray (T3607's remainder), group editing
 //! (T3608), and from T3606's remainder (T3695) this window's own header row
 //! and the rail's +, rename in place, the hover tint, the busy sheen, the
 //! width grip and hero-mode suppression.
@@ -63,6 +74,7 @@ const all = @import("pane_sidebar_all.zig");
 const search_cap = @import("../win32/pane_sidebar_search.zig").cap;
 const pane_stash = @import("../win32/pane_stash.zig");
 const add_rules = @import("../win32/pane_sidebar_add.zig");
+const sidebar_order = @import("../win32/pane_sidebar_order.zig");
 const Application = @import("class/application.zig").Application;
 const Window = @import("class/window.zig").Window;
 const Surface = @import("class/surface.zig").Surface;
@@ -97,6 +109,17 @@ var shared_alloc: Allocator = undefined;
 /// gather, so a reused address starts over.
 var opened: std.AutoHashMapUnmanaged(usize, u64) = .empty;
 var opened_next: u64 = 0;
+/// Every window's own pane order (T3607), by tab address.
+var orders: rows.Orders = .{};
+
+/// A sidebar row's drag offers this, and only a sidebar list takes it: a
+/// row dragged in the list only ever rearranges (Mac
+/// `PaneDragSession.isListDrag`), so no split tree or terminal accepts it.
+const row_mime: [:0]const u8 = "application/x-ghoztty-sidebar-row";
+/// The pane whose row is being dragged (GTK runs one pointer drag at a
+/// time), or empty.
+var row_drag_buf: [64]u8 = undefined;
+var row_drag_len: usize = 0;
 
 fn prefsPath(alloc: Allocator) ?[]u8 {
     var home_buf: [std.fs.max_path_bytes]u8 = undefined;
@@ -231,6 +254,10 @@ pub const Row = struct {
     hovered: bool = false,
     /// A header's windows (tab keys), what its x closes; owned.
     members: []const u64 = &.{},
+    /// A pane row's window (its tab, by address): the rows it reorders among.
+    tab: usize = 0,
+    /// A pane row drags to reorder (T3607): a pane on screen.
+    draggable: bool = false,
 };
 
 alloc: Allocator,
@@ -329,6 +356,12 @@ pub fn create(alloc: Allocator, window: *Window) Allocator.Error!*PaneSidebar {
     wk.gtk_widget_set_vexpand(scroller, 1);
     const list = wk.gtk_box_new(orientation_vertical, 4);
     wk.gtk_widget_add_css_class(list, "pane-sidebar-list");
+    // Rows dropped on the list reorder it (T3607). The list outlives every
+    // redraw, so one target serves each row drawn into it; its signals are
+    // connected once `self` is filled in, below.
+    const row_types = [_][*:0]const u8{row_mime.ptr};
+    const drop_target = wk.gtk_drop_target_async_new(wk.gdk_content_formats_new(&row_types, row_types.len), wk.gdk_action_move);
+    wk.gtk_widget_add_controller(list, drop_target);
     wk.gtk_scrolled_window_set_child(scroller, list);
     wk.gtk_box_append(card, scroller);
 
@@ -344,6 +377,10 @@ pub fn create(alloc: Allocator, window: *Window) Allocator.Error!*PaneSidebar {
         .search = search,
         .list = list,
     };
+    _ = wk.g_signal_connect_data(drop_target, "accept", @ptrCast(&onListAccept), self, null, 0);
+    _ = wk.g_signal_connect_data(drop_target, "drag-enter", @ptrCast(&onListMotion), self, null, 0);
+    _ = wk.g_signal_connect_data(drop_target, "drag-motion", @ptrCast(&onListMotion), self, null, 0);
+    _ = wk.g_signal_connect_data(drop_target, "drop", @ptrCast(&onListDrop), self, null, 0);
     return self;
 }
 
@@ -453,7 +490,9 @@ pub fn refresh(self: *PaneSidebar) void {
     var leaves: std.ArrayListUnmanaged(*Surface) = .empty;
     defer leaves.deinit(self.alloc);
     collectLeaves(self.alloc, tree, &leaves) catch {};
-    for (leaves.items) |v| self.addPaneRow(v, v == active, expanded, home, 0, true) catch |err| {
+    const tab_key = @intFromPtr(tab);
+    arrangeLeaves(tab_key, leaves.items);
+    for (leaves.items) |v| self.addPaneRow(v, v == active, expanded, home, 0, true, tab_key) catch |err| {
         log.warn("pane sidebar row failed err={}", .{err});
         break;
     };
@@ -527,6 +566,7 @@ fn gather(self: *PaneSidebar, arena: Allocator) Allocator.Error!Gathered {
             };
             var leaves: std.ArrayListUnmanaged(*Surface) = .empty;
             if (tab.getSurfaceTree()) |tree| try collectLeaves(arena, tree, &leaves);
+            arrangeLeaves(key, leaves.items);
             const panes = try arena.alloc(rows.Pane, leaves.items.len);
             for (leaves.items, panes) |v, *p| p.* = paneOf(v);
             const active = tab.getActiveSurface();
@@ -583,7 +623,7 @@ fn refreshAll(self: *PaneSidebar, expanded: bool, home: ?[]const u8) Allocator.E
         .pane => {
             const v = g.surfaces[item.window][item.pane];
             const w = g.windows[item.window];
-            try self.addPaneRow(v, w.own and g.actives[item.window] == v, true, home, item.depth, w.own);
+            try self.addPaneRow(v, w.own and g.actives[item.window] == v, true, home, item.depth, w.own, w.key);
         },
         else => try self.addHeadRow(item),
     };
@@ -591,7 +631,7 @@ fn refreshAll(self: *PaneSidebar, expanded: bool, home: ?[]const u8) Allocator.E
 
 /// A pane's row: its icon, and (expanded) its name with its directory under
 /// it. Indented one step under its window in the all-windows outline.
-fn addPaneRow(self: *PaneSidebar, surface: *Surface, selected: bool, expanded: bool, home: ?[]const u8, depth: u8, own: bool) Allocator.Error!void {
+fn addPaneRow(self: *PaneSidebar, surface: *Surface, selected: bool, expanded: bool, home: ?[]const u8, depth: u8, own: bool, tab: usize) Allocator.Error!void {
     var lb: [rows.TEXT_BUF_LEN]u8 = undefined;
     var sb: [rows.TEXT_BUF_LEN]u8 = undefined;
     const viewer = surface.isViewer();
@@ -652,8 +692,11 @@ fn addPaneRow(self: *PaneSidebar, surface: *Surface, selected: bool, expanded: b
         .depth = depth,
         .own = own,
         .tools = rows.paneTools(expanded, own, stashed),
+        .tab = tab,
+        .draggable = !stashed,
     };
     _ = wk.g_signal_connect_data(button, "clicked", @ptrCast(&onRowClicked), r, null, 0);
+    if (r.draggable) addRowDragSource(r, button);
     self.addTools(r, outer, false);
     try self.drawn.append(self.alloc, r);
     wk.gtk_box_append(self.list, outer);
@@ -934,6 +977,145 @@ pub fn clickTool(self: *PaneSidebar, tool: rows.Tool, id: []const u8) bool {
         .close => self.closeFromRow(r),
     }
     return true;
+}
+
+// ---------------------------------------------------------------------------
+// Drag to reorder (T3607; docs/reference/pane-sidebar.md "Drag to reorder")
+
+/// Put a window's panes (tree order) in the sidebar's own order for that
+/// window, in place. No order yet: left as they are.
+fn arrangeLeaves(key: usize, leaves: []*Surface) void {
+    const cur = orders.get(key);
+    if (cur.len == 0) return;
+    const n = @min(leaves.len, sidebar_order.max_ids);
+    var ids: [sidebar_order.max_ids][]const u8 = undefined;
+    var was: [sidebar_order.max_ids]*Surface = undefined;
+    for (leaves[0..n], 0..) |v, i| {
+        ids[i] = v.paneId();
+        was[i] = v;
+    }
+    var idx: [sidebar_order.max_ids]usize = undefined;
+    const m = sidebar_order.arranged(ids[0..n], cur, &idx);
+    for (idx[0..m], 0..) |vi, i| leaves[i] = was[vi];
+}
+
+/// A pane row's drag source: the pointer pressed on the row and moved
+/// starts it, a press without moving is still the row's click.
+fn addRowDragSource(r: *Row, button: *wk.GtkWidget) void {
+    const source = wk.gtk_drag_source_new();
+    wk.gtk_drag_source_set_actions(source, wk.gdk_action_move);
+    _ = wk.g_signal_connect_data(source, "prepare", @ptrCast(&onRowDragPrepare), r, null, 0);
+    _ = wk.g_signal_connect_data(source, "drag-begin", @ptrCast(&onRowDragBegin), r, null, 0);
+    // drag-end gets no row: the list may have been redrawn (and the row
+    // freed) while the pointer was down.
+    _ = wk.g_signal_connect_data(source, "drag-end", @ptrCast(&onRowDragEnd), null, null, 0);
+    wk.gtk_widget_add_controller(button, source);
+}
+
+fn rowDragged() ?[]const u8 {
+    if (row_drag_len == 0) return null;
+    return row_drag_buf[0..row_drag_len];
+}
+
+fn onRowDragPrepare(_: *wk.GtkEventController, _: f64, _: f64, r: *Row) callconv(.c) ?*wk.GdkContentProvider {
+    const bytes = wk.g_bytes_new(r.id.ptr, r.id.len);
+    defer wk.g_bytes_unref(bytes);
+    return wk.gdk_content_provider_new_for_bytes(row_mime.ptr, bytes);
+}
+
+fn onRowDragBegin(_: *wk.GtkEventController, _: *wk.GdkDrag, r: *Row) callconv(.c) void {
+    const n = @min(r.id.len, row_drag_buf.len);
+    @memcpy(row_drag_buf[0..n], r.id[0..n]);
+    row_drag_len = n;
+    log.info("pane sidebar row drag began pane={s}", .{r.id});
+}
+
+fn onRowDragEnd(_: *wk.GtkEventController, _: *wk.GdkDrag, _: c_int, _: ?*anyopaque) callconv(.c) void {
+    if (rowDragged()) |id| log.info("pane sidebar row drag ended pane={s}", .{id});
+    row_drag_len = 0;
+}
+
+fn onListAccept(_: *wk.GtkEventController, _: *wk.GdkDrop, _: *PaneSidebar) callconv(.c) c_int {
+    // Only a row drag of this app: another app offering the type has no row
+    // here to move.
+    return @intFromBool(rowDragged() != null);
+}
+
+fn onListMotion(_: *wk.GtkEventController, _: *wk.GdkDrop, _: f64, _: f64, _: *PaneSidebar) callconv(.c) c_int {
+    return if (rowDragged() != null) wk.gdk_action_move else 0;
+}
+
+fn onListDrop(_: *wk.GtkEventController, drop: *wk.GdkDrop, _: f64, y: f64, self: *PaneSidebar) callconv(.c) c_int {
+    const id = rowDragged() orelse {
+        wk.gdk_drop_finish(drop, 0);
+        return 0;
+    };
+    // Copied: the move redraws every list, and the drag's end clears it.
+    var buf: [64]u8 = undefined;
+    const own = buf[0..id.len];
+    @memcpy(own, id);
+    const moved = self.dropRowAt(own, y) != null;
+    wk.gdk_drop_finish(drop, if (moved) wk.gdk_action_move else 0);
+    return @intFromBool(moved);
+}
+
+/// A drawn row's bounds in the list's coordinates, or null before layout.
+fn rowBounds(self: *PaneSidebar, r: *const Row) ?wk.GrapheneRect {
+    var b: wk.GrapheneRect = .{};
+    if (wk.gtk_widget_compute_bounds(r.widget, self.list, &b) == 0) return null;
+    if (b.h <= 0) return null;
+    return b;
+}
+
+/// The row with this id let go at `y` (the list's coordinates): it lands
+/// among its own window's rows level with the pointer - wherever in the list
+/// that is (Mac: a row dragged in the list only ever rearranges). Returns
+/// the index it landed at, of its window's list without it, or null when
+/// the row is not drawn here, does not drag, or the move was refused. The
+/// live drop and the seam's `--drag` both come here.
+pub fn dropRowAt(self: *PaneSidebar, id: []const u8, y: f64) ?usize {
+    const r = self.rowById(id) orelse return null;
+    if (r.kind != .pane or !r.draggable) return null;
+    var mids: [sidebar_order.max_ids]f64 = undefined;
+    var n: usize = 0;
+    for (self.drawn.items) |o| {
+        if (o == r or o.kind != .pane or o.tab != r.tab) continue;
+        const b = self.rowBounds(o) orelse continue;
+        if (n == mids.len) break;
+        mids[n] = b.y + b.h / 2;
+        n += 1;
+    }
+    const index = rows.dropIndex(mids[0..n], y);
+    log.info("pane sidebar row drop pane={s} y={d:.0} index={d}", .{ id, y, index });
+    if (!self.moveRow(id, index)) return null;
+    return index;
+}
+
+/// Put the pane at `index` of its window's sidebar list (counted without
+/// it): the list's own order, never the grid (win32
+/// `Window.placeInPaneSidebar`). False when the pane is gone or stashed.
+fn moveRow(self: *PaneSidebar, pane_id: []const u8, index: usize) bool {
+    const f = findPane(pane_id) orelse return false;
+    if (pane_stash.isStashed(f.surface)) return false;
+    const tree = f.tab.getSurfaceTree() orelse return false;
+    var leaves: std.ArrayListUnmanaged(*Surface) = .empty;
+    defer leaves.deinit(self.alloc);
+    collectLeaves(self.alloc, tree, &leaves) catch return false;
+    const n = @min(leaves.items.len, sidebar_order.max_ids);
+    var visible: [sidebar_order.max_ids][]const u8 = undefined;
+    for (leaves.items[0..n], 0..) |v, i| visible[i] = v.paneId();
+    const key = @intFromPtr(f.tab);
+    var next: [sidebar_order.max_ids][]const u8 = undefined;
+    const got = sidebar_order.moving(pane_id, index, visible[0..n], orders.get(key), visible[0..n], &next);
+    orders.set(self.alloc, key, next[0..got]) catch return false;
+    orders.prune(self.alloc, {}, tabIsOpen);
+    log.info("pane sidebar reorder pane={s} index={d} panes={d}", .{ pane_id, index, got });
+    Window.queueAllSidebarRefresh();
+    return true;
+}
+
+fn tabIsOpen(_: void, key: usize) bool {
+    return findTab(key) != null;
 }
 
 const FoundPane = struct { win: *Window, tab: *Tab, surface: *Surface };
@@ -1272,6 +1454,9 @@ pub fn report(self: *PaneSidebar, arena: Allocator) Allocator.Error!rows.Report 
         .tools = r.tools,
         .hovered = r.hovered,
         .tools_shown = if (r.tools_box) |b| wk.gtk_widget_get_visible(b) != 0 else false,
+        .draggable = r.draggable,
+        .top = if (self.rowBounds(r)) |b| @intFromFloat(@round(b.y)) else -1,
+        .height = if (self.rowBounds(r)) |b| @intFromFloat(@round(b.h)) else 0,
     };
     var qb: [search_cap * 3]u8 = undefined;
     return .{

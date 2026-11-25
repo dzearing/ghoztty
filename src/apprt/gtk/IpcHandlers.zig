@@ -220,7 +220,8 @@ pub fn handleSeam(app: Context, request: Request) Allocator.Error!server.SeamRep
 
 /// `pane-sidebar --target=<pane|window> [--search=<text>]
 /// [--search-key=enter|escape] [--hover=<row id>|]
-/// [--click=toggle|scope|add|<row id>|fold:<row id>|tool:<button>:<row id>]`
+/// [--click=toggle|scope|add|<row id>|fold:<row id>|tool:<button>:<row id>]
+/// [--layout] [--drag=<row id>:<y>]`
 /// (T3557, T3558): what the target window's pane sidebar shows - its mode,
 /// the shared flags, the scope and search, and every row as drawn (id,
 /// label, subtitle, tooltip, selected; a header's count and fold) - after an
@@ -230,13 +231,24 @@ pub fn handleSeam(app: Context, request: Request) Allocator.Error!server.SeamRep
 /// keyboard the headless harness does not have. The reply is drawn state,
 /// so the sidebar is redrawn first: a click or a change still queued is in
 /// it.
+///
+/// `--layout` (T3607) reads the rows as they are laid out on screen instead,
+/// with no redraw on either side: a redraw builds new rows, which have no
+/// place until GTK's next frame, so only this read carries each row's
+/// `top`/`height`. `--drag=<row id>:<y>` lets that row go at `y` of the list
+/// (the coordinates `top` is in) through the live drop's own code - the
+/// harness has no seat to start a pointer drag - and is read the same way.
 fn paneSidebar(app: Context, request: Request) Allocator.Error![]u8 {
     var target_arg: ?[]const u8 = null;
     var click_arg: ?[]const u8 = null;
     var search_arg: ?[]const u8 = null;
     var key_arg: ?[]const u8 = null;
     var hover_arg: ?[]const u8 = null;
+    var drag_arg: ?[]const u8 = null;
+    var as_laid_out = false;
     for (request.arguments orelse &.{}) |arg| {
+        if (std.mem.startsWith(u8, arg, "--drag=")) drag_arg = arg["--drag=".len..];
+        if (std.mem.eql(u8, arg, "--layout")) as_laid_out = true;
         if (std.mem.startsWith(u8, arg, "--target=")) target_arg = arg["--target=".len..];
         if (std.mem.startsWith(u8, arg, "--click=")) click_arg = arg["--click=".len..];
         if (std.mem.startsWith(u8, arg, "--search=")) search_arg = arg["--search=".len..];
@@ -257,6 +269,25 @@ fn paneSidebar(app: Context, request: Request) Allocator.Error![]u8 {
     };
     const sidebar = target.window_().paneSidebar() orelse
         return server.errorResponse(c_alloc, "the window has no pane sidebar", .{});
+
+    if (drag_arg) |d| {
+        const colon = std.mem.lastIndexOfScalar(u8, d, ':') orelse
+            return server.errorResponse(c_alloc, "--drag=<row id>:<y>", .{});
+        const y = std.fmt.parseFloat(f64, d[colon + 1 ..]) catch
+            return server.errorResponse(c_alloc, "--drag y '{s}' is not a number", .{d[colon + 1 ..]});
+        const index = sidebar.dropRowAt(d[0..colon], y) orelse
+            return server.errorResponse(c_alloc, "sidebar row '{s}' did not drop (not drawn here, not a pane on screen, or not laid out)", .{d[0..colon]});
+        const rep = try sidebar.report(arena);
+        var out: std.Io.Writer.Allocating = .init(arena);
+        std.json.Stringify.value(.{ .success = true, .index = index, .sidebar = rep }, .{}, &out.writer) catch return error.OutOfMemory;
+        return c_alloc.dupe(u8, out.written());
+    }
+    if (as_laid_out) {
+        const rep = try sidebar.report(arena);
+        var out: std.Io.Writer.Allocating = .init(arena);
+        std.json.Stringify.value(.{ .success = true, .sidebar = rep }, .{}, &out.writer) catch return error.OutOfMemory;
+        return c_alloc.dupe(u8, out.written());
+    }
 
     // Pending redraws first, so a click lands on the rows as they now are.
     sidebar.refresh();

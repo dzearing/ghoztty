@@ -207,10 +207,135 @@ pub const Report = struct {
         tools: []const Tool = &.{},
         hovered: bool = false,
         tools_shown: bool = false,
+        /// The row drags to reorder (T3607): a pane on screen.
+        draggable: bool = false,
+        /// Where the row is laid out in the list, logical pixels from the
+        /// list's top (-1 before layout): what a `--drag` y is read against.
+        top: i32 = -1,
+        height: i32 = 0,
     };
 };
 
+// ---------------------------------------------------------------------------
+// Drag to reorder (T3607; docs/reference/pane-sidebar.md "Drag to reorder")
+
+/// Where a row dropped at `y` lands among its siblings - the other rows of
+/// its window's list, the dragged one left out - as an index of that list
+/// without it: past every sibling whose middle is above the pointer. `mids`
+/// are the siblings' middles as laid out, top to bottom, in the same
+/// coordinates as `y`. Mac reads the index off the rows' frames the same
+/// way (`rowFrameReader`).
+pub fn dropIndex(mids: []const f64, y: f64) usize {
+    var n: usize = 0;
+    for (mids) |m| {
+        if (m >= y) break;
+        n += 1;
+    }
+    return n;
+}
+
+/// The sidebar's own pane order, one per window (a GTK tab, by address;
+/// win32 `Window.pane_sidebar_order`, Mac `PaneSidebarState.order`): the ids
+/// `pane_sidebar_order.moving` wrote at the last drag, owned. Empty, or a
+/// window it has never seen, means tree order.
+pub const Orders = struct {
+    map: std.AutoHashMapUnmanaged(usize, std.ArrayListUnmanaged([]const u8)) = .empty,
+
+    pub fn deinit(self: *Orders, alloc: Allocator) void {
+        var it = self.map.valueIterator();
+        while (it.next()) |l| freeList(alloc, l);
+        self.map.deinit(alloc);
+    }
+
+    fn freeList(alloc: Allocator, l: *std.ArrayListUnmanaged([]const u8)) void {
+        for (l.items) |id| alloc.free(id);
+        l.deinit(alloc);
+    }
+
+    /// The window's order, borrowed until the next `set` or `prune`.
+    pub fn get(self: *const Orders, key: usize) []const []const u8 {
+        const l = self.map.getPtr(key) orelse return &.{};
+        return l.items;
+    }
+
+    /// Replace the window's order with copies of `ids` (which may borrow the
+    /// old order). Empty forgets the window.
+    pub fn set(self: *Orders, alloc: Allocator, key: usize, ids: []const []const u8) Allocator.Error!void {
+        var next: std.ArrayListUnmanaged([]const u8) = .empty;
+        errdefer freeList(alloc, &next);
+        try next.ensureTotalCapacity(alloc, ids.len);
+        for (ids) |id| next.appendAssumeCapacity(try alloc.dupe(u8, id));
+        if (self.map.fetchRemove(key)) |old| {
+            var l = old.value;
+            freeList(alloc, &l);
+        }
+        if (next.items.len == 0) return;
+        try self.map.put(alloc, key, next);
+    }
+
+    /// Forget every window `live` does not say is still open.
+    pub fn prune(self: *Orders, alloc: Allocator, ctx: anytype, comptime live: fn (@TypeOf(ctx), usize) bool) void {
+        while (true) {
+            var it = self.map.iterator();
+            const dead = while (it.next()) |e| {
+                if (!live(ctx, e.key_ptr.*)) break e.key_ptr.*;
+            } else return;
+            if (self.map.fetchRemove(dead)) |old| {
+                var l = old.value;
+                freeList(alloc, &l);
+            }
+        }
+    }
+
+    pub fn count(self: *const Orders) usize {
+        return self.map.count();
+    }
+};
+
 const testing = std.testing;
+
+test "T3607: a dropped row lands past every sibling whose middle is above the pointer" {
+    const mids = [_]f64{ 20, 60, 100 };
+    try testing.expectEqual(@as(usize, 0), dropIndex(&mids, 5));
+    try testing.expectEqual(@as(usize, 0), dropIndex(&mids, 20));
+    try testing.expectEqual(@as(usize, 1), dropIndex(&mids, 21));
+    try testing.expectEqual(@as(usize, 2), dropIndex(&mids, 99));
+    try testing.expectEqual(@as(usize, 3), dropIndex(&mids, 400));
+    // A window with only the dragged row: it can only land where it is.
+    try testing.expectEqual(@as(usize, 0), dropIndex(&.{}, 50));
+}
+
+test "T3607: a window's order is copied in, replaced whole, forgotten when empty or closed" {
+    const alloc = testing.allocator;
+    var o: Orders = .{};
+    defer o.deinit(alloc);
+    try testing.expectEqual(@as(usize, 0), o.get(1).len);
+
+    var src = [_][]const u8{ "b", "a" };
+    try o.set(alloc, 1, &src);
+    src[0] = "x"; // the store owns its copies
+    try testing.expectEqualStrings("b", o.get(1)[0]);
+    try testing.expectEqualStrings("a", o.get(1)[1]);
+
+    // A set may borrow the order it replaces.
+    try o.set(alloc, 1, o.get(1)[1..]);
+    try testing.expectEqual(@as(usize, 1), o.get(1).len);
+    try testing.expectEqualStrings("a", o.get(1)[0]);
+
+    try o.set(alloc, 2, &.{"c"});
+    try testing.expectEqual(@as(usize, 2), o.count());
+    const Live = struct {
+        fn f(keep: usize, k: usize) bool {
+            return k == keep;
+        }
+    };
+    o.prune(alloc, @as(usize, 2), Live.f);
+    try testing.expectEqual(@as(usize, 1), o.count());
+    try testing.expectEqual(@as(usize, 0), o.get(1).len);
+
+    try o.set(alloc, 2, &.{});
+    try testing.expectEqual(@as(usize, 0), o.count());
+}
 
 test "T3557: a row is named by its banner's title, else its title, else its directory" {
     var a: [TEXT_BUF_LEN]u8 = undefined;
