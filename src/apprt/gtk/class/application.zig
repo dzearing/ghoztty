@@ -52,6 +52,7 @@ const OpenURI = @import("../portal.zig").OpenURI;
 const url_scheme = @import("../url_scheme.zig");
 const wslg_gpu = @import("../wslg_gpu.zig");
 const viewer_chrome = @import("../viewer_chrome.zig");
+const viewer_links = @import("../viewer_links.zig");
 const CloseUndo = @import("../CloseUndo.zig");
 const window_mode = @import("../../win32/window_mode.zig");
 const builtin = @import("builtin");
