@@ -73,8 +73,8 @@ ticks() { awk '{ print $14 + $15 }' "/proc/$APP/stat" 2>/dev/null; }
 # ---- 1. one window, one pane: everything is seen ---------------------------
 sleep 0.5
 r=$(seen)
-[ "$(q "$r" 'W["seen"] and P["'"$p1"'"]["seen"]')" = True ]
-hl_check "B1 a shown window and its pane read seen (compositor reports minimized=$(q "$r" 'W["reported"]["minimized"]') suspended=$(q "$r" 'W["reported"]["suspended"]'))" $? "$r"
+[ "$(q "$r" 'W["seen"] and P["'"$p1"'"]["seen"]')" = True ]; rc=$?
+hl_check "B1 a shown window and its pane read seen (compositor reports minimized=$(q "$r" 'W["reported"]["minimized"]') suspended=$(q "$r" 'W["reported"]["suspended"]'))" $rc "$r"
 
 # ---- 2. a background tab is not seen ---------------------------------------
 press "$p1" ctrl+shift+f3

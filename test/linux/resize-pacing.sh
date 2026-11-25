@@ -133,8 +133,8 @@ distinct=$(printf '%s\n' $widths | sort -u | wc -l | tr -d ' ')
 hl_check "R3 the drag widened the pane ($w0 -> $w1 px)" $? "widths=$widths"
 [ "$distinct" -ge $((STEPS * 2 / 3)) ]
 hl_check "R4 the pane was laid out anew on the drag's frames ($distinct distinct widths over $STEPS steps)" $? "widths=$widths"
-[ "$n" -ge 1 ] && [ "$(tail -1 "$winch_log")" != "$sizes0" ]
-hl_check "R5 the program was told the new size ($n SIGWINCH, now $(tail -1 "$winch_log" 2>/dev/null))" $? "before=[$sizes0]"
+[ "$n" -ge 1 ] && [ "$(tail -1 "$winch_log")" != "$sizes0" ]; rc=$?
+hl_check "R5 the program was told the new size ($n SIGWINCH, now $(tail -1 "$winch_log" 2>/dev/null))" $rc "before=[$sizes0]"
 # One SIGWINCH per 350ms cap window, plus the release's settle - and never
 # anything like one per frame.
 cap=$(( drag_ms / 350 + 2 ))
@@ -171,7 +171,8 @@ grep -q 'resize pace=debounce' "$APP_LOG"
 hl_check "R9 the core paced those resizes as a running program's (pace=debounce on the log)" $? "$(grep -m3 'resize pace=' "$APP_LOG" | tr '\n' '|')"
 
 # ---- 3. a window resize (T3630) --------------------------------------------
-# The window's edge dragged in $STEPS steps, through the debug-only
+# The window's edge dragged in by $STEPS steps (in: the headless output
+# is 1280 px wide and the window already fills it), through the debug-only
 # window-size seam (gtk_window_set_default_size, as an edge drag would). Each
 # reply carries the width laid out so far, so the widths prove the window
 # really moved on the way.
@@ -185,7 +186,7 @@ wsizes0=$(tail -1 "$winch_log")
 wwidths=""
 t0=$(date +%s%N)
 for i in $(seq 1 $STEPS); do
-    wwidths="$wwidths $(wwidth "$(ws "--size=$((ww0 + i * DX))x$wh0")")"
+    wwidths="$wwidths $(wwidth "$(ws "--size=$((ww0 - i * DX))x$wh0")")"
     [ "$GAP" = 0 ] || sleep "$GAP"
 done
 t1=$(date +%s%N)
@@ -195,10 +196,10 @@ ww1=$(wwidth "$(ws)")
 n=$(( $(winches) - before ))
 wdistinct=$(printf '%s\n' $wwidths | sort -u | wc -l | tr -d ' ')
 
-[ "$ww1" -gt "$ww0" ] 2>/dev/null && [ "$wdistinct" -ge $((STEPS / 2)) ]
+[ "$ww1" -lt "$ww0" ] 2>/dev/null && [ "$wdistinct" -ge $((STEPS / 2)) ]
 hl_check "R10 the window edge moved on the resize's frames ($ww0 -> $ww1 px, $wdistinct distinct widths over $STEPS steps)" $? "widths=$wwidths"
-[ "$n" -ge 1 ] && [ "$(tail -1 "$winch_log")" != "$wsizes0" ]
-hl_check "R11 the program was told the window's new size ($n SIGWINCH, now $(tail -1 "$winch_log" 2>/dev/null))" $? "before=[$wsizes0]"
+[ "$n" -ge 1 ] && [ "$(tail -1 "$winch_log")" != "$wsizes0" ]; rc=$?
+hl_check "R11 the program was told the window's new size ($n SIGWINCH, now $(tail -1 "$winch_log" 2>/dev/null))" $rc "before=[$wsizes0]"
 wcap=$(( win_ms / 350 + 2 ))
 [ "$n" -le "$wcap" ] && [ $((n * 3)) -le "$STEPS" ]
 hl_check "R12 the window resize reached the program paced: $n SIGWINCH for $STEPS steps over ${win_ms}ms (at most $wcap, and at most one per 3 steps)" $? "$(tr '\n' '|' < "$winch_log")"
