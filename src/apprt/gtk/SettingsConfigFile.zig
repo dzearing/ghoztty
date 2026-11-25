@@ -105,6 +105,8 @@ current_label: *wk.GtkWidget = undefined,
 /// The open Restore confirmation, and the backup it is about.
 confirm: ?*wk.GtkWidget = null,
 confirm_index: usize = 0,
+/// Its signal handlers, cut when the window closes it.
+confirm_handlers: [2]c_ulong = .{ 0, 0 },
 
 // --- The toast ---
 revealer: *wk.GtkWidget = undefined,
@@ -132,8 +134,7 @@ trace: Trace = .{},
 pub fn teardown(self: *ConfigFile) void {
     if (!self.built) return;
     self.stopLeave();
-    if (self.confirm) |d| wk.adw_dialog_force_close(d);
-    self.confirm = null;
+    self.closeConfirm();
 }
 
 pub fn deinit(self: *ConfigFile, gpa: Allocator) void {
@@ -698,7 +699,7 @@ pub fn restoreBackupAt(self: *ConfigFile, w: *SettingsWindow, index: usize) bool
 /// A Restore... pick: ask first, as Mac's confirmation dialog does.
 pub fn askRestore(self: *ConfigFile, w: *SettingsWindow, index: usize) bool {
     if (index >= self.backup_list.len) return false;
-    if (self.confirm) |d| wk.adw_dialog_force_close(d);
+    self.closeConfirm();
     var label_buf: [64]u8 = undefined;
     var prompt_buf: [256]u8 = undefined;
     var zbuf: [260]u8 = undefined;
@@ -710,8 +711,10 @@ pub fn askRestore(self: *ConfigFile, w: *SettingsWindow, index: usize) bool {
     wk.adw_alert_dialog_set_response_appearance(dialog, "restore", wk.adw_response_destructive);
     wk.adw_alert_dialog_set_default_response(dialog, "cancel");
     wk.adw_alert_dialog_set_close_response(dialog, "cancel");
-    _ = wk.g_signal_connect_data(dialog, "response", @ptrCast(&onConfirmResponse), w, null, 0);
-    _ = wk.g_signal_connect_data(dialog, "closed", @ptrCast(&onConfirmClosed), w, null, 0);
+    self.confirm_handlers = .{
+        wk.g_signal_connect_data(dialog, "response", @ptrCast(&onConfirmResponse), w, null, 0),
+        wk.g_signal_connect_data(dialog, "closed", @ptrCast(&onConfirmClosed), w, null, 0),
+    };
     self.confirm = dialog;
     self.confirm_index = index;
     wk.adw_dialog_present(dialog, w.window);
@@ -723,8 +726,20 @@ pub fn askRestore(self: *ConfigFile, w: *SettingsWindow, index: usize) bool {
 pub fn answerRestore(self: *ConfigFile, response: [:0]const u8) bool {
     const d = self.confirm orelse return false;
     wk.g_signal_emit_by_name(@ptrCast(d), "response", response.ptr);
-    if (self.confirm) |still| wk.adw_dialog_force_close(still);
+    self.closeConfirm();
     return true;
+}
+
+/// Close the open confirmation now. Its "closed" signal only arrives after
+/// the close animation, so the window forgets it here rather than there.
+fn closeConfirm(self: *ConfigFile) void {
+    const d = self.confirm orelse return;
+    self.confirm = null;
+    // Cut its handlers first: a late signal must not reach a window that
+    // may be gone by then.
+    for (self.confirm_handlers) |h| if (h != 0) wk.g_signal_handler_disconnect(@ptrCast(d), h);
+    self.confirm_handlers = .{ 0, 0 };
+    wk.adw_dialog_force_close(d);
 }
 
 pub fn toggleCurrentFile(self: *ConfigFile) void {
@@ -766,8 +781,10 @@ fn onConfirmResponse(_: *wk.GtkWidget, response: [*:0]const u8, w: *SettingsWind
     if (std.mem.eql(u8, std.mem.span(response), "restore")) _ = self.restoreBackupAt(w, self.confirm_index);
 }
 
-fn onConfirmClosed(_: *wk.GtkWidget, w: *SettingsWindow) callconv(.c) void {
-    w.config_file.confirm = null;
+fn onConfirmClosed(dialog: *wk.GtkWidget, w: *SettingsWindow) callconv(.c) void {
+    // Only the dialog still on record: a late "closed" from one already
+    // replaced must not forget its successor.
+    if (w.config_file.confirm == dialog) w.config_file.confirm = null;
 }
 
 fn onShowClicked(_: *wk.GtkWidget, w: *SettingsWindow) callconv(.c) void {
