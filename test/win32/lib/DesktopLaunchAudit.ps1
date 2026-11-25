@@ -202,13 +202,27 @@ $script:DesktopLaunchAuditAliasSet = @{}
 $script:DesktopLaunchAuditDecoyNames = @{}
 $script:DesktopLaunchAuditDecoyPaths = @{}
 
-# `$Exe`, `$AppExe`, `$exePath`, `$Com`, `$relCom` - but not `$exeVersionText`,
-# which is a string about one. The suffix rule is what every launcher here uses.
+# `$Exe`, `$exePath`, `$my_exe`, `$Com` - and, since T2204, the camelCase
+# suffix: `$AppExe`, `$testExe`, `$GhozttyExePath`, `$relCom` - but not
+# `$exeVersionText`, which is a string about one, nor `$execute`/`$income`.
+# The camelCase arm is case-SENSITIVE (a capital E/C after a lowercase letter or
+# digit), so it cannot catch a word that merely ends in "exe"/"com".
+# update-real-msi.ps1 launched `$testExe` three times on the user's desktop
+# while the lowercase-only rule read it as some other variable.
+#
+# Two exclusions keep the widening honest: a name the script visibly filled
+# with ANOTHER program (`$sleepExe = Join-Path $sys 'timeout.exe'`) is a decoy,
+# recorded by `Get-DesktopLaunchAuditAliases`; and a name that says it is the
+# agent (`$agentExe`, `$AgentExePath`) is the headless daemon, which opens no
+# window wherever it is started.
 function Test-DesktopLaunchAuditExeName([string]$Name) {
-    $n = (($Name -split ':')[-1]).ToLowerInvariant()
+    $orig = ($Name -split ':')[-1]
+    $n = $orig.ToLowerInvariant()
     if ($script:DesktopLaunchAuditDecoyNames.ContainsKey($n)) { return $false }
     if ($n -match '(?i)(^|[^a-z])(exe|com)(path|)$') { return $true }
-    return $script:DesktopLaunchAuditAliasSet.ContainsKey($n)
+    if ($script:DesktopLaunchAuditAliasSet.ContainsKey($n)) { return $true }
+    if ($orig -cmatch '[a-z0-9](Exe|Com)(Path)?$' -and $n -notmatch 'agent') { return $true }
+    return $false
 }
 
 # The app's own file names. Deliberately not `ghoztty-*.exe`: the relay test
@@ -246,6 +260,64 @@ function Test-DesktopLaunchAuditGhozttyRef($El) {
 #
 # A RHS that INVOKES the exe (`$v = & $Exe +version`) is output, not a path, and
 # is deliberately not an alias.
+# What a value node names, as a path string, when a static reading can tell:
+# a literal, or the last (child) argument of a Join-Path, through parentheses.
+function Get-DesktopLaunchAuditPathText($Node) {
+    for ($i = 0; $i -lt 4 -and $null -ne $Node; $i++) {
+        if ($Node -is [System.Management.Automation.Language.CommandExpressionAst]) { $Node = $Node.Expression; continue }
+        if ($Node -is [System.Management.Automation.Language.ParenExpressionAst]) { $Node = $Node.Pipeline; continue }
+        if ($Node -is [System.Management.Automation.Language.PipelineAst]) {
+            if ($Node.PipelineElements.Count -ne 1) { return $null }
+            $Node = $Node.PipelineElements[0]; continue
+        }
+        if ($Node -is [System.Management.Automation.Language.CommandAst]) {
+            if ($Node.GetCommandName() -ne 'Join-Path') { return $null }
+            return (Get-DesktopLaunchAuditStringText (@($Node.CommandElements)[-1]))
+        }
+        return (Get-DesktopLaunchAuditStringText $Node)
+    }
+    return $null
+}
+
+# T2204 - the camelCase `...Exe`/`...Com` names (lowercased keys) this script
+# fills only with some OTHER program: a path to a non-ghoztty .exe/.com or to
+# the agent, as an assignment or a parameter default, or a `Get-Command`
+# result's `.Source`/`.Path` (nothing here resolves the app that way). A name
+# that is also given one of OUR paths is left out, so it stays watched. The bare
+# forms (`$exe`, `$Com`) are not considered: they keep their pre-T2204 reading.
+function Get-DesktopLaunchAuditForeignNames($Ast, $Assigns) {
+    $foreign = @{}
+    $ours = @{}
+    $pairs = New-Object System.Collections.ArrayList
+    foreach ($as in $Assigns) {
+        $left = $as.Left
+        if ($left -is [System.Management.Automation.Language.ConvertExpressionAst]) { $left = $left.Child }
+        if ($left -isnot [System.Management.Automation.Language.VariableExpressionAst]) { continue }
+        [void]$pairs.Add(@($left.VariablePath.UserPath, $as.Right))
+    }
+    foreach ($p in @($Ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.ParameterAst] }, $true))) {
+        if ($null -ne $p.DefaultValue) { [void]$pairs.Add(@($p.Name.VariablePath.UserPath, $p.DefaultValue)) }
+    }
+    foreach ($pair in $pairs) {
+        $orig = ($pair[0] -split ':')[-1]
+        $key = $orig.ToLowerInvariant()
+        if ($key -match '(^|[^a-z])(exe|com)(path|)$') { continue }
+        if ($orig -cnotmatch '[a-z0-9](Exe|Com)(Path)?$') { continue }
+        $val = $pair[1]
+        $inner = $val
+        if ($inner -is [System.Management.Automation.Language.CommandExpressionAst]) { $inner = $inner.Expression }
+        if ($inner -is [System.Management.Automation.Language.MemberExpressionAst] -and
+            $inner.Member -is [System.Management.Automation.Language.StringConstantExpressionAst] -and
+            $inner.Member.Value -match '(?i)^(Source|Path)$') { $foreign[$key] = $true; continue }
+        $t = Get-DesktopLaunchAuditPathText $val
+        if ($null -eq $t -or $t -notmatch '(?i)\.(exe|com)$') { continue }
+        if ($t -notmatch '(?i)ghoztty-agent' -and (Test-DesktopLaunchAuditExeLiteral $t)) { $ours[$key] = $true }
+        else { $foreign[$key] = $true }
+    }
+    foreach ($k in @($ours.Keys)) { $foreign.Remove($k) }
+    return $foreign
+}
+
 function Get-DesktopLaunchAuditAliases($Ast) {
     $set = @{}
     $assigns = @($Ast.FindAll({ param($n)
@@ -281,6 +353,15 @@ function Get-DesktopLaunchAuditAliases($Ast) {
     $savedDP = $script:DesktopLaunchAuditDecoyPaths
     $script:DesktopLaunchAuditDecoyNames = @{}
     $script:DesktopLaunchAuditDecoyPaths = @{}
+    # T2204: the camelCase names a script visibly filled with ANOTHER program -
+    # `$sleepExe = Join-Path $w 'sleeper.exe'`, a `[string]$ClientExe =
+    # '...remote-test-client.exe'` parameter default, `$gitExe = $git.Source` -
+    # are not the app, however they are spelled. Settled BEFORE the alias passes,
+    # so `Copy-Item $avExe $laneCrasher` does not make the copy an alias of ours.
+    # A name also given an app path somewhere stays the app.
+    $foreign = Get-DesktopLaunchAuditForeignNames $Ast $assigns
+    foreach ($k in $foreign.Keys) { $decoyNames[$k] = $true }
+    $script:DesktopLaunchAuditDecoyNames = $foreign
     try {
         for ($pass = 0; $pass -lt 4; $pass++) {
             $script:DesktopLaunchAuditAliasSet = $set

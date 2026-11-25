@@ -45,7 +45,8 @@
     `+new-window`, the shape ipc-relay.ps1 used, and (T1876) a splatted
     `Start-Process @a` whose hashtable holds the exe, and (T1267) a script's
     own CreateProcessW called as a static method plus a renamed copy of the
-    exe - all on no list, and requires the sweep to find each. Run it after
+    exe, and (T2204) a camelCase `$testExe` launch - all on no list, and
+    requires the sweep to find each. Run it after
     any change to the analyzer.
 
 .NOTES
@@ -335,6 +336,41 @@ Assert 'B38 the same wrapper is scored at a call passing +new-window, and at one
     @($s).Count -eq 2 -and @($s)[0].Kind -eq 'new-window' -and @($s)[0].Line -eq 6 -and
     @($s)[1].Kind -eq 'unknown' -and @($s)[1].Line -eq 7)
 
+# T2204: the camelCase suffix. update-real-msi.ps1 launched `$testExe` on the
+# user's desktop three times while the lowercase-only name rule read it as some
+# other variable. Its value came from no literal this file could see.
+$s = Sites @('param([string]$testExe)', 'Start-Process -FilePath $testExe',
+             '& $AppExe +new-window', '& $GhozttyExePath --x', '& $relCom +new-window')
+Assert "B39 a camelCase ...Exe / ...ExePath / ...Com name is the app (got $(@($s).Count))" (@($s).Count -eq 4)
+
+$s = Sites @('Start-Process $execute', '& $income +new-window', '$exeVersionText = 1', 'Start-Process $exeVersionText',
+             'Start-Process $agentExe', '& $AgentExePath --x', 'Start-Process $leakEXE')
+Assert "B40 words that merely end in exe/com, and the agent, are not the app (got $(@($s).Count))" (@($s).Count -eq 0)
+
+$s = Sites @('$sleepExe = Join-Path $env:SystemRoot ''System32\timeout.exe''', 'Start-Process $sleepExe',
+             '$leakExe = "$env:TEMP\leak.exe"', 'Start-Process $leakExe',
+             '$daemonExe = Join-Path $bin ''ghoztty-agent.exe''', 'Start-Process $daemonExe',
+             '$appExe = Join-Path $bin ''ghoztty.exe''', 'Start-Process $appExe')
+Assert "B41 a camelCase name filled with another program is a decoy; one filled with ours is not (got lines $(@($s | ForEach-Object { $_.Line }) -join ','))" (
+    (@($s | ForEach-Object { $_.Line }) -join ',') -eq '8')
+
+# The three shapes the first widened sweep tripped on (12 false sites): a
+# parameter default naming another program (agent-pipe.ps1's $ClientExe), a
+# Get-Command result (stderr-capture-audit.ps1's $gitExe), and a COPY of a
+# foreign ...Exe that the alias pass must not read as a copy of ours
+# (crash-first-chance.ps1's $avExe -> $laneCrasher).
+$s = Sites @('param([string]$ClientExe = ''D:\x\remote-test-client.exe'', [string]$ToolExe = (Join-Path $PSScriptRoot ''..\tool.exe''))',
+             '$ClientExe = Resolve-RemoteTestClient -ClientExe $ClientExe',
+             'Start-Process $ClientExe', 'cmd /c "`"$ClientExe`" --pipe=$p"', 'Start-Process $ToolExe',
+             '$git = Get-Command git', '$gitExe = $git.Source', '& $gitExe --nosuchflag',
+             '$avExe = Join-Path $w ''avthread.exe''', '$crasher = Join-Path $w ''t.exe''', 'Copy-Item $avExe $crasher', 'Start-Process $crasher')
+Assert "B42 a foreign parameter default, a Get-Command result, and a copy of a foreign ...Exe are not the app (got lines $(@($s | ForEach-Object { $_.Line }) -join ','))" (@($s).Count -eq 0)
+
+$s = Sites @('param([string]$AppExe = ''D:\x\zig-out\bin\ghoztty.exe'')', 'Start-Process $AppExe',
+             '$mixedExe = Join-Path $d ''cmd.exe''', '$mixedExe = Join-Path $d ''ghoztty.exe''', 'Start-Process $mixedExe')
+Assert "B43 a parameter default naming ours is the app, and so is a name given ours anywhere (got lines $(@($s | ForEach-Object { $_.Line }) -join ','))" (
+    (@($s | ForEach-Object { $_.Line }) -join ',') -eq '2,5')
+
 # ---------------------------------------------------------------------------
 Write-Host ''
 Write-Host 'C. the quiet-verb list against the CLI'
@@ -506,7 +542,14 @@ try {
         Set-Content -LiteralPath $v7 -Encoding UTF8 -Value @(
             'function Start-TeethApp { Start-Process -FilePath $Exe -ArgumentList ''--session-persistence=false'' }'
         )
-        $planted = @($v1, $v2, $v3, $v4, $v5, $v6, $v7)
+        # T2204: update-real-msi.ps1's shape - a camelCase exe name whose value
+        # no literal in the file gives away.
+        $v8 = Join-Path $Suite 'zz-desktop-launch-teeth-camel.ps1'
+        Set-Content -LiteralPath $v8 -Encoding UTF8 -Value @(
+            'param([string]$testExe)'
+            'Start-Process -FilePath $testExe'
+        )
+        $planted = @($v1, $v2, $v3, $v4, $v5, $v6, $v7, $v8)
     }
 
     $findings = @(Get-DesktopLaunchAuditSweep $Suite)
@@ -522,6 +565,7 @@ try {
         Assert 'E0e the planted static-method CreateProcessW spawn is found' ($names -contains 'zz-desktop-launch-teeth-static.ps1')
         Assert 'E0f the planted renamed copy of the exe is found' ($names -contains 'zz-desktop-launch-teeth-copy.ps1')
         Assert 'E0g the planted launching lib\ helper is found' ($names -contains 'zz-desktop-launch-teeth-helper.ps1')
+        Assert 'E0h the planted camelCase $testExe launch is found' ($names -contains 'zz-desktop-launch-teeth-camel.ps1')
         $bad = @($bad | Where-Object { (Split-Path $_.Path -Leaf) -notlike 'zz-desktop-launch-teeth-*' })
     }
 
