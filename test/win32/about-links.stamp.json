@@ -1,8 +1,8 @@
 {
     "guard":  "about-links",
     "script":  "test/win32/about-links.ps1",
-    "generated":  "2026-11-22T21:28:45-08:00",
-    "commit":  "9d2120a31",
+    "generated":  "2026-11-24T18:12:22-08:00",
+    "commit":  "71396db4e",
     "uncommitted":  [
                         "src/apprt/win32/confirm_dialog_layout.zig",
                         "src/apprt/win32/confirm_dialog_window.zig",
@@ -10,9 +10,9 @@
                     ],
     "files":  {
                   "src/apprt/win32/about_links.zig":  "9bb9ec60b7b6099fda1350ec165c06d9404a32c4f53de1bb2fd0ce697a52683a",
-                  "src/apprt/win32/confirm_dialog_layout.zig":  "cf61d58e920b246a7e0f70ce0036a62263e583e7acbe61769eac9afcf657ba99",
-                  "src/apprt/win32/confirm_dialog_window.zig":  "3e031c15acf56cc51876b27b823520114c48781a45861beb5800e00d34d02614",
-                  "src/apprt/win32/ConfirmDialog.zig":  "e0c8c4bdc94a04723340a92e0b7153de03e08ec8ebc117cba0553cbfae6b0c06",
+                  "src/apprt/win32/confirm_dialog_layout.zig":  "17e33492e711719692c1628bb6a72d8934eebc8e666b40fdb517e65469874708",
+                  "src/apprt/win32/confirm_dialog_window.zig":  "d8c2e7ee21bfa93507d2f09ad06f79faa743cdb290444231ad7273dbe140b6c0",
+                  "src/apprt/win32/ConfirmDialog.zig":  "2ca1b50613e150804e35bcf9754a120724fbe199b9676f3717abb63f89ff4008",
                   "src/apprt/win32/open_url_seam.zig":  "538f709a0f949fb87112fc946b45d58e0efeed55947abeaf2fde670d91897bbf",
                   "test/win32/about-links.ps1":  "cb6ba712f258265f9a5d03dc219567a0025a1f081a2b7d2029586140247906eb"
               },

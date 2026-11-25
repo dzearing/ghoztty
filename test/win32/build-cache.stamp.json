@@ -1,8 +1,8 @@
 {
     "guard":  "build-cache",
     "script":  "test/win32/build-cache.ps1",
-    "generated":  "2026-11-24T19:07:14-08:00",
-    "commit":  "f17b0d76f",
+    "generated":  "2026-11-24T19:13:21-08:00",
+    "commit":  "a87bf2a76",
     "uncommitted":  [
 
                     ],

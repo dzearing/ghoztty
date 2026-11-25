@@ -1,15 +1,17 @@
 {
     "guard":  "startup-failure",
     "script":  "test/win32/startup-failure.ps1",
-    "generated":  "2026-11-23T03:26:49-08:00",
-    "commit":  "9d4f43d8e",
+    "generated":  "2026-11-24T18:12:29-08:00",
+    "commit":  "71396db4e",
     "uncommitted":  [
-
+                        "src/apprt/win32/confirm_dialog_layout.zig",
+                        "src/apprt/win32/confirm_dialog_window.zig",
+                        "src/apprt/win32/ConfirmDialog.zig"
                     ],
     "files":  {
-                  "src/apprt/win32/confirm_dialog_layout.zig":  "cf61d58e920b246a7e0f70ce0036a62263e583e7acbe61769eac9afcf657ba99",
-                  "src/apprt/win32/confirm_dialog_window.zig":  "3e031c15acf56cc51876b27b823520114c48781a45861beb5800e00d34d02614",
-                  "src/apprt/win32/ConfirmDialog.zig":  "e0c8c4bdc94a04723340a92e0b7153de03e08ec8ebc117cba0553cbfae6b0c06",
+                  "src/apprt/win32/confirm_dialog_layout.zig":  "17e33492e711719692c1628bb6a72d8934eebc8e666b40fdb517e65469874708",
+                  "src/apprt/win32/confirm_dialog_window.zig":  "d8c2e7ee21bfa93507d2f09ad06f79faa743cdb290444231ad7273dbe140b6c0",
+                  "src/apprt/win32/ConfirmDialog.zig":  "2ca1b50613e150804e35bcf9754a120724fbe199b9676f3717abb63f89ff4008",
                   "src/apprt/win32/startup_error.zig":  "0b3b083a2613d986ef8663a3b81f2613dd46ea20182661585eb78ec7e81e431e",
                   "src/main_ghostty.zig":  "cfa617280ee45f2ee11fea192b19ccfd4c2ebf56d474e3750425a1206cda87dc",
                   "src/renderer/gl_loader.zig":  "9a92b476463d9e027dc3b104a7309fc97386c6a555482f494714a67f507fa89a",

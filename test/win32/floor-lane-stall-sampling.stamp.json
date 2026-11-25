@@ -1,8 +1,8 @@
 {
     "guard":  "lane-stall-sampling",
     "script":  "test/win32/floor-lane-stall-sampling.ps1",
-    "generated":  "2026-11-24T18:40:53-08:00",
-    "commit":  "f17b0d76f",
+    "generated":  "2026-11-24T18:44:52-08:00",
+    "commit":  "a87bf2a76",
     "uncommitted":  [
 
                     ],

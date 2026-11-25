@@ -1,8 +1,8 @@
 {
     "guard":  "lane-releasesafe",
     "script":  "test/win32/floor-lane-releasesafe.ps1",
-    "generated":  "2026-11-24T18:41:20-08:00",
-    "commit":  "f17b0d76f",
+    "generated":  "2026-11-24T18:45:19-08:00",
+    "commit":  "a87bf2a76",
     "uncommitted":  [
 
                     ],

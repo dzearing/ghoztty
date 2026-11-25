@@ -1,15 +1,9 @@
 {
     "guard":  "setup-front-door",
     "script":  "test/win32/setup-front-door.ps1",
-    "generated":  "2026-11-24T17:46:49-08:00",
-    "commit":  "71396db4e",
+    "generated":  "2026-11-24T19:57:05-08:00",
+    "commit":  "a87bf2a76",
     "uncommitted":  [
-                        "dist/windows/ghoztty-setup.rc",
-                        "src/apprt/win32/dialog_app.zig",
-                        "src/apprt/win32/setup_main.zig",
-                        "src/apprt/win32/setup_result.zig",
-                        "src/build/GhosttySetup.zig",
-                        "src/setup_main.zig",
                         "test/win32/setup-front-door.ps1"
                     ],
     "files":  {
@@ -19,9 +13,9 @@
                   "src/apprt/win32/setup_result.zig":  "851e1ca5e48e98682a5145ffd7075d5e1ba89471029999f252a0c386fd70f79d",
                   "src/build/GhosttySetup.zig":  "d85bb2e626b1443bf394f11a438b09cc34b84acce2ae9ada2e2a5224e8926318",
                   "src/setup_main.zig":  "0390c3c4a321456898573dd241e780e653274bb8a603be7318352f3f898e9b0c",
-                  "test/win32/setup-front-door.ps1":  "a372e70d4608256252e693ecbe30c92c0f6540904080645ab74c06be0af364dd"
+                  "test/win32/setup-front-door.ps1":  "adf700c80246004738d8717e9cc25c7be3b4c4e32ecf3354cfb977d9fc72d13b"
               },
     "code":  {
-                 "test/win32/setup-front-door.ps1":  "code1:7ea395a9f8f7ddf6fc01e8be24b3ffeeea0d262aba2152a866aab2e16e2fc69c"
+                 "test/win32/setup-front-door.ps1":  "code1:95d5c6047b5227baaa269f677f1eb690bd46106b05236af9d2b649e4daefc6c3"
              }
 }

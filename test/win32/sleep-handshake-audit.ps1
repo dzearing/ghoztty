@@ -179,7 +179,10 @@ $oldRoot = Join-Path $tmp 'old'
 New-Item -ItemType Directory -Force $oldRoot | Out-Null
 $tar = Join-Path $tmp 'old.tar'
 & git -C $Repo archive $censusSha 'test/win32' -o $tar 2>$null
-if (Test-Path -LiteralPath $tar) { & tar.exe -xf $tar -C $oldRoot 2>$null }
+# System32's tar by full path: launched from Git Bash, PATH puts MSYS tar first,
+# which reads `C:\...` as host `C` and extracts nothing (B1 went red there).
+$sysTar = Join-Path $env:SystemRoot 'System32\tar.exe'
+if (Test-Path -LiteralPath $tar) { & $sysTar -xf $tar -C $oldRoot 2>$null }
 $oldTree = Join-Path $oldRoot 'test\win32'
 $oldCount = 0
 if (Test-Path -LiteralPath $oldTree) { $oldCount = @(Get-ChildItem -LiteralPath $oldTree -Filter *.ps1 -File -Recurse).Count }

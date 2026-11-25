@@ -156,6 +156,7 @@ try {
     # must not leak in is the updater's wording - "updating", "check for
     # updates", "Ghoztty's menu" - which means nothing before Ghoztty exists.
     Assert "A8 nothing in it is the updater's wording" ($bodyA -notmatch "(?i)updating|check for updates|Ghoztty's update|menu")
+    # settle: the elapsed time IS the subject - A9 asks whether the dialog outlives it
     Start-Sleep -Milliseconds $PERSIST_MS
     Assert "A9 still on screen $PERSIST_MS ms later - it does not flash and close" `
         (($dlgA -ne [IntPtr]::Zero) -and (Test-TestWindowExists -Window $dlgA))

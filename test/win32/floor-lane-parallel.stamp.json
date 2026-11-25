@@ -1,8 +1,8 @@
 {
     "guard":  "lane-parallel",
     "script":  "test/win32/floor-lane-parallel.ps1",
-    "generated":  "2026-11-24T19:06:56-08:00",
-    "commit":  "f17b0d76f",
+    "generated":  "2026-11-24T19:13:03-08:00",
+    "commit":  "a87bf2a76",
     "uncommitted":  [
 
                     ],

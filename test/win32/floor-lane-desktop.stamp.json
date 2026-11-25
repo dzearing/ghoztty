@@ -1,8 +1,8 @@
 {
     "guard":  "lane-desktop",
     "script":  "test/win32/floor-lane-desktop.ps1",
-    "generated":  "2026-11-24T18:34:01-08:00",
-    "commit":  "f17b0d76f",
+    "generated":  "2026-11-24T18:35:58-08:00",
+    "commit":  "a87bf2a76",
     "uncommitted":  [
 
                     ],

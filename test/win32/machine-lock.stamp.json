@@ -1,8 +1,8 @@
 {
     "guard":  "machine-lock",
     "script":  "test/win32/machine-lock.ps1",
-    "generated":  "2026-11-24T18:47:02-08:00",
-    "commit":  "f17b0d76f",
+    "generated":  "2026-11-24T18:52:25-08:00",
+    "commit":  "a87bf2a76",
     "uncommitted":  [
 
                     ],
