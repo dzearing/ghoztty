@@ -32,6 +32,8 @@ const pane_sidebar_add = @import("../../win32/pane_sidebar_add.zig");
 const pane_stack_layout = @import("../../win32/pane_stack_layout.zig");
 const pane_stack_state = @import("../../win32/pane_stack_state.zig");
 const stack_drag = @import("../../win32/stack_drag.zig");
+const pane_stack_slide = @import("../../win32/pane_stack_slide.zig");
+const strip_face = @import("../../win32/strip_face.zig");
 const PaneSidebar = @import("../PaneSidebar.zig");
 const pane_sidebar_rows = @import("../pane_sidebar_rows.zig");
 const homedir = @import("../../../os/homedir.zig");
@@ -197,6 +199,28 @@ pub const SplitTree = extern struct {
         row_drag: ?stack_drag.RowDrag = null,
         /// The pane whose strip was pressed, until the press is let go.
         strip_press: ?pane_stack_layout.Id = null,
+
+        /// The glide under way (T3625; win32's pure follower, Mac
+        /// `PaneStageView.glide`): every card and strip easing toward where
+        /// the layout puts it. Outlives a rebuild - a split or a close
+        /// changes what is on show and glides across the new stage - and
+        /// ends when the tab stops showing a stage (`endGlide`).
+        slide: ?pane_stack_slide.Slide = null,
+        /// The layout the last placement saw, as the glide reads it (each
+        /// minimized card at its held size), and the grid rect it was in.
+        placed: [pane_stack_slide.max_cards]pane_stack_slide.Placed = undefined,
+        placed_len: usize = 0,
+        placed_grid: pane_stack_grid.PxRect = .{},
+        /// Each minimized pane's held size: what it last had on show.
+        held: std.AutoHashMapUnmanaged(pane_stack_layout.Id, pane_stack_slide.Size) = .empty,
+        /// The cards whose content a glide holds at another size this frame,
+        /// by card widget (`cardAllocate` reads it).
+        holds: std.AutoHashMapUnmanaged(usize, pane_stage.HeldContent) = .empty,
+        /// The glide's frame-clock tick on this tree, while it runs.
+        glide_tick: ?c_uint = null,
+        glide_last_us: ?i64 = null,
+        /// When the last gutter drag was let go (the 50ms gesture tail).
+        drag_released_us: ?i64 = null,
 
         pub var offset: c_int = 0;
     };
@@ -577,7 +601,10 @@ pub const SplitTree = extern struct {
         wk.gtk_widget_set_hexpand(stage, 1);
         wk.gtk_widget_set_vexpand(stage, 1);
         wk.gtk_widget_set_layout_manager(stage, wk.gtk_custom_layout_new(null, &stageMeasure, &stageAllocate));
-        for (cards) |c| wk.gtk_box_append(stage, @ptrCast(c));
+        for (cards) |c| {
+            wk.gtk_box_append(stage, @ptrCast(c));
+            installCardLayout(@ptrCast(c));
+        }
 
         const alloc = Application.default().allocator();
         priv.faces.clearRetainingCapacity();
@@ -615,6 +642,69 @@ pub const SplitTree = extern struct {
         natural.* = 0;
         min_base.* = -1;
         nat_base.* = -1;
+    }
+
+    // ---- A card holding its content through a glide (T3625) ----------------
+    //
+    // A card is a `SurfaceScrolledWindow` (overflow hidden, its rim and
+    // rounded corners its own) with one child. Its layout is a bin's - the
+    // child fills it - unless a glide holds the pane at another size: then
+    // the child keeps that size, offset where the glide pins it, and the card
+    // cuts it. So a card narrows into its strip around a terminal that is
+    // never resized, and every terminal takes its new size once, when its
+    // card lands.
+
+    const card_layout_key: [*:0]const u8 = "ghoztty-glide-card-layout";
+
+    fn installCardLayout(card: *wk.GtkWidget) void {
+        // Only a real card: a widget that is not a SurfaceScrolledWindow
+        // keeps its own layout (it glides at its held size, uncut).
+        if (gobject.ext.cast(SurfaceScrolledWindow, @as(*gtk.Widget, @ptrCast(@alignCast(card)))) == null) return;
+        if (wk.g_object_get_data(@ptrCast(card), card_layout_key) != null) return;
+        wk.gtk_widget_set_layout_manager(card, wk.gtk_custom_layout_new(null, &cardMeasure, &cardAllocate));
+        wk.g_object_set_data(@ptrCast(card), card_layout_key, @ptrFromInt(1));
+    }
+
+    fn hasCardLayout(card: *wk.GtkWidget) bool {
+        return wk.g_object_get_data(@ptrCast(card), card_layout_key) != null;
+    }
+
+    /// What a glide holds `card`'s content at this frame, if anything.
+    fn heldFor(card: *wk.GtkWidget) ?pane_stage.HeldContent {
+        const tree = ext.getAncestor(Self, @ptrCast(@alignCast(card))) orelse return null;
+        return tree.private().holds.get(@intFromPtr(card));
+    }
+
+    fn cardMeasure(widget: *wk.GtkWidget, orientation: c_int, for_size: c_int, minimum: *c_int, natural: *c_int, min_base: *c_int, nat_base: *c_int) callconv(.c) void {
+        minimum.* = 0;
+        natural.* = 0;
+        min_base.* = -1;
+        nat_base.* = -1;
+        const child = wk.gtk_widget_get_first_child(widget) orelse return;
+        const held = heldFor(widget) != null;
+        wk.gtk_widget_measure(child, orientation, if (held) -1 else for_size, minimum, natural, null, null);
+        // A held card may be drawn narrower than its content: the content
+        // keeps its size inside it.
+        if (held) minimum.* = 0;
+    }
+
+    fn cardAllocate(widget: *wk.GtkWidget, width: c_int, height: c_int, baseline: c_int) callconv(.c) void {
+        const child = wk.gtk_widget_get_first_child(widget) orelse return;
+        const hc = heldFor(widget) orelse {
+            wk.gtk_widget_allocate(child, width, height, baseline, null);
+            return;
+        };
+        var min_w: c_int = 0;
+        var min_h: c_int = 0;
+        wk.gtk_widget_measure(child, wk.orientation_horizontal, -1, &min_w, null, null, null);
+        wk.gtk_widget_measure(child, wk.orientation_vertical, -1, &min_h, null, null, null);
+        const tr = wk.gsk_transform_translate(null, &.{ .x = @floatFromInt(hc.dx), .y = @floatFromInt(hc.dy) });
+        wk.gtk_widget_allocate(child, @max(hc.w, min_w), @max(hc.h, min_h), -1, tr);
+    }
+
+    /// The card's content: what fades out as it narrows into its strip.
+    fn cardContent(card: *wk.GtkWidget) *wk.GtkWidget {
+        return wk.gtk_widget_get_first_child(card) orelse card;
     }
 
     fn stageAllocate(widget: *wk.GtkWidget, width: c_int, height: c_int, _: c_int) callconv(.c) void {
@@ -670,6 +760,17 @@ pub const SplitTree = extern struct {
         // The test seam asks for the layout as it stands now, between frames.
         if (!place) return;
 
+        // A change in what is on show glides (T3625).
+        self.planGlide(tree, &grid, rect);
+        const slide: ?*const pane_stack_slide.Slide = if (priv.slide) |*s| s else null;
+        const fade = strip_face.fadeOf(1);
+        const alloc_holds = Application.default().allocator();
+        // Last frame's holds: a card no longer held lays its content out
+        // again at its own size.
+        var prev_holds = priv.holds;
+        priv.holds = .empty;
+        defer prev_holds.deinit(alloc_holds);
+
         var home_buf: [std.fs.max_path_bytes]u8 = undefined;
         const home = homedir.home(&home_buf) catch null;
         var it = tree.iterator();
@@ -684,46 +785,307 @@ pub const SplitTree = extern struct {
                 if (face) |f| wk.gtk_widget_set_child_visible(f, 0);
                 continue;
             };
+            const axis = p.tab_axis orelse .horizontal;
+
+            // A card on its way somewhere: drawn where the glide has it, its
+            // pane held at the size it slid from (or the size it had on
+            // show, going into its strip), cut by the card.
+            if (slide) |s| if (s.cardRect(id)) |drawn| {
+                const pane_r = s.placed(id) orelse drawn;
+                const cut = hasCardLayout(card);
+                var content_alpha: f64 = 1;
+                if (s.stripFace(id)) |sf| {
+                    const fa = pane_stage.fadeAt(pane_stack_slide.collapse(
+                        pane_stack_slide.Edges.of(sf.card).extent(),
+                        fade.strip,
+                        fade.span,
+                    ));
+                    content_alpha = fa.content;
+                    if (face) |f| {
+                        placeFace(f, sf.card, sf.axis, entry.view, home);
+                        wk.gtk_widget_set_opacity(f, fa.face);
+                    }
+                } else if (face) |f| wk.gtk_widget_set_child_visible(f, 0);
+                wk.gtk_widget_set_child_visible(card, 1);
+                wk.gtk_widget_set_opacity(cardContent(card), content_alpha);
+                // The card cuts a held pane whichever the style.
+                wk.gtk_widget_set_overflow(card, 1);
+                if (cut) {
+                    priv.holds.put(alloc_holds, @intFromPtr(card), pane_stage.heldContent(drawn, pane_r)) catch {};
+                    wk.gtk_widget_queue_allocate(card);
+                    allocateCard(card, pane_stage.cardAllocation(drawn, elevated));
+                } else {
+                    // Not a card that can cut its content: it glides at its
+                    // held size, whole.
+                    allocateCard(card, pane_stage.cardAllocation(pane_r, elevated));
+                }
+                continue;
+            };
+            // Not gliding: content at full strength, the style's overflow.
+            if (prev_holds.contains(@intFromPtr(card))) wk.gtk_widget_queue_allocate(card);
+            wk.gtk_widget_set_opacity(cardContent(card), 1);
+            wk.gtk_widget_set_overflow(card, if (elevated) 1 else 0);
+            if (face) |f| wk.gtk_widget_set_opacity(f, 1);
+
             if (p.is_tucked or p.is_sliver) {
                 // Minimized: the card keeps its last size on show, out of
                 // sight, and its strip's face takes its place.
                 wk.gtk_widget_set_child_visible(card, 0);
                 const f = face orelse continue;
-                const tab = p.tab orelse {
+                const laid = p.tab orelse {
                     wk.gtk_widget_set_child_visible(f, 0);
                     continue;
                 };
-                const axis = p.tab_axis orelse .horizontal;
-                const fr = pane_stage.stripFace(tab, p.strip_leads orelse true, p.strip_tuck, axis);
-                var lb: [pane_sidebar_rows.TEXT_BUF_LEN]u8 = undefined;
-                var sb: [pane_sidebar_rows.TEXT_BUF_LEN]u8 = undefined;
-                const t = pane_sidebar_rows.text(PaneSidebar.paneOf(entry.view), home, &lb, &sb);
-                var zbuf: [pane_sidebar_rows.TEXT_BUF_LEN + 1]u8 = undefined;
-                const n = @min(t.label.len, zbuf.len - 1);
-                @memcpy(zbuf[0..n], t.label[0..n]);
-                zbuf[n] = 0;
-                wk.gtk_label_set_text(f, @ptrCast(&zbuf));
-                wk.gtk_widget_set_child_visible(f, 1);
-                const lp = pane_stage.labelPlacement(fr, axis);
-                var min_w: c_int = 0;
-                var min_h: c_int = 0;
-                wk.gtk_widget_measure(f, wk.orientation_horizontal, -1, &min_w, null, null, null);
-                wk.gtk_widget_measure(f, wk.orientation_vertical, -1, &min_h, null, null, null);
-                var tr = wk.gsk_transform_translate(null, &.{ .x = lp.tx, .y = lp.ty });
-                if (lp.rotate) tr = wk.gsk_transform_rotate(tr, 90);
-                wk.gtk_widget_allocate(f, @max(lp.w, min_w), @max(lp.h, min_h), -1, tr);
+                const leads = p.strip_leads orelse true;
+                // A strip that stays a strip and moves is drawn where the
+                // glide has it, its reach under a newcomer held until the
+                // glide is over (`Slide.shownStrip`).
+                const tab = if (slide) |s| s.shownStrip(id, laid, axis, leads) else laid;
+                placeFace(f, pane_stage.stripFace(tab, leads, p.strip_tuck, axis), axis, entry.view, home);
                 continue;
             }
             if (face) |f| wk.gtk_widget_set_child_visible(f, 0);
             wk.gtk_widget_set_child_visible(card, 1);
-            const a = pane_stage.cardAllocation(p.rect, elevated);
-            var min_w: c_int = 0;
-            var min_h: c_int = 0;
-            wk.gtk_widget_measure(card, wk.orientation_horizontal, -1, &min_w, null, null, null);
-            wk.gtk_widget_measure(card, wk.orientation_vertical, -1, &min_h, null, null, null);
-            const tr = wk.gsk_transform_translate(null, &.{ .x = @floatFromInt(a.left), .y = @floatFromInt(a.top) });
-            wk.gtk_widget_allocate(card, @max(a.width(), min_w), @max(a.height(), min_h), -1, tr);
+            allocateCard(card, pane_stage.cardAllocation(p.rect, elevated));
         }
+    }
+
+    /// Allocate `card` at `a` (stage coordinates), never under its minimum.
+    fn allocateCard(card: *wk.GtkWidget, a: pane_stack_grid.PxRect) void {
+        var min_w: c_int = 0;
+        var min_h: c_int = 0;
+        wk.gtk_widget_measure(card, wk.orientation_horizontal, -1, &min_w, null, null, null);
+        wk.gtk_widget_measure(card, wk.orientation_vertical, -1, &min_h, null, null, null);
+        const tr = wk.gsk_transform_translate(null, &.{ .x = @floatFromInt(a.left), .y = @floatFromInt(a.top) });
+        wk.gtk_widget_allocate(card, @max(a.width(), min_w), @max(a.height(), min_h), -1, tr);
+    }
+
+    /// Show `f`, a strip's face, over `fr`, named by the sidebar row's rule
+    /// and turned to run down a vertical strip.
+    fn placeFace(f: *wk.GtkWidget, fr: pane_stack_grid.PxRect, axis: pane_stack_layout.Direction, view: *Surface, home: ?[]const u8) void {
+        var lb: [pane_sidebar_rows.TEXT_BUF_LEN]u8 = undefined;
+        var sb: [pane_sidebar_rows.TEXT_BUF_LEN]u8 = undefined;
+        const t = pane_sidebar_rows.text(PaneSidebar.paneOf(view), home, &lb, &sb);
+        var zbuf: [pane_sidebar_rows.TEXT_BUF_LEN + 1]u8 = undefined;
+        const n = @min(t.label.len, zbuf.len - 1);
+        @memcpy(zbuf[0..n], t.label[0..n]);
+        zbuf[n] = 0;
+        wk.gtk_label_set_text(f, @ptrCast(&zbuf));
+        wk.gtk_widget_set_child_visible(f, 1);
+        const lp = pane_stage.labelPlacement(fr, axis);
+        var min_w: c_int = 0;
+        var min_h: c_int = 0;
+        wk.gtk_widget_measure(f, wk.orientation_horizontal, -1, &min_w, null, null, null);
+        wk.gtk_widget_measure(f, wk.orientation_vertical, -1, &min_h, null, null, null);
+        var tr = wk.gsk_transform_translate(null, &.{ .x = lp.tx, .y = lp.ty });
+        if (lp.rotate) tr = wk.gsk_transform_rotate(tr, 90);
+        wk.gtk_widget_allocate(f, @max(lp.w, min_w), @max(lp.h, min_h), -1, tr);
+    }
+
+    // ---- Glides: a change in what is on show (T3625) ----------------------
+
+    /// The glide's time constant: Mac's (`pane_stack_slide.glide_ms`), or
+    /// stretched by `GHOZTTY_STACK_SLIDE_MS` so a test can sample a card
+    /// mid-motion (win32's knob; 0 is no glide).
+    fn glideMs() f64 {
+        if (std.process.parseEnvVarInt("GHOZTTY_STACK_SLIDE_MS", u32, 10)) |ms| {
+            return pane_stack_slide.stretchedGlideMs(@floatFromInt(ms));
+        } else |_| {}
+        return pane_stack_slide.glide_ms;
+    }
+
+    /// A gutter drag is reshaping the row, or was let go under 50ms ago
+    /// (Mac `PaneStackState.isGesturing`).
+    fn stackGesturing(self: *Self) bool {
+        const priv = self.private();
+        return pane_stage.gesturing(priv.row_drag != null, priv.drag_released_us, wk.g_get_monotonic_time());
+    }
+
+    /// Compare this layout with the last one and start, carry on, or end the
+    /// glide (win32 `planStackSlide`; Mac `PaneStageView.apply`). Only a
+    /// change in which cards are on show glides, in the grid rect the last
+    /// layout used: a window resize lays out at once. Under a drag the glide
+    /// follows the hand's layout from wherever each card is drawn.
+    fn planGlide(self: *Self, tree: *const Surface.Tree, grid: *const pane_stack_grid.Grid, rect: pane_stack_grid.PxRect) void {
+        const priv = self.private();
+        const alloc = Application.default().allocator();
+        var now: [pane_stack_slide.max_cards]pane_stack_slide.Placed = undefined;
+        var n: usize = 0;
+        const before = priv.placed[0..priv.placed_len];
+        var it = tree.iterator();
+        while (it.next()) |entry| {
+            if (n == now.len) break;
+            if (pane_stash.isStashed(entry.view)) continue;
+            const id = paneKey(entry.view);
+            const p = grid.placement(id) orelse continue;
+            const mini = p.is_tucked or p.is_sliver;
+            // A minimized card is held at its last size on show, and
+            // glides forward from there.
+            var at = p.rect;
+            if (mini) {
+                const last: ?pane_stack_slide.Placed = for (before) |b| {
+                    if (b.id == id) break b;
+                } else null;
+                const s = pane_stack_slide.hold(priv.held.get(id), last, p.rect);
+                priv.held.put(alloc, id, s) catch {};
+                at = pane_stack_slide.heldRect(p.rect, s);
+            } else _ = priv.held.remove(id);
+            now[n] = .{
+                .id = id,
+                .rect = at,
+                .tucked = mini,
+                .strip = if (mini) p.tab else null,
+                .axis = p.tab_axis orelse .horizontal,
+            };
+            n += 1;
+        }
+        const same_view = before.len > 0 and std.meta.eql(priv.placed_grid, rect);
+        const gesturing = self.stackGesturing();
+        if (!same_view) {
+            self.endGlide(false);
+            self.paintByElevation(tree, grid);
+        } else if (pane_stack_slide.runsChanged(before, now[0..n])) {
+            const animate = wk.adw_get_enable_animations(@ptrCast(self)) != 0;
+            const current: ?*const pane_stack_slide.Slide = if (priv.slide) |*s| s else null;
+            var next = if (animate)
+                pane_stack_slide.plan(before, now[0..n], current, glideMs(), gesturing)
+            else
+                pane_stack_slide.Slide{};
+            next.fade = strip_face.fadeOf(1);
+            if (next.active()) {
+                priv.slide = next;
+                log.debug("stack glide: cards={d} strips={d} resize={}", .{ next.len, next.strips_len, next.resize });
+                self.startGlideClock();
+            } else self.endGlide(false);
+            self.paintByElevation(tree, grid);
+        } else if (priv.slide) |*s| {
+            // The drag goes on under a glide: the cards ease toward where
+            // the hand has the layout now. One that has caught up once the
+            // drag is over is done.
+            if (s.retarget(now[0..n])) {
+                self.startGlideClock();
+            } else if (s.settled() and !gesturing) self.endGlide(false);
+        }
+        @memcpy(priv.placed[0..n], now[0..n]);
+        priv.placed_len = n;
+        priv.placed_grid = rect;
+    }
+
+    fn startGlideClock(self: *Self) void {
+        const priv = self.private();
+        if (priv.glide_tick != null) return;
+        priv.glide_last_us = null;
+        priv.glide_tick = wk.gtk_widget_add_tick_callback(@ptrCast(self), &glideTick, self, null);
+    }
+
+    /// End the glide under way, if any; `forget` also drops the layout it
+    /// would start from (the tab stopped showing a stage).
+    fn endGlide(self: *Self, forget: bool) void {
+        const priv = self.private();
+        if (priv.glide_tick) |id| wk.gtk_widget_remove_tick_callback(@ptrCast(self), id);
+        priv.glide_tick = null;
+        priv.glide_last_us = null;
+        // Called from a placement (which places everything at its slot right
+        // after) or as the stage goes: nothing to queue.
+        priv.slide = null;
+        if (forget) {
+            priv.placed_len = 0;
+            priv.held.clearRetainingCapacity();
+            priv.holds.clearRetainingCapacity();
+        }
+    }
+
+    /// One frame of the glide (Mac `PaneStageView.stepGlide`): every card
+    /// eases on, and the stage places them where they are drawn now. A glide
+    /// that has caught up rests while a drag is held (the next move wakes
+    /// it) and ends once the drag is over.
+    fn glideTick(_: *wk.GtkWidget, clock: *wk.GdkFrameClock, ud: ?*anyopaque) callconv(.c) c_int {
+        const self: *Self = @ptrCast(@alignCast(ud orelse return 0));
+        const priv = self.private();
+        const s = &(priv.slide orelse {
+            priv.glide_tick = null;
+            return 0;
+        });
+        const now = wk.gdk_frame_clock_get_frame_time(clock);
+        const dt = pane_stage.frameStep(priv.glide_last_us, now);
+        priv.glide_last_us = now;
+        const done = s.step(dt);
+        self.relayoutStage();
+        if (!done) return 1;
+        if (self.stackGesturing()) {
+            // Resting under the hand. A drag still held is woken by its
+            // next move (`retarget`); one just let go comes back here
+            // until its 50ms tail is over.
+            if (priv.row_drag != null) {
+                priv.glide_tick = null;
+                priv.glide_last_us = null;
+                return 0;
+            }
+            return 1;
+        }
+        priv.slide = null;
+        priv.glide_tick = null;
+        priv.glide_last_us = null;
+        log.debug("stack glide landed", .{});
+        return 0;
+    }
+
+    /// Stack the cards and strip faces in the layout's paint order, bottom
+    /// first (`Leaf.elevation`): the run highest and strips lower the
+    /// farther they are from it, so a card tucking away passes under the run
+    /// rather than across it. Each face sits just above its own card.
+    fn paintByElevation(self: *Self, tree: *const Surface.Tree, grid: *const pane_stack_grid.Grid) void {
+        const priv = self.private();
+        const stage = priv.stage orelse return;
+        var ids: [pane_stack_slide.max_cards]pane_stack_layout.Id = undefined;
+        var views: [pane_stack_slide.max_cards]*Surface = undefined;
+        var n: usize = 0;
+        var it = tree.iterator();
+        while (it.next()) |entry| {
+            if (n == ids.len) break;
+            if (pane_stash.isStashed(entry.view)) continue;
+            const id = paneKey(entry.view);
+            if (grid.placement(id) == null) continue;
+            ids[n] = id;
+            views[n] = entry.view;
+            n += 1;
+        }
+        pane_stack_layout.paintOrder(ids[0..n], &grid.result);
+        var order: [2 * pane_stack_slide.max_cards]*wk.GtkWidget = undefined;
+        var m: usize = 0;
+        for (ids[0..n]) |id| {
+            const view: *Surface = for (views[0..n]) |v| {
+                if (paneKey(v) == id) break v;
+            } else continue;
+            const card: *wk.GtkWidget = @ptrCast(cardOf(view));
+            if (wk.gtk_widget_get_parent(card) != stage) continue;
+            order[m] = card;
+            m += 1;
+            if (priv.faces.get(id)) |f| {
+                order[m] = f;
+                m += 1;
+            }
+        }
+        // Already in that order (the usual case): leave the stage alone.
+        var child = wk.gtk_widget_get_first_child(stage);
+        var in_order = true;
+        for (order[0..m]) |w| {
+            // Skip anything not in the order (a face of a pane not laid out).
+            while (child) |c| : (child = wk.gtk_widget_get_next_sibling(c)) {
+                if (c == w) break;
+                if (std.mem.indexOfScalar(*wk.GtkWidget, order[0..m], c) != null) {
+                    in_order = false;
+                    break;
+                }
+            }
+            if (!in_order or child == null) {
+                in_order = false;
+                break;
+            }
+            child = wk.gtk_widget_get_next_sibling(child.?);
+        }
+        if (in_order) return;
+        for (order[0..m]) |w| wk.gtk_widget_insert_before(w, stage, null);
     }
 
     /// Recompute the stage's layout now, without placing anything (the next
@@ -833,6 +1195,10 @@ pub const SplitTree = extern struct {
         const priv = self.private();
         if (priv.row_drag != null) {
             self.endRowDrag();
+            // The drag is over 50ms from now (T3625): a glide under way, or
+            // resting under the hand, goes on to where it was headed.
+            priv.drag_released_us = wk.g_get_monotonic_time();
+            if (priv.slide != null) self.startGlideClock();
             self.relayoutStage();
             return;
         }
@@ -872,10 +1238,25 @@ pub const SplitTree = extern struct {
             focused: bool,
             frame: [4]i32,
             strip: ?[4]i32,
+            /// Where its card is drawn this frame (T3625): mid-glide, between
+            /// where it was and `frame` (or its strip); else `frame`, or the
+            /// strip as it shows.
+            drawn: [4]i32,
+            /// Its card is on its way somewhere.
+            gliding: bool,
+            /// Into or out of its strip: how far (`collapse`, 0 a card, 1 the
+            /// strip) - its content's opacity is 1 - this.
+            fade: ?f64,
+            /// Its content's real allocated width and its terminal's size
+            /// changes so far: a glide resizes each terminal once, after it.
+            content_w: c_int,
+            resizes: u32,
         };
         pub const Gutter = struct { kind: []const u8, direction: []const u8, rect: [4]i32 };
         width: c_int,
         height: c_int,
+        /// A glide is under way (T3625).
+        gliding: bool,
         panes: []const Pane,
         gutters: []const Gutter,
     };
@@ -894,14 +1275,32 @@ pub const SplitTree = extern struct {
         var panes: std.ArrayList(StageReport.Pane) = .empty;
         var it = tree.iterator();
         while (it.next()) |entry| {
-            const p = grid.placement(paneKey(entry.view)) orelse continue;
+            const id = paneKey(entry.view);
+            const p = grid.placement(id) orelse continue;
             const mini = p.is_tucked or p.is_sliver;
+            const slide: ?*const pane_stack_slide.Slide = if (priv.slide) |*s| s else null;
+            const drawn_card: ?pane_stack_grid.PxRect = if (slide) |s| s.cardRect(id) else null;
+            const axis = p.tab_axis orelse .horizontal;
+            const drawn = drawn_card orelse if (mini) (if (p.tab) |t|
+                (if (slide) |s| s.shownStrip(id, t, axis, p.strip_leads orelse true) else t)
+            else
+                p.rect) else p.rect;
+            const fade: ?f64 = if (slide) |s| if (s.stripFace(id)) |sf| blk: {
+                const f = strip_face.fadeOf(1);
+                break :blk pane_stack_slide.collapse(pane_stack_slide.Edges.of(sf.card).extent(), f.strip, f.span);
+            } else null else null;
+            const card: *wk.GtkWidget = @ptrCast(cardOf(entry.view));
             try panes.append(arena, .{
                 .pane = try arena.dupe(u8, entry.view.paneId()),
                 .minimized = mini,
                 .focused = focused == entry.view,
                 .frame = rectArr(p.rect),
                 .strip = if (mini) if (p.tab) |t| rectArr(t) else null else null,
+                .drawn = rectArr(drawn),
+                .gliding = drawn_card != null,
+                .fade = fade,
+                .content_w = wk.gtk_widget_get_width(cardContent(card)),
+                .resizes = entry.view.sizeChanges(),
             });
         }
         var gutters: std.ArrayList(StageReport.Gutter) = .empty;
@@ -921,6 +1320,7 @@ pub const SplitTree = extern struct {
         return .{
             .width = wk.gtk_widget_get_width(stage),
             .height = wk.gtk_widget_get_height(stage),
+            .gliding = priv.slide != null,
             .panes = panes.items,
             .gutters = gutters.items,
         };
@@ -1668,10 +2068,16 @@ pub const SplitTree = extern struct {
     fn dispose(self: *Self) callconv(.c) void {
         const priv = self.private();
         priv.last_focused.set(null);
-        // The stacked-panes stage and its state (T3567).
+        // The stacked-panes stage and its state (T3567), and any glide
+        // (T3625): its clock dies with the tree.
+        self.endGlide(true);
         self.dropStage();
         priv.faces.deinit(Application.default().allocator());
         priv.faces = .empty;
+        priv.held.deinit(Application.default().allocator());
+        priv.held = .empty;
+        priv.holds.deinit(Application.default().allocator());
+        priv.holds = .empty;
         if (priv.stacks) |*st| st.deinit();
         priv.stacks = null;
         if (priv.rebuild_source) |v| {
@@ -2000,6 +2406,7 @@ pub const SplitTree = extern struct {
         // waiting for an idle callback. Delaying teardown can keep the last
         // surface alive during shutdown if the main loop exits first.
         if (priv.tree == null) {
+            self.endGlide(true);
             self.dropStage();
             priv.tree_bin.setChild(null);
             return;
@@ -2025,6 +2432,7 @@ pub const SplitTree = extern struct {
         // Rebuild our tree
         const tree: *const Surface.Tree = self.private().tree orelse &.empty;
         if (tree.isEmpty()) {
+            self.endGlide(true);
             self.dropStage();
             priv.tree_bin.setChild(null);
         } else if (tree.zoomed == null and pane_stash.isVisiblySplit(tree.*)) {
@@ -2054,6 +2462,7 @@ pub const SplitTree = extern struct {
                 tree.zoomed orelse firstVisibleHandle(tree),
             );
             defer built.deinit();
+            self.endGlide(true);
             self.dropStage();
             priv.tree_bin.setChild(built.widget);
         }

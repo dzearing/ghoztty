@@ -711,6 +711,10 @@ pub const Surface = extern struct {
 
         /// Cached metrics for libghostty callbacks
         size: apprt.SurfaceSize,
+        /// How many times the terminal's size has changed (T3625): the
+        /// `pane-stack` seam reports it, so a glide can be shown to resize
+        /// each terminal once, after the motion.
+        size_changes: u32 = 0,
         cursor_pos: apprt.CursorPos,
 
         /// Various input method state. All related to key input.
@@ -3135,6 +3139,12 @@ pub const Surface = extern struct {
         self.syncHeaderTitle();
     }
 
+    /// How many times the terminal's size has changed (T3625, the
+    /// `pane-stack` seam's `resizes`).
+    pub fn sizeChanges(self: *Self) u32 {
+        return self.private().size_changes;
+    }
+
     /// Ghoztty's stable pane id (T3335), minted once per surface.
     pub fn paneId(self: *Self) []const u8 {
         return &self.private().pane_id;
@@ -4509,6 +4519,7 @@ pub const Surface = extern struct {
         };
         const changed = !priv.size.eql(&new_size);
         priv.size = new_size;
+        if (changed) priv.size_changes +%= 1;
 
         // If our surface is realize, we send callbacks.
         if (priv.core_surface) |surface| {

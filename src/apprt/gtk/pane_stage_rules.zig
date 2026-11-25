@@ -131,6 +131,70 @@ pub fn isClick(dx: f64, dy: f64) bool {
     return @abs(dx) < click_slop and @abs(dy) < click_slop;
 }
 
+// ---- Glides (T3625; docs/reference/stacked-panes.md "Glides") --------------
+//
+// The motion itself is win32's pure follower, `pane_stack_slide` (Mac
+// `PaneStageView.glide`): the stage hands it the layout before and after, and
+// asks it every frame where each card and its pane are drawn. What GTK adds is
+// how a card shows a pane held at another size: the card is allocated where
+// the glide draws it, and its content is allocated at the held size, offset
+// inside it, so the card (overflow hidden, its rounded rim and all) cuts it.
+
+/// Where a card's content is allocated inside the card while a glide holds it:
+/// `card` is the card as drawn and `pane` the held pane, both in stage
+/// coordinates; the offset is from the card's content box (its frame - the
+/// CSS margin is already out of it).
+pub const HeldContent = struct {
+    dx: i32,
+    dy: i32,
+    w: i32,
+    h: i32,
+};
+
+pub fn heldContent(card: PxRect, pane: PxRect) HeldContent {
+    return .{
+        .dx = pane.left - card.left,
+        .dy = pane.top - card.top,
+        .w = @max(pane.width(), 1),
+        .h = @max(pane.height(), 1),
+    };
+}
+
+/// How long "the drag is over" waits after the hand lets go (Mac
+/// `PaneStackState.isGesturing`, 50 ms): a fast hand outruns the grid, so the
+/// glide keeps following for that long before it may end.
+pub const gesture_tail_us: i64 = 50 * std.time.us_per_ms;
+
+/// Whether a gutter drag still counts as under way at `now_us`: the drag is
+/// held, or was let go less than `gesture_tail_us` ago (`released_us`).
+pub fn gesturing(dragging: bool, released_us: ?i64, now_us: i64) bool {
+    if (dragging) return true;
+    const r = released_us orelse return false;
+    return now_us - r < gesture_tail_us;
+}
+
+/// The time a glide frame advances, in ms: the frame clock's step, with a
+/// first frame (or one after a stall, a window hidden mid-glide) counted as
+/// one 60 Hz period, so no single frame carries most of the motion.
+pub const frame_ms: f64 = 1000.0 / 60.0;
+
+pub fn frameStep(last_us: ?i64, now_us: i64) f64 {
+    const l = last_us orelse return frame_ms;
+    const dt = @as(f64, @floatFromInt(now_us - l)) / std.time.us_per_ms;
+    if (dt <= 0) return 0;
+    return if (dt > 4 * frame_ms) frame_ms else dt;
+}
+
+/// The two halves of a card on its way into or out of its strip at
+/// `collapse` (`pane_stack_slide.collapse`: 0 a card, 1 its strip): its
+/// content fades out as its title fades in (Mac `PaneCardView.collapse`).
+pub const Fade = struct { content: f64, face: f64 };
+
+pub fn fadeAt(collapse: f64) Fade {
+    const c = std.math.clamp(collapse, 0, 1);
+    return .{ .content = 1 - c, .face = c };
+}
+
 test "the elevated grid sits a card margin in; flat runs edge to edge" {
     try testing.expectEqual(PxRect{ .left = 5, .top = 5, .right = 795, .bottom = 595 }, gridRect(800, 600, true));
     try testing.expectEqual(PxRect{ .left = 0, .top = 0, .right = 800, .bottom = 600 }, gridRect(800, 600, false));
@@ -187,6 +251,50 @@ test "a horizontal strip's label sits on it unturned" {
     try testing.expectEqual(@as(i32, 36), p.h);
     try testing.expectEqual(@as(f32, 0), p.tx);
     try testing.expectEqual(@as(f32, 200), p.ty);
+}
+
+test "a held pane sits inside its card at its own size, pinned where the glide puts it" {
+    // A card narrowing into a strip on its left: the pane (400 wide) is
+    // pinned to the card's far (right) edge, so it starts left of the card.
+    const card: PxRect = .{ .left = 100, .top = 10, .right = 250, .bottom = 510 };
+    const pane: PxRect = .{ .left = -150, .top = 10, .right = 250, .bottom = 510 };
+    const h = heldContent(card, pane);
+    try testing.expectEqual(@as(i32, -250), h.dx);
+    try testing.expectEqual(@as(i32, 0), h.dy);
+    try testing.expectEqual(@as(i32, 400), h.w);
+    try testing.expectEqual(@as(i32, 500), h.h);
+    // A pane held at its card's own place and size is the card.
+    const same = heldContent(card, card);
+    try testing.expectEqual(HeldContent{ .dx = 0, .dy = 0, .w = 150, .h = 500 }, same);
+    // Never a zero or negative allocation.
+    const empty = heldContent(card, .{ .left = 5, .top = 5, .right = 5, .bottom = 5 });
+    try testing.expect(empty.w >= 1 and empty.h >= 1);
+}
+
+test "the drag is over 50ms after the hand lets go" {
+    try testing.expect(gesturing(true, null, 0));
+    try testing.expect(!gesturing(false, null, 1_000_000));
+    try testing.expect(gesturing(false, 1_000_000, 1_000_000 + 49_000));
+    try testing.expect(!gesturing(false, 1_000_000, 1_000_000 + 50_000));
+}
+
+test "a glide frame is the clock's step, a first or stalled frame one 60Hz period" {
+    try testing.expectEqual(frame_ms, frameStep(null, 5_000_000));
+    try testing.expectApproxEqAbs(@as(f64, 8.333), frameStep(1_000_000, 1_008_333), 1e-3);
+    // A window hidden mid-glide: its next frame does not jump the motion.
+    try testing.expectEqual(frame_ms, frameStep(1_000_000, 2_000_000));
+    // The clock never runs backwards into a negative step.
+    try testing.expectEqual(@as(f64, 0), frameStep(2_000_000, 1_000_000));
+}
+
+test "a card's content fades out as its strip's title fades in" {
+    try testing.expectEqual(Fade{ .content = 1, .face = 0 }, fadeAt(0));
+    try testing.expectEqual(Fade{ .content = 0, .face = 1 }, fadeAt(1));
+    const mid = fadeAt(0.25);
+    try testing.expectApproxEqAbs(@as(f64, 0.75), mid.content, 1e-9);
+    try testing.expectApproxEqAbs(@as(f64, 1), mid.content + mid.face, 1e-9);
+    // Out of range is clamped, never a negative opacity.
+    try testing.expectEqual(Fade{ .content = 0, .face = 1 }, fadeAt(3));
 }
 
 test "gutters resize across their row; a small move is a click" {

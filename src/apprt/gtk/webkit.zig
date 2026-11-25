@@ -694,6 +694,18 @@ pub extern fn gsk_transform_rotate(next: ?*GskTransform, angle: f32) ?*GskTransf
 pub extern fn gtk_widget_set_child_visible(widget: *GtkWidget, child_visible: c_int) void;
 pub extern fn gtk_widget_get_child_visible(widget: *GtkWidget) c_int;
 pub extern fn gtk_widget_queue_allocate(widget: *GtkWidget) void;
+// Stacked-pane glides (T3625): the stage steps a glide on the frame clock,
+// fades a card's content and strip face, and paints by elevation.
+pub const GdkFrameClock = opaque {};
+pub const TickCallbackFn = *const fn (widget: *GtkWidget, clock: *GdkFrameClock, user_data: ?*anyopaque) callconv(.c) c_int;
+pub extern fn gtk_widget_add_tick_callback(widget: *GtkWidget, callback: TickCallbackFn, user_data: ?*anyopaque, notify: ?*const anyopaque) c_uint;
+pub extern fn gtk_widget_remove_tick_callback(widget: *GtkWidget, id: c_uint) void;
+pub extern fn gdk_frame_clock_get_frame_time(clock: *GdkFrameClock) i64;
+pub extern fn g_get_monotonic_time() i64;
+pub extern fn gtk_widget_set_opacity(widget: *GtkWidget, opacity: f64) void;
+pub extern fn gtk_widget_insert_before(widget: *GtkWidget, parent: *GtkWidget, next_sibling: ?*GtkWidget) void;
+pub extern fn gtk_widget_get_next_sibling(widget: *GtkWidget) ?*GtkWidget;
+pub extern fn adw_get_enable_animations(widget: *GtkWidget) c_int;
 // The Settings window (T3569).
 pub extern fn gtk_window_destroy(window: *GtkWidget) void;
 pub extern fn gtk_button_new_with_label(label: [*:0]const u8) *GtkWidget;
