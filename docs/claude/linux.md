@@ -453,10 +453,24 @@ private runtime dir, so a test app can never meet the user's.
   focuses it there through the surface's present request. Collapsed, the
   rail is one tile per window. Acceptance: `wsl-run.ps1 -CommandFile
   test\linux\cli-sidebar-all.sh`, ends `CLI SIDEBAR ALL: ALL PASS` (30
-  checks); `NEGATIVE=1` searches for nothing and must fail A12. Not yet:
-  drag and the stash tray (T3607), group editing - the window-row menu and
-  the headers' tools (T3608); row tools, hover tint, busy sheen and the
-  width drag (T3606).
+  checks); `NEGATIVE=1` searches for nothing and must fail A12.
+  **Drag to reorder (T3607)**: a pane row on screen drags (its own mime
+  type, `application/x-ghoztty-sidebar-row`, so a split tree never takes
+  it) and, let go over a list, lands among its own window's rows level with
+  the pointer (`pane_sidebar_rows.dropIndex`). The order is the sidebar's,
+  one per window (`rows.Orders`, through win32's `pane_sidebar_order`
+  `moving`/`arranged`): the grid never moves, a split lands after its
+  parent, a closed pane drops out, and both scopes show the same order. The
+  seam's ordinary read redraws, and new rows have no place until GTK's next
+  frame, so `--layout` reads the rows as laid out (each row's `top`,
+  `height`, `draggable`) and `--drag=<row id>:<y>` lets one go at a y of the
+  list through the live drop's code; both skip the redraw. Acceptance:
+  `wsl-run.ps1 -CommandFile test\linux\cli-sidebar-drag.sh`, ends `CLI
+  SIDEBAR DRAG: ALL PASS` (25 checks); `NEGATIVE=1` must fail D2, D2b, D4b.
+  A real pointer drag is NOT RUN (no seat). Not yet: window and group drag
+  (T3697), the stash tray (T3698), cross-window drops (T3699), the order
+  across a restore (T3700); group editing - the window-row menu and the
+  headers' tools (T3608); the rest of the row tools (T3695).
   `--view` on `+new-window`/`+split` opens a viewer pane (T3411, below).
 - **Names (T3370)** follow win32's rules exactly (`apprt/ipc/target_lookup.zig`,
   T2250): a window name is global (`+new-window --target`, else a minted

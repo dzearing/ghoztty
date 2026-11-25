@@ -24,8 +24,9 @@
 # (`--layout`) and lets a row go at a y of the list (`--drag=<row id>:<y>`)
 # through the live drop's own code (PaneSidebar.dropRowAt).
 #
-# NEGATIVE=1 lets the first row go over its own place, which must FAIL D2
-# (the harness can tell a drag that moved nothing).
+# NEGATIVE=1 lets the first row go over its own place, which must FAIL D2,
+# D2b and D4b and nothing else (3 failures, measured 2026-11-24): the harness
+# can tell a drag that moved nothing.
 #
 # Output: one PASS/FAIL line per check, then 'CLI SIDEBAR DRAG: ALL PASS' or
 # 'CLI SIDEBAR DRAG: <n> FAILURE(S)'. Exit 0 only on ALL PASS.
