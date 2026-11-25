@@ -37,7 +37,11 @@
 #      rather than having painted once at open.
 #
 # THE ORACLES work over a `-Sync` capture of the card. The washes are solid
-# rounded fills, so they are exact colour matches. The accent is NOT: it reaches
+# rounded fills, so they are exact colour matches - and since T2211 they are
+# scored as a ROW (`Get-WashBands`: scanlines carrying a solid run of the wash
+# across 40% of the card), with the row below as an unselected control, because
+# one exact pixel anywhere in the card can be a glyph's anti-alias ramp in a
+# build that painted no selection at all. The accent is NOT exact: it reaches
 # the bar through two contrast floors, so its RGB depends on the card it sits on.
 # It is found by SHAPE instead (`Find-SaturatedBar`): a solid vertical run of one
 # saturated colour, ten or more pixels tall. A plain chroma scan would score the
@@ -185,15 +189,103 @@ function Invoke-Verb([string[]]$VerbArgs) {
     return [pscustomobject]@{ Code = $LASTEXITCODE; Out = $out }
 }
 
-# Does this capture of the card hold the exact colour $Rgb anywhere?
-function Test-CardHasColor($Shot, [int[]]$Rgb) {
-    for ($y = 0; $y -lt $Shot.Height; $y++) {
-        for ($x = 0; $x -lt $Shot.Width; $x++) {
-            $c = $Shot.Bitmap.GetPixel($x, $y)
-            if ($c.R -eq $Rgb[0] -and $c.G -eq $Rgb[1] -and $c.B -eq $Rgb[2]) { return $true }
+# T2211: WHERE on the card is $Rgb painted as a ROW FILL? The washes are exact
+# colours, but an exact colour is not evidence on its own: a label's
+# anti-alias ramp and the header's own washes pass through intermediate
+# colours, so "this colour occurs somewhere in the card" (the oracle this
+# replaced) could be satisfied by a glyph fringe in a build that painted no
+# selection at all. A row fill is a SOLID rounded rect, so its scanlines carry
+# long runs of the one colour - a fraction of the card's width that no glyph
+# produces. Scanlines qualifying at $MinRunFrac are grouped into bands, and the
+# two pad bands of one row (split by its label line, where the glyphs break the
+# run) are merged across a gap of at most $MaxGap px.
+#
+# Returns the bands top to bottom: Top, Bottom, Height, MaxRun.
+function Get-PixelArray($Shot) {
+    $bmp = $Shot.Bitmap
+    $rect = New-Object System.Drawing.Rectangle 0, 0, $bmp.Width, $bmp.Height
+    $data = $bmp.LockBits($rect, [System.Drawing.Imaging.ImageLockMode]::ReadOnly,
+        [System.Drawing.Imaging.PixelFormat]::Format32bppArgb)
+    try {
+        $stride = [int]($data.Stride / 4)
+        $px = New-Object int[] ($stride * $bmp.Height)
+        [System.Runtime.InteropServices.Marshal]::Copy($data.Scan0, $px, 0, $px.Length)
+    } finally { $bmp.UnlockBits($data) }
+    return [pscustomobject]@{ Px = $px; Stride = $stride; W = $bmp.Width; H = $bmp.Height }
+}
+function Get-LongestRun($Arr, [int]$Y, [int]$Target) {
+    $best = 0; $run = 0
+    $base = $Y * $Arr.Stride
+    for ($x = 0; $x -lt $Arr.W; $x++) {
+        if (($Arr.Px[$base + $x] -band 0xFFFFFF) -eq $Target) { $run++; if ($run -gt $best) { $best = $run } }
+        else { $run = 0 }
+    }
+    return $best
+}
+function ConvertTo-RgbInt([int[]]$Rgb) { return (($Rgb[0] -shl 16) -bor ($Rgb[1] -shl 8) -bor $Rgb[2]) }
+function Get-WashBands($Shot, [int[]]$Rgb, [double]$MinRunFrac = 0.4, [int]$MaxGap = 48) {
+    $arr = Get-PixelArray $Shot
+    $target = ConvertTo-RgbInt $Rgb
+    $minRun = [int][Math]::Ceiling($arr.W * $MinRunFrac)
+    $bands = New-Object System.Collections.ArrayList
+    $cur = $null
+    for ($y = 0; $y -lt $arr.H; $y++) {
+        $run = Get-LongestRun $arr $y $target
+        if ($run -lt $minRun) { continue }
+        if ($cur -and ($y - $cur.Bottom - 1) -le $MaxGap) {
+            $cur.Bottom = $y
+            if ($run -gt $cur.MaxRun) { $cur.MaxRun = $run }
+        } else {
+            $cur = [pscustomobject]@{ Top = $y; Bottom = $y; Height = 0; MaxRun = $run }
+            [void]$bands.Add($cur)
         }
     }
-    return $false
+    foreach ($b in $bands) { $b.Height = $b.Bottom - $b.Top + 1 }
+    return , $bands.ToArray()
+}
+# The CONTROL: the rows of $Shot in [$Top, $Bottom] are an UNSELECTED row - not
+# one scanline carries a $Wash run at $MinRunFrac - and they ARE card
+# background (each line's most common colour is nearer the card fill than the
+# wash), so the window being scored is the list rather than off the card's edge.
+# Not "solid card fill": the lower rows sit on a soft gradient (#21-#24 against
+# a #1c1f25 mode on the 2026-11-24 run), so a flat-fill test is false there.
+function Measure-ControlRow($Shot, [int]$Top, [int]$Bottom, [int[]]$Wash, [int[]]$Fill, [double]$MinRunFrac = 0.4) {
+    $arr = Get-PixelArray $Shot
+    $minRun = [int][Math]::Ceiling($arr.W * $MinRunFrac)
+    $tw = ConvertTo-RgbInt $Wash
+    $washLines = 0; $bgLines = 0; $lines = 0
+    for ($y = [Math]::Max(0, $Top); $y -le [Math]::Min($arr.H - 1, $Bottom); $y++) {
+        $lines++
+        if ((Get-LongestRun $arr $y $tw) -ge $minRun) { $washLines++ }
+        $h = @{}; $base = $y * $arr.Stride
+        for ($x = 0; $x -lt $arr.W; $x++) { $v = $arr.Px[$base + $x] -band 0xFFFFFF; $h[$v] = 1 + [int]$h[$v] }
+        $mode = ($h.GetEnumerator() | Sort-Object Value -Descending | Select-Object -First 1).Key
+        $m = @((($mode -shr 16) -band 0xFF), (($mode -shr 8) -band 0xFF), ($mode -band 0xFF))
+        if ((Get-ChannelDistance $m $Fill) -lt (Get-ChannelDistance $m $Wash)) { $bgLines++ }
+    }
+    return [pscustomobject]@{ Lines = $lines; WashLines = $washLines; BgLines = $bgLines }
+}
+# The median scanline holding the exact colour $Rgb (the accent bar's), or
+# $null - a median, so a stray fringe pixel of the same value cannot move it.
+function Get-ColorMedianY($Shot, [int[]]$Rgb) {
+    $arr = Get-PixelArray $Shot
+    $t = ConvertTo-RgbInt $Rgb
+    $ys = New-Object System.Collections.Generic.List[int]
+    for ($y = 0; $y -lt $arr.H; $y++) {
+        $base = $y * $arr.Stride
+        for ($x = 0; $x -lt $arr.W; $x++) { if (($arr.Px[$base + $x] -band 0xFFFFFF) -eq $t) { $ys.Add($y) } }
+    }
+    if ($ys.Count -eq 0) { return $null }
+    return $ys[[int]($ys.Count / 2)]
+}
+# Picks the control window for a selected band: the same height directly
+# BELOW it when the capture has room, else directly above.
+function Get-ControlWindow($Band, [int]$ShotHeight) {
+    $gap = 2
+    if ($Band.Bottom + $gap + $Band.Height -lt $ShotHeight) {
+        return @(($Band.Bottom + $gap + 1), ($Band.Bottom + $gap + $Band.Height))
+    }
+    return @(($Band.Top - $gap - $Band.Height), ($Band.Top - $gap - 1))
 }
 
 $originalAccent = Get-AccentRaw
@@ -281,6 +373,7 @@ try {
         'A the viewer window is the ACTIVE window (the state this section measures)'
 
     $cardFill = $null
+    $rowA = $null
     $shotA = Get-TestWindowPixels -Window $toc -Sync
     try {
         $distinct = Get-TestDistinctColors -Shot $shotA
@@ -308,9 +401,25 @@ try {
                 "A that accent mark is a narrow bar, not a filled pill ($($barA.HRun) px wide, $($barA.VRun) px tall)"
         }
         if ($cardFill) {
+            # T2211: scored as a ROW, not as a pixel anywhere in the card.
             $washA = Get-Wash $cardFill $EMPHASIZED_WASH
-            Assert (Test-CardHasColor $shotA $washA) `
-                "A the row's fill is the NEUTRAL focused wash $(Format-Rgb $washA), not an accent tint"
+            $bandsA = Get-WashBands $shotA $washA
+            Write-Host "      focused-wash row bands: $(@($bandsA | ForEach-Object { "y$($_.Top)-$($_.Bottom) run $($_.MaxRun)" }) -join ', ')"
+            Assert ($bandsA.Count -eq 1) `
+                "A exactly ONE row is filled with the NEUTRAL focused wash $(Format-Rgb $washA), not an accent tint ($($bandsA.Count) row bands)"
+            if ($bandsA.Count -eq 1) {
+                $rowA = $bandsA[0]
+                Assert ($rowA.Height -ge 8) "A that fill is row-shaped: $($rowA.Height) px tall, a $($rowA.MaxRun) px solid run"
+                if ($barA) {
+                    $barY = Get-ColorMedianY $shotA $barA.Rgb
+                    Assert ($null -ne $barY -and $barY -ge $rowA.Top -and $barY -le $rowA.Bottom) `
+                        "A the accent bar sits ON that row (bar y=$barY, row y$($rowA.Top)-$($rowA.Bottom))"
+                }
+                $cw = Get-ControlWindow $rowA $shotA.Height
+                $ctlA = Measure-ControlRow $shotA $cw[0] $cw[1] $washA $cardFill
+                Assert ($ctlA.Lines -ge 8 -and $ctlA.WashLines -eq 0 -and $ctlA.BgLines -eq $ctlA.Lines) `
+                    "A control: the unselected row at y$($cw[0])-$($cw[1]) is card background with no wash ($($ctlA.WashLines) wash / $($ctlA.BgLines) background lines of $($ctlA.Lines))"
+            }
         }
     } finally { Close-TestWindowPixels -Shot $shotA }
 
@@ -344,8 +453,23 @@ try {
         # drawn, in the lighter wash. This is the assertion a "never paint accent"
         # build passes and a "paint nothing" build does not.
         if ($wash) {
-            Assert-Pair (Test-CardHasColor $shotB $wash) `
-                "B the selected row is still marked, in the unemphasized wash $(Format-Rgb $wash)"
+            # T2211: the selected ROW, scored by shape. A "paint nothing"
+            # build leaves no band at all, whatever its glyph fringes hold.
+            $bandsB = Get-WashBands $shotB $wash
+            Write-Host "      unemphasized-wash row bands: $(@($bandsB | ForEach-Object { "y$($_.Top)-$($_.Bottom) run $($_.MaxRun)" }) -join ', ')"
+            Assert-Pair ($bandsB.Count -eq 1 -and $bandsB[0].Height -ge 8) `
+                "B the selected row is still marked: one row filled with the unemphasized wash $(Format-Rgb $wash) ($($bandsB.Count) row bands)"
+            if ($bandsB.Count -eq 1) {
+                $rowB = $bandsB[0]
+                if ($rowA) {
+                    Assert ([Math]::Abs($rowB.Top - $rowA.Top) -le 1 -and [Math]::Abs($rowB.Bottom - $rowA.Bottom) -le 1) `
+                        "B it is the SAME row A marked (y$($rowB.Top)-$($rowB.Bottom) vs y$($rowA.Top)-$($rowA.Bottom))"
+                }
+                $cw = Get-ControlWindow $rowB $shotB.Height
+                $ctlB = Measure-ControlRow $shotB $cw[0] $cw[1] $wash $cardFill
+                Assert ($ctlB.Lines -ge 8 -and $ctlB.WashLines -eq 0 -and $ctlB.BgLines -eq $ctlB.Lines) `
+                    "B control: the unselected row at y$($cw[0])-$($cw[1]) is card background with no wash ($($ctlB.WashLines) wash / $($ctlB.BgLines) background lines of $($ctlB.Lines))"
+            }
             Assert ((Get-Chroma $wash) -le 12) `
                 "B that wash is NEUTRAL ink, not a second accent ($(Format-Rgb $wash), chroma $(Get-Chroma $wash))"
         }
