@@ -1,8 +1,8 @@
 {
     "guard":  "unwired-hook",
     "script":  "test/win32/unwired-hook-audit.ps1",
-    "generated":  "2026-11-24T21:08:42-08:00",
-    "commit":  "b214c9f71",
+    "generated":  "2026-11-24T21:19:14-08:00",
+    "commit":  "908533264",
     "uncommitted":  [
 
                     ],
@@ -1360,6 +1360,7 @@
                   "test/win32/deny-escape-damage.ps1":  "2fc4374ce0468d7f7274c10218e38a1ec1c5ec2634fdb231bf2b8b290e9a7e29",
                   "test/win32/deny-git-autostash.ps1":  "625dfd8e4a308dc01902adb6c31b80b0a60a47a1b2e230a9385eaaecd40846e0",
                   "test/win32/deny-sh-from-powershell.ps1":  "345a909a59c95edc61dc97247f3d94784431cae1203ca76951f5dbe755e25a8e",
+                  "test/win32/desktop-escape.ps1":  "c2662313c86d76344c2b0966f421bd4008ae5bfe243f37bbf2a67a63fd50bbd0",
                   "test/win32/desktop-launch-audit.ps1":  "3d0622472ecc931c9a6244beba14b488348284c6ee25dfc9d6357a4db8ff903b",
                   "test/win32/desk-variant.ps1":  "7c119c32b230bc259617070c20518cfcd522d2fc1877e310056cbd5c33bc8776",
                   "test/win32/dip-rounding-audit.ps1":  "8a3979da25d92635db2d67c480af57699a7a61c55331b19d8e56a3fab18d5f5b",

@@ -123,7 +123,7 @@ exit 0
     $static = Join-Path $scratch 'planted-static.ps1'
     @'
 $Exe = 'C:\nowhere\ghoztty.exe'
-Start-Process $Exe -PassThru
+Start-Process $Exe -PassThru -RedirectStandardError (Join-Path $env:TEMP 'planted-static.err')
 '@ | Set-Content -LiteralPath $static -Encoding ascii
 
     # -----------------------------------------------------------------------
@@ -190,12 +190,16 @@ Start-Process $Exe -PassThru
     Assert 'E7 -List prints a count line and runs nothing' (@($out | Where-Object { $_ -match '^DESKTOP ESCAPE LIST: \d+ eligible, \d+ refused' }).Count -eq 1)
 } catch {
     # An unwind must not reach a green verdict (T1039).
-    Assert "X0 the run reached its end ($_)" $false
+    Write-Host "  FAIL X0 the run reached its end ($_)" -ForegroundColor Red
+    $script:fail++
 } finally {
     Get-Process -Name 'ghoztty-nc' -ErrorAction SilentlyContinue | Where-Object {
         try { $_.MainModule.FileName -ieq $decoy } catch { $false }
-    } | Stop-Process -Force -ErrorAction SilentlyContinue
-    Start-Sleep -Milliseconds 300
+    } | ForEach-Object {
+        # Wait on the exit itself rather than a fixed settle, so the scratch
+        # delete below never races a still-mapped image.
+        try { $_.Kill(); [void]$_.WaitForExit(5000) } catch { }
+    }
     Remove-Item -LiteralPath $scratch -Recurse -Force -ErrorAction SilentlyContinue
 }
 

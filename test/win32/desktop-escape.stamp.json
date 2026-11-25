@@ -1,23 +1,21 @@
 {
     "guard":  "desktop-escape",
     "script":  "test/win32/desktop-escape.ps1",
-    "generated":  "2026-11-24T19:58:39-08:00",
-    "commit":  "fe9b21c28",
+    "generated":  "2026-11-24T21:05:08-08:00",
+    "commit":  "908533264",
     "uncommitted":  [
-                        "scripts/desktop-escape-run.ps1",
-                        "test/win32/desktop-escape.ps1",
-                        "test/win32/lib/DesktopEscape.ps1"
+                        "test/win32/desktop-escape.ps1"
                     ],
     "files":  {
                   "scripts/desktop-escape-run.ps1":  "96c25c4ede287064dba0f3d6e2a1464c8e2df150da83d4dd9d9da644d5699eb2",
-                  "test/win32/desktop-escape.ps1":  "576a1d1bc5ac7ef3453e68a1e409e021ad9230a2c9669b8400963a7c7d571283",
+                  "test/win32/desktop-escape.ps1":  "c2662313c86d76344c2b0966f421bd4008ae5bfe243f37bbf2a67a63fd50bbd0",
                   "test/win32/lib/DesktopEscape.ps1":  "f258c66b3f30130b28cba74f80085dd21aec19d0b99ef72fa59397fb3e7c36ae",
                   "test/win32/lib/DesktopLaunchAudit.ps1":  "b05fe6c8a9c82bffc6db3ee04d8d2c7d0977892e113abe83ca30c18f21d5ee58"
               },
     "code":  {
                  "scripts/desktop-escape-run.ps1":  "code1:4496b2446ee6735f60e00f03a403df84b94170c6740f6968f88eb82deede3ac5",
-                 "test/win32/desktop-escape.ps1":  "code1:f5743d9e55fd1a8099a36d991ae9d36b83e2c60529f51ba7d44363dc24c5362b",
-                 "test/win32/lib/DesktopEscape.ps1":  "code1:256cf9d4ea1c56800bf51ff7463dd9fa5129d8ca5ee39f9303514a76e209019e",
+                 "test/win32/desktop-escape.ps1":  "code1:9e41fe8e9890a0b896843d34a6a48e0ffcd2ba23ecbf5db60991044a2258a847",
+                 "test/win32/lib/DesktopEscape.ps1":  "code1:ad05c4231e9e775535af732b6cc21321fe932f35ed107c3e78bdf25bfc8008fa",
                  "test/win32/lib/DesktopLaunchAudit.ps1":  "code1:256662f05c5667381db30975a293b1f158e29c479cfa0caeb184b529e3ab543c"
              }
 }

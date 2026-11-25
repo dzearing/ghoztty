@@ -1,10 +1,10 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-11-24T20:26:35-08:00",
-    "commit":  "51a7559ce",
+    "generated":  "2026-11-24T21:16:51-08:00",
+    "commit":  "908533264",
     "uncommitted":  [
-
+                        "test/win32/desktop-escape.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "cfa23792d110d499fa4086697daa516d218d0d110e594a7452167a81220ee15e",
@@ -144,6 +144,7 @@
                   "test/win32/deny-escape-damage.ps1":  "2fc4374ce0468d7f7274c10218e38a1ec1c5ec2634fdb231bf2b8b290e9a7e29",
                   "test/win32/deny-git-autostash.ps1":  "625dfd8e4a308dc01902adb6c31b80b0a60a47a1b2e230a9385eaaecd40846e0",
                   "test/win32/deny-sh-from-powershell.ps1":  "345a909a59c95edc61dc97247f3d94784431cae1203ca76951f5dbe755e25a8e",
+                  "test/win32/desktop-escape.ps1":  "c2662313c86d76344c2b0966f421bd4008ae5bfe243f37bbf2a67a63fd50bbd0",
                   "test/win32/desktop-launch-audit.ps1":  "3d0622472ecc931c9a6244beba14b488348284c6ee25dfc9d6357a4db8ff903b",
                   "test/win32/desk-variant.ps1":  "7c119c32b230bc259617070c20518cfcd522d2fc1877e310056cbd5c33bc8776",
                   "test/win32/dip-rounding-audit.ps1":  "8a3979da25d92635db2d67c480af57699a7a61c55331b19d8e56a3fab18d5f5b",
@@ -294,6 +295,7 @@
                   "test/win32/lib/CountOrZero.ps1":  "becbcdc2dabc0728175ea276fc082a3e270df5637b659c434d93f3e407a9fa9c",
                   "test/win32/lib/count-resizes.ps1":  "bd9031b210198942ee1b7e9060d8bf46beebe35d217dd0f1abec75715802ce0e",
                   "test/win32/lib/DesktopCapability.ps1":  "d515c5b58b16aaaf2e077e22e86b8b6eb33fda4d639461ba0b133460b3cdf7e7",
+                  "test/win32/lib/DesktopEscape.ps1":  "f258c66b3f30130b28cba74f80085dd21aec19d0b99ef72fa59397fb3e7c36ae",
                   "test/win32/lib/DesktopLaunchAudit.ps1":  "b05fe6c8a9c82bffc6db3ee04d8d2c7d0977892e113abe83ca30c18f21d5ee58",
                   "test/win32/lib/DipRoundingAudit.ps1":  "def9e67665e72015ce65e1f74dea9a69eaf563271b682043df7191041f06e119",
                   "test/win32/lib/DividerFlickerScore.ps1":  "1a35204043813baad3b6252051e0571fb6ca3acbd0c903e944ada0e7c8105854",
