@@ -997,6 +997,15 @@ Concretely, in order, with no stops in between:
    `-NoPushCheck` hatch is for a box with no network and prints that it was
    used. Acceptance: section W of `test\win32\go-loop-guard.ps1`.
 
+   **A pull that brought in the other lane's CODE is compiled before the push**
+   (T2190). When the rejected push's pull carries commits touching `src/`,
+   `pkg/` or `build.zig` and your commit touches them too, the guard builds the
+   merged tree (Debug win32 + the lib lane, about 90s warm) first. Exit **8**,
+   `REBASE BROKE THE BUILD`, means git merged two changes cleanly that do not
+   compile together: nothing was pushed, the pulled commits are named, and the
+   fix is a follow-up commit through the guard, which pushes both. A pull with
+   no source in it builds nothing. `-NoBuildCheck -Reason` is the hatch. W28t.
+
    Since T1219 `validate` also FAILS when the build machine says the branch head
    does not build. Same two-ended arrangement as the push check above: step 0's
    claim reports the verdict, this gate refuses the commit, and an in-progress

@@ -75,10 +75,25 @@
 # path uses (T2027), and nothing else dirty is ever moved; the repo's
 # PreToolUse hook (scripts\hooks\deny-git-autostash.ps1) refuses the flag.
 #
+# A PULL THAT BROUGHT IN CODE IS COMPILED BEFORE IT IS PUSHED (T2190). On
+# 2026-10-23 T2187's commit was built and tested on a tree without lane b's
+# T2186; the rejected push pulled T2186 in by rebase (git merged it textually,
+# no conflict), and the guard pushed a tree that did not compile. Now, when the
+# pulled commits touch source (src/, pkg/, build.zig, build.zig.zon) AND the
+# commits being pushed do too, the merged tree is built (the Debug win32 build
+# plus the lib lane's -Dapp-runtime=none build, both into a scratch prefix
+# under the git dir so a running zig-out exe cannot fail the install) before
+# the second push. A red build leaves the commit LOCAL and exits 8 with REBASE
+# BROKE THE BUILD naming the pulled commits. A pull with no source in it costs
+# nothing. `-NoBuildCheck -Reason` is the hatch (a box with no zig); a box
+# where zig is not on PATH says BUILD CHECK SKIPPED and pushes.
+#
 # Actions: install | status | hold | release | commit | verify | push | unpushed | sync
 # Exit codes: 0 ok, 2 usage/error, 3 lock held by another session,
 #             4 not the owner (release), 5 the commit contains foreign paths,
-#             6 git refused the commit, 7 HEAD is ahead of its upstream.
+#             6 git refused the commit, 7 HEAD is ahead of its upstream,
+#             8 a push-rebase pulled in source and the merged tree did not
+#               build (the commit is left local, T2190).
 #
 #   powershell -NoProfile -File scripts\git-commit-guard.ps1 install
 #   powershell -NoProfile -File scripts\git-commit-guard.ps1 commit `
@@ -110,6 +125,12 @@ param(
     # stay on this box. It prints that it was used and why, so a turn that took
     # it can be explained rather than silently excused.
     [switch]$NoPush,
+    # T2190: skip compiling the merged tree after a push-rebase that pulled in
+    # source. Prints that it was taken, with -Reason.
+    [switch]$NoBuildCheck,
+    # T2190 test seam: a .ps1 run as the build check instead of zig
+    # (`powershell -File <it> -Repo <repo>`); non-zero exit = the tree is broken.
+    [string]$BuildCheckScript,
     [string]$Reason,
     [switch]$Force,
     [switch]$Json,
@@ -568,8 +589,102 @@ function Get-MergeBroughtPaths([string[]]$heads) {
     return @($set)
 }
 
+# Paths that can change whether the tree compiles (T2190).
+function Test-SourcePath([string]$p) {
+    return ($p -match '^(src|pkg)/' -or $p -match '^build\.zig(\.zon)?$')
+}
+
+function Get-RangePaths([string]$from, [string]$to) {
+    $r = Git-Run @('diff', '--name-only', '--no-renames', $from, $to)
+    if ($r.Code -ne 0 -or -not $r.Out) { return @() }
+    return @($r.Out -split "`r?`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+}
+
+# After a rejected push's pull: did it bring source in beside our own source
+# change, and if so does the merged tree still build? @{ Ok; Lines; Broken }.
+# Ok=$false only for a build that ran and failed; anything the check cannot
+# ask (no upstream, no zig) is said and passed.
+function Invoke-PostPullBuildCheck([string]$preHead) {
+    $lines = @()
+    $up = Git-Run @('rev-parse', '@{u}')
+    if ($up.Code -ne 0 -or -not $up.Out -or -not $preHead) {
+        return @{ Ok = $true; Broken = $false; Lines = @('BUILD CHECK SKIPPED: could not read the pulled range') }
+    }
+    $upNew = ($up.Out -split "`r?`n")[0].Trim()
+    $mb = Git-Run @('merge-base', $preHead, $upNew)
+    if ($mb.Code -ne 0 -or -not $mb.Out) {
+        return @{ Ok = $true; Broken = $false; Lines = @('BUILD CHECK SKIPPED: no merge-base for the pulled range') }
+    }
+    $base = ($mb.Out -split "`r?`n")[0].Trim()
+    $theirSrc = @(Get-RangePaths $base $upNew | Where-Object { Test-SourcePath $_ })
+    $ourSrc = @(Get-RangePaths $base $preHead | Where-Object { Test-SourcePath $_ })
+    if ($theirSrc.Count -eq 0 -or $ourSrc.Count -eq 0) {
+        return @{ Ok = $true; Broken = $false; Lines = $lines }
+    }
+    $pulled = Git-Run @('log', '--no-merges', '--format=%h %s', "$base..$upNew", '--', 'src', 'pkg', 'build.zig', 'build.zig.zon')
+    $pulledLines = @($pulled.Out -split "`r?`n" | Where-Object { $_.Trim() })
+    if ($NoBuildCheck) {
+        $why = if ($Reason) { $Reason } else { 'no reason given' }
+        $lines += "BUILD CHECK SKIPPED (-NoBuildCheck): $why - the pull brought in $($pulledLines.Count) source commit(s) and the merged tree was not compiled"
+        return @{ Ok = $true; Broken = $false; Lines = $lines }
+    }
+    $lines += "the pull brought in source ($($theirSrc.Count) file(s), $($pulledLines.Count) commit(s)) beside this commit's own - building the merged tree before pushing (T2190)"
+    $gd = Get-GitDir
+    if (-not $gd) { $gd = $env:TEMP }
+    $work = Join-Path $gd 'ghoztty-buildcheck'
+    New-Item -ItemType Directory -Force -Path $work | Out-Null
+    $log = Join-Path $work 'build.log'
+    $prev = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    $code = 0
+    try {
+        if ($BuildCheckScript) {
+            $o = @(& powershell -NoProfile -ExecutionPolicy Bypass -File $BuildCheckScript -Repo $Repo 2>&1 | ForEach-Object { $_.ToString() })
+            $code = $LASTEXITCODE
+            Set-Content -LiteralPath $log -Value $o -Encoding utf8
+        } else {
+            if (-not (Get-Command zig -ErrorAction SilentlyContinue)) {
+                $lines += 'BUILD CHECK SKIPPED: zig is not on PATH - the merged tree was not compiled'
+                return @{ Ok = $true; Broken = $false; Lines = $lines }
+            }
+            $cache = $env:ZIG_GLOBAL_CACHE_DIR
+            if (-not $cache) { $cache = (Split-Path -Qualifier $Repo) + '\zig-global-cache' }
+            $steps = @(
+                @('build', '-Dapp-runtime=win32', '-Doptimize=Debug', '--prefix', (Join-Path $work 'win32')),
+                @('build', '-Dapp-runtime=none', '--prefix', (Join-Path $work 'lib'))
+            )
+            Set-Content -LiteralPath $log -Value '' -Encoding utf8
+            $saved = $env:ZIG_GLOBAL_CACHE_DIR
+            $env:ZIG_GLOBAL_CACHE_DIR = $cache
+            Push-Location -LiteralPath $Repo
+            try {
+                foreach ($s in $steps) {
+                    Add-Content -LiteralPath $log -Value ("> zig " + ($s -join ' ')) -Encoding utf8
+                    $o = @(& zig @s 2>&1 | ForEach-Object { $_.ToString() })
+                    $code = $LASTEXITCODE
+                    if ($o.Count -gt 0) { Add-Content -LiteralPath $log -Value $o -Encoding utf8 }
+                    if ($code -ne 0) { break }
+                }
+            } finally { Pop-Location; $env:ZIG_GLOBAL_CACHE_DIR = $saved }
+        }
+    } finally { $ErrorActionPreference = $prev }
+    if ($code -eq 0) {
+        $lines += '  merged tree builds - pushing'
+        return @{ Ok = $true; Broken = $false; Lines = $lines }
+    }
+    $lines += "REBASE BROKE THE BUILD: the merged tree does not compile (exit $code) - NOT pushed; the commit stays local"
+    $lines += '  pulled source commits:'
+    foreach ($l in $pulledLines) { $lines += "    $l" }
+    $lines += "  build log: $log"
+    $tail = @(Get-Content -LiteralPath $log -ErrorAction SilentlyContinue | Where-Object { $_.Trim() } | Select-Object -Last 25)
+    foreach ($t in $tail) { $lines += "    | $t" }
+    $lines += '  fix the merge on top of this commit, commit that through the guard, and it pushes both'
+    return @{ Ok = $false; Broken = $true; Lines = $lines }
+}
+
 function Invoke-PushWithRebase {
     $lines = @()
+    $preHead = (Git-Run @('rev-parse', 'HEAD')).Out
     $pushArgs = Get-PushArgs
     $res = Git-Run $pushArgs
     if ($res.Code -eq 0) { return @{ Ok = $true; Out = $res.Out; Rebased = $false; Merged = $false; Lines = $lines } }
@@ -591,6 +706,12 @@ function Invoke-PushWithRebase {
         }
         return @{ Ok = $false; Rebased = $true; Merged = $false; Lines = $lines
             Out = ("push was rejected and the rebase did not run:`n" + $pr.Out) }
+    }
+    $bc = Invoke-PostPullBuildCheck $preHead
+    foreach ($l in @($bc.Lines)) { $lines += $l }
+    if (-not $bc.Ok) {
+        return @{ Ok = $false; BuildBroken = $true; Rebased = ($merges -eq 0); Merged = ($merges -gt 0); Lines = $lines
+            Out = 'the merged tree did not build, so it was not pushed (T2190)' }
     }
     $res2 = Git-Run $pushArgs
     return @{ Ok = ($res2.Code -eq 0); Out = $res2.Out; Rebased = ($merges -eq 0); Merged = ($merges -gt 0); Lines = $lines }
@@ -1129,6 +1250,7 @@ switch ($Action) {
         # its type conversion before a line of this block ran.
         $pushRes = Invoke-PushWithRebase
         $pushRes.Lines
+        if ($pushRes.BuildBroken) { "ERROR push held back: $($pushRes.Out)"; exit 8 }
         if (-not $pushRes.Ok) { "ERROR push failed:"; $pushRes.Out; exit 6 }
         if ($pushRes.Rebased) {
             # A rebase rewrites the commit, so the sha reported before it is no
@@ -1157,6 +1279,7 @@ switch ($Action) {
         if ($st.Count -eq 0) { "push clean ($($st.Branch) == $($st.Upstream))"; exit 0 }
         $res = Invoke-PushWithRebase
         $res.Lines
+        if ($res.BuildBroken) { "ERROR push held back: $($res.Out)"; exit 8 }
         if (-not $res.Ok) { "ERROR push failed:"; $res.Out; exit 6 }
         $how = if ($res.Merged) { ' (after a merge pull, which kept the merge commit intact)' } elseif ($res.Rebased) { ' (after a rebase onto the moved branch)' } else { '' }
         "PUSHED $($st.Count) commit(s) to $($st.Upstream)$how"

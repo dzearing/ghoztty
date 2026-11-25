@@ -2154,6 +2154,107 @@ Assert 'W28f5 the pushed head carries the ORIGINAL merge commit (both parents), 
     ($mKept -and $mSideOk -and @($mLog | Where-Object { $_ -eq 'the other lane raced the merge' }).Count -eq 1 -and
      @($mLog | Where-Object { $_ -eq 'main commit a' }).Count -eq 1)
 
+# T2190: a push-rebase that pulls in the other lane's source is compiled before
+# it is pushed. The 2026-10-23 shape: lane b gives a function a new argument and
+# updates every caller it knows of; this lane adds a new caller with the old
+# arity. Git rebases that without a conflict and the result does not build. The
+# "compiler" here is a fake (-BuildCheckScript) that knows exactly that rule, so
+# the section measures the guard's decision, not zig.
+$tBare = Join-Path $root 'bc-remote.git'
+$tMine = Join-Path $root 'bc-mine'
+$tTheirs = Join-Path $root 'bc-theirs'
+$tFake = Join-Path $root 'bc-fake'
+New-Item -ItemType Directory -Force $tFake | Out-Null
+$tFakeScript = Join-Path $tFake 'fake-build.ps1'
+$tRan = Join-Path $tFake 'ran.txt'
+Set-Content -Path $tFakeScript -Encoding ascii -Value @'
+param([string]$Repo)
+Add-Content -LiteralPath (Join-Path $PSScriptRoot 'ran.txt') -Value $Repo
+$mod = Get-Content -Raw -LiteralPath (Join-Path $Repo 'src\mod.zig')
+if ($mod -notmatch 'resize') { exit 0 }
+$bad = @(Get-ChildItem -LiteralPath (Join-Path $Repo 'src') -Filter *.zig |
+    Where-Object { $_.Name -ne 'mod.zig' -and (Get-Content -Raw -LiteralPath $_.FullName) -match 'at\(x\)' })
+if ($bad.Count -gt 0) { "error: at() expects 2 arguments, found 1 in $($bad[0].Name)"; exit 1 }
+exit 0
+'@
+function TCommit([string]$dir, [string]$rel, [string]$text, [string]$msg) {
+    $full = Join-Path $dir $rel
+    New-Item -ItemType Directory -Force (Split-Path -Parent $full) | Out-Null
+    Set-Content -Path $full -Value $text
+    git -C $dir add -- $rel 2>$null
+    git -C $dir -c core.hooksPath= commit -q -m $msg 2>$null
+}
+function TGuard([string[]]$argList) {
+    $o = & powershell -NoProfile -ExecutionPolicy Bypass -File $cgScript @argList -Repo $tMine -BuildCheckScript $tFakeScript 2>&1 |
+        ForEach-Object { $_.ToString() } | Out-String
+    return @{ Code = $LASTEXITCODE; Out = $o.Trim() }
+}
+function TRev([string]$dir, [string]$ref) { (& git -C $dir rev-parse $ref 2>$null | Select-Object -First 1) }
+git init -q --bare $tBare 2>$null
+git clone -q $tBare $tMine 2>$null
+git -C $tMine config user.email 't@t' 2>$null; git -C $tMine config user.name 't' 2>$null
+TCommit $tMine 'src/mod.zig' 'pub fn at(x) {}' 'seed mod'
+TCommit $tMine 'src/user.zig' 'at(x)' 'seed user'
+git -C $tMine push -q -u origin HEAD 2>$null
+git clone -q $tBare $tTheirs 2>$null
+git -C $tTheirs config user.email 't@t' 2>$null; git -C $tTheirs config user.name 't' 2>$null
+$tBranch = (& git -C $tMine symbolic-ref --short HEAD 2>$null | Select-Object -First 1)
+
+# The other lane changes the signature and its known caller, and lands first.
+Set-Content -Path (Join-Path $tTheirs 'src\mod.zig') -Value 'pub fn at(x, resize) {}'
+Set-Content -Path (Join-Path $tTheirs 'src\user.zig') -Value 'at(x, resize)'
+git -C $tTheirs add -A 2>$null
+git -C $tTheirs -c core.hooksPath= commit -q -m 'lane b gave at a resize argument' 2>$null
+git -C $tTheirs push -q origin HEAD 2>$null
+$tTheirsHead = TRev $tTheirs 'HEAD'
+# This lane adds a caller with the old arity: textually clean, does not build.
+Set-Content -Path (Join-Path $tMine 'src\caller2.zig') -Value 'at(x)'
+Remove-Item -LiteralPath $tRan -Force -ErrorAction SilentlyContinue
+$r = TGuard @('commit', '-Paths', 'src/caller2.zig', '-Message', 'a new caller of at')
+$tRemote = TRev $tBare "refs/heads/$tBranch"
+$tAhead = (& git -C $tMine rev-list --count '@{u}..HEAD' 2>$null | Select-Object -First 1)
+Assert 'W28t1 a push-rebase that pulled source compiles the merged tree, and a red build is NOT pushed (exit 8, REBASE BROKE THE BUILD)' `
+    ($r.Code -eq 8 -and $r.Out -match 'REBASE BROKE THE BUILD' -and (Test-Path $tRan) -and $tRemote -eq $tTheirsHead)
+Assert 'W28t2 the refusal names the pulled source commit, and the commit stays local on top of it' `
+    ($r.Out -match 'lane b gave at a resize argument' -and "$tAhead" -eq '1' -and (TRev $tMine 'HEAD~1') -eq $tTheirsHead)
+
+# Negative control: the same broken pair, check disabled, is pushed. The other
+# lane moves the trunk again with source so the push is rejected and rebased.
+TCommit $tTheirs 'src/other.zig' 'pub fn b() {}' 'lane b adds other'
+git -C $tTheirs push -q origin HEAD 2>$null
+Remove-Item -LiteralPath $tRan -Force -ErrorAction SilentlyContinue
+$r = TGuard @('push', '-NoBuildCheck', '-Reason', 'negative control')
+$tRemote = TRev $tBare "refs/heads/$tBranch"
+& powershell -NoProfile -ExecutionPolicy Bypass -File $tFakeScript -Repo $tMine 2>&1 | Out-Null
+$tBrokenCode = $LASTEXITCODE
+Remove-Item -LiteralPath $tRan -Force -ErrorAction SilentlyContinue
+Assert 'W28t3 control: with -NoBuildCheck the broken pair IS pushed, and says the check was skipped' `
+    ($r.Code -eq 0 -and $r.Out -match 'BUILD CHECK SKIPPED \(-NoBuildCheck\): negative control' -and
+     $tRemote -eq (TRev $tMine 'HEAD') -and $tBrokenCode -eq 1)
+
+# The common path costs nothing: a pull with no source in it runs no build.
+# (This lane's commit also repairs the caller, so the tree builds again.)
+TCommit $tTheirs 'docs/notes.md' 'notes' 'lane b wrote docs only'
+git -C $tTheirs pull -q --rebase 2>$null
+git -C $tTheirs push -q origin HEAD 2>$null
+Set-Content -Path (Join-Path $tMine 'src\caller2.zig') -Value 'at(x, resize)'
+$r = TGuard @('commit', '-Paths', 'src/caller2.zig', '-Message', 'repair the caller')
+$tRemote = TRev $tBare "refs/heads/$tBranch"
+Assert 'W28t4 a pull with no source changes pushes without building' `
+    ($r.Code -eq 0 -and $r.Out -match 'push rejected' -and $r.Out -match 'PUSHED' -and
+     -not (Test-Path $tRan) -and $r.Out -notmatch 'building the merged tree' -and $tRemote -eq (TRev $tMine 'HEAD'))
+
+# And a source pull that still builds is compiled, then pushed.
+git -C $tTheirs pull -q --rebase 2>$null
+TCommit $tTheirs 'src/other.zig' 'pub fn b(y) {}' 'lane b changes other'
+git -C $tTheirs push -q origin HEAD 2>$null
+Set-Content -Path (Join-Path $tMine 'src\caller3.zig') -Value 'at(x, resize)'
+$r = TGuard @('commit', '-Paths', 'src/caller3.zig', '-Message', 'a correct new caller')
+$tRemote = TRev $tBare "refs/heads/$tBranch"
+Assert 'W28t5 a source pull whose merged tree builds is compiled and then pushed' `
+    ($r.Code -eq 0 -and (Test-Path $tRan) -and $r.Out -match 'merged tree builds' -and $r.Out -match 'PUSHED' -and
+     $tRemote -eq (TRev $tMine 'HEAD'))
+
 # T2047: the merge commit itself goes through the guard. git refuses a pathspec
 # commit while MERGE_HEAD exists, so T1902's main merge was committed bare -
 # no lock, no read-back, no push - and its rejected push was then rebased,
