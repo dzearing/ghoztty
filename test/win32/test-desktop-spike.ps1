@@ -29,9 +29,27 @@
 #               background desktop is not the input desktop. Posted
 #               WM_KEYDOWN works, and modifier chords work when the key state
 #               is set on the input queue we share via AttachThreadInput.
-#   capture   - SPLIT, and the split is the whole answer. The window CHROME is
-#               captured faithfully by PrintWindow; the TERMINAL SURFACE is not
-#               captured at all. CopyFromScreen/BitBlt is dead outright.
+#   capture   - CHANGED AGAIN 2026-11-24 (T2206): PrintWindow now returns the
+#               chrome AND the terminal surface, composed - the shell banner and
+#               prompt are legible in the capture, and typing changes it.
+#               CopyFromScreen/BitBlt is still dead outright. The T1115 text
+#               below is the 2026-09-02 state (surface flat), kept as history.
+#
+# ---- T2206: the surface is composed now, and why the oracle changed ----
+#
+# Run 20/20 red on 2026-10-24 (T1280): the surface no longer scored flat
+# (distinct ~1000 where T1115 measured 2). Measured 2026-11-24 with the capture
+# saved to a PNG: the surface region holds the window gradient (glass panes,
+# T1833) AND the terminal's own text over it, so the surface really is
+# captured, not just the gradient behind it. (--background-opacity=1 gave a
+# byte-identical capture: that flag does not turn the glass off, so it was no
+# lever for separating the two; the PNG was.) The flat-surface assertions
+# encoded an answer that stopped being true; they are replaced by CAP-4's
+# change oracle (diff the surface before/after posted keys), which a gradient,
+# a flat fill or a stale bitmap cannot pass. The same run found the input
+# assertions red for a different reason: since T3185 `+list`'s window `id` is
+# not the hwnd (see PaneOf). The CAPTURE LIMIT in `lib\TestDesktop.ps1`
+# (measured on the CHILD hwnd) is re-checked by its own follow-up task.
 #
 # ---- T1115: how the capture answer changed, and why the old one was wrong ----
 #
@@ -92,7 +110,8 @@
 # thing that matters: on a BACKGROUND desktop the terminal surface cannot be
 # asserted, and Get-TestWindowPixels is right to throw on a uniform interior.
 #
-# THE DECISION THIS SPIKE PRODUCES, for T1100 and the pixel-probe scripts:
+# THE DECISION THIS SPIKE PRODUCED on 2026-09-02, for T1100 and the
+# pixel-probe scripts (the first bullet is what T2206 re-opens):
 #
 #   * A probe that asserts TERMINAL CONTENT pixels (glyph colors, cursor,
 #     selection highlight, anything the renderer draws into the terminal
@@ -154,7 +173,7 @@ function Assert([bool]$cond, [string]$label) {
     else { $script:fail++; Write-Host "FAIL  $label" -ForegroundColor Red }
 }
 
-Add-Type @'
+Add-Type -ReferencedAssemblies System.Drawing -TypeDefinition @'
 using System;
 using System.Text;
 using System.Threading;
@@ -259,8 +278,17 @@ public class DeskSpike {
     public static bool ChordSent = false;
     public static int SendInputAccepted = -1;
     public static int SendInputLastError = -1;
+    // T2206: the surface oracle. Two PW_RENDERFULLCONTENT captures of the
+    // whole window, one before the posted keys and one after they are reported
+    // on screen, diffed pixel for pixel over the GhozttyTerminal rect. Static
+    // paint (the window gradient behind glass panes, a flat fill) cannot change
+    // between the two; only a composed surface can.
+    public static int SurfX = -1, SurfY = -1, SurfW = -1, SurfH = -1;
+    public static int SurfaceChangedPx = -1;   // -1 = a capture failed
+    public static int ChromeChangedPx = -1;    // the band above the surface, informational
     // T1280: what the input assertions are scored on, all read back over IPC
-    // for the window the keys were posted to (TopHwnd == its +list `id`).
+    // for the window the keys were posted to (the one window on a clean slate,
+    // T2206 - see PaneOf).
     public static long TopHwnd = 0;
     public static string Pane = null;
     public static bool PreHadToken = false;
@@ -282,18 +310,38 @@ public class DeskSpike {
         }
     }
 
-    // The window whose +list `id` is `hwnd`: its first tab's pane name, and
-    // its tab count (one "splits" per tab). null when it is not listed.
+    // The spike's window: its first tab's pane name, and its tab count (one
+    // "splits" per tab). null unless +list reports EXACTLY ONE window.
+    //
+    // T2206: this used to find the window by `+list`'s `id` == its hwnd. Since
+    // single-window mode (T3185) a workspace's `id` is the Window pointer, not
+    // the hwnd, so the lookup never matched and every input assertion read
+    // tabs=-1. +list carries no hwnd at all, so the window is identified by
+    // being the only one: the run starts from a full reset, so a second window
+    // (the 2026-09-02 shape T1280 guarded against) makes this null - a red,
+    // never a wrong window answering. Every window object carries
+    // `title_set_by_user` exactly once and no tab or pane does.
     static string PaneOf(string exe, long hwnd, out int tabs) {
         tabs = -1;
         string json = Cli(exe, "+list --json");
-        int at = json.IndexOf("{\"id\":\"" + hwnd + "\"");
+        if (System.Text.RegularExpressions.Regex.Matches(json, "\"title_set_by_user\":").Count != 1) return null;
+        int at = json.IndexOf("\"windows\":[{\"id\":\"");
         if (at < 0) return null;
         int end = json.IndexOf(",\"chrome\":", at);
         string w = end < 0 ? json.Substring(at) : json.Substring(at, end - at);
         tabs = System.Text.RegularExpressions.Regex.Matches(w, "\"splits\":").Count;
         var m = System.Text.RegularExpressions.Regex.Match(w, "\"name\":\"([^\"]+)\"");
         return m.Success ? m.Groups[1].Value : null;
+    }
+
+    // Tabs across EVERY window +list reports (one "splits" per tab). The chord
+    // below is scored on this: in single-window mode ctrl+shift+t opens a new
+    // WORKSPACE, which +list reports as a second window (T3182, Mac `newTab`),
+    // so the spike's own window keeps one tab and PaneOf stops answering.
+    static int TotalTabs(string exe) {
+        string json = Cli(exe, "+list --json");
+        if (json.IndexOf("\"windows\":[") < 0) return -1;
+        return System.Text.RegularExpressions.Regex.Matches(json, "\"splits\":").Count;
     }
 
     static void Key(ushort vk, bool up) {
@@ -318,6 +366,42 @@ public class DeskSpike {
     // mean ~0 AND distinct == 1. Real window content is neither.
     static void Sample(IntPtr hdcMem, int w, int h, out int meanLum, out int distinct) {
         SampleRect(hdcMem, 0, 0, w, h, out meanLum, out distinct);
+    }
+
+    // T2206: a full-resolution PW_RENDERFULLCONTENT capture of `top` as packed
+    // 0xRRGGBB, or null when PrintWindow fails.
+    static int[] Snap(IntPtr top, int w, int h) {
+        IntPtr hdcWin = GetDC(top);
+        IntPtr mem = CreateCompatibleDC(hdcWin);
+        IntPtr bmp = CreateCompatibleBitmap(hdcWin, w, h);
+        IntPtr old = SelectObject(mem, bmp);
+        bool ok = PrintWindow(top, mem, 2 /*PW_RENDERFULLCONTENT*/);
+        SelectObject(mem, old);
+        int[] px = null;
+        if (ok) {
+            using (var b = System.Drawing.Image.FromHbitmap(bmp)) {
+                var data = b.LockBits(new System.Drawing.Rectangle(0, 0, w, h),
+                    System.Drawing.Imaging.ImageLockMode.ReadOnly,
+                    System.Drawing.Imaging.PixelFormat.Format32bppRgb);
+                px = new int[w * h];
+                for (int y = 0; y < h; y++) Marshal.Copy(IntPtr.Add(data.Scan0, y * data.Stride), px, y * w, w);
+                b.UnlockBits(data);
+            }
+        }
+        DeleteObject(bmp); DeleteDC(mem); ReleaseDC(top, hdcWin);
+        return px;
+    }
+
+    // Pixels that differ between two Snap()s inside a rect; -1 when either is missing.
+    static int Changed(int[] a, int[] b, int w, int x0, int y0, int rw, int rh) {
+        if (a == null || b == null || rw <= 0 || rh <= 0) return -1;
+        int n = 0;
+        for (int y = y0; y < y0 + rh; y++)
+            for (int x = x0; x < x0 + rw; x++) {
+                int i = y * w + x;
+                if (i >= 0 && i < a.Length && ((a[i] ^ b[i]) & 0xFFFFFF) != 0) n++;
+            }
+        return n;
     }
 
     // The same measurement over an arbitrary sub-rect of the bitmap, so the
@@ -474,6 +558,7 @@ public class DeskSpike {
                         int sx = sr.left - r.left, sy = sr.top - r.top;
                         int sw = sr.right - sr.left, sh = sr.bottom - sr.top;
                         note("GhozttyTerminal rect in window coords " + sx + "," + sy + " " + sw + "x" + sh);
+                        SurfX = sx; SurfY = sy; SurfW = sw; SurfH = sh;
                         if (sw > 8 && sh > 8) {
                             int sm, sd; SampleRect(hdcMem2, sx, sy, sw, sh, out sm, out sd);
                             PrintSurfaceMeanLum = sm; PrintSurfaceDistinct = sd;
@@ -532,6 +617,9 @@ public class DeskSpike {
             Pane = pane;
             note("app answers for window " + top + ": pane=" + pane + " tabs=" + TabsBefore);
             if (pane != null) PreHadToken = Cli(exe, "+read --name=" + pane + " --lines=10").ToLower().Contains("spikeb");
+            // T2206: the BEFORE half of the surface oracle, taken once the app
+            // has answered (so the prompt is up) and before a key is posted.
+            int[] snapBefore = (WinW > 0 && WinH > 0) ? Snap(top, WinW, WinH) : null;
 
             // --- input path 2: posted key messages. The terminal class skips
             // TranslateMessage (App.run) and calls ToUnicode itself, so a bare
@@ -547,6 +635,16 @@ public class DeskSpike {
                 Thread.Sleep(200);
             }
             note("posted keys landed after " + KeysLandedMs + "ms (-1 = not within 10s)");
+            // T2206: the AFTER half. +read reports the text from the terminal
+            // model, which runs ahead of the next frame, so give the renderer a
+            // few frames before capturing what it drew.
+            if (KeysLandedMs >= 0 && snapBefore != null) {
+                Thread.Sleep(600);
+                int[] snapAfter = Snap(top, WinW, WinH);
+                SurfaceChangedPx = Changed(snapBefore, snapAfter, WinW, SurfX, SurfY, SurfW, SurfH);
+                ChromeChangedPx = Changed(snapBefore, snapAfter, WinW, 0, 0, WinW, SurfY);
+            }
+            note("surface pixels changed by the posted keys: " + SurfaceChangedPx + " (chrome band: " + ChromeChangedPx + ")");
 
             // --- input path 3: a MODIFIER CHORD by the same route. Posted
             // messages do not move the key state that the app reads back for
@@ -566,7 +664,7 @@ public class DeskSpike {
             PostMessageW(target, 0x0100, (IntPtr)0x54, IntPtr.Zero); // 'T'
             clock.Restart();
             for (int i = 0; i < 50 && pane != null; i++) {
-                int tabs; PaneOf(exe, top.ToInt64(), out tabs);
+                int tabs = TotalTabs(exe);
                 if (tabs > TabsBefore) { TabsAfter = tabs; ChordLandedMs = (int)clock.ElapsedMilliseconds; break; }
                 Thread.Sleep(200);
             }
@@ -576,7 +674,7 @@ public class DeskSpike {
             ks[0x11] = 0; ks[0xA2] = 0; ks[0x10] = 0; ks[0xA0] = 0;
             SetKeyboardState(ks);
             ChordSent = true;
-            if (TabsAfter < 0) { int tabs; PaneOf(exe, top.ToInt64(), out tabs); TabsAfter = tabs; }
+            if (TabsAfter < 0) TabsAfter = TotalTabs(exe);
             note("chord: tabs " + TabsBefore + " -> " + TabsAfter + " after " + ChordLandedMs + "ms (-1 = not within 10s); GetFocus=" + GetFocus());
             AttachThreadInput(myTid, appTid, false);
         } catch (Exception e) {
@@ -654,7 +752,10 @@ Reset-GhozttyTestState -Exe $exe | Out-Null
 [DeskSpike]::StartForegroundWatch()
 
 Write-Host "--- running spike on desktop 'ghoztty-spike' (the user's desktop must not flicker) ---"
-[DeskSpike]::Run($exe, 'ghoztty-spike', '--window-theme=light --window-show-tab-bar=always', 1500)
+# --cursor-style-blink=false (T2206): CAP-4 diffs the surface before/after the
+# posted keys, and a blinking cursor changes it on its own (312 px with no key
+# posted, measured 2026-11-24; 0 with blink off, 1030 with the keys).
+[DeskSpike]::Run($exe, 'ghoztty-spike', '--window-theme=light --window-show-tab-bar=always --cursor-style-blink=false', 1500)
 
 $spikePid = [DeskSpike]::Pid
 Write-Host ([DeskSpike]::Log)
@@ -697,7 +798,9 @@ Assert ($si -eq 0 -and $sierr -eq 5 -and -not $sawSendInput) `
 Assert ([DeskSpike]::KeysLandedMs -ge 0) `
     "posted WM_KEYDOWN reaches the terminal on a background desktop (landed after $([DeskSpike]::KeysLandedMs)ms)"
 # INPUT-3: and a modifier chord survives the same route (key state set over
-# the attached input queue). ctrl+shift+t must have opened exactly one tab.
+# the attached input queue). ctrl+shift+t must have opened exactly one tab -
+# counted across every window, since in single-window mode it opens a new
+# workspace (T2206; see TotalTabs).
 Write-Host "tabs around the posted ctrl+shift+t: $tabsBefore -> $tabsAfter"
 Assert ([DeskSpike]::ChordSent -and $tabsBefore -ge 1 -and $tabsAfter -eq ($tabsBefore + 1)) `
     "a posted ctrl+shift+t chord fires its keybind (tabs $tabsBefore -> $tabsAfter, want +1)"
@@ -731,16 +834,21 @@ Assert ([DeskSpike]::PrintFullOk) "PrintWindow(PW_RENDERFULLCONTENT) succeeds on
 # for the sampler and the bitmap: if this were flat, CAP-4 would prove nothing.
 Assert ($cd -gt 4) `
     "PrintWindow returns the window CHROME on a background desktop (meanLum=$cl, distinct=$cd)"
-# CAP-4: the terminal SURFACE does not come back. Scored over everything below
-# the chrome band, full width, so it cannot be a rect-mapping artefact.
-Assert ($wd -ge 0 -and $wd -le 2) `
-    "the terminal SURFACE comes back flat on a background desktop (meanLum=$wl, distinct=$wd - uncomposed)"
-# CAP-5: and the two readings are far apart, so CAP-3/CAP-4 are measuring a real
-# split rather than a sampler that has quietly degenerated.
-Assert ($cd -gt ($wd * 8)) `
-    "chrome and surface differ by an order of magnitude (chrome=$cd vs surface=$wd)"
-# CAP-6: PW_RENDERFULLCONTENT buys nothing here - the un-flagged PrintWindow
-# returns the same shape. Recorded so the flag is not blamed for the outcome.
+# CAP-4 (T2206): the terminal SURFACE now comes back COMPOSED. It used to be a
+# flat fill (distinct 1-2, T1115) and was asserted flat; measured 2026-11-24 the
+# capture holds the shell banner and prompt, legible. A distinct-colour count
+# cannot be the oracle any more - glass panes (T1833) put the window gradient
+# behind the surface, and a gradient alone scores hundreds of colours - so the
+# oracle is CHANGE: the surface rect is diffed between a capture taken before
+# the posted keys and one taken after +read reports them. A gradient, a flat
+# fill or a stale bitmap all diff to 0; only a surface the renderer is drawing
+# into changes. 50 px is well under one glyph run of "spikeb" at any DPI.
+$scp = [DeskSpike]::SurfaceChangedPx; $ccp = [DeskSpike]::ChromeChangedPx
+Write-Host "CAPTURE    surface px changed by the posted keys: $scp (chrome band: $ccp)"
+Assert ([DeskSpike]::KeysLandedMs -ge 0 -and $scp -ge 50) `
+    "the terminal SURFACE is composed on a background desktop: the posted keys change it in a PrintWindow capture ($scp px changed)"
+# CAP-6: the un-flagged PrintWindow succeeds too. Its region scores are printed
+# above for comparison; it is not part of the oracle.
 Assert ([DeskSpike]::PrintPlainOk) `
     "PrintWindow(flags=0) also succeeds, so the flag is not what decides this (meanLum=$zl, distinct=$zd)"
 
