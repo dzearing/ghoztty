@@ -40539,3 +40539,7 @@ WebKitGTK's script message carries no frame, and a page-world handler is visible
 ## 2026-11-25 00:13 lane b - T2214 closed: already fixed by ca804122b
 - What: the stale `@user-desktop-launch: update-real-msi.ps1` declaration in test/win32/lib/TestDesktop.ps1 was removed in ca804122b (T1332), after bd05206f7 (T2202) had moved that script's launches to the test desktop. Closed with that commit; no code change. The `desktop-launch` guard-ack this card held is no longer needed.
 - Evidence: desktop-launch-audit.ps1 ALL PASS (71 assertions) via acceptance-parallel from 89ccf72cc; guard-due reports GUARD CURRENT desktop-launch. No Mac half: test-only.
+
+## 2026-11-25 00:25 lane b - T2215 closed: the maximized "stale pane outline" is a capture artifact, not a repaint defect
+- What: re-captured a maximize at 0s and 3s with child rects. The children are at the maximized size immediately, and every stale pixel lies inside the GhozttyTerminal child's rect (old screen memory: the window at its earlier sizes). Chrome around it repaints correctly. That is the T214 PrintWindow limit. caption-bar.ps1 section 6 now blanks the terminal rect before saving and scoring its maximized capture, so the Distinct check can no longer pass on that garbage.
+- Evidence: caption-bar.ps1 ALL PASS (54 assertions, maximized Distinct 369); harness floor (scoped) PASS + stamped. No Mac half: test-only.

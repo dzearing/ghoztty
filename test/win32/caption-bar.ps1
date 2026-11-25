@@ -652,6 +652,26 @@ try {
         # suite. Its painted region is the caption band alone, so DISTINCT is
         # the axis that has to see it; TopShare is an area fraction and reads
         # the flat glass below as ~0.97 at this size by construction.
+        #
+        # T2215: blank the terminal surface first. PrintWindow cannot reproduce
+        # the GPU-presented GhozttyTerminal child (T214), and after a maximize
+        # it hands back stale screen memory in that rect - the window itself
+        # at its earlier sizes and positions, which read as a "pre-maximize
+        # pane outline" and was filed as a repaint defect. Measured 2026-11-25:
+        # every stale pixel sat inside the child's rect, the child itself was
+        # already at the maximized size (3734x2032), and the caption, sidebar
+        # and frame around it were repainted at the new size. Left in, that
+        # garbage also fed the Distinct score below, so the check could pass
+        # on noise. Filled with the launch --background (#000000), which is
+        # what an empty terminal paints anyway.
+        $gfx = [System.Drawing.Graphics]::FromImage($mshot.Bitmap)
+        try {
+            foreach ($tc in @($mshot.Children | Where-Object { $_.Class -eq 'GhozttyTerminal' })) {
+                $gfx.FillRectangle([System.Drawing.Brushes]::Black,
+                    ($tc.Left - $mshot.Left), ($tc.Top - $mshot.Top),
+                    ($tc.Right - $tc.Left), ($tc.Bottom - $tc.Top))
+            }
+        } finally { $gfx.Dispose() }
         $mPng = Join-Path $env:TEMP 'caption-bar-maximized.png'
         $mshot.Bitmap.Save($mPng, [System.Drawing.Imaging.ImageFormat]::Png)
         $mContent = Get-TestCaptureContent -Shot $mshot

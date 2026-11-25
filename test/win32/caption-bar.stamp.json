@@ -1,16 +1,16 @@
 {
     "guard":  "caption-bar",
     "script":  "test/win32/caption-bar.ps1",
-    "generated":  "2026-11-22T13:06:38-08:00",
-    "commit":  "412ba5a0c",
+    "generated":  "2026-11-25T00:19:23-08:00",
+    "commit":  "91eca0059",
     "uncommitted":  [
                         "test/win32/caption-bar.ps1"
                     ],
     "files":  {
                   "src/apprt/win32/caption_layout.zig":  "39e4484c2478bd4b72a4053f80aaf39c50510637ab9b63f70a5b21ff67744603",
-                  "test/win32/caption-bar.ps1":  "f3e4c65358f5a31ee2b830b5d8db87ffe56ed6fb6f32d89bc0175d56c1a4beb9"
+                  "test/win32/caption-bar.ps1":  "c446320bbebd56630cb7668d7fc137b0f50b5607443fbf6dd6e92ecb8cef0b73"
               },
     "code":  {
-                 "test/win32/caption-bar.ps1":  "code1:b252d9cd9870d0e4cb8bdc89c2dba87edf312c77c00f14e9bb41ac5422e02a05"
+                 "test/win32/caption-bar.ps1":  "code1:cb7c15da4a3da2bcdde04aec93367b5b981bc02a610aa6cd4c70b44673dfe9b2"
              }
 }
