@@ -1,8 +1,8 @@
 {
     "guard":  "desktop-launch",
     "script":  "test/win32/desktop-launch-audit.ps1",
-    "generated":  "2026-11-24T22:27:38-08:00",
-    "commit":  "9941adbf0",
+    "generated":  "2026-11-24T22:49:13-08:00",
+    "commit":  "9546dda10",
     "uncommitted":  [
 
                     ],

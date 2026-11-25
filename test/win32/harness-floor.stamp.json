@@ -1,10 +1,10 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-11-24T22:48:28-08:00",
-    "commit":  "9941adbf0",
+    "generated":  "2026-11-24T23:03:17-08:00",
+    "commit":  "9546dda10",
     "uncommitted":  [
-
+                        "test/win32/website-windows-download.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "cfa23792d110d499fa4086697daa516d218d0d110e594a7452167a81220ee15e",
@@ -658,7 +658,7 @@
                   "test/win32/viewer-worktree.ps1":  "ff312a507bf64b11b5bca28f265698b222a944b1685f5ddb94322bcc01c5880a",
                   "test/win32/viewer-worktree-port.ps1":  "b991f340cf0f1f4a34fa3edab4305aad56e131ad7115a9e01417343306fe31e2",
                   "test/win32/vt-escape-scan.ps1":  "52f5f59c717c2d090c6d78f7594839a28011843fe58c08df59e4b1bf8fcff4ea",
-                  "test/win32/website-windows-download.ps1":  "03a4dc88431e4730b1d947194b70d11e756db9762117ea72ba9c2bb9dbdc8594",
+                  "test/win32/website-windows-download.ps1":  "0d15df95f081c078a825ad6353997bff86604c314f10a0af55daf476127f3cae",
                   "test/win32/webview-browser-exit.ps1":  "fc5366b411e3c79e5be9d1a529b45e0b66c1047558d1680fb5ee2e5f4e9e9a2d",
                   "test/win32/whats-new.ps1":  "2dd7e75d9014532aa4be67f64269147a6245630877a8b1ff3b4e54660a7609d2",
                   "test/win32/whea-report.ps1":  "e4cbc0522661b29c95d827023f4f40b0168935dd852021435e2a930c4c00ad90",

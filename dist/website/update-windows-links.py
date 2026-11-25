@@ -8,7 +8,8 @@ can never advertise a Windows build that does not exist yet -- which is the
 exact failure T38 fixed on the artifact side (the Mac channel reached v1.28.0
 while Windows sat at win-v1.4.1 because the Windows step needed a human).
 
-Three things move, and they are found by their element id rather than by
+Three things move (four once the page offers the setup exe -- see SETUP_ID),
+and they are found by their element id rather than by
 matching a version number anywhere in the page. That is deliberate: a regex
 loose enough to find "the version" also finds Ghoztty-1.28.0-arm64.dmg and
 would silently retarget the macOS download at a Windows tag.
@@ -32,6 +33,19 @@ REPO_URL = "https://github.com/dzearing/ghoztty"
 # asserts all three agree.
 MSI_NAME = "Ghoztty-{v}-x64.msi"
 ZIP_NAME = "Ghoztty-portable-{v}-x64.zip"
+# The installer's front door (T2197), published beside the MSI since T2198.
+SETUP_NAME = "Ghoztty-Setup-{v}-x64.exe"
+
+# The page's setup download. OPTIONAL while the deployed page predates it, and
+# only while it does (T3703): no win-v release carried the setup asset until
+# T2198, so the page cannot offer it before the first release that does, and
+# the strict-anchor rule above would fail that very release on a page that has
+# never had the anchor. Absent is said out loud, never silent; present is held
+# to the same exactly-one rule as every other anchor. T2199 puts the anchor on
+# the page and makes it REQUIRED (drop the name from OPTIONAL_IDS) in the same
+# change.
+SETUP_ID = "win-setup-link"
+OPTIONAL_IDS = {SETUP_ID}
 
 
 def asset_url(version, name):
@@ -75,7 +89,19 @@ def replace_text(html, element_id, text):
     return html
 
 
+def count_id(html, element_id):
+    return len(re.findall(r'id="' + re.escape(element_id) + r'"', html))
+
+
 def update(html, version):
+    if SETUP_ID in OPTIONAL_IDS and count_id(html, SETUP_ID) == 0:
+        print(
+            "note: the page has no id={0!r} yet, so it does not offer "
+            "Ghoztty-Setup.exe; the MSI stays its Windows download "
+            "(T2199 adds the anchor)".format(SETUP_ID)
+        )
+    else:
+        html = replace_href(html, SETUP_ID, asset_url(version, SETUP_NAME))
     html = replace_href(html, "win-msi-link", asset_url(version, MSI_NAME))
     html = replace_href(html, "win-zip-link", asset_url(version, ZIP_NAME))
     html = replace_text(html, "win-version", "v" + version)
@@ -105,6 +131,8 @@ def main(argv):
     with open(path, "w", encoding="utf-8", newline="") as f:
         f.write(after)
     print("website Windows downloads -> win-v" + version)
+    if count_id(after, SETUP_ID):
+        print("  setup: " + asset_url(version, SETUP_NAME))
     print("  msi: " + asset_url(version, MSI_NAME))
     print("  zip: " + asset_url(version, ZIP_NAME))
     return 0

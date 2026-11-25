@@ -288,6 +288,14 @@ Assert 'B4 workflow publishes that ZIP name' `
 Assert 'B5 workflow tag is win-v<version>' ($wf -match 'TAG=win-v\$VERSION')
 Assert 'B6 shared build script produces the same names' `
     ($shared -match 'Ghoztty-\$\{?SEMVER' -or $shared -match 'Ghoztty-\$SEMVER' -or $shared -match 'Ghoztty-.*-x64\.msi')
+# T3703: the setup exe (T2198) is the fourth name, and the three writers must
+# agree on it too, or the page's primary download is a 404 that reads fine.
+Assert 'B7 rewrite script setup name is Ghoztty-Setup-<v>-x64.exe' `
+    ($py -match 'SETUP_NAME\s*=\s*"Ghoztty-Setup-\{v\}-x64\.exe"')
+Assert 'B8 workflow publishes that setup name' `
+    ($wf -match 'SETUP=zig-out/Ghoztty-Setup-\$VERSION-x64\.exe')
+Assert 'B9 shared build script produces that setup name' `
+    ($shared -match 'SETUP="\$OUT_DIR/Ghoztty-Setup-\$SEMVER-x64\.exe"')
 
 "=== C. the rewrite script, run for real ==="
 
@@ -350,6 +358,47 @@ if (-not $interp) {
         # A bad version must be rejected before it reaches the page.
         $out4 = & $interp $pyPath $sample 'v9.9.9' 2>&1
         Assert 'C8 leading-v version is rejected' ($LASTEXITCODE -ne 0)
+
+        # T3703: the setup download. The deployed page predates it, so a page
+        # WITHOUT the anchor must still release (C9) and must say so (C9b),
+        # never silently; a page WITH it must have it retargeted (C10) and
+        # stay idempotent (C11); a doubled anchor is the usual error (C12).
+        $setupUrl = 'https://github.com/dzearing/ghoztty/releases/download/win-v' +
+            $target + '/Ghoztty-Setup-' + $target + '-x64.exe'
+        $hasSetupAnchor = ($html -match 'id="win-setup-link"')
+        if ($hasSetupAnchor) {
+            Skip 'C9-C9b page without the setup anchor' 'the mirror already carries win-setup-link (T2199 landed); C9 shape no longer exists'
+        } else {
+            Assert 'C9 a page with no setup anchor still rewrites (exit 0)' ($rc1 -eq 0)
+            Assert 'C9b and says the setup exe is not offered yet' `
+                ("$out1" -match 'no id=.win-setup-link' -and "$out1" -match 'T2199')
+        }
+        $withSetup = Join-Path $work 'with-setup.html'
+        $setupPage = $html
+        if (-not $hasSetupAnchor) {
+            $setupPage = ([regex]'(<p class="download-note">)').Replace($html,
+                '<a id="win-setup-link" href="https://example.invalid/old.exe" class="download-card">setup</a>$1', 1)
+        }
+        $setupPage | Set-Content -LiteralPath $withSetup -Encoding UTF8
+        $out5 = & $interp $pyPath $withSetup $target 2>&1
+        $rc5 = $LASTEXITCODE
+        $afterSetup = Get-Content -LiteralPath $withSetup -Raw
+        AssertEq 'C10 a page with the setup anchor rewrites (exit 0)' 0 $rc5
+        Assert 'C10b setup link moved to the new release asset' `
+            ($afterSetup -match ('id="win-setup-link"[^>]*?href="' + [regex]::Escape($setupUrl) + '"'))
+        Assert 'C10c and the msi link still moved beside it' `
+            ($afterSetup -match ('id="win-msi-link"[^>]*?href="[^"]*/win-v' + [regex]::Escape($target) + '/Ghoztty-' + [regex]::Escape($target) + '-x64\.msi"'))
+        Assert 'C10d the run names the setup url it wrote' ("$out5" -match [regex]::Escape($setupUrl))
+        Assert 'C10e and does not claim the anchor is missing' ("$out5" -notmatch 'no id=')
+        $out6 = & $interp $pyPath $withSetup $target 2>&1
+        AssertEq 'C11 setup rewrite is idempotent' $afterSetup (Get-Content -LiteralPath $withSetup -Raw)
+        $doubled = Join-Path $work 'doubled-setup.html'
+        ([regex]'(<p class="download-note">)').Replace($setupPage,
+            '<a id="win-setup-link" href="https://example.invalid/two.exe">again</a>$1', 1) |
+            Set-Content -LiteralPath $doubled -Encoding UTF8
+        $out7 = & $interp $pyPath $doubled $target 2>&1
+        Assert 'C12 two setup anchors are an error' ($LASTEXITCODE -ne 0)
+        Assert 'C12b and it names the setup id' ("$out7" -match 'win-setup-link')
     } finally {
         Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue
     }

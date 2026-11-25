@@ -1,19 +1,20 @@
 {
     "guard":  "website-windows-links",
     "script":  "test/win32/website-windows-download.ps1",
-    "generated":  "2026-11-23T14:54:19-08:00",
-    "commit":  "fd419aa0b",
+    "generated":  "2026-11-24T22:17:40-08:00",
+    "commit":  "9546dda10",
     "uncommitted":  [
-
+                        "dist/website/update-windows-links.py",
+                        "test/win32/website-windows-download.ps1"
                     ],
     "files":  {
                   "dist/website/publish-appcast.sh":  "378d74a4df63e88d3f5fc48a8807f0665f5d84af7ab40289996ae4c57e3e2bc0",
                   "dist/website/publish-windows-links.sh":  "41e424f4e850c82993b759d82c45b3556d8264b4fb95707d9672f8e4a74f97e4",
                   "dist/website/update-appcast.py":  "9c9f6d97a27bcf01e1caf6ffb0cfc936faef336daff62735405ba348b8575fda",
-                  "dist/website/update-windows-links.py":  "03573c2f74effb040242d4bd588b7b6a8d770267c98664a02392e6efa763615c",
-                  "test/win32/website-windows-download.ps1":  "03a4dc88431e4730b1d947194b70d11e756db9762117ea72ba9c2bb9dbdc8594"
+                  "dist/website/update-windows-links.py":  "cd5d4cdcee9f4400a2278d4edd6586eb52401dcf54a70a66e0b8d51c3aa63ada",
+                  "test/win32/website-windows-download.ps1":  "0d15df95f081c078a825ad6353997bff86604c314f10a0af55daf476127f3cae"
               },
     "code":  {
-                 "test/win32/website-windows-download.ps1":  "code1:512e04781a41db9e688e1c645bd8b0702dea113787f455f7d80c8d9de6256236"
+                 "test/win32/website-windows-download.ps1":  "code1:3b04619d11d203779f6d4b3958d9d2e422548756e1df89a7f3c429cec8a8b4e8"
              }
 }
