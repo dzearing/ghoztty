@@ -171,8 +171,12 @@ hl_check "D5 let go high on a middle row, it lands before that row" $? "index=$i
 cli +split --target="$b" --name=d > /dev/null 2>&1
 hl_wait_for 10 lst_is 'len(ids("wa"))' 4
 dd=$(lst '[i for i in ids("wa") if i not in ("'"$a"'", "'"$b"'", "'"$c"'")][0]')
-hl_wait_for 10 is wa '[x["pane"] for x in p]' "['$b', '$dd', '$a', '$c']"
-hl_check "D6 a split lands in the list right after the pane it came from" $? "list=$(field wa '[x["pane"] for x in p]') tree=$(lst 'ids("wa")')"
+# +split splits the window's focused pane: the new pane's tree neighbour
+# before it is the pane it came from.
+parent=$(lst 'ids("wa")[ids("wa").index("'"$dd"'") - 1]')
+want=$(case "$parent" in "$b") echo "['$b', '$dd', '$a', '$c']" ;; "$a") echo "['$b', '$a', '$dd', '$c']" ;; *) echo "parent?" ;; esac)
+hl_wait_for 10 is wa '[x["pane"] for x in p]' "$want"
+hl_check "D6 a split lands in the list right after the pane it came from" $? "list=$(field wa '[x["pane"] for x in p]') tree=$(lst 'ids("wa")') parent=$parent"
 cli +close --target="$dd" > /dev/null 2>&1
 hl_wait_for 10 lst_is 'len(ids("wa"))' 3
 hl_wait_for 10 is wa '[x["pane"] for x in p]' "['$b', '$a', '$c']"
