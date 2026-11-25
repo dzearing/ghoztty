@@ -65,10 +65,15 @@
 //! time the page is shown, and the enrolled machines from the remembered
 //! directory with a background presence fetch and Host Settings....
 //!
+//! **Appearance's theme picker and live preview (T3636)** are
+//! `SettingsTheme.zig`: Mac's "Use" switch (one theme / light & dark), tabs
+//! that list only their kind, the filter, a tile per theme with the picked
+//! one ringed, and the preview card in the effective theme, font, opacity,
+//! padding, pane style and cursor - on win32's shared `theme_catalog`,
+//! `settings_theme_grid` and `settings_preview`.
+//!
 //! Rows are built once and refreshed in place after every write (a rebuild
 //! would lose the page's scroll), from the same reader the seam reports.
-//! Sections with their own UI that are their own cards are left off for
-//! now: the preview and themes (T3636).
 const SettingsWindow = @This();
 
 const std = @import("std");
@@ -90,6 +95,7 @@ const ShortcutGuideWindow = @import("ShortcutGuideWindow.zig");
 const font_families = @import("font_families.zig");
 const ConfigFile = @import("SettingsConfigFile.zig");
 pub const SettingsLive = @import("SettingsLive.zig");
+pub const SettingsTheme = @import("SettingsTheme.zig");
 
 const log = std.log.scoped(.gtk_settings);
 
@@ -202,6 +208,8 @@ font_arena: std.heap.ArenaAllocator,
 config_file: ConfigFile = .{},
 /// Sessions & Agent's agent status and Remote Machines (T3635).
 live: SettingsLive = .{},
+/// Appearance's theme picker and live preview (T3636).
+theme: SettingsTheme = .{},
 
 const Group = struct { page: PageId, title: ?[]const u8, widget: *wk.GtkWidget };
 
@@ -232,6 +240,7 @@ pub fn open(app: *Application) void {
     self.refreshCurated();
     self.refreshCounts();
     self.config_file.refresh(self);
+    self.theme.refresh();
     wk.gtk_window_present(self.window);
     log.info("settings: opened keys={d} curated={d} file={s}", .{ self.catalog.entries.len, self.curated.items.len, self.main_path });
 }
@@ -314,8 +323,7 @@ fn tagOf(widget: *wk.GtkWidget, name: [*:0]const u8) ?usize {
 /// their own cards; see the file comment).
 fn customBuilt(c: pages.Custom) bool {
     return switch (c) {
-        .shortcut_guide, .version, .config_file, .all_settings, .agent_status, .remote_machines => true,
-        .preview, .theme => false,
+        .shortcut_guide, .version, .config_file, .all_settings, .agent_status, .remote_machines, .preview, .theme => true,
     };
 }
 
@@ -460,7 +468,10 @@ fn addCustom(self: *SettingsWindow, group: *wk.GtkWidget, c: pages.Custom) !void
         // T3635: SettingsLive draws both and re-reads them when shown.
         .agent_status => self.live.buildAgent(group),
         .remote_machines => self.live.buildRemote(group),
-        .config_file, .all_settings, .preview, .theme => {},
+        // T3636: SettingsTheme draws both and refreshes them after a write.
+        .preview => self.theme.buildPreview(group),
+        .theme => self.theme.buildTheme(group),
+        .config_file, .all_settings => {},
     }
 }
 
@@ -843,7 +854,7 @@ pub fn reloadData(self: *SettingsWindow) void {
     self.config_file.reload(self);
 }
 
-fn reader(self: *const SettingsWindow) ?SettingsSources.Reader {
+pub fn reader(self: *const SettingsWindow) ?SettingsSources.Reader {
     const sources = if (self.sources) |*s| s else return null;
     return .{
         .catalog = &self.catalog,
@@ -1608,6 +1619,15 @@ pub fn flush(self: *SettingsWindow) void {
         self.refresh_source = 0;
         self.redraw();
     }
+    self.theme.flush();
+}
+
+/// The slider key whose drag has not been written yet (the preview shows
+/// its value meanwhile), else null.
+pub fn slidingKey(self: *const SettingsWindow) ?[]const u8 {
+    if (self.slide_source == 0) return null;
+    if (self.slide_index >= self.curated.items.len) return null;
+    return self.curated.items[self.slide_index].key;
 }
 
 fn redraw(self: *SettingsWindow) void {
@@ -1615,6 +1635,7 @@ fn redraw(self: *SettingsWindow) void {
     self.refreshCurated();
     self.refreshCounts();
     self.config_file.refresh(self);
+    self.theme.refresh();
 }
 
 fn onIdleRefresh(self: *SettingsWindow) callconv(.c) c_int {
@@ -1792,6 +1813,7 @@ fn destroy(self: *SettingsWindow) void {
     const gpa = self.gpa;
     self.config_file.deinit(gpa);
     self.live.deinit(gpa);
+    self.theme.deinit(gpa);
     self.rows.deinit(gpa);
     self.curated.deinit(gpa);
     self.groups.deinit(gpa);
@@ -1934,6 +1956,8 @@ fn onScaleChanged(scale: *wk.GtkWidget, self: *SettingsWindow) callconv(.c) void
     self.slide_value = wk.gtk_range_get_value(scale);
     if (self.slide_source != 0) _ = wk.g_source_remove(self.slide_source);
     self.slide_source = wk.g_timeout_add(slide_settle_ms, @ptrCast(&onSlideSettled), self);
+    // Mac: a slider drag previews before it is written.
+    self.theme.refreshPreview();
 }
 
 /// A slider's readout: Mac's percent (inverted for Dim unfocused panes).

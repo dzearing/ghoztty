@@ -810,3 +810,28 @@ pub extern fn adw_preferences_row_get_title(row: *GtkWidget) ?[*:0]const u8;
 /// `GtkEventSequenceState`.
 pub const sequence_claimed: c_int = 1;
 pub const sequence_denied: c_int = 2;
+
+// Settings > Appearance: the theme picker and the live preview (T3636).
+pub const GtkCssProvider = opaque {};
+/// `GTK_STYLE_PROVIDER_PRIORITY_APPLICATION`.
+pub const style_provider_priority_application: c_uint = 600;
+pub extern fn gtk_css_provider_new() *GtkCssProvider;
+pub extern fn gtk_css_provider_load_from_string(provider: *GtkCssProvider, string: [*:0]const u8) void;
+pub extern fn gtk_style_context_add_provider_for_display(display: *GdkDisplay, provider: *GtkCssProvider, priority: c_uint) void;
+pub extern fn gtk_style_context_remove_provider_for_display(display: *GdkDisplay, provider: *GtkCssProvider) void;
+pub extern fn gtk_widget_get_display(widget: *GtkWidget) *GdkDisplay;
+pub extern fn gtk_toggle_button_new_with_label(label: [*:0]const u8) *GtkWidget;
+pub extern fn gtk_toggle_button_set_group(button: *GtkWidget, group: ?*GtkWidget) void;
+pub extern fn gtk_toggle_button_set_active(button: *GtkWidget, active: c_int) void;
+pub extern fn gtk_toggle_button_get_active(button: *GtkWidget) c_int;
+pub extern fn gtk_flow_box_new() *GtkWidget;
+pub extern fn gtk_flow_box_append(box: *GtkWidget, child: *GtkWidget) void;
+pub extern fn gtk_flow_box_remove_all(box: *GtkWidget) void;
+pub extern fn gtk_flow_box_set_selection_mode(box: *GtkWidget, mode: c_int) void;
+pub extern fn gtk_flow_box_set_homogeneous(box: *GtkWidget, homogeneous: c_int) void;
+pub extern fn gtk_flow_box_set_min_children_per_line(box: *GtkWidget, n: c_uint) void;
+pub extern fn gtk_flow_box_set_max_children_per_line(box: *GtkWidget, n: c_uint) void;
+pub extern fn gtk_flow_box_set_column_spacing(box: *GtkWidget, spacing: c_uint) void;
+pub extern fn gtk_flow_box_set_row_spacing(box: *GtkWidget, spacing: c_uint) void;
+pub extern fn gtk_label_get_label(label: *GtkWidget) [*:0]const u8;
+pub extern fn gtk_widget_get_margin_start(widget: *GtkWidget) c_int;

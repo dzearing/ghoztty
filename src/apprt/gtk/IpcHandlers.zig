@@ -1317,6 +1317,25 @@ fn readClipboard(app: Context, request: Request) Allocator.Error![]u8 {
 ///   drawn:{title,caption,dot,button}}],rows_drawn},host_dialog,
 ///   host_last_answer}
 ///
+/// Appearance's theme picker and live preview (T3636), win32's op names:
+///
+///   --op=theme-mode --value=true|false   click Light & dark themes / One theme
+///   --op=theme-tab --value=light|dark    click a tab
+///   --op=theme-filter --value=<text>     type into the filter field
+///   --op=theme-all                       click "All N <kind> themes..."
+///   --op=theme-tile --value=<name>       click that drawn tile
+///   --op=theme-pick --key=light|dark --value=<name>   pick for a slot
+///                                        directly (no tile needed)
+///   state adds "theme":{follows,light,dark,mismatch,light_count,dark_count,
+///   load_ms,system_dark,editable,tab,filter,show_all,selected,kind_total,
+///   matched,more,tiles[],catalog:[{name,light,user,background}],drawn:{
+///   follow_active,one_active,mode_sensitive,use_caption,tab_labels[],
+///   tab_active,tab_caption,filter,notices[],tiles:[{name,light,picked,
+///   sensitive,background}],all,empty}} and "preview":{theme,from_catalog,
+///   background,foreground,cursor_color,family,size,opacity,pad_x,pad_y,
+///   elevated,ligatures,cursor_style,blink,cursor_opacity,caption,drawn:{
+///   caption,term_rule,elevated,lines[],text_margin,mapped,blinking}}
+///
 ///   state adds "page", "visible_page", "filter", "pages":[{id,title,count}],
 ///   "groups":[{page,title,drawn}] and, with --key, "key.curated":
 ///   {page,label,kind,display,expected,dot,reset,sensitive,enabled,subtitle,
@@ -1417,6 +1436,37 @@ fn settingsSeam(app: Context, request: Request) Allocator.Error![]u8 {
                 d.answer(if (std.mem.eql(u8, v, "save")) "save" else "cancel");
             }
         }
+    } else if (themeOp(op)) {
+        const w = SettingsWindow.current() orelse
+            return server.errorResponse(c_alloc, "the Settings window is not open", .{});
+        const th = &w.theme;
+        const result: SettingsWindow.SettingsTheme.GestureError!void = if (std.mem.eql(u8, op, "theme-mode")) blk: {
+            const v = val orelse return server.errorResponse(c_alloc, "--value=true|false is required for --op=theme-mode", .{});
+            break :blk th.gestureMode(std.mem.eql(u8, v, "true"));
+        } else if (std.mem.eql(u8, op, "theme-tab")) blk: {
+            const tab = std.meta.stringToEnum(SettingsWindow.SettingsTheme.Tab, val orelse "") orelse
+                return server.errorResponse(c_alloc, "--value must be light or dark for --op=theme-tab", .{});
+            break :blk th.gestureTab(tab);
+        } else if (std.mem.eql(u8, op, "theme-filter"))
+            th.gestureFilter(val orelse "")
+        else if (std.mem.eql(u8, op, "theme-all"))
+            th.gestureAll()
+        else if (std.mem.eql(u8, op, "theme-tile"))
+            th.gestureTile(val orelse return server.errorResponse(c_alloc, "--value=<theme name> is required for --op=theme-tile", .{}))
+        else blk: {
+            // theme-pick: win32's direct pick for a slot (no tile needed).
+            const slot = std.meta.stringToEnum(@import("../win32/theme_catalog.zig").Slot, key orelse "light") orelse
+                return server.errorResponse(c_alloc, "--key must be light or dark for --op=theme-pick", .{});
+            const name = val orelse return server.errorResponse(c_alloc, "--value=<theme name> is required for --op=theme-pick", .{});
+            ok = th.pick(name, slot);
+            break :blk {};
+        };
+        result catch |err| return server.errorResponse(c_alloc, "--op={s}: {s}", .{ op, switch (err) {
+            error.NotDrawn => "the section does not draw that control now",
+            error.Insensitive => "that control is not editable (a later file sets theme)",
+        } });
+        w.flush();
+        if (ok == null) ok = w.problem("theme") == null;
     } else if (configFileOp(op)) {
         const w = SettingsWindow.current() orelse
             return server.errorResponse(c_alloc, "the Settings window is not open", .{});
@@ -1622,6 +1672,13 @@ fn writeLiveState(jws: *std.json.Stringify, w: anytype) !void {
 /// The Remote Machines / Host Settings ops (T3635).
 fn liveOp(op: []const u8) bool {
     const ops = [_][]const u8{ "host_settings", "host-settings-fill", "host-settings-preset", "host-settings-answer" };
+    for (ops) |o| if (std.mem.eql(u8, op, o)) return true;
+    return false;
+}
+
+/// Appearance > Theme (T3636), win32's op names plus theme-tile.
+fn themeOp(op: []const u8) bool {
+    const ops = [_][]const u8{ "theme-mode", "theme-pick", "theme-tab", "theme-filter", "theme-all", "theme-tile" };
     for (ops) |o| if (std.mem.eql(u8, op, o)) return true;
     return false;
 }
@@ -1832,6 +1889,8 @@ fn writeSettingsState(jws: *std.json.Stringify, arena: Allocator, w_opt: anytype
         try jws.write(w.curated.items.len);
         try writeConfigFileState(jws, arena, w);
         try writeLiveState(jws, w);
+        // Appearance's theme picker and preview (T3636).
+        try w.theme.writeState(jws, arena);
         if (key) |k| {
             try jws.objectField("key");
             try jws.beginObject();
