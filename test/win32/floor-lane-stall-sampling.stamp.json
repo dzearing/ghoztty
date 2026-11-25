@@ -1,17 +1,17 @@
 {
     "guard":  "lane-stall-sampling",
     "script":  "test/win32/floor-lane-stall-sampling.ps1",
-    "generated":  "2026-11-22T23:22:07-08:00",
-    "commit":  "0a665bf5c",
+    "generated":  "2026-11-24T16:30:49-08:00",
+    "commit":  "acf50e902",
     "uncommitted":  [
-                        "test/win32/floor-lane-stall-sampling.ps1"
+                        "scripts/floor-lane.ps1"
                     ],
     "files":  {
-                  "scripts/floor-lane.ps1":  "75a211e4acdccc226d1cfd4e5a915cae8acc330ef7ef6e530876d302af448786",
+                  "scripts/floor-lane.ps1":  "f784f1c7eba34cf7cb4c000262ee29de27c6fae3ed94792bb540a92ff058e5df",
                   "test/win32/floor-lane-stall-sampling.ps1":  "868938dc6ffbb2f736af9b76991f796d9621145bdee32d05d2aa58958e9092ea"
               },
     "code":  {
-                 "scripts/floor-lane.ps1":  "code1:012b7aabf50181fcf0163bb7ce283bfbcff55c58136c421037eda823b0e6b251",
+                 "scripts/floor-lane.ps1":  "code1:8a6ec4da474f0ec8f2f6b9eedc683c8fb14872bc004634d3eb74c5a8cbd4b5f0",
                  "test/win32/floor-lane-stall-sampling.ps1":  "code1:7cc9b06854336edd5ebb8712066958939cd1ac85152cacb23fc6104858bbe674"
              }
 }

@@ -163,6 +163,86 @@ finally { Remove-Item -LiteralPath $marker -Force -ErrorAction SilentlyContinue 
 Check 'a lane red only side by side passes alone: exit 0, and FLOOR PARALLEL CONTENTION names it' `
     ($rf.Code -eq 0 -and $rf.Lines[-1] -eq 'ALL LANES PASS' -and $rf.Text -match 'FLOOR PARALLEL CONTENTION: none ' -and
     $rf.Text -match 'none#1=PASS[^\n]*\[side by side: FAIL\]') "exit=$($rf.Code)"
+Check 'an unchanged tree between the two runs is not reported as a source change' `
+    ($rf.Text -notmatch 'FLOOR PARALLEL SOURCE CHANGED' -and $rf.Text -notmatch 'RERUN UNEXPLAINED') ''
+
+# ---- arms T2191: a source change between the runs is not contention ----------
+# 2026-10-23: win32 and agent went red side by side on a real leak, the leak
+# was fixed before the solo re-runs, and the summary blamed the box. The
+# planted lane here goes red AND changes "the source" on its first run, which
+# is that shape exactly.
+
+$marker2 = Join-Path $env:TEMP ("floor-lane-parallel-src-" + [guid]::NewGuid().ToString('N').Substring(0, 8))
+$srcFake = "$marker2.src"
+Set-Content -LiteralPath $srcFake -Value 'before the fix' -Encoding ASCII
+$fixedMidRun = "powershell -NoProfile -Command `"if (Test-Path '$marker2') { exit 0 }; `$null = New-Item -ItemType File '$marker2'; Set-Content -LiteralPath '$srcFake' -Value 'after the fix' -Encoding ASCII; exit 1`""
+$env:GHOZTTY_FLOOR_SOURCE_FAKE = $srcFake
+try {
+    $rc = Invoke-Floor -Fake @{ lib = 'ping -n 2 127.0.0.1 >nul'; none = $fixedMidRun; win32 = 'ping -n 2 127.0.0.1 >nul'; agent = 'ping -n 2 127.0.0.1 >nul' }
+}
+catch { Write-Host "FAIL  the source-change run threw: $($_.Exception.Message)"; $script:Failures++; $rc = [pscustomobject]@{ Code = -1; Lines = @(''); Text = '' } }
+finally {
+    Remove-Item Env:GHOZTTY_FLOOR_SOURCE_FAKE -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $marker2, $srcFake -Force -ErrorAction SilentlyContinue
+}
+Check 'T2191: a lane red side by side and green alone over CHANGED sources says SOURCE CHANGED, not CONTENTION' `
+    ($rc.Code -eq 0 -and $rc.Text -match 'FLOOR PARALLEL SOURCE CHANGED: none ' -and
+    $rc.Text -notmatch 'FLOOR PARALLEL CONTENTION') "exit=$($rc.Code)"
+Check 'T2191: its summary token and ==== line carry the source change' `
+    ($rc.Text -match 'none#1=PASS[^\n]*\[side by side: FAIL, source changed\]' -and
+    $rc.Text -match '==== lane none: side by side FAIL[^\n]*source changed between them \([0-9a-f]{16} -> [0-9a-f]{16}\)') ''
+
+. (Join-Path $RepoRoot 'scripts\lib\FloorSource.ps1')
+Check 'T2191: Get-FloorRerunCause - same fingerprints is contention' `
+    ((Get-FloorRerunCause -SideFingerprint 'aa' -AloneFingerprint 'aa' -AlonePassed $true) -eq 'contention') ''
+Check 'T2191: Get-FloorRerunCause - different fingerprints is source-changed' `
+    ((Get-FloorRerunCause -SideFingerprint 'aa' -AloneFingerprint 'bb' -AlonePassed $true) -eq 'source-changed') ''
+Check 'T2191: Get-FloorRerunCause - a missing fingerprint claims neither' `
+    ((Get-FloorRerunCause -SideFingerprint $null -AloneFingerprint 'bb' -AlonePassed $true) -eq 'unknown') ''
+Check 'T2191: Get-FloorRerunCause - a solo red needs no explaining' `
+    ($null -eq (Get-FloorRerunCause -SideFingerprint 'aa' -AloneFingerprint 'bb' -AlonePassed $false)) ''
+
+# The real fingerprint, over a throwaway repo: it moves for exactly the edits a
+# zig build reads, and holds still for the tracker churn it does not.
+function Invoke-FpGit {
+    $ErrorActionPreference = 'Continue'
+    & git -C $fpRepo -c user.email=t@t -c user.name=t -c init.defaultBranch=main @args 2>$null | Out-Null
+}
+$fpRepo = Join-Path $env:TEMP ("floor-lane-parallel-fp-" + [guid]::NewGuid().ToString('N').Substring(0, 8))
+try {
+    New-Item -ItemType Directory -Force -Path (Join-Path $fpRepo 'src'), (Join-Path $fpRepo 'docs') | Out-Null
+    Set-Content -LiteralPath (Join-Path $fpRepo 'src\a.zig') -Value 'const a = 1;' -Encoding ASCII
+    Set-Content -LiteralPath (Join-Path $fpRepo 'docs\t.md') -Value 'task' -Encoding ASCII
+    Invoke-FpGit init -q
+    Invoke-FpGit add -A
+    Invoke-FpGit commit -q -m init
+    $fp0 = Get-FloorSourceFingerprint -Repo $fpRepo
+    $fp1 = Get-FloorSourceFingerprint -Repo $fpRepo
+    Check 'T2191: the fingerprint is a stable 16-hex string for an unchanged tree' `
+        ($fp0 -match '^[0-9a-f]{16}$' -and $fp0 -eq $fp1) "$fp0 / $fp1"
+    Set-Content -LiteralPath (Join-Path $fpRepo 'docs\t.md') -Value 'task, edited' -Encoding ASCII
+    Check 'T2191: an edit outside the build inputs (docs) does not move it' `
+        ((Get-FloorSourceFingerprint -Repo $fpRepo) -eq $fp0) ''
+    Set-Content -LiteralPath (Join-Path $fpRepo 'src\a.zig') -Value 'const a = 2;' -Encoding ASCII
+    $fp2 = Get-FloorSourceFingerprint -Repo $fpRepo
+    Check 'T2191: an uncommitted edit to a tracked source moves it' ($fp2 -and $fp2 -ne $fp0) "$fp2"
+    Set-Content -LiteralPath (Join-Path $fpRepo 'src\new.zig') -Value 'const b = 1;' -Encoding ASCII
+    $fp3 = Get-FloorSourceFingerprint -Repo $fpRepo
+    Check 'T2191: a new untracked source file moves it' ($fp3 -and $fp3 -ne $fp2) "$fp3"
+    Set-Content -LiteralPath (Join-Path $fpRepo 'src\new.zig') -Value 'const b = 2;' -Encoding ASCII
+    $fp4 = Get-FloorSourceFingerprint -Repo $fpRepo
+    Check 'T2191: editing that untracked file moves it again (content, not just the name)' ($fp4 -and $fp4 -ne $fp3) "$fp4"
+    Invoke-FpGit add -A
+    Invoke-FpGit commit -q -m two
+    $fp5 = Get-FloorSourceFingerprint -Repo $fpRepo
+    Check 'T2191: a commit moves it (HEAD is part of it)' ($fp5 -and $fp5 -ne $fp4 -and $fp5 -ne $fp0) "$fp5"
+    $notRepo = Join-Path $fpRepo 'docs'
+    Remove-Item -LiteralPath (Join-Path $fpRepo '.git') -Recurse -Force
+    Check 'T2191: outside a git repo it answers $null rather than guessing' `
+        ($null -eq (Get-FloorSourceFingerprint -Repo $notRepo)) ''
+}
+catch { Write-Host "FAIL  the fingerprint arms threw: $($_.Exception.Message)"; $script:Failures++ }
+finally { Remove-Item -LiteralPath $fpRepo -Recurse -Force -ErrorAction SilentlyContinue }
 
 # ---- arm 9: the same planted lanes, serial, score the same words -------------
 

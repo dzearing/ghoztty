@@ -1,10 +1,10 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-11-24T16:46:06-08:00",
-    "commit":  "919e9222a",
+    "generated":  "2026-11-24T16:50:11-08:00",
+    "commit":  "acf50e902",
     "uncommitted":  [
-
+                        "test/win32/floor-lane-parallel.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "cfa23792d110d499fa4086697daa516d218d0d110e594a7452167a81220ee15e",
@@ -171,7 +171,7 @@
                   "test/win32/floor-lane-compiler-crash.ps1":  "34827f1ed2d63df665d72275f13211f6a3f8273c44561b09396ffdc3f7505470",
                   "test/win32/floor-lane-desktop.ps1":  "98ad27a978e7689f77af81c616bb81634f405d9a6cf27f30ce02d80e5e96d2fc",
                   "test/win32/floor-lane-leak-sweep.ps1":  "00c1d64322809c0f7575078a5341d8ac0cddc86e49a6952a38d1a63233b0ca02",
-                  "test/win32/floor-lane-parallel.ps1":  "e4821c99f31c4708e5402a8f7d0682586f130592268f8d3b5a2a2e11aab3161d",
+                  "test/win32/floor-lane-parallel.ps1":  "ffca13d2da9a4d441c39ca7afb48903dc8910fc9fbe07079d6ecf976691925b8",
                   "test/win32/floor-lane-releasesafe.ps1":  "691cb0b20e21706b03a604b3a91d7a5d409e0ce77f8315d29ddd896bccc0fe3e",
                   "test/win32/floor-lane-solo-confirm.ps1":  "a222a0c597b6f6e265690cbebb3e9d621db1ba6a53217ab62148231a5a9dab9c",
                   "test/win32/floor-lane-stall-sampling.ps1":  "868938dc6ffbb2f736af9b76991f796d9621145bdee32d05d2aa58958e9092ea",
@@ -201,7 +201,7 @@
                   "test/win32/ghoztty-cleanup.ps1":  "43cd3c8d3d20789fe9c12d0134418a0e2e6c1bd9c8450d48f837f49c7ee00fc9",
                   "test/win32/glass-frame-origin.ps1":  "0a0dfeed8dff3e6ba20ec9402905ac5490ab37b43d85d9316be106de72e26b56",
                   "test/win32/gl-device-lost.ps1":  "3a87a2acf4ebca9c19323687ecd65919747f3691aa09eb9eb245f19246d30711",
-                  "test/win32/go-loop-guard.ps1":  "209fd0258e36731d1820cff808bccfa1ee00b7421cb573fa51c03407185150e8",
+                  "test/win32/go-loop-guard.ps1":  "16a8fac216be3cec32707ed045dcdca919856049a74a70282d559ab383c09455",
                   "test/win32/go-loop-resume.ps1":  "6295cd2d72a24a6150d414e1c831c6a9581868d66ae6e17fa821a27d08696b78",
                   "test/win32/go-loop-uptime.ps1":  "7c2ceea601e716ffba45f0054228e1925a0932a14a100dd7f0a34f4765e12a20",
                   "test/win32/goto-window.ps1":  "46d315222e373a99e41e10787bf31cbd847e3cd8c383da93e902008f549627a1",

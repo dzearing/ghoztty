@@ -1,10 +1,12 @@
 {
     "guard":  "unroll-count",
     "script":  "test/win32/unroll-count-audit.ps1",
-    "generated":  "2026-11-24T16:07:35-08:00",
-    "commit":  "be679ba55",
+    "generated":  "2026-11-24T16:27:39-08:00",
+    "commit":  "acf50e902",
     "uncommitted":  [
-                        "scripts/git-commit-guard.ps1"
+                        "scripts/floor-lane.ps1",
+                        "scripts/guard-due.ps1",
+                        "scripts/lib/FloorSource.ps1"
                     ],
     "files":  {
                   "scripts/acceptance-parallel.ps1":  "664d7cc264cd257377d66545ca9960556802361c0ad3c6fab635a67e755c6d96",
@@ -39,12 +41,12 @@
                   "scripts/divergence-inventory.ps1":  "f299f907df872214375bd6f88b868bbbaf5db7125301d6481c6a39d44222ff61",
                   "scripts/divider-drag-onscreen.ps1":  "09c6b79655c929a091a1946a98b1c95875c0b4f19b5c1f9535cdc58d0b7eaba1",
                   "scripts/fetch-symbols.ps1":  "ef40b9f0b393b5662331bb7fdca267fe87d2dcf64f6ce9b83e99a3d7cc39c35a",
-                  "scripts/floor-lane.ps1":  "75a211e4acdccc226d1cfd4e5a915cae8acc330ef7ef6e530876d302af448786",
+                  "scripts/floor-lane.ps1":  "f784f1c7eba34cf7cb4c000262ee29de27c6fae3ed94792bb540a92ff058e5df",
                   "scripts/focus-pull-scan.ps1":  "ce1ebfa8aac19eed0eb7cc7578fb0a1df8b39974204777a9991ac2fea1eec8e8",
                   "scripts/fork-identity.ps1":  "229e1f428c4dcb47e51b54b4786c2850275e09b34126470db2f64c0efe546981",
                   "scripts/ghoztty-agent-watcher.ps1":  "51f93a125f8c81543a365acc9a990175f3b1b599184c19e2a87748b417559db4",
                   "scripts/ghoztty-cleanup.ps1":  "d2307b4c4df220c56944c340fbf60863f23f869fcd52e18acb195627c0aefde9",
-                  "scripts/git-commit-guard.ps1":  "c9b31b95c7e9e278e40d1ebf8e4696fa9891302493446a5e31df8cbe9b2d9cf8",
+                  "scripts/git-commit-guard.ps1":  "53cdbaf6d93ea215acd424b2a82217f6146223e95e992c52bd3cfa2ae13864c5",
                   "scripts/glass-viewer-onscreen.ps1":  "402d6bedef7961f660a9806dd9cb9bea09da4050b8bee78a0755ba8ceb528685",
                   "scripts/go-loop-boot.ps1":  "62b910dada177775a1dbecdfde944ca014ce9b93ab427d97640edfa4d536a5ef",
                   "scripts/go-loop-exec.ps1":  "f14b52f885f4db1e3a9aa1a1707bf51710558711f624dd1c98f7ac7319f43ebe",
@@ -52,7 +54,7 @@
                   "scripts/go-loop-lock.ps1":  "eda6fc5f2bc851e11a9718ddbdd529d9fb9a5ce06637703e93800f37ccc0a2bb",
                   "scripts/go-loop-pane-probe.ps1":  "e491be3477c3236c4e10af70db2f40e9d632c45f83bf860f4b09fe6eeda5e2b7",
                   "scripts/go-loop-watchdog.ps1":  "37f19f9ce08a701645b7267fea8411125b9112d83ef5ff0cbddb8e380f058d67",
-                  "scripts/guard-due.ps1":  "9879743151251945071e03681ce4151f9c5c26b7f8f4e1d99a902be1d87df7c2",
+                  "scripts/guard-due.ps1":  "40466abadadab8320176f582582e971b54396d753fe66ec47d62b0453fedd532",
                   "scripts/harness-floor.ps1":  "cfa23792d110d499fa4086697daa516d218d0d110e594a7452167a81220ee15e",
                   "scripts/hero-glide-onscreen.ps1":  "46d211f7ec7843d13506f4e3bd13933630339adb8aff13b5c97d69ae3fd248a7",
                   "scripts/hidden-windows-cpu.ps1":  "61551ac8760570d16a46ab2ef235c9792a2e29fb9e9d116ebbc23a5ce9051876",
@@ -76,6 +78,7 @@
                   "scripts/lib/DigestState.ps1":  "3b0d48ec0c53dfeace8df7d1d9fd675b3541f1f9205a0af31987bdf60be00d0e",
                   "scripts/lib/Duration.ps1":  "b9889f194a1af5fee4177fd4c87ea6f7d74be5bffac0828532b55ebaa1f4787c",
                   "scripts/lib/EscapeDamage.ps1":  "87c096ced08379d50c3dbabbd65bcf6596c2812039dde1e4d00d66943a0baa84",
+                  "scripts/lib/FloorSource.ps1":  "eeb267775ca4dee7dc562cfb195c008937fee9ab0de4ee469083da3f45bba14e",
                   "scripts/lib/HardDelete.ps1":  "78ca1c0b521f9ae991e6b8f5304eb2a4e30a7a8ef1e3ba93839de8b740ea88b2",
                   "scripts/lib/HarnessFloor.ps1":  "01bb2070f33c670359a93275a510f38d74feda84c55069fe5433d91aaec71cd5",
                   "scripts/lib/LaneDesktop.ps1":  "eba72a217797149f3d24226023a839ec9beb8ebccfbc25a94f10bfd248594353",

@@ -321,6 +321,9 @@ if (-not $Repo) { $Repo = Split-Path $PSScriptRoot -Parent }
 # Names the tests a red lane blamed, and words the verdict of the narrowed
 # re-run that follows (T1170) -- the pure half of the solo confirm pass below.
 . "$PSScriptRoot\lib\LaneSolo.ps1"
+# What the parallel floor compares before it calls a side-by-side red
+# "contention": the build inputs each run started from (T2191).
+. "$PSScriptRoot\lib\FloorSource.ps1"
 # Identifies a test lane's WebView2 browser processes and WAITS for them to
 # exit, so the next lane does not ask for an environment through the previous
 # one's teardown and get hr=0x80004005 for it (T592).
@@ -1442,6 +1445,8 @@ function Invoke-ParallelFloor {
     foreach ($l in $Lanes) { $pending.Add($l) }
     $running = @{}
     $first = @{}
+    # T2191: the build inputs each lane's side-by-side run started from.
+    $sideSource = @{}
     $peak = 0
     $wallStart = Get-Date
 
@@ -1451,6 +1456,7 @@ function Invoke-ParallelFloor {
             $w = if ($l -eq 'lib') { $LaneCommitGB / 4 } else { $LaneCommitGB }
             $inUse = 0; foreach ($r in $running.Values) { $inUse += $r.Weight }
             if ($running.Count -gt 0 -and ($inUse + $w) -gt $budget) { break }
+            $sideSource[$l] = Get-FloorSourceFingerprint -Repo $Repo
             $child = Start-ParallelChild -Name $l -Tag 'side' -Concurrent $true -Jobs $jobs
             $child.Weight = $w
             $running[$l] = $child
@@ -1472,10 +1478,12 @@ function Invoke-ParallelFloor {
     # Anything not green side by side gets the box to itself, one at a time.
     $final = @{}
     $alone = @()
+    $aloneSource = @{}
     foreach ($l in $Lanes) {
         if ($first[$l].Code -eq $EXIT_PASS) { $final[$l] = $first[$l]; continue }
         $alone += $l
         Write-Host ("  lane {0} was {1} side by side; re-running it alone, and that verdict is final" -f $l, $first[$l].Word)
+        $aloneSource[$l] = Get-FloorSourceFingerprint -Repo $Repo
         $child = Start-ParallelChild -Name $l -Tag 'alone' -Concurrent $false -Jobs $ZigJobs
         $d = $null
         while (-not $d) { Start-Sleep -Seconds 2; $d = Wait-ParallelChild -Child $child -CapSeconds $capSeconds }
@@ -1489,16 +1497,29 @@ function Invoke-ParallelFloor {
     $details = @()
     $laneSum = 0
     $contention = @()
+    $sourceChanged = @()
+    $sourceUnknown = @()
     foreach ($l in $Lanes) {
         $f = $first[$l]
         $o = $final[$l]
         $laneSum += $f.Done.Seconds
         Write-Host ''
         if ($alone -contains $l) {
-            Write-Host ("==== lane {0}: side by side {1} ({2}s, child log {3}); alone {4} ({5}s) ====" -f `
-                    $l, $f.Word, $f.Done.Seconds, $f.Done.Log, $o.Word, $o.Done.Seconds)
-            $tokens += "$($o.Tokens) [side by side: $($f.Word)]"
-            if ($o.Code -eq $EXIT_PASS) { $contention += $l }
+            # T2191: a green solo run only clears the side-by-side red when
+            # both runs built the same sources.
+            $cause = Get-FloorRerunCause -SideFingerprint $sideSource[$l] -AloneFingerprint $aloneSource[$l] `
+                -AlonePassed ($o.Code -eq $EXIT_PASS)
+            $srcNote = ''
+            if ($sideSource[$l] -and $aloneSource[$l] -and $sideSource[$l] -ne $aloneSource[$l]) {
+                $srcNote = "; source changed between them ($($sideSource[$l]) -> $($aloneSource[$l]))"
+            }
+            Write-Host ("==== lane {0}: side by side {1} ({2}s, child log {3}); alone {4} ({5}s){6} ====" -f `
+                    $l, $f.Word, $f.Done.Seconds, $f.Done.Log, $o.Word, $o.Done.Seconds, $srcNote)
+            $sideNote = if ($cause -eq 'source-changed') { "$($f.Word), source changed" } else { $f.Word }
+            $tokens += "$($o.Tokens) [side by side: $sideNote]"
+            if ($cause -eq 'contention') { $contention += $l }
+            elseif ($cause -eq 'source-changed') { $sourceChanged += $l }
+            elseif ($cause -eq 'unknown') { $sourceUnknown += $l }
         }
         else {
             Write-Host ("==== lane {0} ({1}s, exit {2}, child log {3}) ====" -f $l, $f.Done.Seconds, $f.Done.Code, $f.Done.Log)
@@ -1517,6 +1538,12 @@ function Invoke-ParallelFloor {
     Write-Host ''
     if ($contention.Count -gt 0) {
         Write-Host ("FLOOR PARALLEL CONTENTION: {0} failed side by side and passed alone - the box, not the code; the side-by-side log is on its ==== line" -f ($contention -join ', '))
+    }
+    if ($sourceChanged.Count -gt 0) {
+        Write-Host ("FLOOR PARALLEL SOURCE CHANGED: {0} failed side by side and passed alone, but the sources changed between the two runs - the solo green is the verdict for the tree as it stands; the side-by-side red may have been a real defect since fixed, not the box. Read the side-by-side log on its ==== line (T2191)" -f ($sourceChanged -join ', '))
+    }
+    if ($sourceUnknown.Count -gt 0) {
+        Write-Host ("FLOOR PARALLEL RERUN UNEXPLAINED: {0} failed side by side and passed alone, and the sources could not be fingerprinted to tell contention from a code change. Read the side-by-side log on its ==== line (T2191)" -f ($sourceUnknown -join ', '))
     }
     Write-Host ("FLOOR PARALLEL: wall {0}s for {1}s of lanes, up to {2} at once (side by side {3}s, alone re-runs: {4})" -f `
             $wall, $laneSum, $peak, $sideWall, $(if ($alone.Count) { $alone -join ', ' } else { 'none' }))

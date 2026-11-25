@@ -5440,6 +5440,7 @@ $GuardTable = @(
             'scripts\lib\CrashDiag.ps1',
             'scripts\lib\BuildCache.ps1',
             'scripts\build-cache.ps1',
+            'scripts\lib\FloorSource.ps1',
             'test\win32\floor-lane-parallel.ps1'
         )
     },
