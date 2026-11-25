@@ -1,0 +1,19 @@
+{
+    "guard":  "window-count-scale",
+    "script":  "test/win32/window-count-scale.ps1",
+    "generated":  "2026-11-25T10:05:42-08:00",
+    "commit":  "1f0d44272",
+    "uncommitted":  [
+                        "test/win32/window-count-scale.ps1"
+                    ],
+    "files":  {
+                  "src/apprt/win32/App.zig":  "643ed91cfdb8a3424d379efa40d348a57fc73f4fa57e5b98749b8586d7141970",
+                  "src/apprt/win32/occlusion.zig":  "efe06766422d41454190b9be5d3a865ef33814801f5fb9158e326392eb39d338",
+                  "src/apprt/win32/Window.zig":  "3e982f8c676b62841d4c8db1d5b08a2007ea559fb1a5bf837328f8387208d86b",
+                  "src/renderer/Thread.zig":  "8f1ce8a9434e86e8a06d046e9d61dabad2c634af095211dc5eeda8474a37291f",
+                  "test/win32/window-count-scale.ps1":  "6cdcfab2808dbd26a61ee0f30f08c6c0631af04141b497c1fe3bbd199b57a71a"
+              },
+    "code":  {
+                 "test/win32/window-count-scale.ps1":  "code1:a78c5377ee2ac94afefe0f424148366bb01e47475db57e20eded1279b29f67e4"
+             }
+}

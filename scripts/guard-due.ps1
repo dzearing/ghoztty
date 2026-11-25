@@ -2585,6 +2585,23 @@ $GuardTable = @(
             'src\apprt\win32\ViewerPane.zig'
         )
     },
+    # T3740: what the 50th open window costs against the 2nd - open time,
+    # keystroke to glyph, UI-thread lag, idle CPU - and that covered windows
+    # draw nothing however many there are. The only harness that opens more
+    # than a handful of windows, so it covers what runs once PER WINDOW: the
+    # occlusion poll and its coverage test, and the window/surface lifecycle.
+    [pscustomobject]@{
+        Name   = 'window-count-scale'
+        Script = 'test\win32\window-count-scale.ps1'
+        Stamp  = 'test\win32\window-count-scale.stamp.json'
+        Covers = @(
+            'test\win32\window-count-scale.ps1',
+            'src\apprt\win32\occlusion.zig',
+            'src\apprt\win32\App.zig',
+            'src\apprt\win32\Window.zig',
+            'src\renderer\Thread.zig'
+        )
+    },
     # T2473: what a closed window gives back - private bytes, handles, GDI/USER,
     # threads, child processes and GPU memory across repeated open/close of a
     # split window with a viewer. The only harness that measures a window's
