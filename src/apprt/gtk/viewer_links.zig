@@ -275,6 +275,44 @@ test "popupSize: what the page asked for, clamped like win32's, or nothing" {
     try testing.expectEqual(popup.max_dim, popupSize(0, 0, std.math.maxInt(c_int), 300).?.w);
 }
 
+/// The window size that gives a sized popup's PAGE the size it asked for
+/// (T3614), or null when it already has it. The window is first opened at
+/// the asked size, which is the size of the whole window; the chrome round
+/// the page - the pane sidebar's column, the elevated grid's inset, the
+/// viewer's nav bar - takes its share out of that, and the page came up 84px
+/// narrow. A popup asks for the size of its page (win32 adds its frame on top
+/// with `AdjustWindowRectEx`; Mac stamps the size onto the pane's own view),
+/// so once the page is laid out the window grows by what it is short. It
+/// never shrinks: a page already as big as asked (or a window the compositor
+/// would not give the size to) is left alone. Measured rather than summed,
+/// so chrome added later is covered without this knowing about it.
+pub fn popupFit(asked: PopupSize, page_w: i32, page_h: i32, window_w: i32, window_h: i32) ?PopupSize {
+    if (page_w <= 0 or page_h <= 0 or window_w <= 0 or window_h <= 0) return null;
+    const dw = @max(0, asked.w - page_w);
+    const dh = @max(0, asked.h - page_h);
+    if (dw == 0 and dh == 0) return null;
+    return .{
+        .w = @min(popup.max_dim, window_w + dw),
+        .h = @min(popup.max_dim, window_h + dh),
+    };
+}
+
+test "T3614: popupFit grows the window by what the chrome took from the page" {
+    // The K24d shape: 500x400 asked, the rail (64) and the grid inset (20)
+    // took 84 across, the nav bar and inset took 56 down.
+    try testing.expectEqual(PopupSize{ .w = 584, .h = 456 }, popupFit(.{ .w = 500, .h = 400 }, 416, 344, 500, 400).?);
+    // Already the size asked, or bigger: nothing to do, never a shrink.
+    try testing.expect(popupFit(.{ .w = 500, .h = 400 }, 500, 400, 584, 456) == null);
+    try testing.expect(popupFit(.{ .w = 500, .h = 400 }, 520, 410, 600, 470) == null);
+    // One axis short: only that one grows.
+    try testing.expectEqual(PopupSize{ .w = 500, .h = 430 }, popupFit(.{ .w = 500, .h = 400 }, 500, 370, 500, 400).?);
+    // Not laid out yet: no measurement to act on.
+    try testing.expect(popupFit(.{ .w = 500, .h = 400 }, 0, 0, 500, 400) == null);
+    try testing.expect(popupFit(.{ .w = 500, .h = 400 }, 416, 344, 0, 0) == null);
+    // Held to the same cap the request is.
+    try testing.expectEqual(popup.max_dim, popupFit(.{ .w = popup.max_dim, .h = 400 }, popup.max_dim - 84, 400, popup.max_dim, 400).?.w);
+}
+
 // -------------------------------------------------------------------------
 // The link menu
 // -------------------------------------------------------------------------

@@ -392,6 +392,13 @@ pub fn widget(self: *const Viewer) *wk.GtkWidget {
     return self.box;
 }
 
+/// The page's laid-out size in logical pixels (0x0 before its first
+/// layout): what a sized popup's window is fitted to (T3614).
+pub fn pageSize(self: *const Viewer) PopupSize {
+    const w = wk.asWidget(self.view);
+    return .{ .w = wk.gtk_widget_get_width(w), .h = wk.gtk_widget_get_height(w) };
+}
+
 /// Give keyboard focus to the page (Mac's `focusContent`): what focusing the
 /// pane means, and where a submitted address or an Escape hands focus back.
 pub fn focusContent(self: *const Viewer) void {

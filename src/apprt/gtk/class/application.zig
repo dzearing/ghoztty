@@ -61,6 +61,56 @@ const log = std.log.scoped(.gtk_ghostty_application);
 /// A window size in logical pixels: an adopted popup's requested size (T3447).
 pub const WindowSize = struct { w: i32, h: i32 };
 
+/// Fits a sized popup's window to its page (T3614): a frame callback that,
+/// at the first frame the page has been laid out, grows the window by what
+/// the chrome took from the asked size (`viewer_links.popupFit`), then
+/// removes itself. Bounded, so a window whose page never lays out (or a
+/// compositor that will not give the size) stops asking.
+const PopupFit = struct {
+    asked: WindowSize,
+    ticks: u32 = 0,
+    grown: bool = false,
+
+    const max_ticks: u32 = 120;
+
+    fn arm(win: *Window, asked: WindowSize) void {
+        const alloc = Application.default().allocator();
+        const self = alloc.create(PopupFit) catch return;
+        self.* = .{ .asked = asked };
+        _ = win.as(gtk.Widget).addTickCallback(&tick, self, &destroy);
+    }
+
+    fn destroy(data: ?*anyopaque) callconv(.c) void {
+        const self: *PopupFit = @ptrCast(@alignCast(data orelse return));
+        Application.default().allocator().destroy(self);
+    }
+
+    fn tick(widget: *gtk.Widget, _: *gdk.FrameClock, data: ?*anyopaque) callconv(.c) c_int {
+        const self: *PopupFit = @ptrCast(@alignCast(data orelse return 0));
+        self.ticks += 1;
+        if (self.ticks > max_ticks) return 0;
+        const win = gobject.ext.cast(Window, widget) orelse return 0;
+        const surface = win.getActiveSurface() orelse return 1;
+        const viewer = surface.getViewer() orelse return 0;
+        const page = viewer.pageSize();
+        const ww = widget.getWidth();
+        const wh = widget.getHeight();
+        if (page.w <= 0 or page.h <= 0 or ww <= 0 or wh <= 0) return 1;
+        const fit = viewer_links.popupFit(.{ .w = self.asked.w, .h = self.asked.h }, page.w, page.h, ww, wh) orelse {
+            log.info("viewer popup: page fitted at {d}x{d} (asked {d}x{d}) window {d}x{d}", .{ page.w, page.h, self.asked.w, self.asked.h, ww, wh });
+            return 0;
+        };
+        // One grow; the next frames only confirm it (or give up at the
+        // bound), so a compositor that keeps the old size cannot make this
+        // grow the window without end.
+        if (self.grown) return 1;
+        self.grown = true;
+        log.info("viewer popup: page {d}x{d} short of {d}x{d}; window {d}x{d} -> {d}x{d}", .{ page.w, page.h, self.asked.w, self.asked.h, ww, wh, fit.w, fit.h });
+        win.as(gtk.Window).setDefaultSize(fit.w, fit.h);
+        return 1;
+    }
+};
+
 /// Function used to funnel GLib/GObject/GTK log messages into Zig's logging
 /// system rather than just getting dumped directly to stderr.
 fn glibLogWriterFunction(
@@ -2930,8 +2980,13 @@ const Action = struct {
                 );
             }
         }
-        // A page's own request wins over the estimate (T3447).
-        if (overrides.size) |s| win.as(gtk.Window).setDefaultSize(s.w, s.h);
+        // A page's own request wins over the estimate (T3447), and once the
+        // page is laid out the window grows by what the chrome round it
+        // took, so the PAGE is the size asked (T3614).
+        if (overrides.size) |s| {
+            win.as(gtk.Window).setDefaultSize(s.w, s.h);
+            PopupFit.arm(win, s);
+        }
 
         // Show the window. `present` is show + an activation request (on
         // Wayland, xdg-activation). A window a script opened without

@@ -348,8 +348,11 @@ hl_check "K24b the adopted popups are viewer windows of their own (+list)" $? "$
 grep -qx 'probe OK blankread Written|true' "$out"
 hl_check "K24c a bare window.open() hands back a window the opener writes into" $? "$(grep -E '^probe .*blank' "$out" | tr '\n' ' ')"
 w=$(grep -o 'fromPop|sized|Page Two|[0-9]*' "$out" | head -1 | awk -F'|' '{print $4}')
-[ -n "$w" ] && [ "$w" -ge 440 ] && [ "$w" -le 500 ] && grep -q 'viewer: popup ready to show at 500x400 (asked 500x400)' "$APP_LOG" && grep -q 'viewer: popup ready to show at the default size' "$APP_LOG"
-hl_check "K24d width=500,height=400 opens the window at that size, and a popup that asked for none gets the default (page innerWidth $w)" $? "$(grep 'ready to show' "$APP_LOG" | tr '\n' ' ')"
+# T3614: the PAGE is the size asked - the window grows by what the sidebar,
+# the grid inset and the nav bar take - so innerWidth is 500, not 500 less
+# the chrome (436, then 416, while the window itself was 500).
+[ "$w" = 500 ] && grep -q 'viewer: popup ready to show at 500x400 (asked 500x400)' "$APP_LOG" && grep -q 'viewer popup: page fitted at 500x400 (asked 500x400)' "$APP_LOG" && grep -q 'viewer: popup ready to show at the default size' "$APP_LOG"
+hl_check "K24d width=500,height=400 gives the popup's page that size, and a popup that asked for none gets the default (page innerWidth $w)" $? "$(grep -E 'ready to show|page fitted|short of' "$APP_LOG" | tr '\n' ' ')"
 before=$(echo "$pop_leaves" | grep -cF "|viewer|$fx/sub/two.html|")
 after=$(echo "$closed_leaves" | grep -cF "|viewer|$fx/sub/two.html|")
 grep -qx 'probe OK closed true' "$out" && [ "$after" = $((before - 1)) ] && grep -q 'viewer popup: the page closed its pane' "$APP_LOG"
