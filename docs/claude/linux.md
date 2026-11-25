@@ -1466,9 +1466,21 @@ exactly as selected), which needs the seam to grow the rectangle modifier (T3621
 
 `docs/reference/pane-style.md` on GTK. Three pieces:
 
-- **The desk** is drawn by the split tree itself: `SplitTree` overrides the
-  widget `snapshot` vfunc (`snapshotDesk`) and appends a small texture of the
-  window's gradient, stretched over the tree, before its children. The colours
+- **The desk** is drawn by the window (T3623; it was the split tree's until
+  then): `Window` overrides the widget `snapshot` vfunc (`snapshotDesk`) and
+  appends a small texture of its gradient, stretched over the toolbar view's
+  bounds - header bar, tab bar and the sidebar row - before any child. So the
+  gradient runs up under the header bar (Mac's transparent titlebar) and
+  under the pane sidebar, and the split tree draws nothing of its own. The
+  window's classes `pane-desk-window` (+ `-light`, `-glass`;
+  `Window.syncDeskClasses`, run from `syncPaneStyle`) make the header bar,
+  the toolbar's top/bottom bars and the tab bar transparent in `style.css`.
+  On glass the sidebar card is an unfocused pane's card (Mac
+  `PaneSidebarCard` -> `PaneCard`): 11px corners, the card's rim and shadow
+  in CSS, and its 40% sheet (`pane_style.sidebarSheet`) painted by the
+  window inside those corners. Off glass it keeps its own light wash, which
+  the desk reads through. Tab-overview thumbnails show the cards without the
+  desk (the overview renders the tab alone). The colours
   are win32's `desk_palette.zig` (Mac's `PaneDeskPalette`/`PaneDeskVariant`,
   draw for draw through the same SplitMix64), rendered at win32's downscale and
   cached per size/seed/theme (`pane_style.DeskKey`). Light vs dark follows the
@@ -1509,15 +1521,23 @@ read (the gutter beside it is inside the card's drop shadow), so pane-style.sh
 reads each probe under two dark backgrounds and checks the pixel moved by
 40% (25%) of the change; G7 is the negative control (solid moves by 100%).
 
-Not yet: the seed in the session layout and the desk under
-the sidebar/header bar (T3623), the 1px line down the flat style's gutter (T3624; the 6px gutter itself came with T3567's stage).
+**The window's gradient survives a relaunch (T3623).** The session layout
+records the window's seed as `desk_variant` (win32's field, Mac
+`deskVariant: {seed}`; `session_layout_rules.deskSeedToRecord`), and the
+restore gives it back (`deskSeedToRestore`): the recorded seed, else the
+ocean - never the fresh random gradient a hand-opened window would draw.
+In-place agent recovery keeps the window object, so its gradient never
+moves. Acceptance: RD1-RD3 of `test/linux/session-restore.sh`.
+
+Not yet: the 1px line down the flat style's gutter (T3624; the 6px gutter itself came with T3567's stage).
 
 ```powershell
 powershell -NoProfile -File scripts\linux\wsl-run.ps1 -CommandFile test\linux\pane-style.sh
 ```
 
-Ends `PANE STYLE: ALL PASS` (24 checks; geometry and pixels from the window's
-own render via `capture-pane --window`, probed with `hl_png_pixel`).
+Ends `PANE STYLE: ALL PASS` (28 checks; geometry and pixels from the window's
+own render via `capture-pane --window`, probed with `hl_png_pixel`; D1-D4 are
+the desk under the header bar and the sidebar, D4 the flat control).
 
 ## Stacked panes: one stage the shared layout places (T3567)
 
@@ -1921,7 +1941,7 @@ it used to carry (a `-Dtest-filter=firstLeaf` run matched no tests).
   `XDG_CONFIG_HOME` holds a test's manifest too.
 - **It records** per window its target name, pinned title, size (`frame` w/h:
   GTK's default size, which tracks the user's resizes and stays the normal
-  size while maximized; x/y are 0, T3549), maximized state and selected tab;
+  size while maximized; x/y are 0, T3549), maximized state, selected tab and gradient seed (`desk_variant`, T3623);
   per tab its pinned title (T3549) and the split tree with exact directions
   and ratios; per
   terminal pane its session id, pane id, name, pinned title, pwd,

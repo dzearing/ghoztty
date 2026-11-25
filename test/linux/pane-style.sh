@@ -8,7 +8,9 @@
 # instead of tinting the terminal. Glass panes (T3622, G1-G8): each pane is a
 # sheet of its terminal's background at 40% over the desk (25% under a banner
 # card), focused or not, with no unfocused wash; a markdown viewer's page is
-# see-through over it; flat stays solid. Read from the window's OWN render through
+# see-through over it; flat stays solid. The window paints the desk, so it runs
+# up under the header bar and through the pane sidebar's card, which on glass is
+# an unfocused pane's 40% sheet (T3623, D1-D4). Read from the window's OWN render through
 # the debug-only capture-pane seam (T3359), so it is what the window draws.
 #
 # Run it ONLY through the wrapper, from this box:

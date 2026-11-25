@@ -5,7 +5,8 @@
 # the same pane id, the same name and split ratio. A real quit (SIGTERM, what a
 # logout sends) detaches rather than ends; a pane whose session died while the
 # app was down comes back as a fresh shell; a window the user closed never
-# comes back; a second instance neither restores nor writes.
+# comes back; a second instance neither restores nor writes. A window's own
+# gradient comes back with it, not a new random one (T3623, RD1-RD3).
 #
 # Run it ONLY through the wrapper, from this box:
 #
