@@ -105,7 +105,7 @@ hl_check "P4 the divider dragged past pa's minimum tucks pa (the leading pane) i
 
 # ---- 2. an undone close puts the strip back a strip ----------------------
 cli +close --target=pa > /dev/null 2>&1
-one_pane() { [ "$(names | wc -w)" = 1 ]; }
+one_pane() { ! names | tr ' ' '\n' | grep -q '^pa='; }
 hl_wait_for 10 one_pane
 hl_check "P5 +close takes pa out of the tab" $? "names=$(names)"
 hl_ipc press-key --target=pb --key=ctrl+shift+z > /dev/null 2>&1
