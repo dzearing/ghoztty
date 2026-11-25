@@ -65,12 +65,18 @@
         See scripts\lib\CompilerCrash.ps1.
 
 .PARAMETER Lane
-    none | win32 | agent | lib | harness | none-releasesafe | win32-releasesafe |
-    releasesafe | all. Default `all` runs the four zig lanes SIDE BY SIDE
+    none | win32 | agent | lib | vt | harness | none-releasesafe |
+    win32-releasesafe | releasesafe | all. Default `all` runs the four zig lanes SIDE BY SIDE
     (T1959): each is an `-Isolated` child with its own build root, scheduled
     against free commit, and a lane that is not green beside the others is
     re-run alone for its final verdict. `-Serial` runs them in sequence, the way
     it ran before. See Invoke-ParallelFloor.
+
+    `vt` is `zig build test-lib-vt` (T2193): libghostty-vt (`src\lib_vt.zig`)
+    and its C API (`src\terminal\c\`), two test binaries no other lane
+    builds. Measured green on this box 2026-11-24, 140s cold. It is NOT in
+    `all`; its guard-due row `lib-vt` makes it due when those sources change,
+    and a whole green run stamps that row.
 
     `none-releasesafe` and `win32-releasesafe` are the `none` and `win32` lanes
     compiled the way real builds are compiled (T846). Every other lane here
@@ -167,7 +173,7 @@
 #>
 [CmdletBinding()]
 param(
-    [ValidateSet('none', 'win32', 'agent', 'lib', 'harness',
+    [ValidateSet('none', 'win32', 'agent', 'lib', 'vt', 'harness',
         'none-releasesafe', 'win32-releasesafe', 'releasesafe', 'all')]
     [string]$Lane = 'all',
     # T1958: `-Lane harness` runs the SCOPED sweep (what changed since the
@@ -384,6 +390,7 @@ function Get-LaneArgs {
         'win32' { return 'test -Dapp-runtime=win32' }     # win32 apprt units
         'agent' { return 'test-agent' }                   # incl. real-pty
         'lib' { return '-Dapp-runtime=none' }             # compiles lib ghostty
+        'vt' { return 'test-lib-vt' }                     # libghostty-vt + C API (T2193)
         # The same two test lanes, compiled the way real builds are compiled
         # (T846). A separate optimize mode is a separate cache, so these are
         # sweeps rather than floor members -- see .PARAMETER Lane.
@@ -1896,6 +1903,17 @@ foreach ($l in $lanes) {
 # path and first errors go HERE rather than staying hundreds of lines up where
 # the lane ran.
 foreach ($line in (Format-FloorFailureDetail -Details $failureDetails)) { Write-Host $line }
+
+# T2193: `-Lane vt` is not part of `all` (harness-floor.ps1 E3 pins `all` to
+# the four zig lanes), so what makes it standing is its guard-due row,
+# `lib-vt`: an edit to libghostty-vt's sources puts it DUE and `validate`
+# refuses the commit until a green run here re-stamps it. Only a whole,
+# unfiltered, non-fixture run proves the module set, so only that stamps.
+if ($worst -eq $EXIT_PASS -and $Lane -eq 'vt' -and -not $Filter -and -not $Isolated -and
+    -not (Get-FakeLaneCommand -Name 'vt')) {
+    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'guard-due.ps1') `
+        update -Guard lib-vt -Repo $Repo 2>&1 | ForEach-Object { Write-Host "  $_" }
+}
 
 Write-Host ""
 Write-Host "FLOOR SUMMARY: $($summary -join ' ')"

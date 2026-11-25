@@ -1,8 +1,8 @@
 {
     "guard":  "sleep-handshake",
     "script":  "test/win32/sleep-handshake-audit.ps1",
-    "generated":  "2026-11-24T16:33:09-08:00",
-    "commit":  "919e9222a",
+    "generated":  "2026-11-24T17:35:07-08:00",
+    "commit":  "c856d195e",
     "uncommitted":  [
 
                     ],

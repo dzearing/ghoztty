@@ -1,15 +1,15 @@
 {
     "guard":  "build-cache",
     "script":  "test/win32/build-cache.ps1",
-    "generated":  "2026-11-24T16:34:19-08:00",
-    "commit":  "acf50e902",
+    "generated":  "2026-11-24T17:15:59-08:00",
+    "commit":  "c856d195e",
     "uncommitted":  [
                         "scripts/floor-lane.ps1"
                     ],
     "files":  {
                   "scripts/build-cache.ps1":  "d94c8308363992f42d7ef2c3b729dbce0a7cad28b41f415a7bad39cfab16013a",
                   "scripts/crash-databreak.ps1":  "03e868f010ac75c549778e05aa225c97033a1af23bc86eec268cf5708f0dc3b6",
-                  "scripts/floor-lane.ps1":  "f784f1c7eba34cf7cb4c000262ee29de27c6fae3ed94792bb540a92ff058e5df",
+                  "scripts/floor-lane.ps1":  "0518db175e376801837648f55860838a8bca0b4100d65a6d1c411c0fc353d710",
                   "scripts/launch-upgrade.ps1":  "cdac13e044f5b31ec2346cbd23556ea45ddf937972e033f56f7a6451ffbaaaa1",
                   "scripts/lib/BuildCache.ps1":  "ee9ec82ca0da753164d67b9ab808265d29f45e0ec74512987d07bdeaf6fcf0a0",
                   "scripts/lib/HardDelete.ps1":  "78ca1c0b521f9ae991e6b8f5304eb2a4e30a7a8ef1e3ba93839de8b740ea88b2",
@@ -19,7 +19,7 @@
     "code":  {
                  "scripts/build-cache.ps1":  "code1:a881a2551b853c41020487d2e38b7e1c2abf97aebba4d8ce002511c6d6e92bb5",
                  "scripts/crash-databreak.ps1":  "code1:a096e107f45f8fcf3586dc2dda9c85f5e2457b13915a21ef8a1db8e1dfece383",
-                 "scripts/floor-lane.ps1":  "code1:8a6ec4da474f0ec8f2f6b9eedc683c8fb14872bc004634d3eb74c5a8cbd4b5f0",
+                 "scripts/floor-lane.ps1":  "code1:dd8ff54377ecd10c7fea176583e995598f3fe4e8efa089cbb0be75833a391cf6",
                  "scripts/launch-upgrade.ps1":  "code1:bafd3732a4b148f497466a6a7215616df33652dfe4755e2aae4a986da0f32f9d",
                  "scripts/lib/BuildCache.ps1":  "code1:5ffaa24da9edbe853545916aa6b63591156044ac630695e790da2bc3cc83d8e1",
                  "scripts/lib/HardDelete.ps1":  "code1:f77048e94c5dd08f39759e800c0335b025498a07dc245a28775db20c79801a61",

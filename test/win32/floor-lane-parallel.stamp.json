@@ -1,27 +1,23 @@
 {
     "guard":  "lane-parallel",
     "script":  "test/win32/floor-lane-parallel.ps1",
-    "generated":  "2026-11-24T16:15:16-08:00",
-    "commit":  "acf50e902",
+    "generated":  "2026-11-24T17:13:33-08:00",
+    "commit":  "c856d195e",
     "uncommitted":  [
-                        "scripts/floor-lane.ps1",
-                        "scripts/lib/FloorSource.ps1",
-                        "test/win32/floor-lane-parallel.ps1"
+                        "scripts/floor-lane.ps1"
                     ],
     "files":  {
                   "scripts/build-cache.ps1":  "d94c8308363992f42d7ef2c3b729dbce0a7cad28b41f415a7bad39cfab16013a",
-                  "scripts/floor-lane.ps1":  "f784f1c7eba34cf7cb4c000262ee29de27c6fae3ed94792bb540a92ff058e5df",
+                  "scripts/floor-lane.ps1":  "0518db175e376801837648f55860838a8bca0b4100d65a6d1c411c0fc353d710",
                   "scripts/lib/BuildCache.ps1":  "ee9ec82ca0da753164d67b9ab808265d29f45e0ec74512987d07bdeaf6fcf0a0",
                   "scripts/lib/CrashDiag.ps1":  "2a4a5aa89744faabd1d178da50305b793249cd73d75d88c8f31b96e2a7a52e79",
-                  "scripts/lib/FloorSource.ps1":  "eeb267775ca4dee7dc562cfb195c008937fee9ab0de4ee469083da3f45bba14e",
-                  "test/win32/floor-lane-parallel.ps1":  "ffca13d2da9a4d441c39ca7afb48903dc8910fc9fbe07079d6ecf976691925b8"
+                  "test/win32/floor-lane-parallel.ps1":  "e4821c99f31c4708e5402a8f7d0682586f130592268f8d3b5a2a2e11aab3161d"
               },
     "code":  {
                  "scripts/build-cache.ps1":  "code1:a881a2551b853c41020487d2e38b7e1c2abf97aebba4d8ce002511c6d6e92bb5",
-                 "scripts/floor-lane.ps1":  "code1:8a6ec4da474f0ec8f2f6b9eedc683c8fb14872bc004634d3eb74c5a8cbd4b5f0",
+                 "scripts/floor-lane.ps1":  "code1:dd8ff54377ecd10c7fea176583e995598f3fe4e8efa089cbb0be75833a391cf6",
                  "scripts/lib/BuildCache.ps1":  "code1:5ffaa24da9edbe853545916aa6b63591156044ac630695e790da2bc3cc83d8e1",
                  "scripts/lib/CrashDiag.ps1":  "code1:9176752b43a04f2e89c72142b74096c4d93eeec606f81ed5d4c011b9edc4f4c2",
-                 "scripts/lib/FloorSource.ps1":  "code1:f5c5874776ba1ccd725e5414ed22ab3290bd7e00ee21fbe0f942e8dd52a9323c",
-                 "test/win32/floor-lane-parallel.ps1":  "code1:a5c6aeb81be014b1a406351a25472f5fa7fb4179a52396119d90d3f8f8ddfa10"
+                 "test/win32/floor-lane-parallel.ps1":  "code1:1052e6fc90a26384a0f3ee3226257f02eb36211338f5a4c4138e7d7acec43b8e"
              }
 }

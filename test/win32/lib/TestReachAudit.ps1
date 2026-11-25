@@ -132,8 +132,6 @@ $script:TestReachExemptions = @(
     [pscustomobject]@{ Prefix = 'os.kernel_info'; Why = 'Linux only (os\main.zig references it under .linux)' }
     [pscustomobject]@{ Prefix = 'renderer.metal'; Why = 'Metal, macOS only' }
     [pscustomobject]@{ Prefix = 'build'; Why = 'src\build\ runs in ghoztty-build-helpers-test, rooted at src\build\, whose own sweep (T736) fails the lane on an unreached file' }
-    [pscustomobject]@{ Prefix = 'lib_vt'; Why = 'libghostty-vt; runs in `zig build test-lib-vt`, which no floor lane on this box builds (T2193)' }
-    [pscustomobject]@{ Prefix = 'terminal.c'; Why = 'libghostty-vt C API; runs in `zig build test-lib-vt`, which no floor lane on this box builds (T2193)' }
     [pscustomobject]@{ Prefix = 'remote_test_client_main'; Why = 'the root of its own test-client exe, not of any test lane' }
     [pscustomobject]@{ Prefix = 'comp_spike_main'; Why = 'the root of the T2360 comp-spike exe, not of any test lane; its scoring module runs in the win32 lane (apprt\win32\comp_spike_stats.zig)' }
 )
@@ -381,7 +379,10 @@ function Remove-ForeignReachProbes {
 # user's whenever the harness floor ran it. `Start-LaneRedirected` is `cmd`
 # doing the redirect, so the T883 reason above still holds.
 function Invoke-LaneTestBuild {
-    param([string]$Repo, [string]$LogPath, [string]$BuildArgs, [string]$ExeName)
+    # -AllMatches: a step that runs SEVERAL binaries of one name (test-lib-vt
+    # runs two `test.exe`s, mod.vt and the C-ABI mod.vt_c - T2193) hands back
+    # every distinct path, in order, as ExePaths; ExePath stays the first.
+    param([string]$Repo, [string]$LogPath, [string]$BuildArgs, [string]$ExeName, [switch]$AllMatches)
 
     $env:ZIG_GLOBAL_CACHE_DIR = (Get-ZigGlobalCacheDir $Repo)
     $p = Start-LaneRedirected -FilePath 'zig' -ArgumentLine "build $BuildArgs -Doptimize=Debug --verbose" `
@@ -389,16 +390,22 @@ function Invoke-LaneTestBuild {
     $p.WaitForExit()
     $code = $p.ExitCode
 
-    $exe = $null
-    $pat = '(?<p>[^ "'']*' + [regex]::Escape($ExeName) + ')'
+    # The name must be the whole file name (after a separator), so `test.exe`
+    # does not also take `ghostty-test.exe`.
+    $pat = '(?<p>[^ "'']*[\\/]' + [regex]::Escape($ExeName) + ')'
+    $paths = New-Object System.Collections.ArrayList
     foreach ($line in [System.IO.File]::ReadAllLines($LogPath)) {
-        $m = [regex]::Match($line, $pat)
-        if ($m.Success) { $exe = $m.Groups['p'].Value; break }
+        foreach ($m in [regex]::Matches($line, $pat)) {
+            $exe = $m.Groups['p'].Value
+            # Normalised either way, so one binary spelled twice dedupes.
+            if (-not [System.IO.Path]::IsPathRooted($exe)) { $exe = Join-Path $Repo $exe }
+            $exe = [System.IO.Path]::GetFullPath($exe)
+            if (-not ($paths -contains $exe)) { [void]$paths.Add($exe) }
+        }
+        if ($paths.Count -gt 0 -and -not $AllMatches) { break }
     }
-    if ($exe -and -not [System.IO.Path]::IsPathRooted($exe)) {
-        $exe = [System.IO.Path]::GetFullPath((Join-Path $Repo $exe))
-    }
-    return [pscustomobject]@{ ExitCode = $code; ExePath = $exe }
+    $first = if ($paths.Count -gt 0) { $paths[0] } else { $null }
+    return [pscustomobject]@{ ExitCode = $code; ExePath = $first; ExePaths = @($paths) }
 }
 
 # The newest moment any source a test binary is built from was written: every

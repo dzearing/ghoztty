@@ -9356,6 +9356,27 @@ $GuardTable = @(
         )
     },
 
+    # T2193 - libghostty-vt's own tests (`zig build test-lib-vt`): the two test
+    # binaries rooted at src\lib_vt.zig (mod.vt and the C-ABI mod.vt_c). No
+    # `-Lane all` lane builds them, so before this row nothing on this box ever
+    # ran them. Covers the vt root, the terminal core and its C API, and the
+    # unicode/simd helpers it imports, so an edit there puts the lane due;
+    # floor-lane.ps1 -Lane vt stamps it on a whole green run.
+    [pscustomobject]@{
+        Name    = 'lib-vt'
+        Script  = 'scripts\floor-lane.ps1'
+        RunArgs = '-Lane vt'
+        Stamp   = 'test\win32\lib-vt.stamp.json'
+        Covers  = @(
+            'src\lib_vt.zig',
+            'src\terminal\*.zig',
+            'src\terminal\*\*.zig',
+            'src\terminal\*\*\*.zig',
+            'src\unicode\*.zig',
+            'src\simd\*.zig'
+        )
+    },
+
     # ...and the acceptance harness for the floor's own scoring, which is a
     # narrow row on purpose: it proves the ratchet has teeth (T1133) and needs
     # re-running when the ratchet moves, not when somebody edits an audit.

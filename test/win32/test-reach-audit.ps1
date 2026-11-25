@@ -242,6 +242,21 @@ foreach ($spec in @(@('none', 'test -Dapp-runtime=none', 'ghostty-test.exe'),
             -BuildArgs $spec[1] -ExeName $spec[2]
     }
 }
+# T2193: the `vt` lane (`floor-lane.ps1 -Lane vt`, `zig build test-lib-vt`)
+# runs TWO binaries, both named test.exe: mod.vt and the C-ABI mod.vt_c, which
+# is the one that carries `terminal\c\`. Built here every run - a warm build is
+# seconds - and scored as two lanes so D1 names the one that went missing.
+"  NOTE vt lane: building test-lib-vt"
+$vtBuild = Invoke-LaneTestBuild -Repo $Repo -LogPath (Join-Path $tmp 'vt.log') `
+    -BuildArgs 'test-lib-vt' -ExeName 'test.exe' -AllMatches
+Assert "D1v the vt lane ran its two binaries (mod.vt, mod.vt_c)" `
+    ($vtBuild.ExitCode -eq 0 -and @($vtBuild.ExePaths).Count -eq 2) `
+    "exit $($vtBuild.ExitCode); binaries: $(@($vtBuild.ExePaths) -join ' | '); log under $tmp"
+$vi = 0
+foreach ($p in @($vtBuild.ExePaths)) {
+    $vi++
+    $laneBins["vt$vi"] = [pscustomobject]@{ ExitCode = $vtBuild.ExitCode; ExePath = $p }
+}
 
 $inLanes = New-Object System.Collections.Generic.HashSet[string]
 $perLane = [ordered]@{}
