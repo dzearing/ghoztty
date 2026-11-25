@@ -88,7 +88,10 @@ pane=$(hl_first_pane "$app")
 hl_wait_for 20 sh -c "env -u GHOZTTY_IPC_SOCKET -u GHOZTTY_PANE_ID '$app' +read --name='$pane' --lines=5 2>/dev/null | grep -q READY-PROMPT"
 hl_check "P2 bash is up at its prompt (pid $bash_pid, pane $pane)" $? "$(cli +read --name="$pane" --lines=5 2>&1 | tr '\n' '|')"
 
-cli +send-keys --target="$pane" 'echo output-above-the-prompt' Enter > /dev/null 2>&1
+# One line of output and ONE prompt on screen: the typed command line is
+# cleared away, so the only green on screen is the prompt the cursor is on -
+# the one a resize clears.
+cli +send-keys --target="$pane" 'clear; echo output-above-the-prompt' Enter > /dev/null 2>&1
 hl_wait_for 10 sh -c "env -u GHOZTTY_IPC_SOCKET -u GHOZTTY_PANE_ID '$app' +read --name='$pane' --lines=5 2>/dev/null | grep -q '^output-above-the-prompt'"
 
 shots="$HL_RUNTIME/shots"; mkdir -p "$shots"
