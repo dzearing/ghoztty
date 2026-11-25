@@ -13,6 +13,7 @@ pub const GhosttyAgent = @import("GhosttyAgent.zig");
 pub const GhosttyConptySmoke = @import("GhosttyConptySmoke.zig");
 pub const GhosttyCompSpike = @import("GhosttyCompSpike.zig");
 pub const GhosttyMsiCa = @import("GhosttyMsiCa.zig");
+pub const GhosttySetup = @import("GhosttySetup.zig");
 pub const GhosttyBench = @import("GhosttyBench.zig");
 pub const GhosttyDist = @import("GhosttyDist.zig");
 pub const GhosttyDocs = @import("GhosttyDocs.zig");

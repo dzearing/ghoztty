@@ -1,0 +1,46 @@
+// Windows resources for Ghoztty-Setup.exe, the installer's front door (T2197).
+// LANG_NEUTRAL(0), SUBLANG_NEUTRAL(0)
+LANGUAGE 0, 0
+
+// The app's manifest: PerMonitorV2 (the dialog is drawn at the display's
+// scale) and Common Controls 6 (themed buttons, the SysLink row).
+#define RT_MANIFEST 1
+RT_MANIFEST 24 "ghostty.manifest"
+
+#define ID_ICON_GHOSTTY 1
+ID_ICON_GHOSTTY ICON "ghostty.ico"
+
+#ifndef GHOZTTY_FILE_VER
+#define GHOZTTY_FILE_VER 0,1,0,0
+#endif
+#ifndef GHOZTTY_FILE_VER_STR
+#define GHOZTTY_FILE_VER_STR "0.1.0.0"
+#endif
+#define VS_VERSION_INFO 1
+VS_VERSION_INFO VERSIONINFO
+FILEVERSION    GHOZTTY_FILE_VER
+PRODUCTVERSION GHOZTTY_FILE_VER
+FILEFLAGSMASK  0x3F
+FILEFLAGS      0x0
+FILEOS         0x40004 // VOS_NT_WINDOWS32
+FILETYPE       0x1     // VFT_APP
+FILESUBTYPE    0x0
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904B0"
+        BEGIN
+            VALUE "CompanyName",      "dzearing"
+            VALUE "FileDescription",  "Ghoztty Setup"
+            VALUE "FileVersion",      GHOZTTY_FILE_VER_STR
+            VALUE "InternalName",     "ghoztty-setup"
+            VALUE "OriginalFilename", "ghoztty-setup.exe"
+            VALUE "ProductName",      "Ghoztty"
+            VALUE "ProductVersion",   GHOZTTY_FILE_VER_STR
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x0409, 1200
+    END
+END

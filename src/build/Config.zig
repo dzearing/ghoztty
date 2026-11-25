@@ -59,6 +59,8 @@ flatpak: bool = false,
 snap: bool = false,
 windows_console: bool = false,
 windows_file_version: [4]u16 = .{ 0, 1, 0, 0 },
+/// The MSI `Ghoztty-Setup.exe` embeds (T2197); null builds it empty.
+setup_msi: ?[]const u8 = null,
 windows_update_check: bool = false,
 /// Whether the terminal's slow integrity checks run inside the runnable
 /// artifacts (app, agent, libghostty). Test binaries ignore this and keep
@@ -209,6 +211,15 @@ pub fn init(b: *std.Build, appVersion: []const u8, libVersion: []const u8) !Conf
             "pipeline (dist/windows-installer/build-msi.sh) passes its " ++
             "per-build number so MSI upgrades replace the exe (T23).",
     ));
+
+    config.setup_msi = b.option(
+        []const u8,
+        "setup-msi",
+        "Path of the MSI that ghoztty-setup.exe (Ghoztty-Setup.exe, Windows " ++
+            "only, T2197) embeds and installs. Without it the setup exe is " ++
+            "built empty and says so when run; release-windows.yml passes the " ++
+            "package wixl just produced.",
+    );
 
     config.windows_update_check = b.option(
         bool,

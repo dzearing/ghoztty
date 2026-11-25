@@ -4538,6 +4538,24 @@ $GuardTable = @(
             'test\win32\lib\ApplierSandbox.ps1'
         )
     },
+    # The installer's front door (T2197): Ghoztty-Setup.exe runs the MSI and
+    # reports a refusal - the 2026-08-31 collision above all - in our own
+    # dialog. It shares that dialog through an app-less stub (dialog_app.zig),
+    # so a change to either is a change to what the setup exe can show.
+    [pscustomobject]@{
+        Name   = 'setup-front-door'
+        Script = 'test\win32\setup-front-door.ps1'
+        Stamp  = 'test\win32\setup-front-door.stamp.json'
+        Covers = @(
+            'src\apprt\win32\setup_main.zig',
+            'src\apprt\win32\setup_result.zig',
+            'src\apprt\win32\dialog_app.zig',
+            'src\setup_main.zig',
+            'src\build\GhosttySetup.zig',
+            'dist\windows\ghoztty-setup.rc',
+            'test\win32\setup-front-door.ps1'
+        )
+    },
     # Whether a staged update installs ITSELF, and only at a moment that
     # interrupts nobody (T1934). Neither row above asks: both start from a
     # click, and the defect was that nothing but a click ever reached msiexec -

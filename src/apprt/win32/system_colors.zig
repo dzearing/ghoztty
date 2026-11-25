@@ -208,7 +208,7 @@ pub fn panelFor(app: anytype) panel_theme.Panel {
 
 /// The `window-theme` values `chrome_theme.chromeBase` switches on, for the
 /// callers that have no app config to read one from.
-const SystemTheme = enum { auto, system, light, dark, ghostty };
+pub const SystemTheme = enum { auto, system, light, dark, ghostty };
 
 /// The panel palette for a surface with NO app behind it: the standalone
 /// update window and the startup-failure dialog, which run before (or without)

@@ -19,7 +19,7 @@
 const ConfirmDialog = @This();
 
 const std = @import("std");
-const App = @import("App.zig");
+const App = @import("dialog_app.zig").App; // the real App, or the app-less stub (T2197)
 const w32 = @import("win32.zig");
 const type_ramp = @import("type_ramp.zig");
 const utf16_text = @import("utf16_text.zig");

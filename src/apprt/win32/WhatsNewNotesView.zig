@@ -28,7 +28,7 @@ const WhatsNewNotesView = @This();
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
-const App = @import("App.zig");
+const App = @import("dialog_app.zig").App; // the real App, or the app-less stub (T2197)
 const layout = @import("whats_new_layout.zig");
 const notes_render = @import("whats_new_notes.zig");
 const panel_theme = @import("panel_theme.zig");

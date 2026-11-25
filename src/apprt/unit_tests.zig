@@ -307,6 +307,8 @@ test {
     _ = @import("win32/update_apply.zig");
     // T3393: does a staged package act on THIS copy (pure decision half).
     _ = @import("win32/update_target.zig");
+    // T2197: what Ghoztty-Setup.exe says when Windows Installer refuses.
+    _ = @import("win32/setup_result.zig");
 
     // Pure win32 PERSISTENT update affordance (T1673): the escalation ladder
     // behind the menu-button dot, its geometry, the row's wording, and the

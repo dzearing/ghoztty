@@ -381,6 +381,13 @@ pub fn build(b: *std.Build) !void {
                 const msi_ca = buildpkg.GhosttyMsiCa.init(b, &config);
                 msi_ca.install();
                 install_unlock.guardArtifact(msi_ca.install_step);
+
+                // T2197: the installer's front door. Built beside the exe for
+                // the acceptance script and release-windows.yml (which passes
+                // -Dsetup-msi); never installed by the MSI itself.
+                const setup = buildpkg.GhosttySetup.init(b, &config);
+                setup.install();
+                install_unlock.guardArtifact(setup.install_step);
             }
 
             // Linux (T3337): the GTK app finds ghoztty-agent beside itself
