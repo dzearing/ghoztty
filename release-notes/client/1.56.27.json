@@ -1,0 +1,21 @@
+{
+  "version": "1.56.27",
+  "sections": [
+    { "title": "New",
+      "items": [
+        { "text": "On Linux, stacked panes glide instead of jumping." },
+        { "text": "On Linux, a split's gutters light an accent bar, and a double-click evens the panes out." },
+        { "text": "On Linux, a collapsed row lasts through a relaunch and an undone close." },
+        { "text": "Stamp seam-audit and unwired-hook-audit green over the pulled code." },
+        { "text": "Stamp the due audits and the harness floor green over the pulled code." },
+        { "text": "On Linux, an agent's side pane opened without focus comes on show." }
+      ] },
+    { "title": "Fixes",
+      "items": [
+        { "text": "File the user's WSL, shell-picker and Settings-scroll reports." },
+        { "text": "A panic in a shipping Windows build now leaves a crash report and a minidump." },
+        { "text": "A shell picked in Settings > Shell now reaches the next window, tab and split." },
+        { "text": "A pane on a reused window now draws when its composition present fails, instead of staying blank." }
+      ] }
+  ]
+}
