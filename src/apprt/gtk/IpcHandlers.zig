@@ -811,15 +811,22 @@ const GhostRep = struct {
     scale: c_int = 0,
     texture_w: c_int = 0,
     texture_h: c_int = 0,
-    bg: [3]u8 = .{ 0, 0, 0 },
-    strip_planned: [3]u8 = .{ 0, 0, 0 },
-    margin_px: ?[4]u8 = null,
-    shadow_px: ?[4]u8 = null,
-    strip_px: ?[4]u8 = null,
-    body_px: ?[4]u8 = null,
+    // u16, not u8: std.json writes a `[N]u8` that happens to be valid UTF-8
+    // as a STRING, so the colour 40,44,52 arrived as "(,4".
+    bg: [3]u16 = .{ 0, 0, 0 },
+    strip_planned: [3]u16 = .{ 0, 0, 0 },
+    margin_px: ?[4]u16 = null,
+    shadow_px: ?[4]u16 = null,
+    strip_px: ?[4]u16 = null,
+    body_px: ?[4]u16 = null,
     title_ink_px: usize = 0,
     png: ?[]const u8 = null,
 };
+
+fn wide4(v: ?[4]u8) ?[4]u16 {
+    const x = v orelse return null;
+    return .{ x[0], x[1], x[2], x[3] };
+}
 
 fn ghostReport(arena: Allocator, surface: *Surface, png_path: ?[]const u8) GhostRep {
     const b = surface.dragGhost() orelse return .{ .built = false };
@@ -845,11 +852,11 @@ fn ghostReport(arena: Allocator, surface: *Surface, png_path: ?[]const u8) Ghost
     };
     if (PaneDragGhost.Pixels.of(b)) |px| {
         defer px.deinit();
-        rep.margin_px = px.at(1, 1);
-        rep.shadow_px = px.at(@divTrunc(p.image.w, 2), lay.card.bottom + 3);
+        rep.margin_px = wide4(px.at(1, 1));
+        rep.shadow_px = wide4(px.at(@divTrunc(p.image.w, 2), lay.card.bottom + 3));
         const strip_y = lay.title.top + @divTrunc(lay.title.height(), 2);
-        rep.strip_px = px.at(lay.card.right - 4, strip_y);
-        rep.body_px = px.at(lay.body.right - 12, lay.body.bottom - 12);
+        rep.strip_px = wide4(px.at(lay.card.right - 4, strip_y));
+        rep.body_px = wide4(px.at(lay.body.right - 12, lay.body.bottom - 12));
         // The title's ink: strip pixels in the left half (where the label
         // starts) that are far from the strip's own colour.
         var y = lay.title.top + 2;
