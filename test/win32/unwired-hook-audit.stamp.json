@@ -1,8 +1,8 @@
 {
     "guard":  "unwired-hook",
     "script":  "test/win32/unwired-hook-audit.ps1",
-    "generated":  "2026-11-25T14:42:49-08:00",
-    "commit":  "e64622c7c",
+    "generated":  "2026-11-25T15:12:09-08:00",
+    "commit":  "bb3b57a8c",
     "uncommitted":  [
 
                     ],
@@ -68,7 +68,7 @@
                   "src/apprt/gtk/ipc/new_window.zig":  "2146e1ee1e3a4fd3de21447b81fec4344e3f76e366dc37ed2dd0ac657af9dbd2",
                   "src/apprt/gtk/ipc_remote_window.zig":  "5dcb238c811f5739df25ace480090f4da84bbf1be9c860f4413c2c50aceb6d24",
                   "src/apprt/gtk/ipc_stash.zig":  "3bf54e95b5035712dcf2a23ef51a7c848a655e3d1c6a7988025f526c51aa5bff",
-                  "src/apprt/gtk/IpcHandlers.zig":  "ff853aff333a65eb07d27d9e9627791fab816e2927f712864f6f252a987ab81a",
+                  "src/apprt/gtk/IpcHandlers.zig":  "87feac167235d1bc722137a756f874df5e81ad1d1e24094314d6c218ac4621df",
                   "src/apprt/gtk/IpcServer.zig":  "ad1bb0f13aaea00f82f5086300343bb75789c64137d8ed4b0c9d0df128a678fb",
                   "src/apprt/gtk/key.zig":  "26190d1c1be8ddfc9874f035ffe218881ca6a24a91d27966555d3663c83a0cf4",
                   "src/apprt/gtk/launch_handoff.zig":  "52e116534e9c5e902b64e2261911370eda25773afb68b645149cf935949c83d6",
@@ -99,7 +99,7 @@
                   "src/apprt/gtk/SettingsLive.zig":  "58a72e501d1bf8aec35058e8fec093d89b190c17859764885f3e428d520e3718",
                   "src/apprt/gtk/SettingsTheme.zig":  "6c32e25ac7ce9c21d82074baeb0594b3ec521a8472d51812ad8973157638dfa2",
                   "src/apprt/gtk/SettingsWindow.zig":  "ea1f6a1bea3b4c79671fa148af736912e4f1fabc9038e48c10744055ab6a9756",
-                  "src/apprt/gtk/ShortcutGuideWindow.zig":  "f555639f3e05c07f39c2b7f99a4131df326f9b0ab994c9791cf3aac7905508da",
+                  "src/apprt/gtk/ShortcutGuideWindow.zig":  "e7d5856c052b8adf851783503e5e05afe4ffadc04fba142a6cd0dfea9734a53b",
                   "src/apprt/gtk/Surface.zig":  "06aa46f48a21569b307d1cf1b8db60b78b2f854ed36d369c4b432ea8bf14f5ea",
                   "src/apprt/gtk/url_activation.zig":  "eb7e237ecfff43e95f7d335b69136a7cbb2a178369988890f81126c53dee2082",
                   "src/apprt/gtk/url_scheme.zig":  "08dee3549c24c80e7b431c5b134e71037b96ebe7d885a86d76ef1711fb8e4cd6",
