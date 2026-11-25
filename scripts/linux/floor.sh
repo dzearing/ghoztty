@@ -14,13 +14,20 @@
 #   none  zig build test -Dapp-runtime=none   the pure-logic unit tests
 #   agentx zig build agent        builds ghoztty-agent for Linux (T3332)
 #   agent  zig build test-agent   the agent's tests, incl. real-pty (T3332)
+#   gtk    zig build test -Dapp-runtime=gtk -fno-sys=gtk4-layer-shell
+#          the GTK frontend's own test blocks (T3605): upstream's gtk.zig test
+#          root (key, portal, ext, gsettings, gtk_version, class/*) and every
+#          gtk module only a gtk build compiles. No other lane on any platform
+#          runs them - the none lane takes only the std-only gtk/*.zig halves
+#          that apprt/unit_tests.zig references. -fno-sys=gtk4-layer-shell
+#          builds the vendored copy, since Ubuntu 24.04 packages none.
 #
 # The agent lanes take the DEFAULT runtime (gtk on Linux) on purpose: the agent
 # is GUI-free and gets runtime-none deps on a gtk build (SharedDeps.guiFree,
 # T3358), so it must build without the system gtk4-layer-shell Ubuntu 24.04 does
 # not package. Adding -Dapp-runtime=none here would hide a regression of that.
 #
-# Pick lanes with FLOOR_LANES (default "lib none agentx agent"), e.g. FLOOR_LANES=none.
+# Pick lanes with FLOOR_LANES (default "lib none agentx agent gtk"), e.g. FLOOR_LANES=none.
 # Each lane is bounded by FLOOR_LANE_TIMEOUT seconds (default 1800), so a
 # wedged lane ends as STALL rather than holding the wrapper forever.
 #
@@ -30,7 +37,7 @@
 # 'LINUX FLOOR: <n> FAILURE(S)'. Exit 0 only on ALL PASS. Full lane logs are
 # /tmp/linux-floor-<lane>.log inside the distro.
 set -u
-lanes=${FLOOR_LANES:-lib none agentx agent}
+lanes=${FLOOR_LANES:-lib none agentx agent gtk}
 limit=${FLOOR_LANE_TIMEOUT:-1800}
 fails=0
 
@@ -40,6 +47,7 @@ lane_args() {
         none) echo "test -Dapp-runtime=none" ;;
         agentx) echo "agent" ;;
         agent) echo "test-agent" ;;
+        gtk) echo "test -Dapp-runtime=gtk -fno-sys=gtk4-layer-shell" ;;
         *) return 1 ;;
     esac
 }
@@ -47,7 +55,7 @@ lane_args() {
 echo "LINUX FLOOR at $(git rev-parse --short HEAD 2>/dev/null || echo '?') lanes='$lanes' jobs=${GHOZTTY_WSL_JOBS:-default}"
 for lane in $lanes; do
     if ! args=$(lane_args "$lane"); then
-        echo "LANE $lane FAIL - unknown lane (known: lib none agentx agent)"
+        echo "LANE $lane FAIL - unknown lane (known: lib none agentx agent gtk)"
         fails=$((fails+1)); continue
     fi
     log=/tmp/linux-floor-$lane.log

@@ -1614,6 +1614,16 @@ are `/tmp/linux-floor-<lane>.log` in the distro. `FLOOR_LANES=none` picks
 lanes, and `FLOOR_LANE_TIMEOUT` (1800 s) bounds each one. It tests the
 committed HEAD, so commit first.
 
+**The `gtk` lane** (T3605) is `zig build test -Dapp-runtime=gtk
+-fno-sys=gtk4-layer-shell`: the GTK frontend's own test blocks (upstream's
+`src/apprt/gtk.zig` test root - key, portal, ext, gsettings, gtk_version,
+class/* - and anything else only a gtk build compiles). It is the only lane on
+any platform that runs them; the none lane gets just the std-only
+`src/apprt/gtk/*.zig` halves `src/apprt/unit_tests.zig` references, which is
+why new GTK logic keeps its pure half there. `-fno-sys=gtk4-layer-shell` is
+required because Ubuntu 24.04 packages no gtk4-layer-shell. Measured
+2026-11-24 warm: 7963 passed / 100 skipped in about 2 minutes.
+
 **What breaks here that Windows and macOS never see.** The none lane compiles
 the `src/apprt/win32/` and `src/renderer/` pure-logic tests too, and Linux is
 the first host where they meet both an LP64 C ABI and a POSIX `std.fs.path`:
