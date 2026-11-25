@@ -207,7 +207,7 @@ for _ in $(seq 1 100); do
     [ -n "$vp" ] && [ "$(q "$r" 'P["'"$vp"'"]["viewer"]["git"] > 0 and P["'"$vp"'"]["viewer"]["polling"]')" = True ] && break
     sleep 0.2
 done
-[ -n "$vp" ] && [ "$(q "$r" 'P["'"$vp"'"]["viewer"]["on_show"] and P["'"$vp"'"]["viewer"]["page_mapped"] and P["'"$vp"'"]["viewer"]["git"] > 0')" = True ]
+[ -n "$vp" ] && [ "$(q "$r" 'P["'"$vp"'"]["seen"] and P["'"$vp"'"]["viewer"]["on_show"] and P["'"$vp"'"]["viewer"]["page_mapped"] and P["'"$vp"'"]["viewer"]["git"] > 0')" = True ]
 hl_check "V1 a git-status: viewer split opens on show, its page mapped, polling git" $? "split: $o | $r"
 v() { q "$(seen)" 'P["'"$vp"'"]["viewer"]["'"$1"'"]'; }
 g0=$(v git); sleep 5; g1=$(v git)

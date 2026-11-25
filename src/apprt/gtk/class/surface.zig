@@ -1705,9 +1705,15 @@ pub const Surface = extern struct {
     /// its notifications go on exactly as before.
     pub fn syncSeen(self: *Self) void {
         const priv = self.private();
-        // A viewer pane has no terminal to pause; its own polls and watches
-        // already gate on being mapped (Viewer.zig, ViewerDiff.zig).
-        if (priv.viewer != null) return;
+        // A viewer pane has no terminal to pause. Its own polls and watches
+        // gate on its box being mapped, which a minimized or suspended
+        // window does not change, so it is told about the window (T3643).
+        if (priv.viewer) |v| {
+            const window_seen_now = if (ext.getAncestor(Window, self.as(gtk.Widget))) |w| w.isSeen() else false;
+            v.setWindowSeen(window_seen_now);
+            priv.seen = self.computeSeen();
+            return;
+        }
         const surface = priv.core_surface orelse return;
         const now = self.computeSeen();
         const told = window_seen.change(priv.seen, now) orelse return;
