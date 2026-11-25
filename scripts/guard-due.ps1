@@ -9249,6 +9249,22 @@ $GuardTable = @(
             'src\cli\ghostty.zig'
         )
     },
+    # T2203 - the box-side half of the same question: the runner that executes
+    # a script and watches the interactive desktop for a repo-build window. Its
+    # harness runs planted scripts only (a renamed powershell decoy that owns
+    # one off-screen, never-activated window), so it is safe to re-run on any
+    # edit to the runner, its library, or the static audit it uses to refuse.
+    [pscustomobject]@{
+        Name   = 'desktop-escape'
+        Script = 'test\win32\desktop-escape.ps1'
+        Stamp  = 'test\win32\desktop-escape.stamp.json'
+        Covers = @(
+            'test\win32\desktop-escape.ps1',
+            'test\win32\lib\DesktopEscape.ps1',
+            'test\win32\lib\DesktopLaunchAudit.ps1',
+            'scripts\desktop-escape-run.ps1'
+        )
+    },
     # T364 - the chrome's COLOR math, which nothing in the four lanes scores
     # against a painted pixel. chrome-theme.ps1 is the one harness that reads
     # the band, the hover and the panel surfaces off the screen and compares
