@@ -104,9 +104,11 @@ hl_check "G11 the strip carries the header's label in ink" $? "ink_px=$(g "['tit
 
 # The pane's own content: paint the whole screen white (erase with a white
 # background), then the card's body - a scaled picture of that screen - must
-# be white too, against the dark default background.
+# be white too, against the dark default background. Four backslashes: bash's
+# double quotes halve them, then +send-keys turns `\\` into `\` (a bare `\0`
+# is a NUL to it, which left the shell printing "^@33[107m").
 if [ "${NEGATIVE:-0}" != 1 ]; then
-    cli +send-keys --target="$p" "printf '\\033[107m\\033[2J'" Enter > /dev/null 2>&1
+    cli +send-keys --target="$p" "printf '\\\\033[107m\\\\033[2J'" Enter > /dev/null 2>&1
 fi
 body_white() {
     local v; v=$(pd --target="$p" --ghost)

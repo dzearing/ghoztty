@@ -655,13 +655,26 @@ private runtime dir, so a test app can never meet the user's.
   went on driving it after it moved. Logs: `tab bar drop pane=... index=...
   outcome=...`, `pane drag dwell opened tab <n>`, `pane <id> arrived from
   another tab`, `pane <id> arrived from another window`, `tab bar drop ...
-  (from another window)`. Not yet: the ghost card, drop
-  preview (including lighting the dwelling tab) and the hover handle with the
-  mode off (T3617), a release over nothing or the header's pop-out button
+  (from another window)`. **The ghost card** (T3617, `PaneDragGhost.zig`,
+  sizes in `pane_ghost_rules.zig`): drag-begin sets the drag icon to a card
+  of the pane - its background (or tint), a title strip with the header's
+  label, the pane's own content scaled into the body, a rim and a shadow, at
+  most 220x150 in the pane's shape plus a 10px shadow margin, held by the
+  middle of the title strip - drawn with GtkSnapshot and rendered ONCE to a
+  texture by the window's GSK renderer (a still, like the Mac's NSImage).
+  Log: `drag began pane=... ghost=<w>x<h> hot=<x>,<y>`. Not yet: the drop
+  preview, including lighting the dwelling tab (T3708), the hover handle with
+  the mode off (T3709), a release over nothing or the header's pop-out button
   making a new window (T3618). Debug seam:
   `hl_ipc pane-drag --target=<pane> [--key=escape] [--drop-on=<pane>
   --fx=<0..1> --fy=<0..1> | --drop-at=<x>,<y> | --drop-tab=<n>]
-  [--hover-tab=<n> | --hover-leave] [--bar-of=<pane>]` (`--bar-of` aims the
+  [--hover-tab=<n> | --hover-leave] [--bar-of=<pane>]
+  [--ghost | --ghost-png=<path>]` (`--ghost` adds a `ghost` object: the
+  card's planned geometry, the texture size and scale, and pixels sampled
+  from the very texture a drag-begin would set; `--ghost-png` also saves it.
+  Acceptance: `wsl-run.ps1 -CommandFile test\linux\pane-drag-ghost.sh`, ends
+  `PANE DRAG GHOST: ALL PASS` (15 checks); `NEGATIVE=1` must fail G12 only)
+  (`--bar-of` aims the
   tab-bar flags at that pane's window) replies with `mode`, `tabs_visible`,
   `tabs_autohide`, `key_effect`, every pane's header (`shown`, `height`,
   `title`, `content_height`, `is_split`), the drop (`target`, `side`,
