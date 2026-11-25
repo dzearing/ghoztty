@@ -1217,7 +1217,10 @@ fn reloadHook(ctx: ?*anyopaque) void {
 
 // ---------------------------------------------------------------------
 // The gestures, as the seam drives them: each moves the WIDGET, and the
-// widget's own signal does the write.
+// widget's own signal does the write. A field's Return and a button's click
+// are emitted as the signals themselves: `gtk_widget_activate` on a GtkButton
+// only clicks after a ~250 ms pressed-look timeout, and on a GtkEntry it
+// never reached the `activate` handler (measured in T3631's first run).
 // ---------------------------------------------------------------------
 
 pub const GestureError = error{ NotCurated, WrongControl, BadValue };
@@ -1241,7 +1244,7 @@ pub fn gestureChoose(self: *SettingsWindow, key: []const u8, val: []const u8) Ge
     if (c.kind != .shell) return error.BadValue;
     wk.adw_combo_row_set_selected(c.row, @intCast(c.choices.len));
     wk.gtk_editable_set_text(c.entry.?, (self.gpa.dupeZ(u8, val) catch return error.BadValue).ptr);
-    _ = wk.gtk_widget_activate(c.entry.?);
+    wk.g_signal_emit_by_name(c.entry.?, "activate");
 }
 
 /// One click of a spin row's arrow (`dir` +1 up, -1 down).
@@ -1278,13 +1281,13 @@ pub fn gestureText(self: *SettingsWindow, key: []const u8, text: []const u8) Ges
     const c = self.curatedFor(key) orelse return error.NotCurated;
     if (c.kind != .text) return error.WrongControl;
     wk.gtk_editable_set_text(c.entry.?, (self.gpa.dupeZ(u8, text) catch return error.BadValue).ptr);
-    _ = wk.gtk_widget_activate(c.entry.?);
+    wk.g_signal_emit_by_name(c.entry.?, "activate");
 }
 
 /// A curated row's reset button.
 pub fn gestureReset(self: *SettingsWindow, key: []const u8) GestureError!void {
     const c = self.curatedFor(key) orelse return error.NotCurated;
-    _ = wk.gtk_widget_activate(c.reset);
+    wk.g_signal_emit_by_name(c.reset, "clicked");
 }
 
 // ---------------------------------------------------------------------
