@@ -7,6 +7,7 @@
     { "file": "src\\os\\process_cwd.zig", "fn": "test \"cmdlineFromPid: own process names our own executable\"", "use": "read", "why": "test oracle: compares our own command line against our image name" },
     { "file": "src\\apprt\\win32\\AgentIntegration.zig", "fn": "setupEnabled", "use": "read", "why": "location gate: is this the canonical per-user install?" },
     { "file": "src\\apprt\\win32\\App.zig", "fn": "launchIdentity", "use": "read", "why": "names this build in the single-instance handoff notice" },
+    { "file": "src\\apprt\\gtk\\launch_handoff.zig", "fn": "launchIdentity", "use": "read", "why": "names this build in the Linux launch's Switch / Open Window / Cancel question and the handoff it sends (T3598)" },
     { "file": "src\\apprt\\win32\\install_location.zig", "fn": "isInstalledRelease", "use": "read", "why": "location gate: are we running from the installed release dir?" },
     { "file": "src\\apprt\\win32\\install_prepare.zig", "fn": "runFromArgs", "use": "read", "why": "default install dir for the installer's prepare step; renames files, launches nothing" },
     { "file": "src\\apprt\\win32\\install_restart.zig", "fn": "runFromArgs", "use": "read", "why": "default install dir whose windows the restart step enumerates" },
