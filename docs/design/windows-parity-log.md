@@ -40536,3 +40536,6 @@ WebKitGTK's script message carries no frame, and a page-world handler is visible
 ## 2026-11-25 00:10 lane b - T2213 closed: already fixed by ae179ec73
 - What: the flagged `+send-keys "echo $marker"` at remote-reconnect-relay.ps1:321 gained its `# argv-audit:` intent marker in ae179ec73 (T1279's commit), an hour after 077f12bed introduced the site; the card was filed from a floor run between the two. Closed with that commit; no code change.
 - Evidence: argv-hazard-audit.ps1 ALL PASS (23 assertions; B2/B3 green, 35 explained sites) from dcce5c1fb. No Mac half: test-only.
+## 2026-11-25 00:13 lane b - T2214 closed: already fixed by ca804122b
+- What: the stale `@user-desktop-launch: update-real-msi.ps1` declaration in test/win32/lib/TestDesktop.ps1 was removed in ca804122b (T1332), after bd05206f7 (T2202) had moved that script's launches to the test desktop. Closed with that commit; no code change. The `desktop-launch` guard-ack this card held is no longer needed.
+- Evidence: desktop-launch-audit.ps1 ALL PASS (71 assertions) via acceptance-parallel from 89ccf72cc; guard-due reports GUARD CURRENT desktop-launch. No Mac half: test-only.
