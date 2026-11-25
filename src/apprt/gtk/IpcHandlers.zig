@@ -221,7 +221,17 @@ pub fn handleSeam(app: Context, request: Request) Allocator.Error!server.SeamRep
 /// `pane-sidebar --target=<pane|window> [--search=<text>]
 /// [--search-key=enter|escape] [--hover=<row id>|]
 /// [--click=toggle|scope|add|<row id>|fold:<row id>|tool:<button>:<row id>]
-/// [--layout] [--drag=<row id>:<y>]`
+/// [--layout] [--drag=<row id>:<y>]
+/// [--menu=<window row id>] [--menu-pick=create|remove|move:<group>]
+/// [--edit=<text>] [--edit-key=enter|escape]`
+///
+/// `--menu` pops a window row's right-click menu (T3608) and the reply's
+/// `menu` lists it while it is up; `--menu-pick` picks from it, through the
+/// live menu's own code. `--edit` types into the in-place group field that
+/// Create Group... or the Ungrouped header's pencil (`--click=tool:rename:
+/// ungrouped`) opened, replacing what it holds; `--edit-key` is Return or
+/// Escape in it. The reply's `editing` describes the field while it is open.
+///
 /// (T3557, T3558): what the target window's pane sidebar shows - its mode,
 /// the shared flags, the scope and search, and every row as drawn (id,
 /// label, subtitle, tooltip, selected; a header's count and fold) - after an
@@ -245,6 +255,10 @@ fn paneSidebar(app: Context, request: Request) Allocator.Error![]u8 {
     var key_arg: ?[]const u8 = null;
     var hover_arg: ?[]const u8 = null;
     var drag_arg: ?[]const u8 = null;
+    var menu_arg: ?[]const u8 = null;
+    var pick_arg: ?[]const u8 = null;
+    var edit_arg: ?[]const u8 = null;
+    var edit_key_arg: ?[]const u8 = null;
     var as_laid_out = false;
     for (request.arguments orelse &.{}) |arg| {
         if (std.mem.startsWith(u8, arg, "--drag=")) drag_arg = arg["--drag=".len..];
@@ -254,6 +268,10 @@ fn paneSidebar(app: Context, request: Request) Allocator.Error![]u8 {
         if (std.mem.startsWith(u8, arg, "--search=")) search_arg = arg["--search=".len..];
         if (std.mem.startsWith(u8, arg, "--search-key=")) key_arg = arg["--search-key=".len..];
         if (std.mem.startsWith(u8, arg, "--hover=")) hover_arg = arg["--hover=".len..];
+        if (std.mem.startsWith(u8, arg, "--menu=")) menu_arg = arg["--menu=".len..];
+        if (std.mem.startsWith(u8, arg, "--menu-pick=")) pick_arg = arg["--menu-pick=".len..];
+        if (std.mem.startsWith(u8, arg, "--edit=")) edit_arg = arg["--edit=".len..];
+        if (std.mem.startsWith(u8, arg, "--edit-key=")) edit_key_arg = arg["--edit-key=".len..];
     }
     const target_name = target_arg orelse return server.errorResponse(c_alloc, "--target is required for pane-sidebar", .{});
 
@@ -323,6 +341,42 @@ fn paneSidebar(app: Context, request: Request) Allocator.Error![]u8 {
         } else if (!sidebar.clickRow(click)) {
             return server.errorResponse(c_alloc, "no sidebar row for '{s}'", .{click});
         }
+    }
+    // A window row's right-click menu (T3608): opened on the row, then an
+    // item picked from it - create, remove, or move:<group>.
+    if (menu_arg) |id| {
+        const r = sidebar.rowById(id) orelse
+            return server.errorResponse(c_alloc, "no sidebar row '{s}'", .{id});
+        if (!sidebar.openWindowMenu(r, 12, 12))
+            return server.errorResponse(c_alloc, "sidebar row '{s}' has no window menu", .{id});
+    }
+    if (pick_arg) |p| {
+        const cmd: PaneSidebar.WindowCmd = if (std.mem.eql(u8, p, "create"))
+            .create_group
+        else if (std.mem.eql(u8, p, "remove"))
+            .remove_from_group
+        else if (std.mem.startsWith(u8, p, "move:")) cmd: {
+            const i = sidebar.menuGroupIndex(p["move:".len..]) orelse
+                return server.errorResponse(c_alloc, "the window menu lists no group '{s}'", .{p["move:".len..]});
+            break :cmd .{ .move_to_group = i };
+        } else return server.errorResponse(c_alloc, "--menu-pick must be create, remove or move:<group>", .{});
+        if (!sidebar.menuOffers(cmd))
+            return server.errorResponse(c_alloc, "the window menu is not up, or does not offer '{s}'", .{p});
+        _ = sidebar.pickMenu(cmd);
+    }
+    // The in-place group field (T3608): typed into, then Return or Escape.
+    // A queued redraw lands first, so the field is drawn when typed into.
+    if (edit_arg != null or edit_key_arg != null) sidebar.refresh();
+    if (edit_arg) |t| {
+        if (!sidebar.typeEdit(t)) return server.errorResponse(c_alloc, "no sidebar field is open", .{});
+    }
+    if (edit_key_arg) |k| {
+        if (sidebar.edit == null) return server.errorResponse(c_alloc, "no sidebar field is open", .{});
+        if (std.mem.eql(u8, k, "enter")) {
+            sidebar.commitEdit("return");
+        } else if (std.mem.eql(u8, k, "escape")) {
+            sidebar.cancelEdit();
+        } else return server.errorResponse(c_alloc, "--edit-key must be enter or escape", .{});
     }
     sidebar.refresh();
     // The pointer over a row (its buttons show), or with an empty value off

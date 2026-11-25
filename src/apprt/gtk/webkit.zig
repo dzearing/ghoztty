@@ -414,6 +414,11 @@ pub extern fn gtk_popover_set_pointing_to(popover: *GtkWidget, rect: *const GdkR
 pub extern fn gtk_popover_set_has_arrow(popover: *GtkWidget, has_arrow: c_int) void;
 pub extern fn gtk_popover_popup(popover: *GtkWidget) void;
 pub extern fn gtk_event_controller_motion_new() *GtkEventController;
+// The pane sidebar's window menu and its in-place group field (T3608).
+pub extern fn g_menu_append_submenu(menu: *GMenu, label: ?[*:0]const u8, submenu: *GMenu) void;
+pub extern fn gtk_popover_popdown(popover: *GtkWidget) void;
+pub extern fn gtk_event_controller_focus_new() *GtkEventController;
+pub extern fn gtk_editable_set_position(editable: *GtkWidget, position: c_int) void;
 
 pub const GdkRectangle = extern struct { x: c_int, y: c_int, width: c_int, height: c_int };
 

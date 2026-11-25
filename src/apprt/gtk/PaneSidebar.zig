@@ -50,9 +50,15 @@
 //! own drag icon; the row following the pointer and the others sliding are
 //! not ported (parity is behavior here, not the glide).
 //!
+//! Groups are edited from the list (T3608): a window row's right-click menu
+//! (Create Group..., Move to Group, Remove from Group) and the Ungrouped
+//! header's pencil, which open an in-place "Group name" field where a name
+//! was. Each retitles windows `<group>: <name>` and pins the title as the
+//! user's, the rules win32's pure `pane_sidebar_menu`/`pane_sidebar_rename`.
+//!
 //! Not here yet: dragging windows and groups, a row dropped into another
-//! window, and the stash tray (T3607's remainder), group editing
-//! (T3608), and from T3606's remainder (T3695) this window's own header row
+//! window, and the stash tray (T3607's remainder), and from T3606's
+//! remainder (T3695) this window's own header row
 //! and the rail's +, rename in place, the hover tint, the busy sheen, the
 //! width grip and hero-mode suppression.
 //!
@@ -75,6 +81,8 @@ const search_cap = @import("../win32/pane_sidebar_search.zig").cap;
 const pane_stash = @import("../win32/pane_stash.zig");
 const add_rules = @import("../win32/pane_sidebar_add.zig");
 const sidebar_order = @import("../win32/pane_sidebar_order.zig");
+const rename_rules = @import("../win32/pane_sidebar_rename.zig");
+const row_menu = @import("../win32/pane_sidebar_menu.zig");
 const Application = @import("class/application.zig").Application;
 const Window = @import("class/window.zig").Window;
 const Surface = @import("class/surface.zig").Surface;
@@ -285,6 +293,22 @@ idle: c_uint = 0,
 /// Set while the field is written from the shared search, so its own
 /// change signal is not taken for typing.
 syncing_search: bool = false,
+/// A window row's right-click menu (T3608): the popover while it is up
+/// (parented to the card, which outlives every redraw), and what it was
+/// opened on - the window's key and row id and the groups its Move to Group
+/// listed, owned until the next menu - so a pick acts on what was shown.
+menu_pop: ?*wk.GtkWidget = null,
+menu_key: u64 = 0,
+menu_row: ?[]u8 = null,
+menu_groups: std.ArrayListUnmanaged([]u8) = .empty,
+menu_remove: bool = false,
+/// The in-place field naming a group (T3608), kept across redraws: a redraw
+/// draws it again with what was typed, and gives it the caret back.
+edit: ?Edit = null,
+edit_focus_idle: c_uint = 0,
+/// Set while the rows are torn down, so the field losing the caret to its
+/// own removal is not taken for the user clicking away.
+clearing: bool = false,
 
 pub fn create(alloc: Allocator, window: *Window) Allocator.Error!*PaneSidebar {
     const self = try alloc.create(PaneSidebar);
@@ -388,9 +412,14 @@ pub fn create(alloc: Allocator, window: *Window) Allocator.Error!*PaneSidebar {
 pub fn destroy(self: *PaneSidebar) void {
     if (self.idle != 0) _ = wk.g_source_remove(self.idle);
     self.idle = 0;
+    if (self.edit_focus_idle != 0) _ = wk.g_source_remove(self.edit_focus_idle);
+    self.edit_focus_idle = 0;
+    self.edit = null;
     self.clearRows();
     self.drawn.deinit(self.alloc);
     if (self.hover_id) |h| self.alloc.free(h);
+    self.freeMenuState();
+    self.menu_groups.deinit(self.alloc);
     self.alloc.destroy(self);
 }
 
@@ -419,6 +448,9 @@ fn currentWindowWidth(self: *PaneSidebar) i32 {
 }
 
 fn clearRows(self: *PaneSidebar) void {
+    self.clearing = true;
+    defer self.clearing = false;
+    if (self.edit) |*e| e.entry = null;
     for (self.drawn.items) |r| {
         wk.gtk_box_remove(self.list, r.widget);
         self.alloc.free(r.id);
@@ -434,6 +466,11 @@ fn clearRows(self: *PaneSidebar) void {
 /// Draw the sidebar as the shared flags, the window's width and the panes it
 /// lists (this window's active tab, or every window's) now are.
 pub fn refresh(self: *PaneSidebar) void {
+    self.redraw();
+    self.settleEdit();
+}
+
+fn redraw(self: *PaneSidebar) void {
     const ww = self.currentWindowWidth();
     self.window_width = ww;
     // A quick terminal (the drop-down) has no sidebar, as on the Mac: hidden
@@ -721,6 +758,7 @@ fn addTools(self: *PaneSidebar, r: *Row, row: *wk.GtkWidget, window_row: bool) v
             .restore => "edit-undo-symbolic",
             .add => "list-add-symbolic",
             .close => "window-close-symbolic",
+            .rename => "document-edit-symbolic",
         });
         wk.gtk_widget_add_css_class(b, "flat");
         wk.gtk_widget_add_css_class(b, "circular");
@@ -737,6 +775,7 @@ fn addTools(self: *PaneSidebar, r: *Row, row: *wk.GtkWidget, window_row: bool) v
             .stash, .restore => @ptrCast(&onToolStash),
             .add => @ptrCast(&onToolAdd),
             .close => @ptrCast(&onToolClose),
+            .rename => @ptrCast(&onToolRename),
         };
         _ = wk.g_signal_connect_data(b, "clicked", cb, r, null, 0);
         wk.gtk_box_append(box, b);
@@ -849,7 +888,16 @@ fn addHeadRow(self: *PaneSidebar, item: all.Item) Allocator.Error!void {
     var cb: [16]u8 = undefined;
     const count_z = std.fmt.bufPrintZ(&cb, "{d}", .{item.count}) catch "";
     var count_widget: *wk.GtkWidget = undefined;
-    if (kind == .window) {
+    const editing = if (self.edit) |*e| std.mem.eql(u8, e.rowId(), id) else false;
+    if (editing) {
+        // The in-place field naming a group (T3608) stands where the name
+        // was; the count stays.
+        wk.gtk_box_append(row, self.editField());
+        const count = wk.gtk_label_new(count_z);
+        wk.gtk_widget_add_css_class(count, "dim-label");
+        wk.gtk_box_append(row, count);
+        count_widget = count;
+    } else if (kind == .window) {
         // The name raises the window; the chevron folds it.
         const button = rowButton(false, null);
         wk.gtk_widget_set_hexpand(button, 1);
@@ -893,11 +941,19 @@ fn addHeadRow(self: *PaneSidebar, item: all.Item) Allocator.Error!void {
         .depth = item.depth,
         .selection = item.selection,
         .selected = item.selection == .accent,
-        .tools = rows.headTools(true),
+        .tools = rows.headTools(true, kind == .ungrouped),
         .count_widget = count_widget,
         .members = members,
     };
     _ = wk.g_signal_connect_data(chevron, "clicked", @ptrCast(&onFoldClicked), r, null, 0);
+    if (kind == .window) {
+        // A window row's right-click menu (T3608): Create Group..., Move to
+        // Group, Remove from Group.
+        const menu_click = wk.gtk_gesture_click_new();
+        wk.gtk_gesture_single_set_button(menu_click, gdk_button_secondary);
+        _ = wk.g_signal_connect_data(menu_click, "pressed", @ptrCast(&onWindowRowSecondary), r, null, 0);
+        wk.gtk_widget_add_controller(row, menu_click);
+    }
     self.addTools(r, row, kind == .window);
     try self.drawn.append(self.alloc, r);
     wk.gtk_box_append(self.list, row);
@@ -975,8 +1031,489 @@ pub fn clickTool(self: *PaneSidebar, tool: rows.Tool, id: []const u8) bool {
         .stash, .restore => _ = toggleStash(r.id),
         .add => self.addFromRow(r),
         .close => self.closeFromRow(r),
+        .rename => self.beginEdit(.ungrouped, 0),
     }
     return true;
+}
+
+fn onToolRename(_: *wk.GtkWidget, r: *Row) callconv(.c) void {
+    // Only the Ungrouped header offers it so far (a window's and a group's
+    // rename in place is T3695).
+    if (r.kind == .ungrouped) r.sidebar.beginEdit(.ungrouped, 0);
+}
+
+// ---------------------------------------------------------------------------
+// Group editing (T3608; docs/reference/pane-sidebar.md "All windows": the
+// window row's menu and the Ungrouped header's pencil). The rules are
+// win32's pure `pane_sidebar_menu` / `pane_sidebar_rename`, as on win32.
+//
+// Not ported: the list keeping its place across the move (win32
+// `keepWindowPlace`, Mac `renameWindowKeepingPlace`) - the GTK list has no
+// order of its own for windows and groups yet (dragging them is T3607's
+// remainder), so a regrouped window sorts by name as every window does; and
+// a group title outranking a script's later `+rename` (win32's `.user`
+// provenance), filed as its own task.
+
+const gdk_button_secondary: c_uint = 3;
+const gdk_key_escape: c_uint = 0xff1b;
+
+/// The most bytes the field keeps of what was typed.
+const edit_cap = 256;
+/// A window's name, as the list shows it.
+const name_cap = 512;
+
+/// What the in-place field names.
+pub const EditPurpose = enum {
+    /// A window row's Create Group...: Return makes the window `<group>:
+    /// <name>`, into that group, new or existing.
+    create_group,
+    /// The Ungrouped header's pencil: each lone window becomes `<group>:
+    /// <its title>`.
+    ungrouped,
+};
+
+pub const Edit = struct {
+    purpose: EditPurpose,
+    /// The window a Create Group... names (its tab's key).
+    key: u64 = 0,
+    row_buf: [40]u8 = undefined,
+    row_len: usize = 0,
+    text_buf: [edit_cap]u8 = undefined,
+    text_len: usize = 0,
+    /// The field as drawn now; null between a teardown and the next draw.
+    entry: ?*wk.GtkWidget = null,
+
+    pub fn rowId(self: *const Edit) []const u8 {
+        return self.row_buf[0..self.row_len];
+    }
+
+    pub fn text(self: *const Edit) []const u8 {
+        return self.text_buf[0..self.text_len];
+    }
+
+    fn setText(self: *Edit, t: []const u8) void {
+        var n = @min(t.len, self.text_buf.len);
+        while (n > 0 and n < t.len and (t[n] & 0xC0) == 0x80) n -= 1;
+        @memcpy(self.text_buf[0..n], t[0..n]);
+        self.text_len = n;
+    }
+};
+
+/// Open the in-place field: on window row `key` (Create Group...) or on the
+/// Ungrouped header. It opens empty, with the placeholder "Group name".
+pub fn beginEdit(self: *PaneSidebar, purpose: EditPurpose, key: u64) void {
+    var e: Edit = .{ .purpose = purpose, .key = key };
+    const id = switch (purpose) {
+        .create_group => std.fmt.bufPrint(&e.row_buf, "window:{x}", .{key}) catch return,
+        .ungrouped => std.fmt.bufPrint(&e.row_buf, "ungrouped", .{}) catch return,
+    };
+    e.row_len = id.len;
+    self.edit = e;
+    log.info("pane sidebar group field open purpose={s} row={s}", .{ @tagName(purpose), id });
+    self.queueRefresh();
+}
+
+/// The field, drawn for `self.edit`: what was typed so far, the caret given
+/// to it once it is on screen.
+fn editField(self: *PaneSidebar) *wk.GtkWidget {
+    const e = &self.edit.?;
+    const entry = wk.gtk_entry_new();
+    wk.gtk_entry_set_placeholder_text(entry, rows.group_placeholder);
+    wk.gtk_widget_set_hexpand(entry, 1);
+    wk.gtk_widget_add_css_class(entry, "pane-sidebar-rename");
+    var tb: [edit_cap + 1]u8 = undefined;
+    const t = std.fmt.bufPrintZ(&tb, "{s}", .{e.text()}) catch "";
+    wk.gtk_editable_set_text(entry, t);
+    _ = wk.g_signal_connect_data(entry, "changed", @ptrCast(&onEditChanged), self, null, 0);
+    _ = wk.g_signal_connect_data(entry, "activate", @ptrCast(&onEditActivate), self, null, 0);
+    const keys = wk.gtk_event_controller_key_new();
+    // Ahead of the entry's own text, which would otherwise see Escape first.
+    wk.gtk_event_controller_set_propagation_phase(keys, wk.phase_capture);
+    _ = wk.g_signal_connect_data(keys, "key-pressed", @ptrCast(&onEditKey), self, null, 0);
+    wk.gtk_widget_add_controller(entry, keys);
+    const focus = wk.gtk_event_controller_focus_new();
+    _ = wk.g_signal_connect_data(focus, "leave", @ptrCast(&onEditLeave), self, null, 0);
+    wk.gtk_widget_add_controller(entry, focus);
+    e.entry = entry;
+    return entry;
+}
+
+/// After a draw: a field whose row is no longer listed (its window closed,
+/// or the Ungrouped header went with the last group) is dropped; one that
+/// is drawn gets the caret on the next idle turn, once it is mapped.
+fn settleEdit(self: *PaneSidebar) void {
+    const e = if (self.edit) |*x| x else return;
+    if (e.entry == null) {
+        log.info("pane sidebar group field dropped: row={s} no longer listed", .{e.rowId()});
+        self.edit = null;
+        return;
+    }
+    if (self.edit_focus_idle == 0) self.edit_focus_idle = wk.g_idle_add(@ptrCast(&onEditFocusIdle), self);
+}
+
+fn onEditFocusIdle(self: *PaneSidebar) callconv(.c) c_int {
+    self.edit_focus_idle = 0;
+    const e = if (self.edit) |*x| x else return 0;
+    if (e.entry) |entry| {
+        if (!entryFocused(entry)) {
+            _ = wk.gtk_widget_grab_focus(entry);
+            wk.gtk_editable_set_position(entry, -1);
+        }
+    }
+    return 0; // G_SOURCE_REMOVE
+}
+
+/// Whether the field has the keyboard: a GtkEntry's caret is in its text
+/// child.
+fn entryFocused(entry: *wk.GtkWidget) bool {
+    const root = wk.gtk_widget_get_root(entry) orelse return false;
+    const f = wk.gtk_root_get_focus(root) orelse return false;
+    return f == entry or wk.gtk_widget_get_parent(f) == entry;
+}
+
+fn onEditChanged(entry: *wk.GtkWidget, self: *PaneSidebar) callconv(.c) void {
+    const e = if (self.edit) |*x| x else return;
+    if (e.entry != entry) return;
+    e.setText(std.mem.span(wk.gtk_editable_get_text(entry)));
+}
+
+fn onEditActivate(_: *wk.GtkWidget, self: *PaneSidebar) callconv(.c) void {
+    self.commitEdit("return");
+}
+
+fn onEditKey(_: *wk.GtkEventController, keyval: c_uint, _: c_uint, _: c_uint, self: *PaneSidebar) callconv(.c) c_int {
+    if (keyval != gdk_key_escape) return 0;
+    self.cancelEdit();
+    return 1;
+}
+
+/// The caret left the field - the user clicked away - which keeps what was
+/// typed, as Return does. Its own teardown in a redraw is not that.
+fn onEditLeave(ctl: *wk.GtkEventController, self: *PaneSidebar) callconv(.c) void {
+    if (self.clearing) return;
+    const e = if (self.edit) |*x| x else return;
+    if (e.entry != wk.gtk_event_controller_get_widget(ctl)) return;
+    self.commitEdit("away");
+}
+
+/// Escape: nothing changes.
+pub fn cancelEdit(self: *PaneSidebar) void {
+    const e = self.edit orelse return;
+    log.info("pane sidebar group field cancelled row={s}", .{e.rowId()});
+    self.edit = null;
+    self.queueRefresh();
+}
+
+/// Return (or clicking away): what was typed names the group. Nothing
+/// typed changes nothing.
+pub fn commitEdit(self: *PaneSidebar, how: []const u8) void {
+    const e = self.edit orelse return;
+    // Closed first: the retitles below redraw, and the field must not be
+    // drawn again or commit twice.
+    self.edit = null;
+    defer Window.queueAllSidebarRefresh();
+    const name = switch (rename_rules.decide(e.text(), "")) {
+        .set => |n| n,
+        .keep, .clear => {
+            log.info("pane sidebar group field committed empty by={s}: unchanged", .{how});
+            return;
+        },
+    };
+    log.info("pane sidebar group field committed by={s} purpose={s} name={s}", .{ how, @tagName(e.purpose), name });
+    switch (e.purpose) {
+        .create_group => _ = moveWindowToGroup(e.key, name),
+        .ungrouped => self.groupUngrouped(name),
+    }
+}
+
+/// The Ungrouped header's pencil committed `name` (Mac
+/// `groupUngroupedFromSidebar`, win32 `groupUngrouped`): each window it lists
+/// - the matching ones while searching - is retitled `<name>: <its title>`,
+/// pinned as the user's. A name that cannot head a group changes nothing.
+fn groupUngrouped(self: *PaneSidebar, name: []const u8) void {
+    if (!rename_rules.namesGroup(name)) return log.info("pane sidebar ungrouped not grouped: not a group name", .{});
+    const r = self.rowById("ungrouped") orelse return;
+    // Copied: the retitles queue redraws, which replace the row.
+    var keys: [row_menu.max_groups * 4]u64 = undefined;
+    const n = @min(keys.len, r.members.len);
+    @memcpy(keys[0..n], r.members[0..n]);
+    var grouped: usize = 0;
+    for (keys[0..n]) |k| {
+        if (moveWindowToGroup(k, name)) grouped += 1;
+    }
+    log.info("pane sidebar ungrouped grouped windows={d}", .{grouped});
+}
+
+/// Window `key` moved into group `project` - or, null, out of any - its own
+/// name kept (win32 `moveWindowToGroup`, Mac `moveToGroupFromSidebar`).
+/// False when the window is gone, the name cannot head a group, or nothing
+/// would change.
+fn moveWindowToGroup(key: u64, project: ?[]const u8) bool {
+    var nb: [name_cap]u8 = undefined;
+    const title = windowName(key, &nb) orelse return false;
+    var gb: [name_cap + 64]u8 = undefined;
+    const titled = rename_rules.titleInGroup(&gb, title, project) orelse {
+        log.info("pane sidebar window group unchanged: not a group name", .{});
+        return false;
+    };
+    if (std.mem.eql(u8, titled, title)) return false;
+    log.info("pane sidebar window group move to={s} title={s}", .{ project orelse "", titled });
+    return pinWindowName(key, titled);
+}
+
+/// Pin window `key`'s name as the user's: the tab's title (Change Tab
+/// Title) - unless its window carries a window-wide pin (`+rename`, Change
+/// Window Title), which is what the row shows and so what is renamed.
+fn pinWindowName(key: u64, name: []const u8) bool {
+    const f = findTab(key) orelse return false;
+    if (f.win.titleOverride()) |o| if (o.len > 0) {
+        f.win.setTitleOverride(name);
+        return true;
+    };
+    var zb: [name_cap + 65]u8 = undefined;
+    const z = std.fmt.bufPrintZ(&zb, "{s}", .{name}) catch return false;
+    f.tab.setTitleOverride(z);
+    return true;
+}
+
+/// The name window `key` (a tab) shows in the list, copied into `buf`; null
+/// when it is gone. Read as `gather` reads it.
+fn windowName(key: u64, buf: []u8) ?[]const u8 {
+    var node: ?*glib.List = Application.default().as(gtk.Application).getWindows();
+    while (node) |n| {
+        node = n.f_next;
+        const obj: *gobject.Object = @ptrCast(@alignCast(n.f_data orelse continue));
+        const win = gobject.ext.cast(Window, obj) orelse continue;
+        if (win.paneSidebar() == null) continue;
+        const tab_view = win.getTabView();
+        const pages: usize = @intCast(@max(tab_view.getNPages(), 0));
+        for (0..pages) |i| {
+            const page = tab_view.getNthPage(@intCast(i));
+            const tab = gobject.ext.cast(Tab, page.getChild()) orelse continue;
+            if (@intFromPtr(tab) != key) continue;
+            const active = tab.getActiveSurface();
+            const pwd: ?[]const u8 = if (active) |a| (if (a.getPwd()) |d| d else null) else null;
+            const nm = all.name(win.titleOverride(), if (tab.titleOverride()) |t| t else null, std.mem.span(page.getTitle()), pwd);
+            var len = @min(nm.len, buf.len);
+            while (len > 0 and len < nm.len and (nm[len] & 0xC0) == 0x80) len -= 1;
+            @memcpy(buf[0..len], nm[0..len]);
+            return buf[0..len];
+        }
+    }
+    return null;
+}
+
+fn freeMenuState(self: *PaneSidebar) void {
+    if (self.menu_row) |r| self.alloc.free(r);
+    self.menu_row = null;
+    for (self.menu_groups.items) |g| self.alloc.free(g);
+    self.menu_groups.clearRetainingCapacity();
+    self.menu_remove = false;
+}
+
+fn onWindowRowSecondary(_: *wk.GtkEventController, _: c_int, x: f64, y: f64, r: *Row) callconv(.c) void {
+    r.sidebar.openWindowMenu(r, x, y);
+}
+
+/// Pop window row `r`'s menu at (`x`, `y`) of the row (Mac
+/// `PaneSidebarView.windowMenu`): Create Group..., Move to Group with every
+/// other group as listed (only when there is one), and Remove from Group
+/// for a grouped window. False when the row is not a window's or is gone.
+pub fn openWindowMenu(self: *PaneSidebar, r: *const Row, x: f64, y: f64) bool {
+    if (r.kind != .window) return false;
+    if (self.menu_pop) |p| wk.gtk_popover_popdown(p);
+    self.menu_pop = null;
+    self.freeMenuState();
+
+    var nb: [name_cap]u8 = undefined;
+    const title = windowName(r.key, &nb) orelse return false;
+    // Every group the list shows, in its order.
+    var listed: [row_menu.max_groups]?[]const u8 = undefined;
+    var nl: usize = 0;
+    for (self.drawn.items) |d| {
+        if (d.kind != .project or nl == listed.len) continue;
+        listed[nl] = d.label;
+        nl += 1;
+    }
+    var gbuf: [row_menu.max_groups][]const u8 = undefined;
+    const groups = row_menu.movingTo(title, listed[0..nl], &gbuf);
+    for (groups) |g| {
+        const copy = self.alloc.dupe(u8, g) catch break;
+        self.menu_groups.append(self.alloc, copy) catch {
+            self.alloc.free(copy);
+            break;
+        };
+    }
+    self.menu_key = r.key;
+    self.menu_row = self.alloc.dupe(u8, r.id) catch null;
+    self.menu_remove = row_menu.offersRemove(title);
+
+    const group = wk.g_simple_action_group_new();
+    defer wk.g_object_unref(group);
+    const menu = wk.g_menu_new();
+    defer wk.g_object_unref(menu);
+    addMenuAction(group, "create", self);
+    wk.g_menu_append(menu, rows.create_group_label, "sbmenu.create");
+    if (self.menu_groups.items.len > 0) {
+        const sub = wk.g_menu_new();
+        defer wk.g_object_unref(sub);
+        for (self.menu_groups.items, 0..) |g, i| {
+            var an: [24]u8 = undefined;
+            const action = std.fmt.bufPrintZ(&an, "move-{d}", .{i}) catch continue;
+            addMenuAction(group, action, self);
+            var dn: [40]u8 = undefined;
+            const detailed = std.fmt.bufPrintZ(&dn, "sbmenu.{s}", .{action}) catch continue;
+            var lb: [name_cap]u8 = undefined;
+            wk.g_menu_append(sub, rows.menuLabel(&lb, g).ptr, detailed.ptr);
+        }
+        wk.g_menu_append_submenu(menu, rows.move_to_group_label, sub);
+    }
+    if (self.menu_remove) {
+        addMenuAction(group, "remove", self);
+        wk.g_menu_append(menu, rows.remove_from_group_label, "sbmenu.remove");
+    }
+    wk.gtk_widget_insert_action_group(self.card, "sbmenu", group);
+
+    const pop = wk.gtk_popover_menu_new_from_model(menu);
+    wk.gtk_widget_set_parent(pop, self.card);
+    wk.gtk_popover_set_has_arrow(pop, 0);
+    var cx: f64 = 0;
+    var cy: f64 = 0;
+    if (wk.gtk_widget_translate_coordinates(r.widget, self.card, x, y, &cx, &cy) == 0) {
+        cx = 0;
+        cy = 0;
+    }
+    const rect: wk.GdkRectangle = .{
+        .x = @intFromFloat(@max(0, cx)),
+        .y = @intFromFloat(@max(0, cy)),
+        .width = 1,
+        .height = 1,
+    };
+    wk.gtk_popover_set_pointing_to(pop, &rect);
+    _ = wk.g_signal_connect_data(pop, "closed", @ptrCast(&onMenuClosed), self, null, 0);
+    self.menu_pop = pop;
+    log.info("pane sidebar window menu open title={s} groups={d} remove={}", .{ title, self.menu_groups.items.len, self.menu_remove });
+    wk.gtk_popover_popup(pop);
+    return true;
+}
+
+fn addMenuAction(group: *wk.GSimpleActionGroup, name: [:0]const u8, self: *PaneSidebar) void {
+    const action = wk.g_simple_action_new(name.ptr, null);
+    _ = wk.g_signal_connect_data(action, "activate", @ptrCast(&onMenuAction), self, null, 0);
+    wk.g_action_map_add_action(group, action);
+    wk.g_object_unref(action);
+}
+
+fn onMenuAction(action: *wk.GSimpleAction, _: ?*anyopaque, self: *PaneSidebar) callconv(.c) void {
+    const name = std.mem.span(wk.g_action_get_name(action));
+    const cmd: row_menu.WindowCmd = if (std.mem.eql(u8, name, "create"))
+        .create_group
+    else if (std.mem.eql(u8, name, "remove"))
+        .remove_from_group
+    else if (std.mem.startsWith(u8, name, "move-"))
+        .{ .move_to_group = std.fmt.parseInt(usize, name["move-".len..], 10) catch return }
+    else
+        return;
+    _ = self.pickMenu(cmd);
+}
+
+/// A pick from the window menu (the live menu and the seam's `--menu-pick`
+/// both come here), acting on the window it was opened on.
+pub fn pickMenu(self: *PaneSidebar, cmd: row_menu.WindowCmd) bool {
+    if (self.menu_row == null) return false;
+    const key = self.menu_key;
+    log.info("pane sidebar window menu choice={s}", .{@tagName(cmd)});
+    const ok = switch (cmd) {
+        .create_group => blk: {
+            self.beginEdit(.create_group, key);
+            break :blk true;
+        },
+        .move_to_group => |i| blk: {
+            if (i >= self.menu_groups.items.len) break :blk false;
+            // Copied: the move redraws, and the next menu frees the list.
+            var pb: [name_cap]u8 = undefined;
+            const g = self.menu_groups.items[i];
+            const n = @min(g.len, pb.len);
+            @memcpy(pb[0..n], g[0..n]);
+            break :blk moveWindowToGroup(key, pb[0..n]);
+        },
+        .remove_from_group => moveWindowToGroup(key, null),
+    };
+    if (self.menu_pop) |p| wk.gtk_popover_popdown(p);
+    Window.queueAllSidebarRefresh();
+    return ok;
+}
+
+pub const WindowCmd = row_menu.WindowCmd;
+
+/// Which of the menu's Move to Group entries names `group`.
+pub fn menuGroupIndex(self: *const PaneSidebar, group: []const u8) ?usize {
+    for (self.menu_groups.items, 0..) |g, i| if (std.mem.eql(u8, g, group)) return i;
+    return null;
+}
+
+/// Whether the menu is up and offers `cmd`.
+pub fn menuOffers(self: *const PaneSidebar, cmd: WindowCmd) bool {
+    if (self.menu_pop == null) return false;
+    return switch (cmd) {
+        .create_group => true,
+        .move_to_group => |i| i < self.menu_groups.items.len,
+        .remove_from_group => self.menu_remove,
+    };
+}
+
+/// The seam's report of the menu while it is up.
+fn menuReport(self: *PaneSidebar, arena: Allocator) Allocator.Error!?rows.Report.Menu {
+    if (self.menu_pop == null) return null;
+    var items: std.ArrayListUnmanaged([]const u8) = .empty;
+    try items.append(arena, rows.create_group_label);
+    if (self.menu_groups.items.len > 0) try items.append(arena, rows.move_to_group_label);
+    if (self.menu_remove) try items.append(arena, rows.remove_from_group_label);
+    const groups = try arena.alloc([]const u8, self.menu_groups.items.len);
+    for (self.menu_groups.items, groups) |g, *o| o.* = try arena.dupe(u8, g);
+    return .{
+        .row = try arena.dupe(u8, self.menu_row orelse ""),
+        .items = items.items,
+        .groups = groups,
+    };
+}
+
+fn editReport(self: *PaneSidebar, arena: Allocator) Allocator.Error!?rows.Report.Editing {
+    const e = if (self.edit) |*x| x else return null;
+    return .{
+        .row = try arena.dupe(u8, e.rowId()),
+        .purpose = @tagName(e.purpose),
+        .placeholder = rows.group_placeholder,
+        .text = try arena.dupe(u8, e.text()),
+        .shown = e.entry != null,
+        .focused = if (e.entry) |en| entryFocused(en) else false,
+    };
+}
+
+/// Type `text` into the open field, as the keyboard would (the seam's
+/// `--edit`). False when no field is open.
+pub fn typeEdit(self: *PaneSidebar, text: []const u8) bool {
+    const e = if (self.edit) |*x| x else return false;
+    if (e.entry) |entry| {
+        var tb: [edit_cap + 1]u8 = undefined;
+        const z = std.fmt.bufPrintZ(&tb, "{s}", .{text[0..@min(text.len, edit_cap)]}) catch return false;
+        wk.gtk_editable_set_text(entry, z);
+    } else e.setText(text);
+    return true;
+}
+
+fn onMenuClosed(pop: *wk.GtkWidget, self: *PaneSidebar) callconv(.c) void {
+    if (self.menu_pop == pop) self.menu_pop = null;
+    // Unparented once GTK has finished with the activation that closed it.
+    _ = wk.g_object_ref(pop);
+    _ = wk.g_idle_add(&unparentMenu, pop);
+}
+
+fn unparentMenu(data: ?*anyopaque) callconv(.c) c_int {
+    const pop: *wk.GtkWidget = @ptrCast(@alignCast(data orelse return 0));
+    if (wk.gtk_widget_get_parent(pop) != null) wk.gtk_widget_unparent(pop);
+    wk.g_object_unref(pop);
+    return 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -1460,6 +1997,8 @@ pub fn report(self: *PaneSidebar, arena: Allocator) Allocator.Error!rows.Report 
     };
     var qb: [search_cap * 3]u8 = undefined;
     return .{
+        .menu = try self.menuReport(arena),
+        .editing = try self.editReport(arena),
         .add_shown = wk.gtk_widget_get_visible(self.add_button) != 0,
         .mode = @tagName(self.mode),
         .expanded = shared.expanded,

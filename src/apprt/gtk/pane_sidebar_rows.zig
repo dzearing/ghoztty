@@ -126,7 +126,9 @@ pub fn save(path: []const u8, p: Prefs) void {
 
 /// A hovered row's buttons (T3606; Mac `PaneSidebarItemButton`, win32
 /// T2280/T2298/T2323): stash or restore, add, close.
-pub const Tool = enum { stash, restore, add, close };
+/// The Ungrouped header's pencil (`rename`, T3608) names its windows as a
+/// group.
+pub const Tool = enum { stash, restore, add, close, rename };
 
 /// A pane row's buttons, in order (Mac `PaneSidebarRow`): in the panel, a
 /// row of the window the sidebar is in offers - (stash) or, stashed, the
@@ -138,9 +140,13 @@ pub fn paneTools(expanded: bool, own: bool, stashed: bool) []const Tool {
 }
 
 /// A window row's, a project's or the Ungrouped header's buttons: + then x,
-/// where its count was. Only the panel's outline has headers.
-pub fn headTools(expanded: bool) []const Tool {
-    return if (expanded) &.{ .add, .close } else &.{};
+/// where its count was; the Ungrouped header's pencil first among them
+/// (T3608, Mac `PaneSidebarProjectHeader` with no project). A window's and a
+/// project's pencil are a rename in place (T3695). Only the panel's outline
+/// has headers.
+pub fn headTools(expanded: bool, ungrouped: bool) []const Tool {
+    if (!expanded) return &.{};
+    return if (ungrouped) &.{ .rename, .add, .close } else &.{ .add, .close };
 }
 
 /// A button's tooltip. `window_row`: a window row's + adds a pane to it,
@@ -152,7 +158,41 @@ pub fn toolTip(t: Tool, window_row: bool) [:0]const u8 {
         .restore => "Restore",
         .add => if (window_row) "New pane" else "New window",
         .close => if (window_row) "Close window" else "Close",
+        .rename => "Name these windows as a group",
     };
+}
+
+/// The in-place field's placeholder when it names a group (Create Group...,
+/// the Ungrouped pencil; Mac `PaneSidebarRename.key(groupFor:)`).
+pub const group_placeholder = "Group name";
+
+/// A window row's right-click menu, top to bottom (T3608; Mac
+/// `PaneSidebarView.windowMenu`, win32 `pane_sidebar_menu`): Create Group...,
+/// Move to Group (a submenu of the other groups, only when there is one), and
+/// Remove from Group for a grouped window.
+pub const create_group_label = "Create Group\u{2026}";
+pub const move_to_group_label = "Move to Group";
+pub const remove_from_group_label = "Remove from Group";
+
+/// A GMenu label shows `_` as a mnemonic mark: a group's name has each one
+/// doubled so it shows as typed. Cut short in `buf` (never mid-character)
+/// when it does not fit; NUL-terminated.
+pub fn menuLabel(buf: []u8, name: []const u8) [:0]const u8 {
+    std.debug.assert(buf.len > 0);
+    var n: usize = 0;
+    var i: usize = 0;
+    while (i < name.len) {
+        const len = std.unicode.utf8ByteSequenceLength(name[i]) catch 1;
+        const ch = name[i..@min(name.len, i + len)];
+        const need: usize = if (ch.len == 1 and ch[0] == '_') 2 else ch.len;
+        if (n + need + 1 > buf.len) break;
+        @memcpy(buf[n .. n + ch.len], ch);
+        if (need == 2) buf[n + 1] = '_';
+        n += need;
+        i += ch.len;
+    }
+    buf[n] = 0;
+    return buf[0..n :0];
 }
 
 /// The debug seam's report of one window's sidebar, as JSON the acceptance
@@ -178,7 +218,32 @@ pub const Report = struct {
     title: []const u8 = "",
     /// The panel header's + (a new window, T3606) is on screen.
     add_shown: bool = false,
+    /// A window row's right-click menu, while it is up (T3608).
+    menu: ?Menu = null,
+    /// The in-place field naming a group, while it is open (T3608).
+    editing: ?Editing = null,
     rows: []const Row,
+
+    pub const Menu = struct {
+        /// The row it was opened on (`window:<key>`).
+        row: []const u8,
+        /// Its items, top to bottom; Move to Group's are `groups`.
+        items: []const []const u8,
+        groups: []const []const u8,
+    };
+
+    pub const Editing = struct {
+        /// The row the field stands in (`window:<key>`, `ungrouped`).
+        row: []const u8,
+        /// `create_group` (a window row's Create Group...) or `ungrouped`
+        /// (the Ungrouped header's pencil).
+        purpose: []const u8,
+        placeholder: []const u8,
+        text: []const u8,
+        /// The field is drawn in the list now, and has the keyboard.
+        shown: bool,
+        focused: bool,
+    };
 
     pub const Row = struct {
         /// A pane's id; a header's or rail tile's `window:<key>`,
@@ -388,10 +453,28 @@ test "T3606: a row's hover buttons - stash/restore and x on this window's rows, 
     try testing.expectEqualSlices(Tool, &.{.close}, paneTools(true, false, false));
     try testing.expectEqualSlices(Tool, &.{.close}, paneTools(true, false, true));
     try testing.expectEqual(@as(usize, 0), paneTools(false, true, false).len);
-    try testing.expectEqualSlices(Tool, &.{ .add, .close }, headTools(true));
-    try testing.expectEqual(@as(usize, 0), headTools(false).len);
+    try testing.expectEqualSlices(Tool, &.{ .add, .close }, headTools(true, false));
+    try testing.expectEqual(@as(usize, 0), headTools(false, false).len);
     try testing.expectEqualStrings("Stash", toolTip(.stash, false));
     try testing.expectEqualStrings("New window", toolTip(.add, false));
+}
+
+test "T3608: the Ungrouped header's pencil comes first, and only on it" {
+    try testing.expectEqualSlices(Tool, &.{ .rename, .add, .close }, headTools(true, true));
+    try testing.expectEqual(@as(usize, 0), headTools(false, true).len);
+    try testing.expectEqualStrings("Name these windows as a group", toolTip(.rename, false));
+}
+
+test "T3608: a group's menu label doubles its underscores and fits its buffer" {
+    var buf: [32]u8 = undefined;
+    try testing.expectEqualStrings("my__proj", menuLabel(&buf, "my_proj"));
+    try testing.expectEqualStrings("plain", menuLabel(&buf, "plain"));
+    // Five bytes of room (one is the NUL): "a__b" fits, the next "__" does not.
+    var small: [6]u8 = undefined;
+    try testing.expectEqualStrings("a__b", menuLabel(&small, "a_b_c"));
+    // Never cut inside a character: the e-acute is two bytes.
+    var tiny: [3]u8 = undefined;
+    try testing.expectEqualStrings("x", menuLabel(&tiny, "x\u{e9}"));
 }
 
 test "T3557: the mode follows the shared flags, and a narrow window gets the rail" {
