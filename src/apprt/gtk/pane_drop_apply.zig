@@ -3,11 +3,12 @@
 //! tests run in every app-runtime lane, the `win32/pane_drop.zig` pattern.
 //!
 //! The resolver (`win32/pane_drop.zig`) says what a point means; this makes
-//! it so. Only the drops that stay inside the tree the pane came from are
-//! here: a split of another pane, a swap with it, an insert at the top level
-//! of the window, and an insert in a divider's gap. The tab bar, a new window
-//! and the other cross-tree drops are the drag's other half (the follow-up
-//! cards T3564 filed).
+//! it so: `apply` for the drops that stay inside the tree the pane came from
+//! (a split of another pane, a swap with it, an insert at the top level of
+//! the window, an insert in a divider's gap), `applyArriving` for the same
+//! drops into another tab's tree, and `tabDrop` for a release on the tab bar
+//! (T3615). A new window and cross-window drops are follow-up cards (T3616,
+//! T3618).
 //!
 //! Every result holds the very same views (`SplitTree.move` and friends), so
 //! a terminal that moves keeps its shell, its scrollback and its pane id -

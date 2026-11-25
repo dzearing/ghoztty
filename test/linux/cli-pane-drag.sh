@@ -24,7 +24,9 @@
 #   powershell -NoProfile -File scripts\linux\wsl-run.ps1 -CommandFile test\linux\cli-pane-drag.sh
 #
 # NEGATIVE=1 presses the wrong chord (Ctrl+Shift+,) and must FAIL D2-D5b, D14
-# and D15 (7 failures): the drops do not depend on the mode.
+# and D15 (the in-tab drops do not depend on the mode), plus the tab-bar half
+# D19-D28b, D31 and D32: with the mode off and one tab the bar is hidden, so it
+# is no target. 21 failures.
 # Output: one PASS/FAIL line per check, then 'CLI PANE DRAG: ALL PASS' or
 # 'CLI PANE DRAG: <n> FAILURE(S)'. Exit 0 only on ALL PASS.
 set -u

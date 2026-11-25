@@ -607,20 +607,55 @@ private runtime dir, so a test app can never meet the user's.
   leave the pane in place (`pane_layout.wouldLeaveInPlace`) does nothing.
   Every move keeps the same `Surface` (same shell, pid and pane id) and
   focuses the moved pane. Log category `gtk_pane_drag` (`drag began`,
-  `drop pane=... target=... outcome=...`). Not yet: the tab bar and the tab
-  dwell (T3615), cross-window drops (T3616), the ghost card, drop preview
-  and the hover handle with the mode off (T3617), a release over nothing or
-  the header's pop-out button making a new window (T3618). Debug seam:
+  `drop pane=... target=... outcome=...`).
+  **The tab bar (T3615)**: the window's `AdwTabBar` holds a second
+  `GtkDropTargetAsync` for the same mime type. It is a target only while it
+  is on screen (mapped and non-empty: with the mode off and one tab it is
+  hidden and takes nothing). Its candidate is the bar plus each tab's button
+  - libadwaita's internal `AdwTab` widgets, found by type name and ordered
+  left to right (`Window.tabBarCandidate`) - and the same resolver answers
+  `new_tab` with the button index under the pointer (Mac and win32: over a
+  button means before it; with expanded tabs there is no strip background,
+  so a drop cannot append past the last tab, as on the Mac).
+  `Window.dropOnTabBar` then applies `pane_drop_apply.tabDrop`: a pane of a
+  tab with others moves into a new tab of its own at that index, selected
+  and focused (`SplitTree.releaseSurface` + `Tab.newAdopting`, the same
+  `Surface`); a pane that is its tab's only one moves its tab there instead
+  (win32 `pane_relocate.tabReorderIndex`), and the two seams either side of
+  it are in place - so a window's only pane never leaves it. **The dwell**:
+  every drag-motion over the bar calls `Window.tabDwellAt`, which arms a
+  500 ms clock on the button under the pointer (`pane_drop.hoveredTab`),
+  re-armed only when that button changes, never on the tab already on show;
+  leaving the bar or dropping cancels it, and when it fires that tab is
+  selected. A drop in the new tab's split area then finds the pane in
+  another tree of the window and goes through
+  `pane_drop_apply.applyArriving` (`SplitTree.moveTo`/`swapWith`): split,
+  swap, top-level and gap drops across tabs, the tab it left closing when it
+  empties. A pane of another window is still `not_here` (T3616). A tree now
+  PUSHES its is-split to its panes on every rebuild (`Surface.setIsSplit`)
+  instead of binding the property: a binding from the tree that made a pane
+  went on driving it after it moved. Logs: `tab bar drop pane=... index=...
+  outcome=...`, `pane drag dwell opened tab <n>`, `pane <id> arrived from
+  another tab`. Not yet: cross-window drops (T3616), the ghost card, drop
+  preview (including lighting the dwelling tab) and the hover handle with the
+  mode off (T3617), a release over nothing or the header's pop-out button
+  making a new window (T3618). Debug seam:
   `hl_ipc pane-drag --target=<pane> [--key=escape] [--drop-on=<pane>
-  --fx=<0..1> --fy=<0..1> | --drop-at=<x>,<y>]` replies with `mode`,
-  `tabs_visible`, `tabs_autohide`, `key_effect`, every pane's header
-  (`shown`, `height`, `title`, `content_height`) and the drop (`target`,
-  `side`, `pane`, `outcome`), dropping the TARGET pane through the same
-  `SplitTree.dropPaneAt` a release calls. The harness has no seat, so a
-  pointer drag cannot START headless; the seam is the drop half. Acceptance:
+  --fx=<0..1> --fy=<0..1> | --drop-at=<x>,<y> | --drop-tab=<n>]
+  [--hover-tab=<n> | --hover-leave]` replies with `mode`, `tabs_visible`,
+  `tabs_autohide`, `key_effect`, every pane's header (`shown`, `height`,
+  `title`, `content_height`, `is_split`), the drop (`target`, `side`,
+  `pane`, `index`, `outcome`), `tab_count`, `selected_tab`, `dwell_tab` and
+  `tab_buttons`. It drops the TARGET pane through the same
+  `SplitTree.dropPaneAt` (in the `--drop-on` pane's tab, else the tab on
+  show) or `Window.dropOnTabBar` (`--drop-tab`, the middle of that tab's
+  button) a release calls, and `--hover-tab` is the motion handler's
+  `tabDwellAt` call. The harness has no seat, so a pointer drag cannot START
+  headless; the seam is the drop half. Acceptance:
   `wsl-run.ps1 -CommandFile test\linux\cli-pane-drag.sh`, ends
-  `CLI PANE DRAG: ALL PASS` (23 checks); `NEGATIVE=1` presses Ctrl+Shift+,
-  and must fail D2-D5b, D14 and D15.
+  `CLI PANE DRAG: ALL PASS` (40 checks); `NEGATIVE=1` presses Ctrl+Shift+,
+  and must fail 21: D2-D5b, D14, D15, and the tab-bar half D19-D28b, D31 and
+  D32 (with the mode off and one tab the bar is hidden, so it is no target).
 - `+send-keys` and `+read` take a pane id, a pane name or a window name (its
   active pane). `+send-keys` is the Mac's:
   text runs framed as a bracketed paste when the program asked for one, key
