@@ -1486,14 +1486,32 @@ providers, and between providers order wins, not specificity - a rule in
 `style.css` that the dark sheet also sets (the paned separator) must be
 repeated there, or it silently loses in a dark theme.
 
-Not yet: glass panes (T3622), the seed in the session layout and the desk under
+**Glass panes (T3622, `macos-pane-glass`, default on, elevated only).** The
+Mac's layering, not win32's backdrop: the renderer draws no terminal
+background (`generic.zig` `pane_glass_sheet_in_apprt` covers GTK), and the
+pane's `Surface` paints the sheet in its own `snapshot` vfunc before its
+children - the pane's background (`--color` tint, else the configured one) at
+40%, and 25% over the banner card's frame (`pane_style.sheetBands`), all inside
+the card's `overflow: hidden` clip. The tree's `pane-glass` class makes the
+banner a rim-and-shadow card with no wash. A viewer's template pages get a
+transparent web view plus `html.pane-glass` (`Viewer.applyGlass`, re-run on
+every commit and load; the rules are win32's pure `viewer_glass.zig`). The
+unfocused wash closure in `surface.blp` binds `template.config`, or a reload
+that turns glass on would leave the wash up until the next focus change.
+
+**Measuring glass: difference, not absolute.** The desk under a card cannot be
+read (the gutter beside it is inside the card's drop shadow), so pane-style.sh
+reads each probe under two dark backgrounds and checks the pixel moved by
+40% (25%) of the change; G7 is the negative control (solid moves by 100%).
+
+Not yet: the seed in the session layout and the desk under
 the sidebar/header bar (T3623), the 1px line down the flat style's gutter (T3624; the 6px gutter itself came with T3567's stage).
 
 ```powershell
 powershell -NoProfile -File scripts\linux\wsl-run.ps1 -CommandFile test\linux\pane-style.sh
 ```
 
-Ends `PANE STYLE: ALL PASS` (16 checks; geometry and pixels from the window's
+Ends `PANE STYLE: ALL PASS` (24 checks; geometry and pixels from the window's
 own render via `capture-pane --window`, probed with `hl_png_pixel`).
 
 ## Stacked panes: one stage the shared layout places (T3567)
