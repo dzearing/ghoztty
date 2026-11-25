@@ -1,0 +1,14 @@
+{
+  "version": "1.56.28",
+  "sections": [
+    { "title": "New",
+      "items": [
+        { "text": "On Linux, a folded pane's strip renames itself live, can be dragged along its row, and a column of panes stacks." },
+        { "text": "A pane can open one WSL distro, in its own home: --shell=wsl:<distro>." }
+      ] },
+    { "title": "Improvements",
+      "items": [
+        { "text": "On Linux, a resize at a shell prompt never shows the prompt blank, and a window-edge drag is paced like a divider drag." }
+      ] }
+  ]
+}
