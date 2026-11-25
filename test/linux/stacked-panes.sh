@@ -221,6 +221,41 @@ hl_check "S23 two panes left fit side by side again: nothing minimized" $? "$r"
 [ -z "$(listed_minimized)" ]
 hl_check "S24 +list reports no pane minimized" $?
 
+# ---- 7. a side pane opened without focus comes on show (T3628) ---------------
+# An agent's +split leaves the caret where it is (focus is opt-in). In a row
+# with no room it is still the one put on show - the featured pane - and the
+# pane with the caret keeps it.
+r=$(st)
+caret=$(sq "$r" '[p["pane"] for p in s["panes"] if p["focused"]][0]')
+cli +split --target="$caret" --direction=right --name=p5 > /dev/null 2>&1
+cli +split --target=p5 --direction=right --name=p6 > /dev/null 2>&1
+cli +split --target=p6 --direction=right --name=p7 > /dev/null 2>&1
+sleep 1
+r=$(st)
+p7=$(id_of p7)
+[ -n "$p7" ] && [ "$(sq "$r" 'len(s["panes"]) == 5 and len(mini) >= 1')" = True ]
+hl_check "S26 five panes in a row that cannot fit stack" $? "$r"
+[ -n "$p7" ] && [ "$(sq "$r" 'P.get("'"$p7"'") is not None and not P["'"$p7"'"]["minimized"]')" = True ]
+hl_check "S27 the side pane split last without focus is on show, not born a strip" $? "p7=$p7 $r"
+[ -n "$caret" ] && [ "$(sq "$r" 'P["'"$caret"'"]["focused"] and not P["'"$p7"'"]["focused"]')" = True ]
+hl_check "S28 the pane that had the caret keeps it" $? "caret=$caret $r"
+
+# Only the user brings a minimized pane back out: a side pane split off a
+# strip goes in beside the pane on show nearest it, and the strips stay.
+m_id=$(sq "$r" '[p["pane"] for p in mini if p["pane"] != "'"$caret"'"][0]')
+m_name=$m_id
+mini_before=$(sq "$r" '" ".join(sorted(p["pane"] for p in mini))')
+[ -n "$m_name" ] && cli +split --target="$m_name" --direction=right --name=p8 > /dev/null 2>&1
+sleep 1
+r=$(st)
+p8=$(id_of p8)
+[ -n "$p8" ] && [ "$(sq "$r" 'P.get("'"$p8"'") is not None and not P["'"$p8"'"]["minimized"]')" = True ]
+hl_check "S29 a side pane split off a minimized pane is on show" $? "target=$m_name ($m_id) p8=$p8 $r"
+[ -n "$m_id" ] && [ "$(sq "$r" 'P["'"$m_id"'"]["minimized"]')" = True ]
+hl_check "S30 the minimized pane it was split off stays minimized" $? "target=$m_id before=[$mini_before] $r"
+[ -n "$p8" ] && [ "$(sq "$r" 'all(P[i]["minimized"] for i in "'"$mini_before"'".split() if i in P and i != "'"$caret"'")')" = True ]
+hl_check "S31 no strip is pulled back out with it" $? "before=[$mini_before] $r"
+
 ! grep -E "without calling gtk_widget_measure|Allocation (width|height) too small|Gtk-CRITICAL" "$APP_LOG" > /dev/null
 hl_check "S25 the app logged no GTK allocation warnings or criticals" $? "$(grep -m3 -E 'gtk_widget_measure|too small|Gtk-CRITICAL' "$APP_LOG")"
 

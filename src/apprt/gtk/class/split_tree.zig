@@ -1973,11 +1973,15 @@ pub const SplitTree = extern struct {
             }
             break :handle self.getActiveSurfaceHandle() orelse .root;
         };
+        // A split that leaves the caret where it is goes in beside the pane
+        // on show nearest a minimized anchor (T3628), never beside the strip.
+        const background = !overrides.focus;
+        const anchor = if (background) self.backgroundSplitAnchor(old_tree, handle) else handle;
 
         // Create our split!
         var new_tree = try old_tree.split(
             alloc,
-            handle,
+            anchor,
             direction,
             overrides.ratio,
             &single_tree,
@@ -1985,12 +1989,61 @@ pub const SplitTree = extern struct {
         defer new_tree.deinit();
         log.debug(
             "new split at={} direction={} old_tree={f} new_tree={f}",
-            .{ handle, direction, old_tree, &new_tree },
+            .{ anchor, direction, old_tree, &new_tree },
         );
 
         // Replace our tree
         self.setTree(&new_tree);
+
+        // A split that leaves the caret where it was has to come on show
+        // without it (T3628; Mac `PaneStackState.featured`, win32
+        // `insertPaneAsSplit`): in a row with no room it is the caller that
+        // becomes the strip, caret and all. The history is brought up to the
+        // caret first, so the caller's own focus coming back on the rebuild
+        // does not read as the change that ends the featuring.
+        if (background) {
+            const state = self.stackState();
+            if (old_last_focused) |f| {
+                if (state.recency.first() != paneKey(f)) state.noteFocus(paneKey(f));
+            }
+            state.feature(paneKey(surface));
+            self.relayoutStage();
+        }
         return surface;
+    }
+
+    /// Where a split that leaves the caret where it is goes in (an agent's
+    /// `+split`, a side pane; T3628, Mac `backgroundSplitAnchor`, win32
+    /// `Window.backgroundSplitAnchor`): beside `anchor`, unless the user
+    /// minimized it in a collapsed row. Then it goes beside the pane on show
+    /// nearest it instead: the new pane comes on show (`feature`) and a run
+    /// is contiguous, so beside a strip it would pull that strip, and every
+    /// strip between it and the run, back out with it. Only the user brings
+    /// a minimized pane back out; a split that takes focus keeps its anchor.
+    fn backgroundSplitAnchor(
+        self: *Self,
+        tree: *const Surface.Tree,
+        anchor: Surface.Tree.Node.Handle,
+    ) Surface.Tree.Node.Handle {
+        const state = if (self.private().stacks) |*s| s else return anchor;
+        var pane: ?*Surface = null;
+        var it = tree.iterator();
+        while (it.next()) |entry| if (entry.handle == anchor) {
+            pane = entry.view;
+            break;
+        };
+        const view = pane orelse return anchor;
+        var arena = std.heap.ArenaAllocator.init(Application.default().allocator());
+        defer arena.deinit();
+        const rows = self.stackRowsNow(arena.allocator()) catch return anchor;
+        const id = state.paneOnShow(paneKey(view), rows, rows) catch return anchor;
+        if (id == paneKey(view)) return anchor;
+        var find = tree.iterator();
+        while (find.next()) |entry| if (paneKey(entry.view) == id) {
+            log.info("background split off a minimized strip goes in beside the pane on show", .{});
+            return entry.handle;
+        };
+        return anchor;
     }
 
     pub fn resize(
@@ -2806,6 +2859,10 @@ pub const SplitTree = extern struct {
         // the surface is destroyed.
         if (!surface.getFocused()) return;
         self.private().last_focused.set(surface);
+        // A change of focus ends a side pane's featuring (T3628) when it
+        // happens, not at the next layout (win32 `adoptsFocus`): a move away
+        // and back between two layouts would otherwise read as no change.
+        if (self.private().stacks) |*s| s.noteFocusMoved(paneKey(surface));
         self.syncPaneStyle();
         // Focus brings a pane forward (T3567): the row follows it.
         self.relayoutStage();
