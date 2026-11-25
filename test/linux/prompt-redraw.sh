@@ -65,17 +65,21 @@ mkdir -p "$cfg_dir"
 printf 'window-width = 100\nwindow-height = 30\nshell-integration = bash\n' > "$cfg_dir/config.ghostty"
 
 # bash with a green prompt; it writes its pid so the control can stop it.
-rcfile=$(mktemp /tmp/prompt-redraw-XXXXXX.rc)
-pidfile=$(mktemp /tmp/prompt-redraw-XXXXXX.pid)
+# It is the pane's DEFAULT shell ($SHELL), not an `-e` command: an explicit
+# command reaches the agent as OPEN.command, run under the default shell,
+# and the injected integration lands on that outer shell instead (T3758).
+# So the prompt lives in a private $HOME/.bashrc, which Ghostty's injected
+# ghostty.bash sources as an interactive bash would.
+home="$HL_RUNTIME/home"; mkdir -p "$home"
+pidfile="$HL_RUNTIME/bash.pid"
 : > "$pidfile"
-cat > "$rcfile" <<RC
+cat > "$home/.bashrc" <<RC
 HISTFILE=/dev/null
-PROMPT_COMMAND=
 echo \$\$ > $pidfile
 PS1='\[\e[48;2;0;200;0m\] READY-PROMPT \[\e[0m\] \$ '
 RC
 
-hl_launch APP "$app" --gtk-single-instance=false -e bash --rcfile "$rcfile"
+hl_launch APP env SHELL=/bin/bash HOME="$home" "$app" --gtk-single-instance=false
 hl_wait_for 30 test -S "$(hl_socket)"
 hl_check "P1 the app serves its socket" $?
 hl_wait_for 20 test -s "$pidfile"
@@ -91,7 +95,18 @@ shots="$HL_RUNTIME/shots"; mkdir -p "$shots"
 # green <png>: the fraction of the frame that is the prompt's green.
 green() { hl_png_stats "$1" 0 200 0 2>/dev/null | sed -n 's/.*match=\([0-9.]*\).*/\1/p'; }
 has_green() { python3 -I -c 'import sys; sys.exit(0 if float(sys.argv[1] or 0) > 0.0005 else 1)' "${1:-0}"; }
-shot() { hl_screenshot "$pane" "$1" --width=400 > /dev/null 2>&1; }
+# shot <file>: the pane's next composited frame. Straight after a resize GTK
+# has not re-allocated the pane yet and the snapshot has nothing to draw
+# ("produced no frame"), so poll - the first frame that comes back is the one
+# the resize put on screen.
+shot() {
+    local _
+    for _ in $(seq 1 40); do
+        hl_screenshot "$pane" "$1" --width=400 > /dev/null 2>&1 && return 0
+        sleep 0.01
+    done
+    return 1
+}
 ws() { hl_ipc window-size "--target=$pane" "$@"; }
 wwidth() { printf '%s' "$1" | python3 -I -c 'import json,sys; print(json.load(sys.stdin).get("width", 0))' 2>/dev/null; }
 log_after() { tail -n +"$(( $1 + 1 ))" "$APP_LOG"; }
@@ -163,5 +178,5 @@ else
     hl_check "C1 CONTROL: bash wrote its pid" 1
 fi
 
-rm -f "$rcfile" "$pidfile"
+rm -f "$pidfile"
 hl_finish "$L"
