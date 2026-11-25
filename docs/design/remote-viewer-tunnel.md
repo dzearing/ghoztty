@@ -97,8 +97,10 @@ that box*.
 - Mechanics:
   - The viewer's fetches are intercepted, by WebView2 `WebResourceRequested` on
     Windows and a `WKURLSchemeHandler` plus a proxy on Mac.
-  - They are forwarded over the reserved `tunnel` opcode as HTTP requests the
-    agent makes on the remote machine.
+  - They are forwarded as HTTP requests the agent makes on the remote machine,
+    over the gated `web_tunnel` capability (`WEB_REQUEST`..`WEB_CLOSE`,
+    0x88-0x8c; T2221). Not the reserved `tunnel` (0x40): that is §8 port
+    forwarding, a different shape with a different job.
 - The pane states it (decision 5).
 - This is filed as a user decision because the alternative would look and
   behave differently:
@@ -165,7 +167,7 @@ Windows task that needs it first. Every Mac task is `seat: mac`.
 |---|---|---|
 | IPC proxy + `app_ipc` frames + env rewrite + scope policy | T2217 (wire + policy), T3710 (agent proxy + env rewrite), T3711 (app dispatcher); GTK: T3712 | T2218 |
 | Remote file content: fetch, granted roots, live reload, relative assets, remote git diff | T2219 (wire `viewer_fetch` + agent grants), T3714 (win32 viewer + asset host), T3715 (live reload), T3716 (remote git), T3717 (remote feedback); GTK: T3718 | T2220 |
-| HTTP tunnel for pages and websites (decision 3) | T2221 | T2222 |
+| HTTP tunnel for pages and websites (decision 3) | T2221 (wire `web_tunnel` + agent requests), T3723 (win32 WebView2 + own origin), T3724 (live-reload WebSockets), T3725 (agent-side proxy); GTK: T3726 | T2222 |
 | Origin chip, title suffix, persistence/restore of tunnelled viewers | T2223 | T2224 |
 | End-to-end acceptance over a loopback "remote" agent | T2225 | (docs in T2218) |
 

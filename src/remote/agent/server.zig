@@ -66,6 +66,7 @@ const session = @import("session.zig");
 const metrics = @import("metrics.zig");
 const proc = @import("proc.zig");
 const viewer_grants = @import("viewer_grants.zig");
+const web_tunnel = @import("web_tunnel.zig");
 const descendants = @import("descendants.zig");
 const proc_control = @import("proc_control.zig");
 const relay_perf = @import("relay_perf.zig");
@@ -439,6 +440,11 @@ pub const Server = struct {
     /// (T2219). Touched only from the control reader; freed in `destroy`.
     viewer_grants: viewer_grants.Grants = undefined,
 
+    /// This connection's tunnelled web requests (T2221): their workers and the
+    /// response bodies a page has not finished reading. Null only when its
+    /// allocation failed, which answers nothing (as an older agent would).
+    web_tunnel: ?web_tunnel.Tunnel = null,
+
     /// Per-session ring size (from Options), read by `create`'s table inserts.
     ring_bytes: usize = session.default_ring_bytes,
 
@@ -619,6 +625,10 @@ pub const Server = struct {
         // A viewer on the client can show a file on THIS machine, read through
         // a granted directory and never outside it (T2219).
         protocol.capability.viewer_fetch,
+        // A page in a viewer on the client makes its network requests from
+        // THIS machine, so a dev server on this box's localhost previews
+        // there (T2221).
+        protocol.capability.web_tunnel,
     };
 
     pub const Options = struct {
@@ -699,6 +709,7 @@ pub const Server = struct {
 
         self.proc_sampler = proc.ProcSampler.init(alloc);
         self.viewer_grants = viewer_grants.Grants.init(alloc);
+        self.web_tunnel = web_tunnel.Tunnel.init(alloc, self, deliverWeb) catch null;
         return self;
     }
 
@@ -839,6 +850,9 @@ pub const Server = struct {
         assert(!self.roster_listener.linked);
         self.proc_sampler.deinit();
         self.viewer_grants.deinit();
+        // A worker still waiting on a slow server keeps only the tunnel's own
+        // shared state alive, never this Server: its answer is dropped.
+        if (self.web_tunnel) |*t| t.deinit(1000);
         self.bound_channels.deinit(self.alloc);
         for (self.write_queue.items) |f| self.alloc.free(f.payload);
         self.write_queue.deinit(self.alloc);
@@ -1338,6 +1352,9 @@ pub const Server = struct {
             .viewer_open => self.handleViewerOpen(frame.channel, frame.payload),
             .viewer_fetch => self.handleViewerFetch(frame.channel, frame.payload),
             .viewer_close => self.handleViewerClose(frame.payload),
+            .web_request => if (self.webTunnel()) |t| t.request(frame.channel, frame.payload),
+            .web_read => if (self.webTunnel()) |t| t.read(frame.channel, frame.payload),
+            .web_close => if (self.webTunnel()) |t| t.close(frame.payload),
             // The remaining types are agent→client replies (the agent produces
             // them) or out of scope: ignore.
             else => {},
@@ -3148,6 +3165,21 @@ pub const Server = struct {
         var parsed = protocol.parseJson(protocol.ViewerClose, self.alloc, payload) catch return;
         defer parsed.deinit();
         self.viewer_grants.close(parsed.value.grant);
+    }
+
+    /// The tunnel, iff this connection negotiated `web_tunnel` (T2221). Its
+    /// replies are new opcodes - a fatal framing error to an older peer - so
+    /// nothing is answered without it.
+    fn webTunnel(self: *Server) ?*web_tunnel.Tunnel {
+        const ok = if (self.negotiated) |n| n.web_tunnel else |_| false;
+        if (!ok) return null;
+        return if (self.web_tunnel) |*t| t else null;
+    }
+
+    /// The tunnel's workers frame their answers through here (T2221).
+    fn deliverWeb(ctx: *anyopaque, ftype: protocol.FrameType, channel: u128, payload: []u8) void {
+        const self: *Server = @ptrCast(@alignCast(ctx));
+        self.enqueueOwned(.control, ftype, channel, payload) catch {};
     }
 
     fn handleProcList(self: *Server, channel: u128, payload: []const u8) void {
@@ -5240,6 +5272,233 @@ test "T2219 VIEWER_OPEN from a peer that did not negotiate viewer_fetch is never
     while (true) {
         const f = (try h.client.nextControl()) orelse return error.Eof;
         try testing.expect(f.type != .viewer_opened);
+        if (f.type == .proc_snapshot) break;
+    }
+}
+
+/// A one-shot loopback HTTP server for the T2221 tests: accepts one
+/// connection, keeps the request head it was sent, answers `response`.
+const T2221Http = struct {
+    server: std.net.Server,
+    response: []const u8,
+    head: [8192]u8 = undefined,
+    head_len: usize = 0,
+    thread: ?std.Thread = null,
+
+    fn start(self: *T2221Http) !void {
+        self.thread = try std.Thread.spawn(.{}, run, .{self});
+    }
+
+    fn url(self: *T2221Http, buf: []u8, path: []const u8) ![]const u8 {
+        return std.fmt.bufPrint(buf, "http://127.0.0.1:{d}{s}", .{ self.server.listen_address.getPort(), path });
+    }
+
+    fn run(self: *T2221Http) void {
+        const conn = self.server.accept() catch return;
+        defer conn.stream.close();
+        // The interfaces, not `Stream.read`/`writeAll`: on Windows those are
+        // ReadFile/WriteFile, which zig 0.15's overlapped sockets refuse.
+        var rbuf: [1024]u8 = undefined;
+        var sr = conn.stream.reader(&rbuf);
+        const r = sr.interface();
+        while (self.head_len < self.head.len) {
+            const got = r.peekGreedy(1) catch break;
+            const n = @min(got.len, self.head.len - self.head_len);
+            @memcpy(self.head[self.head_len..][0..n], got[0..n]);
+            r.toss(n);
+            self.head_len += n;
+            if (std.mem.indexOf(u8, self.head[0..self.head_len], "\r\n\r\n") != null) break;
+        }
+        var wbuf: [4096]u8 = undefined;
+        var sw = conn.stream.writer(&wbuf);
+        sw.interface.writeAll(self.response) catch return;
+        sw.interface.flush() catch {};
+    }
+
+    fn finish(self: *T2221Http) []const u8 {
+        if (self.thread) |t| t.join();
+        self.thread = null;
+        self.server.deinit();
+        return self.head[0..self.head_len];
+    }
+};
+
+fn t2221Decode(alloc: Allocator, b64: []const u8) ![]u8 {
+    const dec = std.base64.standard.Decoder;
+    const out = try alloc.alloc(u8, try dec.calcSizeForSlice(b64));
+    try dec.decode(out, b64);
+    return out;
+}
+
+test "T2221 WEB_REQUEST is made from the agent's machine; hop headers are its own; a big body is pulled and released" {
+    const alloc = testing.allocator;
+    var clock: TestClock = .{};
+    var sp: FakeSpawner = .{ .children = &.{} };
+    var prng = std.Random.DefaultPrng.init(2221);
+
+    var h = try Harness.init(alloc, .raw, &clock, &sp, 4096, prng.random());
+    defer h.deinit();
+    try h.server.start();
+    try h.client.handshakeCaps(&.{protocol.capability.web_tunnel});
+    try testing.expect((try h.server.waitHandshake()).web_tunnel);
+
+    const loopback = try std.net.Address.parseIp("127.0.0.1", 0);
+    var buf: [128]u8 = undefined;
+
+    // 1. A small page: status, headers minus the hop ones, the whole body.
+    {
+        var srv: T2221Http = .{
+            .server = try loopback.listen(.{ .reuse_address = true }),
+            .response = "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: 5\r\nConnection: close\r\nX-Dev: 1\r\n\r\nhello",
+        };
+        try srv.start();
+        const hs = [_]protocol.WebHeader{
+            .{ .name = "Host", .value = "evil.example" },
+            .{ .name = "Accept-Encoding", .value = "br" },
+            .{ .name = "Cookie", .value = "s=1" },
+        };
+        const ch: u128 = 0x2221_0001;
+        try h.client.sendControlJson(.web_request, ch, protocol.WebRequest{ .method = "GET", .url = try srv.url(&buf, "/index.html"), .headers = &hs });
+        const f = try h.client.waitControl(.web_response);
+        try testing.expectEqual(ch, f.channel);
+        var r = try protocol.parseJson(protocol.WebResponse, alloc, f.payload);
+        defer r.deinit();
+        try testing.expect(r.value.ok);
+        try testing.expectEqual(@as(u16, 200), r.value.status);
+        try testing.expect(r.value.eof and r.value.body == null);
+        try testing.expectEqual(@as(u64, 5), r.value.size);
+        const body = try t2221Decode(alloc, r.value.data);
+        defer alloc.free(body);
+        try testing.expectEqualStrings("hello", body);
+        var saw_type = false;
+        for (r.value.headers) |hd| {
+            try testing.expect(!std.ascii.eqlIgnoreCase(hd.name, "content-length"));
+            try testing.expect(!std.ascii.eqlIgnoreCase(hd.name, "connection"));
+            if (std.ascii.eqlIgnoreCase(hd.name, "content-type")) saw_type = true;
+        }
+        try testing.expect(saw_type);
+
+        const head = srv.finish();
+        try testing.expect(std.mem.startsWith(u8, head, "GET /index.html HTTP/1.1\r\n"));
+        try testing.expect(std.mem.indexOf(u8, head, "evil.example") == null);
+        try testing.expect(std.mem.indexOf(u8, head, "host: 127.0.0.1") != null or std.mem.indexOf(u8, head, "Host: 127.0.0.1") != null);
+        try testing.expect(std.mem.indexOf(u8, head, "identity") != null);
+        try testing.expect(std.mem.indexOf(u8, head, "\r\nbr") == null);
+        try testing.expect(std.mem.indexOf(u8, head, "Cookie: s=1\r\n") != null);
+    }
+
+    // 2. A body bigger than one piece: held, pulled with WEB_READ, released.
+    {
+        const big_len = protocol.max_viewer_chunk_bytes + 10;
+        const resp = try alloc.alloc(u8, 128 + big_len);
+        defer alloc.free(resp);
+        const head_part = try std.fmt.bufPrint(resp, "HTTP/1.1 200 OK\r\nContent-Length: {d}\r\n\r\n", .{big_len});
+        @memset(resp[head_part.len..][0..big_len], 'z');
+        var srv: T2221Http = .{
+            .server = try loopback.listen(.{ .reuse_address = true }),
+            .response = resp[0 .. head_part.len + big_len],
+        };
+        try srv.start();
+        const ch: u128 = 0x2221_0002;
+        try h.client.sendControlJson(.web_request, ch, protocol.WebRequest{ .method = "GET", .url = try srv.url(&buf, "/big.bin") });
+        const f = try h.client.waitControl(.web_response);
+        var r = try protocol.parseJson(protocol.WebResponse, alloc, f.payload);
+        defer r.deinit();
+        try testing.expect(r.value.ok and !r.value.eof);
+        try testing.expectEqual(@as(u64, big_len), r.value.size);
+        const id = r.value.body.?;
+        _ = srv.finish();
+
+        try h.client.sendControlJson(.web_read, ch, protocol.WebRead{ .body = id, .offset = protocol.max_viewer_chunk_bytes });
+        {
+            const df = try h.client.waitControl(.web_data);
+            var d = try protocol.parseJson(protocol.WebData, alloc, df.payload);
+            defer d.deinit();
+            try testing.expect(d.value.ok and d.value.eof);
+            const rest = try t2221Decode(alloc, d.value.data);
+            defer alloc.free(rest);
+            try testing.expectEqualStrings("zzzzzzzzzz", rest);
+        }
+        try h.client.sendControlJson(.web_close, protocol.control_channel, protocol.WebClose{ .body = id });
+        try h.client.sendControlJson(.web_read, ch, protocol.WebRead{ .body = id, .offset = 0 });
+        {
+            const df = try h.client.waitControl(.web_data);
+            var d = try protocol.parseJson(protocol.WebData, alloc, df.payload);
+            defer d.deinit();
+            try testing.expectEqualStrings(protocol.WebError.no_body, d.value.@"error".?);
+        }
+    }
+
+    // 3. A redirect is answered as itself, never followed.
+    {
+        var srv: T2221Http = .{
+            .server = try loopback.listen(.{ .reuse_address = true }),
+            .response = "HTTP/1.1 302 Found\r\nLocation: /next\r\nContent-Length: 0\r\n\r\n",
+        };
+        try srv.start();
+        try h.client.sendControlJson(.web_request, 0x2221_0003, protocol.WebRequest{ .method = "GET", .url = try srv.url(&buf, "/old") });
+        const f = try h.client.waitControl(.web_response);
+        var r = try protocol.parseJson(protocol.WebResponse, alloc, f.payload);
+        defer r.deinit();
+        try testing.expect(r.value.ok);
+        try testing.expectEqual(@as(u16, 302), r.value.status);
+        var loc: ?[]const u8 = null;
+        for (r.value.headers) |hd| if (std.ascii.eqlIgnoreCase(hd.name, "location")) {
+            loc = hd.value;
+        };
+        try testing.expectEqualStrings("/next", loc.?);
+        _ = srv.finish();
+    }
+
+    // 4. Refused before any socket opens: a file: URL and CONNECT.
+    try h.client.sendControlJson(.web_request, 0x2221_0004, protocol.WebRequest{ .method = "GET", .url = "file:///etc/passwd" });
+    {
+        const f = try h.client.waitControl(.web_response);
+        var r = try protocol.parseJson(protocol.WebResponse, alloc, f.payload);
+        defer r.deinit();
+        try testing.expect(!r.value.ok);
+        try testing.expectEqualStrings(protocol.WebError.bad_url, r.value.@"error".?);
+    }
+    try h.client.sendControlJson(.web_request, 0x2221_0005, protocol.WebRequest{ .method = "CONNECT", .url = "http://127.0.0.1:1/" });
+    {
+        const f = try h.client.waitControl(.web_response);
+        var r = try protocol.parseJson(protocol.WebResponse, alloc, f.payload);
+        defer r.deinit();
+        try testing.expectEqualStrings(protocol.WebError.bad_method, r.value.@"error".?);
+    }
+
+    // 5. Nothing listening: the reason says so.
+    {
+        var gone = try loopback.listen(.{ .reuse_address = true });
+        const port = gone.listen_address.getPort();
+        gone.deinit();
+        const u = try std.fmt.bufPrint(&buf, "http://127.0.0.1:{d}/", .{port});
+        try h.client.sendControlJson(.web_request, 0x2221_0006, protocol.WebRequest{ .method = "GET", .url = u });
+        const f = try h.client.waitControl(.web_response);
+        var r = try protocol.parseJson(protocol.WebResponse, alloc, f.payload);
+        defer r.deinit();
+        try testing.expect(!r.value.ok);
+        try testing.expectEqualStrings(protocol.WebError.connection_refused, r.value.@"error".?);
+    }
+}
+
+test "T2221 WEB_REQUEST from a peer that did not negotiate web_tunnel is never answered" {
+    const alloc = testing.allocator;
+    var clock: TestClock = .{};
+    var sp: FakeSpawner = .{ .children = &.{} };
+    var prng = std.Random.DefaultPrng.init(22210);
+
+    var h = try Harness.init(alloc, .raw, &clock, &sp, 4096, prng.random());
+    defer h.deinit();
+    try h.server.start();
+    try h.client.handshake();
+    try testing.expect(!(try h.server.waitHandshake()).web_tunnel);
+
+    try h.client.sendControlJson(.web_request, 0x2221_0010, protocol.WebRequest{ .method = "GET", .url = "file:///x" });
+    try h.client.sendControlJson(.proc_list, 0x2221_0011, protocol.ProcList{ .limit = 1 });
+    while (true) {
+        const f = (try h.client.nextControl()) orelse return error.Eof;
+        try testing.expect(f.type != .web_response);
         if (f.type == .proc_snapshot) break;
     }
 }

@@ -60,6 +60,7 @@
 //! | v1 | `session_taken` | `DETACHED{taken}` on a session's own channel when another viewer attaches it | the losing pane is not told (its stream just stops) |
 //! | v1 | `app_ipc` | `APP_REQUEST` 0x80 / `APP_RESPONSE` 0x81: a session's `+verb` reaches the app showing it | no proxy; the child keeps the baked local `GHOZTTY_IPC_SOCKET` |
 //! | v1 | `viewer_fetch` | `VIEWER_OPEN`..`VIEWER_CHANGED` 0x82-0x87: a viewer reads a file on the agent's machine, scoped to a granted directory | a remote `--view` cannot be shown (the app says so) |
+//! | v1 | `web_tunnel` | `WEB_REQUEST`..`WEB_CLOSE` 0x88-0x8c: a remote viewer's page requests are made from the agent's machine | a remote page has no network (the app says so) |
 //!
 //! Two rules make that table load-bearing rather than decorative:
 //!
@@ -276,6 +277,21 @@ pub const FrameType = enum(u8) {
     viewer_data = 0x85, // A→C  {ok, size, offset, data, eof, error?}
     viewer_close = 0x86, // C→A  {grant}
     viewer_changed = 0x87, // A→C  push on control: {grant, path}
+
+    // Tunnelled web viewers (T2221; docs/design/remote-viewer-tunnel.md
+    // decision 3, D103). A page shown in a viewer for a remote session makes
+    // its network requests FROM the agent's machine: the app intercepts each
+    // one and sends WEB_REQUEST; the agent performs it there and answers
+    // WEB_RESPONSE with the status, headers and the first piece of the body.
+    // A longer body is held by the agent and pulled with WEB_READ, the
+    // VIEWER_FETCH shape. Same-channel replies. Gated on
+    // `capability.web_tunnel`. Not the reserved `tunnel` (0x40), which is §8
+    // port forwarding with a different shape.
+    web_request = 0x88, // C→A  {method, url, headers, body?}
+    web_response = 0x89, // A→C  {ok, status, reason, headers, size, data, eof, body?, error?}
+    web_read = 0x8a, // C→A  {body, offset, max_len}
+    web_data = 0x8b, // A→C  {ok, size, offset, data, eof, error?}
+    web_close = 0x8c, // C→A  {body}
 };
 
 /// True for the frame types that ride the DATA lane (§4.3). Everything else
@@ -342,6 +358,9 @@ pub fn isRpcReply(t: FrameType) bool {
         // Tunnelled viewer reads (T2219), answered on the request channel.
         .viewer_opened,
         .viewer_data,
+        // Tunnelled web requests (T2221), answered on the request channel.
+        .web_response,
+        .web_data,
         => true,
 
         // Requests (C→A), pushes (A→C), and the stream/heartbeat/flow
@@ -401,6 +420,10 @@ pub fn isRpcReply(t: FrameType) bool {
         .viewer_fetch,
         .viewer_close,
         .viewer_changed,
+        // Tunnelled web requests (C→A; T2221).
+        .web_request,
+        .web_read,
+        .web_close,
         => false,
     };
 }
@@ -987,6 +1010,20 @@ pub const capability = struct {
     /// remote file at all and says so; nothing falls back to local disk, which
     /// would show a DIFFERENT file under the same name.
     pub const viewer_fetch = "viewer_fetch";
+
+    /// **A page in a remote viewer reaches the network from the agent's
+    /// machine** (T2221; docs/design/remote-viewer-tunnel.md decision 3,
+    /// resolved by D103: everything loads from the other machine). The client
+    /// sends `WEB_REQUEST` for each request the page makes; the agent performs
+    /// it on ITS machine - so `localhost:3000` is that box's dev server - and
+    /// answers `WEB_RESPONSE`. A body over one piece is pulled with
+    /// `WEB_READ` and released with `WEB_CLOSE`.
+    ///
+    /// Gated because all five are new opcodes. Without it a remote page has
+    /// no network and the app says so; nothing falls back to fetching from
+    /// the local machine, which would load a DIFFERENT site under the same
+    /// address.
+    pub const web_tunnel = "web_tunnel";
 };
 
 /// The kind of pseudo-terminal a peer spawns its children on. Wire-visible
@@ -1228,6 +1265,10 @@ pub const Negotiated = struct {
     /// True iff BOTH peers advertised `capability.viewer_fetch` (T2219) — the
     /// client may read files on the agent's machine through granted roots.
     viewer_fetch: bool = false,
+
+    /// True iff BOTH peers advertised `capability.web_tunnel` (T2221) — the
+    /// client may send a page's requests for the agent to make.
+    web_tunnel: bool = false,
 };
 
 /// True iff `caps` contains the capability string `name`.
@@ -1290,6 +1331,8 @@ pub fn negotiate(local: Hello, remote: Hello) ProtocolError!Negotiated {
             hasCapability(remote.capabilities, capability.app_ipc),
         .viewer_fetch = hasCapability(local.capabilities, capability.viewer_fetch) and
             hasCapability(remote.capabilities, capability.viewer_fetch),
+        .web_tunnel = hasCapability(local.capabilities, capability.web_tunnel) and
+            hasCapability(remote.capabilities, capability.web_tunnel),
     };
 }
 
@@ -1857,6 +1900,135 @@ pub const ViewerClose = struct {
 pub const ViewerChanged = struct {
     grant: u64,
     path: []const u8,
+};
+
+/// The largest request body a page may send through the tunnel (T2221): a
+/// form post or an upload. It rides one `WEB_REQUEST`, so after base64 it
+/// stays well under `max_frame_len`.
+pub const max_web_request_body_bytes: usize = 8 * 1024 * 1024;
+
+/// The largest response body the agent will hold for a page (T2221). The same
+/// 32 MiB as `max_viewer_file_bytes`, so a page cannot load a bigger resource
+/// from another machine than a viewer will show from this one.
+pub const max_web_response_bytes: u64 = max_viewer_file_bytes;
+
+/// The most request headers one `WEB_REQUEST` may carry (T2221). A browser
+/// sends a dozen or two; the bound keeps a malformed request cheap to refuse.
+pub const max_web_headers: usize = 64;
+
+/// Requests one connection may have in flight at once (T2221) - the per-host
+/// connection count a browser uses. A further request is refused `busy` at
+/// once rather than queued behind a hung server.
+pub const max_web_in_flight: usize = 6;
+
+/// Response bytes the agent holds for one connection's unread bodies at once
+/// (T2221). A response that would take the total past it is refused `busy`;
+/// nothing already held is evicted, so a page part-way through reading a body
+/// never loses it.
+pub const max_web_held_bytes: u64 = 64 * 1024 * 1024;
+
+/// How long the agent waits on a silent server before it gives the request up
+/// (T2221) - per socket read or write, not for the whole response.
+pub const web_idle_timeout_ms: u32 = 30_000;
+
+/// Why the agent refused or failed a tunnelled web request (T2221). Wire
+/// strings; a client that meets one it does not know shows the bare string.
+pub const WebError = struct {
+    /// The request did not parse, or a header name or value is malformed.
+    pub const bad_request = "bad_request";
+    /// Not an absolute `http:` or `https:` URL with a host.
+    pub const bad_url = "bad_url";
+    /// `CONNECT`, `TRACE`, or a method that is not HTTP.
+    pub const bad_method = "bad_method";
+    /// A body over `max_web_request_body_bytes`, or more than
+    /// `max_web_headers` headers.
+    pub const request_too_large = "request_too_large";
+    /// A response body over `max_web_response_bytes`.
+    pub const too_large = "too_large";
+    /// `max_web_in_flight` requests are running, or holding this body would
+    /// pass `max_web_held_bytes`.
+    pub const busy = "busy";
+    /// The host name did not resolve on the agent's machine.
+    pub const unknown_host = "unknown_host";
+    /// Nothing accepted the connection (a dev server that is not running).
+    pub const connection_refused = "connection_refused";
+    /// The server stopped answering for `web_idle_timeout_ms`.
+    pub const timed_out = "timed_out";
+    /// The TLS handshake or certificate check failed.
+    pub const tls_failed = "tls_failed";
+    /// The server's answer was not valid HTTP.
+    pub const bad_response = "bad_response";
+    /// Any other network failure.
+    pub const network_failed = "network_failed";
+    /// `WEB_READ` for a body that is not held (released, or never held).
+    pub const no_body = "no_body";
+};
+
+/// One HTTP header on the tunnel (T2221).
+pub const WebHeader = struct {
+    name: []const u8,
+    value: []const u8,
+};
+
+/// `WEB_REQUEST` (0x88, C→A; T2221): one request a page made.
+pub const WebRequest = struct {
+    /// `GET`, `POST`, ... as the page sent it.
+    method: []const u8,
+    /// Absolute `http:`/`https:` URL, resolved on the AGENT's machine.
+    url: []const u8,
+    /// The page's request headers. The agent drops the ones that describe the
+    /// hop rather than the request (`Host`, `Connection`, `Content-Length`,
+    /// `Transfer-Encoding`, `Accept-Encoding`, ...) and computes its own.
+    headers: []const WebHeader = &.{},
+    /// The request body, base64 (standard alphabet, padded). Absent: none.
+    body: ?[]const u8 = null,
+};
+
+/// `WEB_RESPONSE` (0x89, A→C; T2221), on the request channel.
+pub const WebResponse = struct {
+    ok: bool,
+    /// The HTTP status. A redirect is answered as itself, never followed: the
+    /// page's engine follows it, and that request comes back through the
+    /// tunnel like any other.
+    status: u16 = 0,
+    reason: []const u8 = "",
+    /// The response headers, minus the hop-by-hop ones.
+    headers: []const WebHeader = &.{},
+    /// The whole body's length in bytes.
+    size: u64 = 0,
+    /// The first piece of the body (at most `max_viewer_chunk_bytes`), base64.
+    data: []const u8 = "",
+    /// True when `data` is the whole body. Otherwise the agent holds the rest
+    /// under `body` until `WEB_CLOSE` or the connection ends.
+    eof: bool = true,
+    body: ?u64 = null,
+    /// A `WebError` string when `!ok`.
+    @"error": ?[]const u8 = null,
+};
+
+/// `WEB_READ` (0x8a, C→A; T2221): the next piece of a held body.
+pub const WebRead = struct {
+    body: u64,
+    offset: u64,
+    /// Capped at `max_viewer_chunk_bytes` by the agent whatever is asked.
+    max_len: u32 = max_viewer_chunk_bytes,
+};
+
+/// `WEB_DATA` (0x8b, A→C; T2221), on the request channel. `ViewerData`'s
+/// shape.
+pub const WebData = struct {
+    ok: bool,
+    size: u64 = 0,
+    offset: u64 = 0,
+    data: []const u8 = "",
+    eof: bool = false,
+    @"error": ?[]const u8 = null,
+};
+
+/// `WEB_CLOSE` (0x8c, C→A; T2221). No reply: releasing a body that is not
+/// held is a no-op.
+pub const WebClose = struct {
+    body: u64,
 };
 
 /// `META` (0x21). All fields optional; `listening_ports` powers auto-forward
@@ -3904,6 +4076,61 @@ test "T2219 viewer_fetch negotiates on the intersection; viewer frames lane, rep
     defer d.deinit();
     try testing.expect(!d.value.ok);
     try testing.expectEqualStrings(ViewerError.outside_root, d.value.@"error".?);
+}
+
+test "T2221 web_tunnel negotiates on the intersection; web frames lane, reply set and round-trip" {
+    const alloc = testing.allocator;
+    const both = [_][]const u8{capability.web_tunnel};
+    const other = [_][]const u8{capability.viewer_fetch};
+
+    try testing.expect((try negotiate(
+        .{ .transfer_encoding = .raw, .capabilities = &both },
+        .{ .transfer_encoding = .raw, .capabilities = &both },
+    )).web_tunnel);
+    try testing.expect(!(try negotiate(
+        .{ .transfer_encoding = .raw, .capabilities = &both },
+        .{ .transfer_encoding = .raw, .capabilities = &other },
+    )).web_tunnel);
+    try testing.expect(!(try negotiate(
+        .{ .transfer_encoding = .raw, .capabilities = &other },
+        .{ .transfer_encoding = .raw, .capabilities = &both },
+    )).web_tunnel);
+
+    for ([_]FrameType{ .web_request, .web_response, .web_read, .web_data, .web_close }) |t| {
+        try testing.expect(!onDataLane(t));
+    }
+    try testing.expect(isRpcReply(.web_response));
+    try testing.expect(isRpcReply(.web_data));
+    try testing.expect(!isRpcReply(.web_request));
+    try testing.expect(!isRpcReply(.web_read));
+    try testing.expect(!isRpcReply(.web_close));
+
+    // The biggest request body, base64'd, still fits one frame.
+    try testing.expect(std.base64.standard.Encoder.calcSize(max_web_request_body_bytes) + 64 * 1024 < max_frame_len);
+
+    // REQUEST defaults: no headers, no body.
+    var r = try parseJson(WebRequest, alloc,
+        \\{"method":"GET","url":"http://localhost:3000/"}
+    );
+    defer r.deinit();
+    try testing.expectEqual(@as(usize, 0), r.value.headers.len);
+    try testing.expect(r.value.body == null);
+
+    // RESPONSE round-trip; unknown fields tolerated (additive evolution).
+    const hs = [_]WebHeader{.{ .name = "Content-Type", .value = "text/html" }};
+    const enc = try encodeJson(alloc, WebResponse{ .ok = true, .status = 200, .reason = "OK", .headers = &hs, .size = 2, .data = "aGk=" });
+    defer alloc.free(enc);
+    var o = try parseJson(WebResponse, alloc, enc);
+    defer o.deinit();
+    try testing.expectEqual(@as(u16, 200), o.value.status);
+    try testing.expect(o.value.eof and o.value.body == null);
+    try testing.expectEqualStrings("text/html", o.value.headers[0].value);
+
+    var d = try parseJson(WebData, alloc,
+        \\{"ok":false,"error":"no_body","later":1}
+    );
+    defer d.deinit();
+    try testing.expectEqualStrings(WebError.no_body, d.value.@"error".?);
 }
 
 test "T1793 holder_lost negotiates on the intersection; EXIT.lost and the RELAUNCH fields are additive" {
