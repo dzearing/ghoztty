@@ -9,6 +9,8 @@
 # GUI test never opens a window on the user's screen" is a checked property,
 # not a habit. Builds the GTK debug app first (the committed HEAD, -Repo clone).
 #
+# H22-H25 (T3620) cover hl_start_seat, the headless sway that HAS a wl_seat.
+#
 # Output: PASS/FAIL per check, then 'HEADLESS HARNESS: ALL PASS' or
 # 'HEADLESS HARNESS: <n> FAILURE(S)'. Exit 0 only on ALL PASS.
 set -u
@@ -141,5 +143,39 @@ gone=0
 [ -n "${csl:-}" ] && ! kill -0 "$csl" 2>/dev/null || gone=1
 hl_check "H15 a SIGTERMed harness kills its app and Weston and removes its dir" $gone "dir=${crt:-?} weston=${cwp:-?} app=${csl:-?}"
 rm -f "$info"
+
+# ---- H22-H25: the seat compositor, hl_start_seat (T3620) --------------------------
+# gtk_has_seat: 'yes' when a GTK 4 client on the current WAYLAND_DISPLAY is given
+# a wl_seat (a selection can only be offered to other clients through one).
+gtk_has_seat() {
+    timeout 15 python3 -I -c 'import gi; gi.require_version("Gdk","4.0"); gi.require_version("Gtk","4.0")
+from gi.repository import Gdk, Gtk
+Gtk.init(); d = Gdk.Display.get_default()
+print("yes" if d is not None and d.get_default_seat() is not None else "no")' 2>/dev/null
+}
+export -f gtk_has_seat
+hl_key_serial 2> /tmp/hl-h22.err
+rc=$?
+[ $rc != 0 ] && grep -q 'needs hl_start_seat' /tmp/hl-h22.err
+hl_check "H22 hl_key_serial refuses under the Weston harness (no seat to type into)" $? "rc=$rc $(head -1 /tmp/hl-h22.err)"
+s=$(gtk_has_seat)
+[ "$s" = no ]
+hl_check "H23 control: a GTK client under the default Weston harness gets NO seat" $? "seat=${s:-?}"
+seat=$(bash -c ". '$lib'; hl_start_seat >/dev/null 2>&1 || exit 9; why=\$(hl_isolation_problem); echo \"\${why:-isolated}|\$WAYLAND_DISPLAY|\$(gtk_has_seat)\"")
+[ "${seat%%|*}" = isolated ] && [ "${seat##*|}" = yes ] && case "$seat" in *'|wayland-0|'*) false ;; *) true ;; esac
+hl_check "H24 hl_start_seat comes up isolated, on a private socket, and a GTK client there HAS a seat" $? "$seat"
+info=$(mktemp /tmp/hl-h25.XXXXXX)
+bash -c ". '$lib'; hl_start_seat || exit 9; hl_launch S sleep 300; echo \"\$HL_RUNTIME \$HL_WESTON_PID \$S\" > '$info'; sleep 300 & wait \$!" &
+child=$!
+hl_wait_for 10 test -s "$info"
+read -r crt cwp csl < "$info"
+kill -TERM "$child"; wait "$child" 2>/dev/null
+sleep 0.5
+gone=0
+[ -n "${crt:-}" ] && [ ! -e "$crt" ] || gone=1
+[ -n "${cwp:-}" ] && ! kill -0 "$cwp" 2>/dev/null || gone=1
+[ -n "${csl:-}" ] && ! kill -0 "$csl" 2>/dev/null || gone=1
+hl_check "H25 a SIGTERMed seat harness kills its app and sway and removes its dir" $gone "dir=${crt:-?} sway=${cwp:-?} app=${csl:-?}"
+rm -f "$info" /tmp/hl-h22.err
 
 hl_finish "HEADLESS HARNESS"
