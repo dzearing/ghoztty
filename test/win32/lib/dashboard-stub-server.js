@@ -30,7 +30,7 @@
  *   GET  /api/_unblock     flips the fixture's loop from blocked to working, so
  *                          the blocked bar (T1484) can be shown to CLEAR itself
  *                          through the page's real fetch-and-render path (and
- *                          drops the two loop lanes to one, T1995)
+ *                          drops the loop lanes to one, T1995)
  *
  * Usage:
  *   node dashboard-stub-server.js --page <html> --driver <js> --data <json>
@@ -194,20 +194,26 @@ const BOOT_REVIVES = Object.assign({}, BOOT_SIGNIN_OFF, {
 });
 payload.boot = BOOT_SIGNIN_OFF;
 
-/* Two loop lanes (T1984/T1995), injected over whatever lanes THIS box runs -
+/* Three loop lanes (T1984/T1995/T2228), injected over whatever lanes THIS box runs -
    a real, varying fact (one lane, or three) and not a state a test may depend
    on. Lane a is stopped by request with nothing claimed; lane b is running
    turn 12 on the fixture's stale task, so the row has to resolve an id to its
    title. Cleared by /api/_unblock to ONE lane, which must render no lane row:
    the card already is that lane. */
-const LANES_TWO = [
+const LANES_MULTI = [
   { id: 'a', root: 'X:\\fixture\\ghoztty', self: true, running: false, turn: 3,
     stopped: true, watchdog: true, tasks: [] },
   { id: 'b', root: 'X:\\fixture\\ghoztty-b', self: false, running: true, turn: 12,
+    turnAgeMs: 5 * 60 * 1000, turnStalled: false,
     stopped: false, watchdog: false, tasks: ['TX903'] },
+  /* T2228: alive, but no turn finished in 14h - the row must say so rather
+     than "running, turn 62". */
+  { id: 'c', root: 'X:\\fixture\\ghoztty-c', self: false, running: true, turn: 62,
+    turnAgeMs: 14 * 3600 * 1000, turnStalled: true,
+    stopped: false, watchdog: true, tasks: [] },
 ];
-const LANES_ONE = [LANES_TWO[0]];
-payload.lanes = LANES_TWO;
+const LANES_ONE = [LANES_MULTI[0]];
+payload.lanes = LANES_MULTI;
 
 /* Two open pull requests for the Reviews view (T1182), in the shape the real
    server's /api/prs serves (test/win32/task-dashboard.ps1 section H proves that

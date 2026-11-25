@@ -23,7 +23,10 @@
       loop being worse than none at all;
     - a live loop whose current turn has run past the stall threshold reaches
       the payload as stalled, with its turn age, while a fresh turn does not
-      (T1298) - alive and turning are different questions.
+      (T1298) - alive and turning are different questions;
+    - every OTHER lane carries the same turn clock (T2228), so a stalled
+      lane b reads as stalled on a board served from lane a, and a lane whose
+      owner is gone carries no clock at all.
 
   The server is started on a port this script verified free first, because the
   server treats EADDRINUSE as "already serving" and exits 0 - a leftover
@@ -396,6 +399,58 @@ try {
         Assert 'F11 the loop card says "not turning" and hands over the postmortem command' `
             ($html -match 'L\.turnStalled' -and $html -match 'Alive, but not turning' -and
              $html -match 'go-loop-health\.ps1 -Postmortem' -and $html -match "'this turn '")
+
+        # T2228: the same clock for the OTHER lanes. The board is served from
+        # lane a, so a lane-b turn stalled for fourteen hours read "running,
+        # turn 62" there. Three staged lane trees (GHOZTTY_LANE_ROOTS, lane a
+        # first): a fresh live turn, a live turn 14h old, and a lock whose
+        # owner is gone with an equally old turn - which must NOT read as
+        # stalled, because a lane that is not running has no turn to measure.
+        $laneFix = Join-Path $fix 'lanes'
+        function Write-LaneLock([string]$name, [int]$ownerPid, [datetime]$turnStarted, [int]$turn) {
+            $t = Join-Path (Join-Path $laneFix $name) 'temp'
+            New-Item -ItemType Directory -Force -Path $t | Out-Null
+            @{ state = 'held'; pane_id = "FIXTURE-$name"; claude_pid = $ownerPid; turn = $turn
+               turn_started = $turnStarted.ToString('o')
+               acquired = (Get-Date).AddDays(-1).ToString('o')
+               heartbeat = (Get-Date).ToString('o') } |
+                ConvertTo-Json | Out-File -FilePath (Join-Path $t 'go-loop.lock.json') -Encoding utf8
+            return (Join-Path $laneFix $name)
+        }
+        # A pid that is not running: a process this script started and waited out.
+        $gone = Start-Process -FilePath $env:ComSpec -ArgumentList '/c exit 0' -WindowStyle Hidden -PassThru
+        $gone.WaitForExit()
+        $rootA = Write-LaneLock 'ghoztty'   $PID      ((Get-Date).AddMinutes(-2)) 30
+        $rootB = Write-LaneLock 'ghoztty-b' $PID      ((Get-Date).AddHours(-14))  62
+        $rootC = Write-LaneLock 'ghoztty-c' $gone.Id  ((Get-Date).AddHours(-14))  5
+        $env:GHOZTTY_LANE_ROOTS = ($rootA, $rootB, $rootC) -join ';'
+        $env:GHOZTTY_LOOP_LEDGER = 'off'
+        try { $out = & $node.Source $dash --loop 2>$null } finally {
+            Remove-Item Env:GHOZTTY_LANE_ROOTS, Env:GHOZTTY_LOOP_LEDGER -ErrorAction SilentlyContinue
+        }
+        $j = $null; try { $j = ($out -join "`n" | ConvertFrom-Json) } catch { }
+        $lanes = if ($j) { @($j.lanes | ForEach-Object { $_ }) } else { @() }
+        $la = $lanes | Where-Object { $_.id -eq 'a' }
+        $lb = $lanes | Where-Object { $_.id -eq 'b' }
+        $lc = $lanes | Where-Object { $_.id -eq 'c' }
+        Assert 'F12 three staged lane trees reach the payload as lanes a, b, c' `
+            ((($lanes | ForEach-Object { $_.id }) -join ',') -eq 'a,b,c') `
+            "lanes=$($j.lanes | ConvertTo-Json -Compress)"
+        $bH = if ($lb -and $null -ne $lb.turnAgeMs) { [double]$lb.turnAgeMs / 3600000 } else { -1 }
+        Assert 'F13 the other lane, alive with a 14h-old turn, reads as stalled with its age' `
+            ($lb -and $lb.running -eq $true -and $lb.turnStalled -eq $true -and $lb.turn -eq 62 -and
+             $bH -gt 13.9 -and $bH -lt 14.1) `
+            "$($lb | ConvertTo-Json -Compress)"
+        Assert 'F14 negative control: a lane two minutes into its turn is not stalled' `
+            ($la -and $la.running -eq $true -and $la.turnStalled -eq $false -and $null -ne $la.turnAgeMs -and
+             [double]$la.turnAgeMs -lt 600000) `
+            "$($la | ConvertTo-Json -Compress)"
+        Assert 'F15 a lane whose owner is gone has no turn clock, however old its lock' `
+            ($lc -and $lc.running -eq $false -and $lc.turnStalled -eq $false -and $null -eq $lc.turnAgeMs) `
+            "$($lc | ConvertTo-Json -Compress)"
+        Assert 'F16 the lane rows word a stalled lane the way the loop card does' `
+            ($html -match 'ln\.turnStalled' -and $html -match "'alive, but not turning'" -and
+             $html -match 'no turn has finished in ')
     } finally {
         Remove-Item $fix -Recurse -Force -ErrorAction SilentlyContinue
     }

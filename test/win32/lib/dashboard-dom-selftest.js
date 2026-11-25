@@ -440,10 +440,10 @@
         /* --- one row per loop lane (T1984/T1995) -------------------------- */
         /* The stub serves two lanes until /api/_unblock, then one. */
         var laneEl = function (id) { return document.querySelector('#view [data-lane="' + id + '"]'); };
-        var la = laneEl('a'), lb = laneEl('b');
-        var latxt = la ? la.textContent : '', lbtxt = lb ? lb.textContent : '';
-        check('C64 two lanes render one [data-lane] row each',
-          document.querySelectorAll('#view [data-lane]').length === 2 && !!la && !!lb,
+        var la = laneEl('a'), lb = laneEl('b'), lcn = laneEl('c');
+        var latxt = la ? la.textContent : '', lbtxt = lb ? lb.textContent : '', lctxt = lcn ? lcn.textContent : '';
+        check('C64 three lanes render one [data-lane] row each',
+          document.querySelectorAll('#view [data-lane]').length === 3 && !!la && !!lb && !!lcn,
           document.querySelectorAll('#view [data-lane]').length + ' lane row(s)');
         check('C65 the stopped lane says so, is muted, and marks itself as this one',
           latxt.indexOf('Lane a (this one)') === 0 && latxt.indexOf('stopped by request') >= 0 &&
@@ -453,6 +453,14 @@
           lbtxt.indexOf('Lane b: running, turn 12') === 0 &&
           lbtxt.indexOf('TX903') >= 0 && lbtxt.indexOf('an in-progress task nobody has touched') >= 0 &&
           lbtxt.indexOf('supervisor down') >= 0 && !!lb && !lb.classList.contains('muted'), lbtxt);
+        /* T2228: an OTHER lane whose turn has run 14h is not "running" - the
+           same wording the loop card uses for this lane - and lane b, five
+           minutes in, is the negative control (C66 above, plus no flag). */
+        check('C68 a stalled other lane reads "alive, but not turning" with how long, flagged',
+          lctxt.indexOf('Lane c: alive, but not turning, turn 62') === 0 &&
+          lctxt.indexOf('no turn has finished in 14h') >= 0 &&
+          !!lcn && lcn.getAttribute('data-stalled') === '1' && lcn.classList.contains('lane-stalled') &&
+          !!lb && lb.getAttribute('data-stalled') == null && lbtxt.indexOf('(this turn 5m') >= 0, lctxt + ' | ' + lbtxt);
         /* The negative control: the same page, the same render path, a payload
            that is no longer blocked. A bar that cannot go away is worse than
            no bar at all. */

@@ -735,6 +735,30 @@ function branchName() {
 }
 
 /**
+ * How long the turn a lock describes has been running (T1298), and whether
+ * that is past the stall threshold. One function for this lane's card and for
+ * every other lane's row (T2228), so the two can never disagree about what
+ * "not turning" means.
+ *
+ * Same fallbacks as Get-TurnAgeMinutes in go-loop-lock.ps1 - turn_started,
+ * then the heartbeat, then the acquire - and never the transcript, which a
+ * nudge can move. TURN_STALE_MINUTES is go-loop-health.ps1's
+ * -TurnStaleMinutes default, which the watchdog reads too (T1319): the board,
+ * the health check and the supervisor agree.
+ */
+function turnClock(j) {
+  const turnStart = [j && j.turn_started, j && j.heartbeat, j && j.acquired]
+    .map((s) => (s ? Date.parse(s) : NaN))
+    .filter((t) => !isNaN(t))[0];
+  const turnAge = turnStart == null ? null : Date.now() - turnStart;
+  return {
+    turnStart: turnStart == null ? null : turnStart,
+    turnAge,
+    turnStalled: turnAge != null && turnAge >= TURN_STALE_MINUTES * 60 * 1000,
+  };
+}
+
+/**
  * What the go-loop is doing right now, from its lock file.
  *
  * The lock records the pane, the turn number and a heartbeat, but NOT which
@@ -766,10 +790,7 @@ function loopState() {
   // hours) shows here even while every liveness signal reads fine. Same
   // fallbacks as Get-TurnAgeMinutes in go-loop-lock.ps1, and never the
   // transcript, which a nudge can move.
-  const turnStart = [j.turn_started, j.heartbeat, j.acquired]
-    .map((s) => (s ? Date.parse(s) : NaN))
-    .filter((t) => !isNaN(t))[0];
-  const turnAge = turnStart == null ? null : Date.now() - turnStart;
+  const { turnStart, turnAge, turnStalled } = turnClock(j);
   return {
     paneId: j.pane_id || null,
     claudePid: j.claude_pid || null,
@@ -787,10 +808,8 @@ function loopState() {
     checkpointStale: age != null && age >= 45 * 60 * 1000,
     turnStarted: turnStart == null ? null : turnStart,
     turnAgeMs: turnAge,
-    // go-loop-health.ps1's -TurnStaleMinutes default, which the watchdog reads
-    // too (T1319): the board, the health check and the supervisor agree on
-    // what "not turning" means.
-    turnStalled: turnAge != null && turnAge >= TURN_STALE_MINUTES * 60 * 1000,
+    // Past TURN_STALE_MINUTES: alive, but no turn has finished (turnClock).
+    turnStalled,
     // Why it is not turning, when the answer is one only the user can fix.
     blocked: loopBlocker(j),
   };
@@ -1143,6 +1162,10 @@ const LEDGER_TTL_MS = (Number(process.env.GHOZTTY_LOOP_LEDGER_TTL_MIN) || 60) * 
 let laneRootCache = { at: 0, roots: null };
 
 function laneRoots() {
+  // A fixture names its lane trees directly (';'-separated, lane a first), so
+  // a harness can stage two lanes without creating real git worktrees (T2228).
+  const fixed = (process.env.GHOZTTY_LANE_ROOTS || '').trim();
+  if (fixed) return fixed.split(';').map((r) => r.trim()).filter(Boolean).map((r) => path.resolve(r));
   if (laneRootCache.roots && Date.now() - laneRootCache.at < 60 * 1000) return laneRootCache.roots;
   let roots = [];
   try {
@@ -1189,6 +1212,12 @@ function lanesState() {
     seen.add(id);
     const lock = readJsonFile(lockFile);
     const held = !!(lock && lock.state !== 'free' && lock.claude_pid);
+    const running = held && pidAlive(lock.claude_pid);
+    // T2228: the turn clock for EVERY lane, not just this one. The board is
+    // served from lane a, so without it a lane-b turn stalled for fourteen
+    // hours read "running, turn 62" here. Only a running lane has a turn to
+    // measure; a free or dead lock's age would be a number about nothing.
+    const clock = running ? turnClock(lock) : { turnStart: null, turnAge: null, turnStalled: false };
     const key = root.toLowerCase();
     const tasks = Object.keys(claims).filter((tid) => {
       const c = claims[tid] || {};
@@ -1202,8 +1231,11 @@ function lanesState() {
       id,
       root,
       self: isSelf,
-      running: held && pidAlive(lock.claude_pid),
+      running,
       turn: lock && lock.turn != null ? lock.turn : null,
+      turnStarted: clock.turnStart,
+      turnAgeMs: clock.turnAge,
+      turnStalled: clock.turnStalled,
       stopped: fs.existsSync(path.join(temp, 'go-loop.stop.json')),
       watchdog: watchdogState(path.join(temp, 'go-loop.watchdog.json')).running,
       tasks,

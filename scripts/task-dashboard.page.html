@@ -469,6 +469,7 @@ dialog.taskdlg footer { padding: 10px 14px; border-top: 1px solid var(--hairline
 .loop-line { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 13px; }
 .loop-task { font-size: 13px; margin-top: 8px; }
 .loop-task.muted, .dec-why.muted { color: var(--muted); font-size: 12px; }
+.loop-task.lane-stalled { color: var(--warning); }
 .chip.warn { background: rgba(250, 178, 25, .18); color: var(--ink); }
 /* Reviews view (T1182): one card per open PR, read the way it gets approved. */
 .pr { border-top: 1px solid var(--hairline); padding: 14px 0 4px; }
@@ -1073,16 +1074,26 @@ function laneRows(d) {
   var lanes = d.lanes || [];
   if (lanes.length < 2) return [];
   return lanes.map(function (ln) {
-    var what = ln.stopped ? 'stopped by request' : (ln.running ? 'running' : 'not running');
+    // T2228: the same alive-is-not-turning rule as this lane's own card
+    // (T1298), for every lane. The board is served from lane a, so a lane-b
+    // turn stalled for fourteen hours used to read "running, turn 62" here.
+    var inert = !ln.stopped && ln.running && ln.turnStalled;
+    var what = ln.stopped ? 'stopped by request'
+      : inert ? 'alive, but not turning'
+      : (ln.running ? 'running' : 'not running');
+    var clock = ln.running && ln.turnAgeMs != null
+      ? (inert ? ' — no turn has finished in ' + fDur(ln.turnAgeMs) : ' (this turn ' + fDur(ln.turnAgeMs) + ')')
+      : '';
     var task = ln.tasks && ln.tasks.length
       ? ln.tasks.map(function (id) {
           var t = (d.tasks || []).filter(function (x) { return x.id === id; })[0];
           return t ? id + ' — ' + t.title : id;
         }).join('; ')
       : 'no task claimed';
-    return h('div', { class: 'loop-task' + (ln.running ? '' : ' muted'), 'data-lane': ln.id }, [
+    return h('div', { class: 'loop-task' + (inert ? ' lane-stalled' : ln.running ? '' : ' muted'),
+        'data-lane': ln.id, 'data-stalled': inert ? '1' : null }, [
       h('b', { text: 'Lane ' + ln.id + (ln.self ? ' (this one)' : '') + ': ' }),
-      what + (ln.turn != null ? ', turn ' + ln.turn : '') + ' · ' + task +
+      what + (ln.turn != null ? ', turn ' + ln.turn : '') + clock + ' · ' + task +
         ' · supervisor ' + (ln.watchdog ? 'watching' : 'down')
     ]);
   });
