@@ -324,3 +324,36 @@ test "shouldDim: a pane folded out of sight never dims (T2185)" {
     folded.hidden = true;
     try testing.expect(!shouldDim(folded));
 }
+
+/// What a change of the owner's card region does to the wash's popup region
+/// (T2239). A wash on the composition visual never shows its popup, so
+/// re-cutting the popup's region there is pure cost: an elevated card's
+/// rounded region changes on every resize, so a divider drag paid a
+/// `GetWindowRgn` + redrawing `SetWindowRgn` per dimmed pane per mouse move
+/// (about 1 ms each at 8 panes). The cut is owed instead, and paid once when
+/// the wash next goes up as the popup.
+pub const RegionStep = enum { none, apply, owe };
+
+pub fn regionStep(on_visual: bool, key_changed: bool) RegionStep {
+    if (!key_changed) return .none;
+    return if (on_visual) .owe else .apply;
+}
+
+/// Whether the popup path must cut the region now: its shape changed, or a
+/// change made while the wash was a visual is still owed.
+pub fn popupRegionDue(shape_changed: bool, owed: bool) bool {
+    return shape_changed or owed;
+}
+
+test "regionStep: a wash on the visual owes the cut instead of paying it (T2239)" {
+    try testing.expectEqual(RegionStep.owe, regionStep(true, true));
+    try testing.expectEqual(RegionStep.apply, regionStep(false, true));
+    try testing.expectEqual(RegionStep.none, regionStep(true, false));
+    try testing.expectEqual(RegionStep.none, regionStep(false, false));
+}
+
+test "popupRegionDue: an owed cut is paid when the popup comes back (T2239)" {
+    try testing.expect(popupRegionDue(false, true));
+    try testing.expect(popupRegionDue(true, false));
+    try testing.expect(!popupRegionDue(false, false));
+}

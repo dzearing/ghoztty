@@ -67,6 +67,9 @@ pub const DimOverlay = struct {
     /// The owner's region this wash was last clipped to (T1831); see
     /// `matchOwnerRegion`.
     region_key: u64 = 0,
+    /// A `region_key` change arrived while the wash was on the visual, so
+    /// the popup's region was not re-cut (T2239); the popup path pays it.
+    region_owed: bool = false,
     /// The banner band above the owner the wash also covers (T2308);
     /// `setBand` feeds it before every `show`.
     band: Band = .{},
@@ -267,8 +270,10 @@ pub const DimOverlay = struct {
             .corner = band.corner,
             .width = if (band.corner > 0) rect.right - rect.left else 0,
         };
-        if (!std.meta.eql(shape, self.shape)) {
+        const shape_changed = !std.meta.eql(shape, self.shape);
+        if (dim_math.popupRegionDue(shape_changed, self.region_owed)) {
             self.shape = shape;
+            self.region_owed = false;
             self.applyRegion();
         }
 
@@ -409,9 +414,17 @@ pub const DimOverlay = struct {
     /// `PaneView.card_region_key` - the region is only re-copied when it
     /// changed, 0 meaning "the owner has none".
     pub fn matchOwnerRegion(self: *DimOverlay, key: u64) void {
-        if (key == self.region_key) return;
-        self.region_key = key;
-        self.applyRegion();
+        switch (dim_math.regionStep(self.on_visual, key != self.region_key)) {
+            .none => return,
+            .owe => {
+                self.region_key = key;
+                self.region_owed = true;
+            },
+            .apply => {
+                self.region_key = key;
+                self.applyRegion();
+            },
+        }
     }
 
     /// The banner band above the owner this wash also covers (T2308), or

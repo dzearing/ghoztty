@@ -1,10 +1,11 @@
 {
     "guard":  "radius-table",
     "script":  "test/win32/radius-table-audit.ps1",
-    "generated":  "2026-11-24T20:15:07-08:00",
-    "commit":  "fe9b21c28",
+    "generated":  "2026-11-25T04:12:48-08:00",
+    "commit":  "750ecaf83",
     "uncommitted":  [
-
+                        "src/apprt/win32/dim_math.zig",
+                        "src/apprt/win32/DimOverlay.zig"
                     ],
     "files":  {
                   "docs/design/win32-design-system.md":  "ff5826f3e901a90a74a95687b2dbd700d59f1fc4704b1ae31334adf615f38d86",
@@ -120,8 +121,8 @@
                   "src/apprt/win32/dialog_app.zig":  "bdba26f9c586c3d8ea807d037380730be9561857ff11f3daf55d2632cacce42f",
                   "src/apprt/win32/dib_packed.zig":  "a4dbaba17150f7f9c0587e6b8f718e4c128dc63377d5cbe5d61ba918042bdfc2",
                   "src/apprt/win32/dib32.zig":  "4657a65b709c5a0aafcc05fc517046edad5256d9c5b77ac47553795a5190cfc6",
-                  "src/apprt/win32/dim_math.zig":  "ab7742f13cc59cc62285d53cf2d6d5dd8fc4fde385d6003e4f432c6c055ff55b",
-                  "src/apprt/win32/DimOverlay.zig":  "f56f076971237e90b57818a6c4866721aa7591e129b474de724127e6776bc490",
+                  "src/apprt/win32/dim_math.zig":  "cff41b14687e6df85060c252f1013cadf25959a48d72018d585c7c0335837d3b",
+                  "src/apprt/win32/DimOverlay.zig":  "c8ee2592c97c41a0dc1c66ba72dc8a47b16f5fb89dc5053fb2bf75fe42469d86",
                   "src/apprt/win32/DirectoryProbe.zig":  "8a3c2a82c923ef8c08aabbeb3af4abbbf50515d5c1f6f8442bc92e0715936ef1",
                   "src/apprt/win32/drag_hold.zig":  "ff57a19d08959d90ae50d4c3c5a0337fc62730ade161d3f6ef0f92f12185a065",
                   "src/apprt/win32/drag_perf.zig":  "7a0a6315fca20bcd41664bde044f483de98be9141a71732d236d02fb2be98f8e",

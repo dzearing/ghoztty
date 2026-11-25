@@ -277,8 +277,14 @@ function Measure-DragShape([string]$mode, [int[]]$counts, [int]$moves) {
     $env:GHOZTTY_PERF = '1'
 
     $results = @{}
+    # Glass off (T2239): glass panes never dim (T2281), and glass is the
+    # default, so a default-config drag has no unfocused-pane washes at all
+    # and every chrome/overlay number here read the empty case. With glass
+    # off the 7 washes at 8 panes are up on the default ELEVATED cards, which
+    # is the shape the overlay term has to stay cheap for.
     $app = Start-OnTestDesktop -Exe $exe -StdErr $log -Arguments @(
-        '--config-default-files=false', '--background=#101014', '--session-persistence=false')
+        '--config-default-files=false', '--background=#101014', '--session-persistence=false',
+        '--macos-pane-glass=false')
     try {
         $top = Wait-TestWindow -ProcessId $app.Pid -Class 'GhozttyWindow' -TimeoutMs 20000
         if ($top -eq [IntPtr]::Zero) { throw "no window for the $mode instance" }
@@ -558,6 +564,20 @@ try {
         Rep ("  one popup per pane (T1350) at $hi panes: $($bHi.ChromeMoves) chrome moves " +
             "-> at most $kept, saving at most ${ceiling}us of a $($bHi.MeanUs)us move ($pct%)")
     }
+
+    # ---- E2. the washes are really up, and cost what they should (T2239) -
+    # Every number in this script is only as good as the chrome it drags. With
+    # glass on (the default) nothing dims, so the overlay term measured the
+    # empty case and read ~0.2 ms whatever the wash code did. The run now has
+    # glass off; this proves the washes actually showed, so a later default or
+    # launch-argument change cannot quietly put the empty case back. COUNT,
+    # not clock, like B/C: the overlay term is reported beside it.
+    $bLog = Join-Path $outDir 'batched-stderr.log'
+    $washes = @(Select-String -Path $bLog -Pattern 'dim overlay shown' -ErrorAction SilentlyContinue).Count
+    $washesUp = ($washes -ge ($hi - 1))
+    if ($NegativeControl) { $washesUp = -not $washesUp }
+    Assert $washesUp ("the unfocused panes really dim during the drag: $washes wash(es) shown " +
+        "for $hi panes (want >= $($hi - 1)); overlay term $($bHi.OverlayUs)us per mouse move")
 
     # ---- F. pointer first in the composition tree (T2769) ---------------
     # With the panes in the window's composition tree, a move writes every

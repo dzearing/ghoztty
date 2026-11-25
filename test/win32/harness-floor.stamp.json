@@ -1,8 +1,8 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-11-25T04:32:17-08:00",
-    "commit":  "b05932a4d",
+    "generated":  "2026-11-25T04:36:19-08:00",
+    "commit":  "750ecaf83",
     "uncommitted":  [
                         "test/win32/drag-perf.ps1"
                     ],
@@ -155,7 +155,7 @@
                   "test/win32/docs-routing.ps1":  "98d25cb8eaba89f37cb2fe892dc86cee04a2cec771acc0c588e39d69446ccf11",
                   "test/win32/dpi-change.ps1":  "ee556618b3c43764809203b4fa3d7da1cabb4135cdcba0d7e4bd8dabc4d54733",
                   "test/win32/drag-glide.ps1":  "d8af11cfa221d6d1b3ba0fc9d6ec6ae0aca7c7641ae846a307e53da882c75b03",
-                  "test/win32/drag-perf.ps1":  "b2e8d8219ffe36e92367f8eef59742b2e08cbea18c1540188f46d337a87d834e",
+                  "test/win32/drag-perf.ps1":  "5a4c53e3fc059dcd88ea1494a661febd80a861144e1aa00571a251928fde27f2",
                   "test/win32/drag-stall.ps1":  "4e44e4d0d58e32aec2e41699007c34b9d4029c6a5f090cec060dfcd17b0708ee",
                   "test/win32/echo-marker-audit.ps1":  "d4ba42c116403ba68c75e1962a7943f32f9001d1654cd604d6afa8ea2ea04396",
                   "test/win32/edge-drag-rate.ps1":  "2fca304221d50b9ef944602b898f1b74374622f0c940916889130dc0acd4a32c",
@@ -198,7 +198,7 @@
                   "test/win32/frame-score.ps1":  "d98795f50fd5c8a171332eef326942ed62398f6f8e62601c1102716d240b89d9",
                   "test/win32/fullscreen-exit.ps1":  "2e470f39aa21efdc4f4e2ea5203bfea80e9dd2dbccdfb58cc0786df440f94854",
                   "test/win32/fullscreen-guard.ps1":  "a6c1a301a11d7493a2e7b5411fbcb25daea08302c0a822e91d98fd6db0a67450",
-                  "test/win32/gate-negatives.ps1":  "31f3a328a6bdd3ec8e5c45db112efc03c74458898c828778621249062033207b",
+                  "test/win32/gate-negatives.ps1":  "08ee7c4d67c664a4d594cafc39aa0a0c5c7e8d4f28e72a9a0532427d9510a45a",
                   "test/win32/ghoztty-cleanup.ps1":  "43cd3c8d3d20789fe9c12d0134418a0e2e6c1bd9c8450d48f837f49c7ee00fc9",
                   "test/win32/glass-frame-origin.ps1":  "0a0dfeed8dff3e6ba20ec9402905ac5490ab37b43d85d9316be106de72e26b56",
                   "test/win32/gl-device-lost.ps1":  "3a87a2acf4ebca9c19323687ecd65919747f3691aa09eb9eb245f19246d30711",
