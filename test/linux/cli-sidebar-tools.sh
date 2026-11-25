@@ -155,6 +155,11 @@ dlg=$(hl_ipc close-dialog "--target=$b" --op=pane 2>&1)
 case "$dlg" in *'"open":true'*) ctl=0 ;; *) ctl=1 ;; esac
 hl_check "B9 control: with a program running, the pane's keyboard close asks first" $ctl "$dlg"
 hl_ipc close-dialog "--target=$b" --answer=cancel > /dev/null 2>&1
+# The answered dialog animates out: wait until it is gone, so B11 reads only
+# what the sidebar's x put up (nothing).
+no_dialog() { case "$(hl_ipc close-dialog "--target=$1" 2>&1)" in *'"open":false'*) true ;; *) false ;; esac; }
+hl_wait_for 10 no_dialog "$b"
+hl_check "B9b the control's dialog is answered Cancel and goes" $?
 hl_wait_for 10 lst_is 'len(ids("wa"))' 2
 sb wa "--click=tool:close:$b" > /dev/null
 hl_wait_for 10 lst_is 'ids("wa")' "['$a']"
