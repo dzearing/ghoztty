@@ -587,7 +587,9 @@ test "settings_pages: the Linux seat's wording (T3631)" {
         // No updater reads auto-update on Linux, so no page offers it.
         try testing.expect(!isCurated("auto-update"));
         try testing.expectEqualStrings("To the selection clipboard", cos.labelFor("true"));
-        try testing.expect(!rowMatchesText(wm, "Windows"));
+        // The hint itself, since the row's label ("Open windows") matches
+        // "windows" in any search.
+        try testing.expectEqualStrings("It also applies once you have closed every window.", wm.hint.?);
         try testing.expect(rowMatchesText(cs, "-lic"));
         try testing.expect(!rowMatchesText(cs, "pwsh"));
     } else {

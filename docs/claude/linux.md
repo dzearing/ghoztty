@@ -1810,16 +1810,45 @@ there, once, for both seats.
 - **Backups**: `$XDG_STATE_HOME/ghoztty/config-backups`; a debug build takes
   `GHOZTTY_SETTINGS_BACKUP_DIR` instead (the test's seam).
 - **Seam**: debug-only `hl_ipc settings --op=action|state|search|set|reset|close
-  [--key=] [--value=]`, win32's op names.
+  [--key=] [--value=]`, win32's op names. The curated pages add
+  `--op=toggle|choose|step|slide|flag|text|curated-reset|reveal` and
+  `--page=`/`--filter=` on any op; each moves the row's real widget and lets
+  its own signal write, then `flush()`es the idle redraw so the reply reads
+  the widgets back (`key.curated.display` beside the model's `expected`).
+
+### The curated pages (T3631)
+
+The pages are win32's `settings_pages.zig` table, not a GTK one; Linux
+words are comptime `linux` branches there (copy-on-select's "To the
+selection clipboard", `-lic` in the scripted-shell hint, no `auto-update` on
+Updates). Rows: `AdwSwitchRow` (bool), `AdwComboRow` (enum, plus any schema
+value nobody curated; a shell row ends with Other...), `AdwSpinRow`
+(stepper, MB), `GtkScale` on an `AdwActionRow` (written 250 ms after the
+drag settles), `AdwExpanderRow` of switches (flags), else a text field.
+Every row has the changed dot and a reset button, and is refreshed IN PLACE
+after a write (`refreshCurated`) - rebuilding would lose the page's scroll.
+The shell check is `settings_controls.shellProblemPosix` (`:` PATH, X_OK).
+
+Traps found here:
+
+- **Group titles and descriptions are markup** in libadwaita 1.5: "Copy &
+  paste" must be escaped (`markup()`); row titles are set with
+  `use-markup` off instead. P4 reads the drawn GtkLabel to prove it.
+- **`gtk_widget_activate` is not a click or a Return**: on a GtkButton it
+  clicks only after a ~250 ms pressed-look timeout, and on a GtkEntry it
+  never reached the `activate` handler. A seam gesture emits `clicked` /
+  `activate` with `g_signal_emit_by_name`.
 
 ```powershell
 powershell -NoProfile -File scripts\linux\wsl-run.ps1 -CommandFile test\linux\settings-window.sh
 ```
 
-Ends `SETTINGS WINDOW: ALL PASS` (20 checks). This slice is Advanced > All
-Settings. Still to port: curated pages T3631, lists/keyed keys T3632,
-Config file/backups/undo T3633, the file-mode and local-time fix T3634,
-Sessions & Remote pages T3635, and themes + preview T3636.
+Ends `SETTINGS WINDOW: ALL PASS` (43 checks: W1-W20 for the window and
+All Settings, P1-P23 for the pages). Left off the pages for their own cards:
+the preview and themes T3636, the agent status and Remote Machines T3635,
+list keys (shown, not edited) T3632, color wells and the folder picker T3759,
+search across the pages T3760. Also still to port: Config file/backups/undo
+T3633, the file-mode and local-time fix T3634.
 
 ## The keyboard shortcut guide (T3570)
 
