@@ -1677,8 +1677,39 @@ gutter, the accent in the window's own render while a drag is held (and not
 at rest), the bar moving to the edge grip when a drag tucks the far pane, and
 the divider (both directions) and grip double-clicks.
 
-Not yet: strips as blades with their shadows (T3729), collapses in the
-session layout and undo (T3627), the featured side pane (T3628), live
+### Collapses that last (T3627)
+
+docs/reference/stacked-panes.md "Saved with the window". GTK keeps ONE
+`PaneStackState` per tab (`SplitTree.priv.stacks`; win32 keeps one per
+window), so the win32 `Window.zig` glue is ported onto the split tree:
+
+- **Session layout.** `SessionLayout.captureWindow` writes each tab's
+  `pane_stack` from `SplitTree.stackPersisted` (collapsed rows + focus
+  history, by leaf position, stash included). `restoreWindow` hands it to
+  `adoptStackPersisted` once the tab's tree is whole. The once-a-second
+  change-checked capture is the re-save, so there is no `collapseStamp` hook.
+- **Restore focus.** `adoptStackPersisted` ends in `focusRestoredPane`:
+  `last_focused` goes to the first pane of the saved history that is not
+  stashed, and then through `paneOnShow`, so it can never be a strip. It only
+  records the pane, and the tree's rebuild moves the keyboard there.
+- **Undo.** `CloseUndo.parkClosedPane` keeps `SplitTree.stackSaved()` with
+  the entry. `restorePane` calls `restoreStackRows` (note the rows, then
+  `restoreScoped`) and focuses the pane only when `isStackMinimized` says it
+  is not a strip. A parked TAB needs nothing: its SplitTree, and the stack
+  state in it, is parked whole.
+
+```powershell
+powershell -NoProfile -File scripts\linux\wsl-run.ps1 -CommandFile test\linux\stack-persist.sh
+```
+
+Ends `STACK PERSIST: ALL PASS`. Its collapse is the user's own (a divider
+dragged past the leading pane's minimum, in a row that fits), so every check
+fails on a build without it: the undone close leaves the strip a strip, the
+manifest records `leaves [0,1] start 1 count 1`, and a SIGKILL relaunch lays
+the row out the same way with the caret in the pane on show.
+
+Not yet: strips as blades with their shadows (T3729), a close beside a strip
+focusing it (T3744), the featured side pane (T3628), live
 relabel, strip drags and a column test (T3629), and the bar on a side
 panel's edge (the pane sidebar's, a viewer's contents).
 
