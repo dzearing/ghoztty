@@ -212,6 +212,20 @@ pub fn dialUnixTimeout(
     encoding: protocol.TransferEncoding,
     handshake_timeout_ns: u64,
 ) !Dialed {
+    return dialUnixTimeoutReport(alloc, path, encoding, handshake_timeout_ns, null);
+}
+
+/// `dialUnixTimeout` that also fills in a `DialReport` about the peer - the
+/// AF_UNIX twin of `dialPipeTimeoutReport`, for the same one caller: the Linux
+/// local-agent dial (T3600), whose response to `error.ProtocolIncompatible`
+/// (the mandatory-update path) depends on which side is behind.
+pub fn dialUnixTimeoutReport(
+    alloc: Allocator,
+    path: []const u8,
+    encoding: protocol.TransferEncoding,
+    handshake_timeout_ns: u64,
+    report: ?*DialReport,
+) !Dialed {
     // 1. Connect an AF_UNIX stream socket at `path` (mirrors the CLI's
     //    connectUnixSocket). We own the fd from here; on each pre-`sock` error
     //    path we close it explicitly (no errdefer, so `dialConnected`'s own
@@ -238,7 +252,7 @@ pub fn dialUnixTimeout(
     sock.* = socket_stream.SocketStream.init(fd);
     // `dialConnected` takes ownership of `sock` (closes + destroys it on any
     // failure) — cancel the raw-fd errdefer above by returning through it.
-    return dialConnected(alloc, .{ .sock = sock }, sock.connectionStream(), encoding, .this_machine, handshake_timeout_ns, null, null);
+    return dialConnected(alloc, .{ .sock = sock }, sock.connectionStream(), encoding, .this_machine, handshake_timeout_ns, report, null);
 }
 
 /// Connect to a Windows named pipe at `name` (a full `\\.\pipe\...` path) —
@@ -728,6 +742,55 @@ test "dial: a peer on a different protocol version fails as ProtocolIncompatible
     agent_thread.join();
     agent_joined = true;
     listener.deinit();
+}
+
+test "dialUnixTimeoutReport: an older agent on the unix socket is a skew, and the report names its version (T3600)" {
+    // The Linux local agent's transport. The app's skew response depends on
+    // the DIRECTION (agent older => offer the restart; app older => never),
+    // so the report must carry the peer's version out of the failed dial.
+    if (comptime builtin.os.tag == .windows) return error.SkipZigTest;
+    const alloc = testing.allocator;
+    const enc: protocol.TransferEncoding = .raw;
+
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var dir_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const dir = try tmp.dir.realpath(".", &dir_buf);
+    var path_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const path = try std.fmt.bufPrint(&path_buf, "{s}/a.sock", .{dir});
+
+    const addr = try std.net.Address.initUnix(path);
+    var listener = try addr.listen(.{});
+
+    const Accepter = struct {
+        listener: *std.net.Server,
+        agent: *MiniAgent,
+        fn run(self: *@This()) void {
+            const c = self.listener.accept() catch return;
+            self.agent.fd = c.stream.handle;
+            self.agent.run();
+        }
+    };
+    var agent = MiniAgent{
+        .fd = undefined,
+        .alloc = alloc,
+        .encoding = enc,
+        .proto_version = protocol.proto_version - 1,
+    };
+    var accepter = Accepter{ .listener = &listener, .agent = &agent };
+    const agent_thread = try std.Thread.spawn(.{}, Accepter.run, .{&accepter});
+
+    var report: DialReport = .{};
+    if (dialUnixTimeoutReport(alloc, path, enc, default_handshake_timeout_ns, &report)) |ok| {
+        var dialed = ok;
+        dialed.deinit();
+        agent_thread.join();
+        listener.deinit();
+        return error.TestExpectedError;
+    } else |e| try testing.expectEqual(@as(anyerror, error.ProtocolIncompatible), e);
+    agent_thread.join();
+    listener.deinit();
+    try testing.expectEqual(@as(?u16, protocol.proto_version - 1), report.peer_proto_version);
 }
 
 test "dial: a peer that accepts and says nothing is NOT reported as incompatible" {

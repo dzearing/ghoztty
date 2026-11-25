@@ -688,6 +688,10 @@ test {
     // buttons, the scripted answer, the window a join forwards (T3598). No
     // GTK imports.
     _ = @import("gtk/launch_handoff_rules.zig");
+    // The GTK local-agent upgrade's pure half: what the app does with each
+    // agent_upgrade decision, the is-it-the-agent gate before a signal, the
+    // skew dialog's buttons and scripted answer (T3600). No GTK imports.
+    _ = @import("gtk/agent_upgrade_rules.zig");
     // Cross-machine windows on GTK: a remote machine's name in `+list`, its
     // link state, and the machine copy a re-dial works from (T3597). No GTK
     // imports.

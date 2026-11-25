@@ -35,6 +35,7 @@ const RelayWindows = @import("../RelayWindows.zig");
 const PaneSidebar = @import("../PaneSidebar.zig");
 const BannerEditor = @import("../BannerEditor.zig");
 const AgentRecovery = @import("../AgentRecovery.zig");
+const AgentUpgrade = @import("../AgentUpgrade.zig");
 const launch_handoff = @import("../launch_handoff.zig");
 const ApprtApp = @import("../App.zig");
 const Common = @import("../class.zig").Common;
@@ -627,6 +628,11 @@ pub const Application = extern struct {
         // T3400: a dead or unreachable local agent is recovered in place -
         // its panes rebuilt on a fresh agent - instead of left frozen.
         if (self.as(gio.Application).getIsRemote() == 0) AgentRecovery.start(self);
+
+        // T3600: an agent older than the one this app ships is refreshed when
+        // nothing live rides it, and a protocol-skewed one gets the
+        // mandatory-update dialog - checked once the first resolve settles.
+        if (self.as(gio.Application).getIsRemote() == 0) AgentUpgrade.start(self);
 
         // Ghoztty (T3410): a debug build's headless viewer test window. A
         // no-op unless GHOZTTY_TEST_VIEWER is set, and compiled out of a
@@ -2993,7 +2999,12 @@ const Action = struct {
         mode: apprt.action.QuitTimer,
     ) !void {
         switch (mode) {
-            .start => self.startQuitTimer(),
+            .start => {
+                // T3600: the last surface closed - the quiet moment a stale
+                // agent may have nothing live left (checked on idle).
+                AgentUpgrade.lastWindowClosed();
+                self.startQuitTimer();
+            },
             .stop => self.stopQuitTimer(),
         }
     }

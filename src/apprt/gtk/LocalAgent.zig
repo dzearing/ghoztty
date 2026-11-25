@@ -46,6 +46,9 @@ const internal_os = @import("../../os/main.zig");
 const source_checkout = @import("../../os/source_checkout.zig");
 const autostart = @import("agent_autostart.zig");
 const agent_recovery = @import("../win32/agent_recovery.zig");
+const agent_build = @import("../../remote/agent_build.zig");
+const protocol = @import("../../remote/protocol.zig");
+const rules = @import("agent_upgrade_rules.zig");
 
 const log = std.log.scoped(.gtk_local_agent);
 
@@ -82,6 +85,27 @@ last_failure_ms: ?i64 = null,
 
 /// The login entry was refreshed (or deliberately skipped) this run.
 autostart_done: bool = false,
+
+/// The protocol skew the last dial hit (T3600, win32's T125): the agent
+/// ANSWERED and the handshake could not be agreed. A live process holding
+/// live sessions, not a dead one, so `resolve` never spawns a second agent
+/// over it; `AgentUpgrade` decides what to do. Null once a dial negotiates.
+protocol_skew: ?Skew = null,
+
+/// The bundled agent's build stamp, probed once per run (`bundledVersion`).
+bundled_version: ?[]u8 = null,
+bundled_version_probed: bool = false,
+
+/// Called (never from inside a pane build) after a find-or-spawn settled -
+/// a fresh connection, or a skew - so the upgrade check runs at launch the
+/// way win32's runs after its restore (T3600). Set by `AgentUpgrade.start`.
+on_resolved: ?*const fn () void = null,
+
+/// What a skewed dial learned. `peer_proto_version` is null when the peer
+/// never sent a HELLO we could parse.
+pub const Skew = struct {
+    peer_proto_version: ?u16 = null,
+};
 
 /// Called after a NEW pane's request replaced a dead agent's connection
 /// (T3400), so the panes still riding the old one get rebuilt. Set by
@@ -201,6 +225,8 @@ pub fn sharedConnection(self: *LocalAgent) ?*connection.Connection {
     const resolved = self.resolve() catch |err| {
         log.warn("local agent unavailable ({}); this pane runs without session persistence", .{err});
         self.last_failure_ms = std.time.milliTimestamp();
+        // A skew is a decision for the upgrade check, not just a failure.
+        if (err == error.ProtocolSkew) if (self.on_resolved) |hook| hook();
         return null;
     };
     self.last_failure_ms = null;
@@ -208,7 +234,146 @@ pub fn sharedConnection(self: *LocalAgent) ?*connection.Connection {
     self.shared_pid = resolved.pid;
     log.info("shared local-agent connection ready (agent pid {d})", .{resolved.pid});
     self.ensureAutostart();
+    if (self.on_resolved) |hook| hook();
     return self.shared.?.conn;
+}
+
+// ---------------------------------------------------------------------------
+// Non-destructive agent upgrade (T3600, win32's T147/T125)
+// ---------------------------------------------------------------------------
+
+/// The protocol skew the last dial hit, or null.
+pub fn protocolSkew(self: *const LocalAgent) ?Skew {
+    return self.protocol_skew;
+}
+
+/// The build stamp the CONNECTED agent advertised in its HELLO, or null when
+/// there is no shared connection or the agent is too old to advertise one.
+pub fn runningVersion(self: *LocalAgent) ?[]const u8 {
+    const d = self.shared orelse return null;
+    return d.conn.peerBuildVersion();
+}
+
+/// The build stamp of the agent binary this app ships beside (`--version`),
+/// or null when it cannot be read. Probed ONCE per run, failure included:
+/// the binary can be swapped mid-run, but the app that shipped it is this
+/// process, so the stamp to adopt is the one beside it at start.
+///
+/// `GHOZTTY_AGENT_BUNDLED_VERSION` overrides the INPUT in a debug build only
+/// (win32's same hook): every stamp in one tree is the same, so without it
+/// no test could reach the stale arm. Never honored in a release build.
+pub fn bundledVersion(self: *LocalAgent) ?[]const u8 {
+    if (self.bundled_version_probed) return self.bundled_version;
+    self.bundled_version_probed = true;
+
+    if (build_config.is_debug) {
+        if (posix.getenv("GHOZTTY_AGENT_BUNDLED_VERSION")) |v| if (v.len > 0) {
+            self.bundled_version = self.alloc.dupe(u8, v) catch return null;
+            log.warn("bundled agent build OVERRIDDEN to {s} (debug test hook)", .{v});
+            return self.bundled_version;
+        };
+    }
+
+    var arena_state = std.heap.ArenaAllocator.init(self.alloc);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const bin = agentBinary(arena) catch return null;
+    std.fs.accessAbsolute(bin, .{}) catch {
+        log.warn("bundled agent binary not found at {s}; upgrade check disabled", .{bin});
+        return null;
+    };
+    const result = std.process.Child.run(.{
+        .allocator = arena,
+        .argv = &.{ bin, "--version" },
+        .max_output_bytes = 4096,
+    }) catch |err| {
+        log.warn("agent --version probe failed err={}", .{err});
+        return null;
+    };
+    const stamp = agent_build.parseVersionOutput(result.stdout) orelse {
+        log.warn("agent --version printed nothing usable; upgrade check disabled", .{});
+        return null;
+    };
+    self.bundled_version = self.alloc.dupe(u8, stamp) catch return null;
+    log.info("bundled agent build is {s}", .{stamp});
+    return self.bundled_version;
+}
+
+/// Stop the running agent so the next resolve starts the bundled build
+/// (T3600). The CALLER decided this is safe: no live sessions (silent), or a
+/// user-confirmed protocol skew. The connection is RETIRED, never freed -
+/// panes borrow it - and the stranded panes are what in-place recovery
+/// rebuilds next. Returns true when an agent was actually stopped.
+///
+/// The pid comes out of `port.json`, so it is VERIFIED before any signal
+/// (win32's T421 gates): never this process, and only a process whose
+/// executable is the agent binary (`agent_upgrade_rules.isAgentExe`).
+pub fn restartForUpgrade(self: *LocalAgent) bool {
+    log.info("agent restart: begin (reading agent info file)", .{});
+    const pid: posix.pid_t = self.liveAgentPid() orelse self.shared_pid;
+    // A deliberate restart is not a failure, and whatever skew was recorded
+    // belonged to the agent being stopped; its replacement speaks this build.
+    self.last_failure_ms = null;
+    self.protocol_skew = null;
+
+    const stopped = if (pid > 0) self.stopAgent(pid) else false;
+    if (self.shared) |old| {
+        log.info("agent restart: retiring the shared connection (agent pid {d})", .{self.shared_pid});
+        self.retire(old);
+        self.shared = null;
+        self.shared_pid = 0;
+    }
+    if (stopped)
+        log.info("stopped local agent pid {d} to adopt the bundled build", .{pid})
+    else
+        log.warn("no local agent process to stop (pid {d}); the next resolve starts one", .{pid});
+    return stopped;
+}
+
+/// SIGTERM, a bounded wait, then SIGKILL - so the respawn never races the
+/// dying agent's still-bound socket and lock.
+fn stopAgent(self: *LocalAgent, pid: posix.pid_t) bool {
+    if (pid == std.os.linux.getpid()) {
+        log.err("agent restart: REFUSING to stop pid {d} - that is THIS process (stale port.json or a recycled pid)", .{pid});
+        return false;
+    }
+    var link_buf: [64]u8 = undefined;
+    const link = std.fmt.bufPrint(&link_buf, "/proc/{d}/exe", .{pid}) catch return false;
+    var exe_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const exe = std.fs.readLinkAbsolute(link, &exe_buf) catch |err| {
+        log.warn("agent restart: cannot read {s} err={}; not signalling it", .{ link, err });
+        return false;
+    };
+    var arena_state = std.heap.ArenaAllocator.init(self.alloc);
+    defer arena_state.deinit();
+    const expected = agentBinary(arena_state.allocator()) catch null;
+    if (!rules.isAgentExe(exe, expected)) {
+        log.err("agent restart: REFUSING to stop pid {d} - its executable {s} is not the agent", .{ pid, exe });
+        return false;
+    }
+    log.info("agent restart: stopping agent pid {d} ({s})", .{ pid, exe });
+    posix.kill(pid, posix.SIG.TERM) catch return false;
+    var waited: u64 = 0;
+    while (waited < stop_grace_ms) : (waited += poll_interval_ms) {
+        if (!pidAlive(pid)) return true;
+        std.Thread.sleep(poll_interval_ms * std.time.ns_per_ms);
+    }
+    log.warn("agent restart: pid {d} still up after {d} ms; SIGKILL", .{ pid, stop_grace_ms });
+    posix.kill(pid, posix.SIG.KILL) catch {};
+    waited = 0;
+    while (waited < stop_grace_ms) : (waited += poll_interval_ms) {
+        if (!pidAlive(pid)) return true;
+        std.Thread.sleep(poll_interval_ms * std.time.ns_per_ms);
+    }
+    return !pidAlive(pid);
+}
+
+/// How long a stopping agent gets after each signal.
+const stop_grace_ms: u64 = 2000;
+
+/// Whether a shared connection exists right now.
+pub fn hasSharedConnection(self: *const LocalAgent) bool {
+    return self.shared != null;
 }
 
 /// Write (or refresh) the login entry that starts the agent without the app
@@ -368,6 +533,9 @@ fn resolve(self: *LocalAgent) !Resolved {
     defer self.alloc.free(port_path);
 
     if (self.dialExisting(port_path)) |r| return r;
+    // The agent answered and could not agree: it is alive and holds the
+    // lock, so a spawn would only collide with it (win32's findOrSpawn rule).
+    if (self.protocol_skew != null) return error.ProtocolSkew;
 
     const bin = try agentBinary(self.alloc);
     defer self.alloc.free(bin);
@@ -417,10 +585,22 @@ fn dialExisting(self: *LocalAgent, port_path: []const u8) ?Resolved {
     if (!pidAlive(pid)) return null;
     const sock = info.socket orelse return null;
     if (sock.len == 0) return null;
-    const dialed = tcp_dial.dialUnixTimeout(self.alloc, sock, .raw, probe_handshake_ns) catch |err| {
+    var report: tcp_dial.DialReport = .{};
+    const dialed = tcp_dial.dialUnixTimeoutReport(self.alloc, sock, .raw, probe_handshake_ns, &report) catch |err| {
+        if (err == error.ProtocolIncompatible) {
+            // A live process holding live sessions, not a dead one: recorded
+            // for `AgentUpgrade` (the mandatory-update path, T3600/T125).
+            self.protocol_skew = .{ .peer_proto_version = report.peer_proto_version };
+            log.warn("local agent refused the handshake: protocol skew (agent offers {?d}, this app speaks {d})", .{
+                report.peer_proto_version, protocol.proto_version,
+            });
+            return null;
+        }
         log.debug("dial {s} failed: {}", .{ sock, err });
         return null;
     };
+    // A dial we could negotiate is proof the skew (if any) is over.
+    self.protocol_skew = null;
     return .{ .dialed = dialed, .pid = pid };
 }
 

@@ -160,7 +160,7 @@ fn watch(app: *Application, now: i64) void {
 
 /// Re-dial, then rebuild every pane stranded on a retired connection. A
 /// failed re-dial arms the next retry.
-fn recover(app: *Application, why: []const u8) void {
+pub fn recover(app: *Application, why: []const u8) void {
     const la = &app.rt().local_agent;
     const conn = la.reconnectForRecovery() orelse {
         if (policy.retryDelayMs(retry_attempts)) |delay| {
@@ -194,6 +194,32 @@ fn rebuildIdle(_: ?*anyopaque) callconv(.c) c_int {
     retry_attempts = 0;
     rebuildStranded(app, d.conn);
     return 0;
+}
+
+/// How many terminal panes in this app ride `conn` (T3600). The upgrade
+/// check takes the larger of this and the agent's live count, so a pane whose
+/// OPEN has not reached the agent yet still counts as live - never the other
+/// way round.
+pub fn panesOn(app: *Application, conn: *const connection.Connection) usize {
+    var n: usize = 0;
+    var node: ?*glib.List = app.as(gtk.Application).getWindows();
+    while (node) |l| : (node = l.f_next) {
+        const obj: *gobject.Object = @ptrCast(@alignCast(l.f_data orelse continue));
+        const window = gobject.ext.cast(Window, obj) orelse continue;
+        const tab_view = window.getTabView();
+        const pages: usize = @intCast(@max(tab_view.getNPages(), 0));
+        for (0..pages) |i| {
+            const page = tab_view.getNthPage(@intCast(i));
+            const tab = gobject.ext.cast(Tab, page.getChild()) orelse continue;
+            const tree = tab.getSplitTree().getTree() orelse continue;
+            var it = tree.iterator();
+            while (it.next()) |entry| {
+                const c = entry.view.agentConnection() orelse continue;
+                if (c == conn) n += 1;
+            }
+        }
+    }
+    return n;
 }
 
 /// Replace every terminal pane whose core rides a retired connection with a
