@@ -1,8 +1,8 @@
 {
     "guard":  "doc-claims",
     "script":  "test/win32/doc-claims.ps1",
-    "generated":  "2026-11-25T00:42:46-08:00",
-    "commit":  "0a3665539",
+    "generated":  "2026-11-25T00:54:54-08:00",
+    "commit":  "5eaa241ea",
     "uncommitted":  [
 
                     ],
@@ -13,7 +13,7 @@
                   "docs/claude/linux.md":  "7032745f1b5daa30f14e7500035245b0d4a2c335f848473d9bd9b2cc49d55c87",
                   "docs/claude/remote.md":  "3e86279891bb6bd225435960d7652887db56707b1681695c2d66e5752acf10ee",
                   "docs/claude/sessions.md":  "3e64b5911bff2bd1d146e78e6b40c3fdb545ff39ef9fcf77d5c271a7755ebaef",
-                  "docs/claude/testing.md":  "91ebb8fcb1e4fea66abe9b03c8555ca794c6aee6aae03b1e4265fe3324dfb2ec",
+                  "docs/claude/testing.md":  "c94040e798d90d11f48c100e73578f99056ff5a1d0d7699086e21fec8662c1df",
                   "docs/claude/viewers.md":  "de51d9dcfe632a8b9b947120b8952648fdb3829444b162bc04e072f210308333",
                   "docs/claude/win32-ui.md":  "0d161ccd181de4fdb54cf6a4b434abc75dcc00f65094c681df21dfab7ac05e55",
                   "go.md":  "ca1be588f5cec28f827b60f6efe00925ce4139b21929dfe05e57933e109434a4",
