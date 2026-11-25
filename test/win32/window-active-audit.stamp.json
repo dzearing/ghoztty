@@ -1,8 +1,8 @@
 {
     "guard":  "window-active-audit",
     "script":  "test/win32/window-active-audit.ps1",
-    "generated":  "2026-11-25T10:43:18-08:00",
-    "commit":  "81d54bf5c",
+    "generated":  "2026-11-25T11:55:25-08:00",
+    "commit":  "d98cfa5b6",
     "uncommitted":  [
 
                     ],
@@ -327,9 +327,9 @@
                   "src/apprt/win32/SessionCpuProbe.zig":  "7df0891891508e68f8d022e8fa0245f3ac4e147a1db8f8f395b8e7e9f13e919f",
                   "src/apprt/win32/SessionRoster.zig":  "62921cd7d374bf6ad2e21f3ccdca5dd223fa16dba9c710d558c74bdd0b2ff395",
                   "src/apprt/win32/SessionRosterProbe.zig":  "97d287a7ceaf0131a0583b4a1e3ec77cd5234f010fae99c194c28dc5e8fb10c4",
-                  "src/apprt/win32/settings_advanced.zig":  "b9c33bb96edbe6241fca09f87f0ef68553b96df2461e83dcc515120759eb6f10",
+                  "src/apprt/win32/settings_advanced.zig":  "3eb88ed7fb3124369539cb3ba4ffda4a70b4daa952a4991466ec8cb19fe619a2",
                   "src/apprt/win32/settings_advanced_view.zig":  "38a381894b754efbc47e1b367c0170c96c847062774ac65f3efb225e9a3fdc43",
-                  "src/apprt/win32/settings_controls.zig":  "9d22d07e3ba481ce296903f0dcafbc4e625b306e21ee7f9890dc922ad5944117",
+                  "src/apprt/win32/settings_controls.zig":  "2d829c2b5d87e0d869f02891118bff98f0ec594ea1d8d6cf239172984785cafa",
                   "src/apprt/win32/settings_line_edit.zig":  "283ca0c97e744cb9b297b546dd955756bc969ce76536d8c16655224bb20a87e5",
                   "src/apprt/win32/settings_live.zig":  "16dd06f1176ca6fe2ce54f2d6ca20a6c3f74f25de2c9e1a81173b3cdeef0d9b1",
                   "src/apprt/win32/settings_pages.zig":  "c7842786eb2cf15f7b95e3f10640919b8d52f873bae15766eb73716be7116619",

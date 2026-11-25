@@ -1795,7 +1795,7 @@ frame has no green: the oracle can see a blank prompt. Three traps it found:
 ## The Settings window (T3569)
 
 `open_config` (Ctrl+, / the menu) opens `src/apprt/gtk/SettingsWindow.zig`
-instead of the raw file; its "Open File" button is the old behavior. The
+instead of the raw file; Advanced's "Open in Editor" is the old behavior. The
 write path is NOT GTK code: it is win32's pure model
 (`ConfigFileText`/`ConfigFileStore`/`SettingsModel`/`SettingsSources`/
 `SettingsCatalog` under `src/apprt/win32/`), imported directly, so the
@@ -1846,13 +1846,15 @@ Traps found here:
 powershell -NoProfile -File scripts\linux\wsl-run.ps1 -CommandFile test\linux\settings-window.sh
 ```
 
-Ends `SETTINGS WINDOW: ALL PASS` (60 checks: W1-W20 for the window and
+Ends `SETTINGS WINDOW: ALL PASS` (76 checks: W1-W20 for the window and
 All Settings, P1-P23 for the pages, L1-L10 less L5 for list keys, F1-F8 for
-the Font picker). Left off the pages for their own cards: the preview and
+the Font picker, C1-C14 with C4b and C11b for Config file and the toast).
+Left off the pages for their own cards: the preview and
 themes T3636, the agent status and Remote Machines T3635, color wells and the
 folder picker T3759, search across the pages T3760. Also
-still to port: Config file/backups/undo T3633, the file-mode and local-time
-fix T3634.
+still to port: the file-mode and local-time fix T3634 (until it lands, a
+backup's date in Restore... reads in UTC: `ConfigFileStore.localNow` is
+Windows-only).
 
 ### List keys (T3632)
 
@@ -1890,6 +1892,45 @@ plain name with no warning. The items are rebuilt only when that extra entry
 changes (`font_arena`). F1 holds the items to `fc-list :spacing=mono` (plus
 charcell) exactly; the distro had three such families on 2026-11-25, DejaVu
 Sans Mono and Ubuntu Mono among them, and F4 needs at least two.
+
+### Config file, backups and the change toast (T3633)
+
+`src/apprt/gtk/SettingsConfigFile.zig`, on win32's pure
+`settings_advanced.zig` (the words, the backup labels, the toast's fade
+curve). Advanced now scrolls as one page: the Config file group (the file -
+the link target's name when it is a link - with a "loaded" pill, its path
+with `~`, Open in Editor and Show in Folder; Mac's link sentence; the red
+file problem; every other loaded file with its "included"/"also loaded"
+pill, sentence and Open), a group with Backups (Restore... is a
+`GtkMenuButton` popover of dates, then Show Backups in Folder; a pick asks
+with an `AdwAlertDialog`) and Current file (an `AdwExpanderRow`, the whole
+file, monospaced and selectable, capped at 220 px), then All Settings.
+"Show in Finder" is "Show in Folder" here (`GtkFileLauncher`, desktop
+agnostic).
+
+The toast is a `GtkRevealer` over the stack in a `GtkOverlay`, raised on the
+idle redraw after every write. Untouched for `toast_ms` (6 s) and not
+expanded, it slides down (the revealer, 350 ms) while a frame callback fades
+it on `toastLeave`'s curve; Undo and the x take it away at once; animations
+off (`adw_get_enable_animations`) takes it at once too.
+
+Traps found here:
+
+- **A frame callback on the card stops short.** The revealer unmaps its
+  child the moment the slide ends, so the fade's last frames never ran. The
+  callback sits on the revealer, which stays mapped at zero height.
+- **`AdwDialog`'s `closed` arrives after the close animation.** A seam that
+  answers the confirmation and reads state at once saw it still open, and a
+  late `closed` could forget the NEXT dialog. The window forgets the dialog
+  when it closes it, cuts its handlers first, and `closed` only clears the
+  dialog still on record.
+
+Seam ops (win32's names, each clicking the drawn button): `open_editor`,
+`reveal_file`, `open_source --index`, `backups_folder`, `current_file`,
+`restore-ask --index` / `restore-answer --value=restore|cancel`, `restore
+--index` (the confirmed half), `undo`, `show_change`, `dismiss`, `toast_ms`.
+With `GHOZTTY_SETTINGS_SHELL_DRY` set, a launch is recorded in
+`advanced.last_shell` (`editor|open|reveal|folder <path>`) instead of run.
 
 ## The keyboard shortcut guide (T3570)
 
