@@ -1,0 +1,17 @@
+{
+  "version": "1.56.29",
+  "sections": [
+    { "title": "New",
+      "items": [
+        { "text": "On Linux the Settings window has the Mac's pages, with switches, drop-downs, number fields and a shell picker." },
+        { "text": "On Linux the Settings window edits list settings as chips you can add to and remove." },
+        { "text": "On Linux the Settings Font row is a menu of the installed fixed-width fonts, as on the Mac." },
+        { "text": "On Linux, Settings > Advanced shows the config file, its backups with Restore, and the change toast with Undo, as on the Mac." },
+        { "text": "Settings > Shell offers Git Bash and one entry per WSL distro, and each pick opens that shell." }
+      ] },
+    { "title": "Fixes",
+      "items": [
+        { "text": "The 16th pane open at once keeps the fast drawing path: the D3D11 device is now a pool." }
+      ] }
+  ]
+}
