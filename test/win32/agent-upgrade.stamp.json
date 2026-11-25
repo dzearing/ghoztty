@@ -1,13 +1,10 @@
 {
     "guard":  "agent-upgrade",
     "script":  "test/win32/agent-upgrade.ps1",
-    "generated":  "2026-11-24T18:21:47-08:00",
-    "commit":  "71396db4e",
+    "generated":  "2026-11-24T20:33:52-08:00",
+    "commit":  "fe9b21c28",
     "uncommitted":  [
-                        "src/apprt/win32/confirm_dialog_layout.zig",
-                        "src/apprt/win32/confirm_dialog_window.zig",
-                        "src/apprt/win32/ConfirmDialog.zig",
-                        "src/apprt/win32/WhatsNewNotesView.zig"
+
                     ],
     "files":  {
                   "src/apprt/win32/agent_upgrade.zig":  "49c5c7ceea8da9bbf31619d51bfdede3b0e3d952e59553c4447410fd508895e9",

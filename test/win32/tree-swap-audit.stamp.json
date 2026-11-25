@@ -1,17 +1,10 @@
 {
     "guard":  "tree-swap",
     "script":  "test/win32/tree-swap-audit.ps1",
-    "generated":  "2026-11-24T18:14:15-08:00",
-    "commit":  "71396db4e",
+    "generated":  "2026-11-24T20:14:55-08:00",
+    "commit":  "fe9b21c28",
     "uncommitted":  [
-                        "src/apprt/win32/confirm_dialog_layout.zig",
-                        "src/apprt/win32/confirm_dialog_window.zig",
-                        "src/apprt/win32/ConfirmDialog.zig",
-                        "src/apprt/win32/dialog_app.zig",
-                        "src/apprt/win32/setup_main.zig",
-                        "src/apprt/win32/setup_result.zig",
-                        "src/apprt/win32/system_colors.zig",
-                        "src/apprt/win32/WhatsNewNotesView.zig"
+
                     ],
     "files":  {
                   "src/apprt/win32/about_links.zig":  "9bb9ec60b7b6099fda1350ec165c06d9404a32c4f53de1bb2fd0ce697a52683a",

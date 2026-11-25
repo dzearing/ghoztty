@@ -1,12 +1,10 @@
 {
     "guard":  "close-force",
     "script":  "test/win32/close-force.ps1",
-    "generated":  "2026-11-24T18:13:18-08:00",
-    "commit":  "71396db4e",
+    "generated":  "2026-11-24T20:13:59-08:00",
+    "commit":  "fe9b21c28",
     "uncommitted":  [
-                        "src/apprt/win32/confirm_dialog_layout.zig",
-                        "src/apprt/win32/confirm_dialog_window.zig",
-                        "src/apprt/win32/ConfirmDialog.zig"
+
                     ],
     "files":  {
                   "src/apprt/win32/confirm_dialog_layout.zig":  "17e33492e711719692c1628bb6a72d8934eebc8e666b40fdb517e65469874708",

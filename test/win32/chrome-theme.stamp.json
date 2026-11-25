@@ -1,10 +1,10 @@
 {
     "guard":  "chrome-theme",
     "script":  "test/win32/chrome-theme.ps1",
-    "generated":  "2026-11-24T18:17:42-08:00",
-    "commit":  "71396db4e",
+    "generated":  "2026-11-24T20:29:46-08:00",
+    "commit":  "fe9b21c28",
     "uncommitted":  [
-                        "src/apprt/win32/system_colors.zig"
+
                     ],
     "files":  {
                   "src/apprt/win32/chrome_theme.zig":  "e9922111d945b6279e8fc42adda3469ee52117b8682e4cb8297b997b91f068b1",
@@ -16,7 +16,7 @@
                   "test/win32/lib/ColorMath.ps1":  "e0b7cb256aa2322eed4d2d75d88c3557598eacf8ffcc825f659a071f36b3c0f7"
               },
     "code":  {
-                 "test/win32/chrome-theme.ps1":  "code1:c750b50af8e8af031d7e0da7f4b64e94400bb37ad2f3115ffd8fe5321744cbbc",
+                 "test/win32/chrome-theme.ps1":  "code1:23b68178c008b831628ae1dfece7a19ac3356a9df558a0d7fd98c5ad8f92bf61",
                  "test/win32/lib/ColorMath.ps1":  "code1:e55afc57e72e9e911d06c02b57ad98512fc9a02ef035379736ca44ced8e223e9"
              }
 }

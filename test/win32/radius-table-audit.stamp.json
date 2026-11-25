@@ -1,17 +1,10 @@
 {
     "guard":  "radius-table",
     "script":  "test/win32/radius-table-audit.ps1",
-    "generated":  "2026-11-24T18:14:01-08:00",
-    "commit":  "71396db4e",
+    "generated":  "2026-11-24T20:15:07-08:00",
+    "commit":  "fe9b21c28",
     "uncommitted":  [
-                        "src/apprt/win32/confirm_dialog_layout.zig",
-                        "src/apprt/win32/confirm_dialog_window.zig",
-                        "src/apprt/win32/ConfirmDialog.zig",
-                        "src/apprt/win32/dialog_app.zig",
-                        "src/apprt/win32/setup_main.zig",
-                        "src/apprt/win32/setup_result.zig",
-                        "src/apprt/win32/system_colors.zig",
-                        "src/apprt/win32/WhatsNewNotesView.zig"
+
                     ],
     "files":  {
                   "docs/design/win32-design-system.md":  "ff5826f3e901a90a74a95687b2dbd700d59f1fc4704b1ae31334adf615f38d86",
