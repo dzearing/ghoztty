@@ -46,6 +46,7 @@ const builtin = @import("builtin");
 
 const build_config = @import("../../build_config.zig");
 const ledger = @import("../../os/exit_ledger.zig");
+const crash_report = @import("../../crash/windows_report.zig");
 const w32 = @import("win32.zig");
 
 const Allocator = std.mem.Allocator;
@@ -138,9 +139,12 @@ fn onUnhandled(info: ?*w32.EXCEPTION_POINTERS) callconv(.winapi) i32 {
     const detail: []const u8 = blk: {
         const p = info orelse break :blk "code=unknown";
         const rec = p.ExceptionRecord orelse break :blk "code=unknown";
+        // T2244: a raised panic names its panic site, the same address the
+        // crash report names, rather than RaiseException inside kernelbase.
+        const params = rec.ExceptionInformation[0..@min(rec.NumberParameters, rec.ExceptionInformation.len)];
         break :blk std.fmt.bufPrint(&detail_buf, "code=0x{X:0>8} addr=0x{X}", .{
             rec.ExceptionCode,
-            @intFromPtr(rec.ExceptionAddress),
+            crash_report.crashAddress(rec.ExceptionCode, params, @intFromPtr(rec.ExceptionAddress)),
         }) catch "code=unknown";
     };
     append(.crash, detail);

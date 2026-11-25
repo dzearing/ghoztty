@@ -32,19 +32,29 @@
 //!   debugger and any LocalDumps rule see exactly what they saw before, and
 //!   the process still exits with the exception code.
 //!
+//! Panics (T2244). A Zig panic raises no exception of its own: the default
+//! handler prints and calls `abort`, which in a shipping build is
+//! `ExitProcess(3)` - no filter runs and the report folder stays empty. So
+//! the root's panic handler (`src/main.zig`) calls `panic` below, which
+//! prints the message and stack the way the default does and then raises
+//! `windows_report.code_panic` carrying the message. That reaches this filter
+//! and the exit ledger's exactly like a fault, so a panic on the GUI,
+//! renderer or IO thread gets a report naming the message and the thread.
+//!
 //! What it does not catch: in Debug and ReleaseSafe builds Zig's own
 //! vectored handler turns an access violation into a panic before any
-//! unhandled-exception filter runs. Shipping builds are ReleaseFast and have
-//! no such handler, so every fault reaches this filter. In a Debug build a
-//! panic ends in a breakpoint exception, which does reach it - that is how
-//! `test\win32\crash-report.ps1` crashes the app on purpose, through the
-//! existing `crash:main` binding action.
+//! unhandled-exception filter runs - which, since T2244, is reported as a
+//! panic. Shipping builds are ReleaseFast and have no such handler, so every
+//! fault reaches this filter as itself. `test\win32\crash-report.ps1`
+//! crashes the app on purpose through the stock `crash:main`, `crash:render`
+//! and `crash:io` binding actions.
 
 const std = @import("std");
 const builtin = @import("builtin");
 const build_config = @import("../build_config.zig");
 const dir = @import("dir.zig");
 const report = @import("windows_report.zig");
+const sentry = @import("sentry.zig");
 
 const windows = std.os.windows;
 const Allocator = std.mem.Allocator;
@@ -61,6 +71,7 @@ pub const TOP_LEVEL_EXCEPTION_FILTER = *const fn (
 ) callconv(.winapi) i32;
 
 const EXCEPTION_CONTINUE_SEARCH: i32 = 0;
+const EXCEPTION_NONCONTINUABLE: DWORD = 0x1;
 
 /// How long the crashing thread waits for the report thread. A minidump of a
 /// large process writes in well under a second; this is the bound on a
@@ -90,6 +101,18 @@ var reporting = std.atomic.Value(bool).init(false);
 /// `reporting`, before it starts the helper.
 var crash_info: ?*EXCEPTION_POINTERS = null;
 var crash_thread: DWORD = 0;
+/// The crashing thread's kind (`crash.sentry.thread_state`, a threadlocal,
+/// so read on the crashing thread before the helper starts).
+var crash_thread_kind: ?[]const u8 = null;
+
+/// The thread `init` ran on - the GUI thread in the app - so a crash there
+/// is named `main` even when no surface callback set `thread_state`.
+var main_thread: DWORD = 0;
+
+/// Per-thread panic depth: a panic raised while this thread is already
+/// inside `panic` (a fault in the stack dump, say) goes straight to the
+/// default handler instead of round again.
+threadlocal var panic_depth: u8 = 0;
 
 /// Resolve the crash directory and install the filter. Cheap enough for
 /// every process: one environment read, one path join and one syscall.
@@ -108,6 +131,7 @@ pub fn init(gpa: Allocator) !void {
         parent_len = std.unicode.calcUtf16LeLen(parent) catch 0;
     }
 
+    main_thread = GetCurrentThreadId();
     prev_filter = SetUnhandledExceptionFilter(onUnhandled);
     installed = true;
     log.debug("crash reports go to {s}", .{d.path});
@@ -119,10 +143,45 @@ pub fn init(gpa: Allocator) !void {
 /// too, and a crash during teardown is still a crash worth a report.
 pub fn deinit() void {}
 
+/// The panic handler's Windows half (T2244); see the module header. Prints
+/// what `std.debug.defaultPanic` prints, then raises `code_panic` so the
+/// unhandled-exception filters write the report and the ledger line. Falls
+/// back to the default handler when there is no filter to reach (`init`
+/// never ran, as in a CLI verb that skipped it) or on a nested panic.
+pub fn panic(msg: []const u8, first_trace_addr: ?usize) noreturn {
+    @branchHint(.cold);
+    if (!installed or panic_depth != 0) std.debug.defaultPanic(msg, first_trace_addr);
+    panic_depth = 1;
+
+    {
+        const stderr = std.debug.lockStderrWriter(&.{});
+        defer std.debug.unlockStderrWriter();
+        stderr.print("thread {d} panic: {s}\n", .{ GetCurrentThreadId(), msg }) catch {};
+    }
+    std.debug.dumpCurrentStackTrace(first_trace_addr orelse @returnAddress());
+
+    const params = [report.panic_param_count]usize{
+        @intFromPtr(msg.ptr),
+        msg.len,
+        first_trace_addr orelse @returnAddress(),
+    };
+    RaiseException(report.code_panic, EXCEPTION_NONCONTINUABLE, params.len, &params);
+
+    // Unreachable unless something swallowed the exception; still die.
+    std.debug.defaultPanic(msg, first_trace_addr);
+}
+
+fn threadKind() ?[]const u8 {
+    if (sentry.thread_state) |ts| return @tagName(ts.type);
+    if (GetCurrentThreadId() == main_thread) return "main";
+    return null;
+}
+
 fn onUnhandled(info: ?*EXCEPTION_POINTERS) callconv(.winapi) i32 {
     if (reporting.cmpxchgStrong(false, true, .acq_rel, .acquire) == null) {
         crash_info = info;
         crash_thread = GetCurrentThreadId();
+        crash_thread_kind = threadKind();
 
         if (holdsLoaderLock()) {
             // A new thread's DLL_THREAD_ATTACH would wait on the lock this
@@ -177,6 +236,7 @@ fn writeReport(loader_ok: bool) void {
         .time = time,
         .pid = pid,
         .thread = crash_thread,
+        .thread_kind = crash_thread_kind,
         .code = 0,
         .address = 0,
         .dump = .{ .skipped = "no exception record" },
@@ -186,12 +246,21 @@ fn writeReport(loader_ok: bool) void {
     if (info) |p| {
         const rec: *const windows.EXCEPTION_RECORD = p.ExceptionRecord;
         fields.code = rec.ExceptionCode;
-        fields.address = @intFromPtr(rec.ExceptionAddress);
+        const params = rec.ExceptionInformation[0..@min(rec.NumberParameters, rec.ExceptionInformation.len)];
+        fields.address = report.crashAddress(rec.ExceptionCode, params, @intFromPtr(rec.ExceptionAddress));
         if (rec.ExceptionCode == report.code_access_violation and rec.NumberParameters >= 2) {
             fields.access = report.Access.fromInformation(
                 rec.ExceptionInformation[0],
                 rec.ExceptionInformation[1],
             );
+        }
+        if (rec.ExceptionCode == report.code_panic and rec.NumberParameters >= report.panic_param_count) {
+            // `panic` put these here from a live slice on the crashing
+            // thread's stack, which is parked in RaiseException until the
+            // filter returns.
+            const ptr = rec.ExceptionInformation[report.panic_param_msg_ptr];
+            const len = rec.ExceptionInformation[report.panic_param_msg_len];
+            if (ptr != 0) fields.message = @as([*]const u8, @ptrFromInt(ptr))[0..len];
         }
     }
 
@@ -215,7 +284,7 @@ fn writeReport(loader_ok: bool) void {
         } else |_| {}
     }
 
-    var text_buf: [2048]u8 = undefined;
+    var text_buf: [4096]u8 = undefined;
     const text = report.format(&text_buf, fields);
     var name_buf: [48]u8 = undefined;
     const name = std.fmt.bufPrint(&name_buf, "{s}.txt", .{base}) catch return;
@@ -378,6 +447,12 @@ extern "kernel32" fn SetUnhandledExceptionFilter(
     lpTopLevelExceptionFilter: ?TOP_LEVEL_EXCEPTION_FILTER,
 ) callconv(.winapi) ?TOP_LEVEL_EXCEPTION_FILTER;
 extern "kernel32" fn GetCurrentThreadId() callconv(.winapi) DWORD;
+extern "kernel32" fn RaiseException(
+    dwExceptionCode: DWORD,
+    dwExceptionFlags: DWORD,
+    nNumberOfArguments: DWORD,
+    lpArguments: [*]const usize,
+) callconv(.winapi) void;
 extern "kernel32" fn GetCurrentProcess() callconv(.winapi) HANDLE;
 extern "kernel32" fn GetSystemTime(lpSystemTime: *SYSTEMTIME) callconv(.winapi) void;
 extern "kernel32" fn CreateDirectoryW(

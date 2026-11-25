@@ -1,10 +1,10 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-11-25T05:16:24-08:00",
-    "commit":  "a05533258",
+    "generated":  "2026-11-25T06:10:48-08:00",
+    "commit":  "8aee3a137",
     "uncommitted":  [
-                        "test/win32/viewer-close.ps1"
+                        "test/win32/crash-report.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "cfa23792d110d499fa4086697daa516d218d0d110e594a7452167a81220ee15e",
@@ -133,7 +133,7 @@
                   "test/win32/crash-databreak.ps1":  "1d4b6f42416ae9bc0e298bf5461be8f5df1f0448c96f3b6b9220230aa5e53f10",
                   "test/win32/crash-diagnostics.ps1":  "337e9b2ef4ebd393e94adcfe2200edb774f5d5a6d1d4352d2aba2742c28333de",
                   "test/win32/crash-first-chance.ps1":  "87ef370d66a61a2689c51f3d677589eab39e4ac1def7230cc320d4d72ef50a7e",
-                  "test/win32/crash-report.ps1":  "5154c6582e5c0f5006fca2d82311624ee46ca38dceaa8db07f4954a04634f5f6",
+                  "test/win32/crash-report.ps1":  "6025d55f192e5b76edf56c865f4fe57f18dda58b29d1bc73bb637940556dce95",
                   "test/win32/crash-stacks.ps1":  "dd47c1c863fb595f6b170407e6d1f2ce9027bb7d1b35717a4b5e2be1cc0d0980",
                   "test/win32/cursor-blink-redraw.ps1":  "5c7725e905ad660031583cb9a2058be442b6df96c4c7b18f24f4a0be372f4e34",
                   "test/win32/daily-publish.ps1":  "ec4ba1160785300cfb8452561edf9306910fa3fc0a677399a33882a4c4275e6c",
@@ -155,7 +155,7 @@
                   "test/win32/docs-routing.ps1":  "98d25cb8eaba89f37cb2fe892dc86cee04a2cec771acc0c588e39d69446ccf11",
                   "test/win32/dpi-change.ps1":  "ee556618b3c43764809203b4fa3d7da1cabb4135cdcba0d7e4bd8dabc4d54733",
                   "test/win32/drag-glide.ps1":  "d8af11cfa221d6d1b3ba0fc9d6ec6ae0aca7c7641ae846a307e53da882c75b03",
-                  "test/win32/drag-perf.ps1":  "0fc98c2373fc1ea0521da505c2b6c5fafc81dc2351b79d041f91f9562e923630",
+                  "test/win32/drag-perf.ps1":  "b2e8d8219ffe36e92367f8eef59742b2e08cbea18c1540188f46d337a87d834e",
                   "test/win32/drag-stall.ps1":  "4e44e4d0d58e32aec2e41699007c34b9d4029c6a5f090cec060dfcd17b0708ee",
                   "test/win32/echo-marker-audit.ps1":  "d4ba42c116403ba68c75e1962a7943f32f9001d1654cd604d6afa8ea2ea04396",
                   "test/win32/edge-drag-rate.ps1":  "2fca304221d50b9ef944602b898f1b74374622f0c940916889130dc0acd4a32c",
@@ -629,7 +629,7 @@
                   "test/win32/verdict-exit-audit.ps1":  "2e64cd9e060a2454a5ad906cef67fe1ef4d2bdbc64ac36a53438f91f2dde572d",
                   "test/win32/verify-release-assets.ps1":  "b5a798c36076a6ccb82cf39576a7fdedb5d1f34310755dc973f9f425996e5327",
                   "test/win32/verify-release-clean.ps1":  "756fee5cbd0b8a1ad8d3d01987658087b62efb6dd8327de4cb9aef10d5107dd3",
-                  "test/win32/viewer-close.ps1":  "d05262185d670bea1f9f54f5e4c9d738ab979b908f57fd6ffac2aabb0623ed0e",
+                  "test/win32/viewer-close.ps1":  "db3dc1453f6d49be9669b5cd739d9a765b2c53c21826ec41352b70cbe25d8e3b",
                   "test/win32/viewer-composer.ps1":  "884e11cadc3a85a60b400e48522b2c7c5e7ddad28d3f8e039338c62197eded23",
                   "test/win32/viewer-diff.ps1":  "52073bc4114f711bdbc1afc35a37c929fa8cee624b03bf28c85bf38702cbfe69",
                   "test/win32/viewer-diff-tree.ps1":  "88025654dcd8819678596bfcd043f45a0e14dbb3ef2057abb99eed9a09474f82",

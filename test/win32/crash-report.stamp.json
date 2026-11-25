@@ -1,19 +1,22 @@
 {
     "guard":  "crash-report",
     "script":  "test/win32/crash-report.ps1",
-    "generated":  "2026-11-21T11:49:33-08:00",
-    "commit":  "39248d413",
+    "generated":  "2026-11-25T06:00:33-08:00",
+    "commit":  "8aee3a137",
     "uncommitted":  [
+                        "src/apprt/win32/exit_reason.zig",
+                        "src/crash/windows.zig",
+                        "src/crash/windows_report.zig",
                         "test/win32/crash-report.ps1"
                     ],
     "files":  {
-                  "src/apprt/win32/exit_reason.zig":  "d4876857be1e32a009a58fd3cb9e1120d47c270422e80a455ae802f09a790f7d",
+                  "src/apprt/win32/exit_reason.zig":  "1b170ac05a42b64198f38013bcb64e23d69e0a90d58f093c3912f891e6c7a1a7",
                   "src/crash/main.zig":  "dce33698396ce06900fc2a76298c3ba93fef65f2b36d6fe73ae5d2d99f9414f4",
-                  "src/crash/windows.zig":  "341334134a5b24a80add0f4af1a26ce4d34426ce9304abab017d8e288cbe95e3",
-                  "src/crash/windows_report.zig":  "9d52a6f6d4f5646aa241fde86487549c07180b29c1d98b36b1184ae24e014ebd",
-                  "test/win32/crash-report.ps1":  "5154c6582e5c0f5006fca2d82311624ee46ca38dceaa8db07f4954a04634f5f6"
+                  "src/crash/windows.zig":  "33e271855694c8803d8312a1ef7ba3e0bce89c47acc61b9f0325a37046392326",
+                  "src/crash/windows_report.zig":  "bbd15178cbd81eddc721011a170ceff5d5caa6f96e58f1e74ea21478688f1c68",
+                  "test/win32/crash-report.ps1":  "6025d55f192e5b76edf56c865f4fe57f18dda58b29d1bc73bb637940556dce95"
               },
     "code":  {
-                 "test/win32/crash-report.ps1":  "code1:561733f0802806a90a27ab6352bc32987710acb4ef6178ef55a9975c5fdfb8f7"
+                 "test/win32/crash-report.ps1":  "code1:529b93df24311d427a0ef8eadad025ec7557cbda44811ae51f048eb514944628"
              }
 }

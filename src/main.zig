@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const build_config = @import("build_config.zig");
 
 /// See build_config.ExeEntrypoint for why we do this.
@@ -20,6 +21,15 @@ pub const std_options: std.Options = if (@hasDecl(entrypoint, "std_options"))
     entrypoint.std_options
 else
     .{};
+
+/// The panic handler (T2244). On Windows a panic is raised as an exception
+/// so the crash filter writes a report (`crash/windows.zig`); a shipping
+/// build would otherwise `ExitProcess(3)` with nothing written. Elsewhere,
+/// and for the build-time generator entrypoints, it is Zig's default.
+pub const panic = if (builtin.os.tag == .windows and build_config.exe_entrypoint == .ghostty)
+    std.debug.FullPanic(@import("crash/main.zig").windows.panic)
+else
+    std.debug.FullPanic(std.debug.defaultPanic);
 
 test {
     _ = entrypoint;
