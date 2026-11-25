@@ -655,6 +655,9 @@ fn viewRefusal(comptime F: type, alloc: Allocator, args: verb_args.VerbArgs) All
         return try errorResponse(alloc, "{s}", .{verb_args.view_command_conflict_error});
     if (@hasDecl(F, "view_not_served")) if (args.view != null)
         return try errorResponse(alloc, "{s}", .{F.view_not_served});
+    // T3735: a `--shell` the platform can tell will not start (a WSL distro
+    // that is not installed) is refused before anything opens.
+    if (@hasDecl(F, "shellRefusal")) if (try F.shellRefusal(alloc, args)) |r| return r;
     return null;
 }
 

@@ -282,6 +282,9 @@ test {
     // Which Apps & Features rows are dead Ghoztty rows (T2679): pure
     // classification, no OS imports, every lane.
     _ = @import("win32/arp_orphan.zig");
+    // The installed WSL distros behind the per-pane shell pickers (T3735):
+    // the catalog rules are pure; the registry read is Windows-only.
+    _ = @import("win32/wsl_distros.zig");
 
     // Claude plugin → app migration (T870): manifest-driven uninstall via
     // Claude's own CLI (injected), banner-state carry-over, stale-script

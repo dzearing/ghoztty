@@ -1,10 +1,10 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-11-25T08:30:51-08:00",
-    "commit":  "a1b1bda7c",
+    "generated":  "2026-11-25T08:59:00-08:00",
+    "commit":  "7c2cd96e1",
     "uncommitted":  [
-
+                        "test/win32/gui-launch-command.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "cfa23792d110d499fa4086697daa516d218d0d110e594a7452167a81220ee15e",
@@ -120,7 +120,7 @@
                   "test/win32/command-resolve-audit.ps1":  "01120dbe18e6961dbb2a463fdbba0632e52388a374252a20b266a88be81e5125",
                   "test/win32/comp-box-state.ps1":  "f007f61ca91b34758b85ba37fe02d3f1bbf4fc596362f0783a400cb3991a43b6",
                   "test/win32/comp-chrome.ps1":  "16799e71e24b6e5c546e426a140b0f865f2866ce36523381336e569eb98bd5c4",
-                  "test/win32/comp-present.ps1":  "dbb39debec02b28dd652a3cbbab7353a63c849406f329bb215c1df66c50af062",
+                  "test/win32/comp-present.ps1":  "94f97cc0a303de8a4bce75279c8c2f50fa7eae4ccdaf4823d25f03aee55f80f9",
                   "test/win32/config-errors.ps1":  "63f39d05ae2b8bf1a0f5b31bed618f7d5ac44f4cbc42532666a7831deb4cc19b",
                   "test/win32/confirm-dialogs.ps1":  "418be175865abaad2bacd882d7507f158d95ed2fba11689563ea3e5c53290950",
                   "test/win32/conformance.ps1":  "967bda84b6004011c79ed51857454d16f3309bec872455509b24c720ed0e52af",
@@ -207,7 +207,7 @@
                   "test/win32/go-loop-uptime.ps1":  "7c2ceea601e716ffba45f0054228e1925a0932a14a100dd7f0a34f4765e12a20",
                   "test/win32/goto-window.ps1":  "46d315222e373a99e41e10787bf31cbd847e3cd8c383da93e902008f549627a1",
                   "test/win32/guard-due.ps1":  "f32bba80075ab29f3f54a393efa8bce66ebff065c30d52d03cbc4c40338d7d1e",
-                  "test/win32/gui-launch-command.ps1":  "c4a333d1ce4aae2b6817e4761eb4baa1efb44472807473adf28460b9e816ba84",
+                  "test/win32/gui-launch-command.ps1":  "6ed1eae90a8b1666e3b78835bf09a3d79d6f2133495382ac8ff15d3ecd1ba39e",
                   "test/win32/gui-postmortem.ps1":  "b9cce844222cd55e667a85aedba38109eeacdc8576524998be403b558b782ba4",
                   "test/win32/hard-delete-sites.ps1":  "f0e6c5b18f1e786cab6acf996e3bcb9d8b1da46d99c9bfbc7f5664a12dacd71c",
                   "test/win32/harness-exitcode-audit.ps1":  "9568a9718f2cfba7d2bc2b8f9813a74ba8767a062a20dea8f236fc56fa3ee4e5",

@@ -227,6 +227,8 @@ pub const Options = struct {
 ///     `--split-command`. The shell is invoked with `-lic` so the user's
 ///     profile is loaded. Defaults to the `command-shell` config, then
 ///     `$SHELL`, then `/bin/zsh`.
+///     On Windows, `wsl:<distro>` (e.g. `wsl:Ubuntu`) picks one WSL
+///     distro and, with no command, opens it in the distro's home.
 ///
 ///   * `--split-percent=<1-99>`: The percentage of space allocated to the
 ///     new split pane. Defaults to 50. Only meaningful when `--split` is

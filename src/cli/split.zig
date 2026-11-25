@@ -172,6 +172,8 @@ pub const Options = struct {
 ///     The shell is invoked with `-lic` so the user's profile is loaded.
 ///     Defaults to the `command-shell` config, then `$SHELL`, then
 ///     `/bin/zsh`.
+///     On Windows, `wsl:<distro>` (e.g. `wsl:Ubuntu`) picks one WSL
+///     distro and, with no command, opens it in the distro's home.
 ///
 ///   * `--env=<KEY=VALUE>`: Set an environment variable in the spawned
 ///     process. Can be specified multiple times for multiple variables.

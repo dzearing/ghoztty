@@ -1,15 +1,15 @@
 {
     "guard":  "gui-launch-command",
     "script":  "test/win32/gui-launch-command.ps1",
-    "generated":  "2026-11-25T07:27:10-08:00",
-    "commit":  "d67e7c9c4",
+    "generated":  "2026-11-25T08:02:41-08:00",
+    "commit":  "7c2cd96e1",
     "uncommitted":  [
                         "test/win32/gui-launch-command.ps1"
                     ],
     "files":  {
-                  "test/win32/gui-launch-command.ps1":  "c4a333d1ce4aae2b6817e4761eb4baa1efb44472807473adf28460b9e816ba84"
+                  "test/win32/gui-launch-command.ps1":  "6ed1eae90a8b1666e3b78835bf09a3d79d6f2133495382ac8ff15d3ecd1ba39e"
               },
     "code":  {
-                 "test/win32/gui-launch-command.ps1":  "code1:cf783c4bbff19d80bcf9bce7aaba3fab6c29cd113e76ddb35fcde9dd2524e809"
+                 "test/win32/gui-launch-command.ps1":  "code1:b1d2a369013dbeaf5d69926ad2f9d608076373457277ac25df097fb59d5affd6"
              }
 }

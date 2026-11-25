@@ -593,6 +593,16 @@ pub fn wrapShellCommandArgv(
     shell: []const u8,
     command: []const u8,
 ) Allocator.Error![]const [:0]const u8 {
+    // T3735: `wsl:<distro>` is the wsl row aimed at one distro.
+    if (wslDistroSpec(shell)) |distro| {
+        const inner = try wrapShellCommandArgv(arena, wsl_program, command);
+        var argv: std.ArrayList([:0]const u8) = .empty;
+        try argv.append(arena, wsl_program);
+        try argv.append(arena, "-d");
+        try argv.append(arena, try arena.dupeZ(u8, distro));
+        try argv.appendSlice(arena, inner[1..]);
+        return argv.items;
+    }
     var base = std.fs.path.basename(shell);
     if (std.ascii.endsWithIgnoreCase(base, ".exe")) base = base[0 .. base.len - 4];
 
@@ -634,6 +644,61 @@ pub fn wrapShellCommandArgv(
             0,
         ));
     }
+    return argv.items;
+}
+
+/// The program a WSL shell spec runs.
+pub const wsl_program = "wsl.exe";
+
+/// The prefix that names one WSL distro as a shell (T3735): `wsl:Ubuntu`.
+pub const wsl_spec_prefix = "wsl:";
+
+/// The distro a `wsl:<distro>` shell spec names, or null when `spec` is not
+/// that form (an empty distro is not that form either).
+pub fn wslDistroSpec(spec: []const u8) ?[]const u8 {
+    if (spec.len <= wsl_spec_prefix.len) return null;
+    if (!std.ascii.startsWithIgnoreCase(spec, wsl_spec_prefix)) return null;
+    const distro = std.mem.trim(u8, spec[wsl_spec_prefix.len..], " \t");
+    return if (distro.len == 0) null else distro;
+}
+
+/// Whether `spec` names a WSL shell at all: `wsl:<distro>`, or a bare `wsl` /
+/// `wsl.exe` / a path ending in `wsl.exe`.
+pub fn isWslShell(spec: []const u8) bool {
+    if (wslDistroSpec(spec) != null) return true;
+    var base = std.fs.path.basename(spec);
+    if (std.ascii.endsWithIgnoreCase(base, ".exe")) base = base[0 .. base.len - 4];
+    return std.ascii.eqlIgnoreCase(base, "wsl");
+}
+
+/// The program a shell spec launches - `wsl.exe` for `wsl:<distro>`, the spec
+/// itself otherwise. What an agent's OPEN.shell carries, so an agent that
+/// predates the spec never tries to run `wsl:Ubuntu` as a file name.
+pub fn shellProgram(spec: []const u8) []const u8 {
+    return if (wslDistroSpec(spec) != null) wsl_program else spec;
+}
+
+/// The interactive argv for a WSL shell with no command (T3735):
+/// `wsl.exe [-d <distro>] --cd <folder>`. The folder is the explicit
+/// working directory when one was given (`--cd` takes a Linux path or a
+/// Windows one), else `~` - the distro's own home, never the slow `/mnt/c`
+/// mirror of whatever Windows folder the pane was spawned in.
+pub fn wslInteractiveArgv(
+    arena: Allocator,
+    spec: []const u8,
+    working_directory: ?[]const u8,
+) Allocator.Error![]const [:0]const u8 {
+    var argv: std.ArrayList([:0]const u8) = .empty;
+    if (wslDistroSpec(spec)) |distro| {
+        try argv.append(arena, wsl_program);
+        try argv.append(arena, "-d");
+        try argv.append(arena, try arena.dupeZ(u8, distro));
+    } else {
+        try argv.append(arena, try arena.dupeZ(u8, spec));
+    }
+    try argv.append(arena, "--cd");
+    const wd: ?[]const u8 = if (working_directory) |w| (if (w.len > 0) w else null) else null;
+    try argv.append(arena, try arena.dupeZ(u8, wd orelse "~"));
     return argv.items;
 }
 
@@ -1323,6 +1388,52 @@ test "wrapShellCommandArgv: every flavor branch" {
         try testing.expectEqual(case.expect.len, argv.len);
         for (case.expect, argv) |want, got| try testing.expectEqualStrings(want, got);
     }
+}
+
+test "wsl shell spec: wsl:<distro> names a distro (T3735)" {
+    try testing.expectEqualStrings("Ubuntu", wslDistroSpec("wsl:Ubuntu").?);
+    try testing.expectEqualStrings("Ubuntu-22.04", wslDistroSpec("WSL: Ubuntu-22.04").?);
+    try testing.expect(wslDistroSpec("wsl:") == null);
+    try testing.expect(wslDistroSpec("wsl: ") == null);
+    try testing.expect(wslDistroSpec("wsl.exe") == null);
+    try testing.expect(wslDistroSpec("pwsh") == null);
+
+    try testing.expect(isWslShell("wsl:Debian"));
+    try testing.expect(isWslShell("wsl"));
+    try testing.expect(isWslShell("WSL.EXE"));
+    try testing.expect(!isWslShell("pwsh.exe"));
+    try testing.expect(!isWslShell("wslconfig.exe"));
+    if (builtin.os.tag == .windows) try testing.expect(isWslShell("C:\\Windows\\System32\\wsl.exe"));
+
+    try testing.expectEqualStrings("wsl.exe", shellProgram("wsl:Ubuntu"));
+    try testing.expectEqualStrings("pwsh", shellProgram("pwsh"));
+}
+
+test "wslInteractiveArgv: the distro's home unless a folder was asked for (T3735)" {
+    var arena = testArena();
+    defer arena.deinit();
+    const alloc = arena.allocator();
+    const cases = [_]struct { spec: []const u8, wd: ?[]const u8, expect: []const []const u8 }{
+        .{ .spec = "wsl:Ubuntu", .wd = null, .expect = &.{ "wsl.exe", "-d", "Ubuntu", "--cd", "~" } },
+        .{ .spec = "wsl.exe", .wd = null, .expect = &.{ "wsl.exe", "--cd", "~" } },
+        .{ .spec = "wsl", .wd = "", .expect = &.{ "wsl", "--cd", "~" } },
+        .{ .spec = "wsl:Debian", .wd = "/srv/app", .expect = &.{ "wsl.exe", "-d", "Debian", "--cd", "/srv/app" } },
+        .{ .spec = "wsl.exe", .wd = "C:\\src", .expect = &.{ "wsl.exe", "--cd", "C:\\src" } },
+    };
+    for (cases) |case| {
+        const argv = try wslInteractiveArgv(alloc, case.spec, case.wd);
+        try testing.expectEqual(case.expect.len, argv.len);
+        for (case.expect, argv) |want, got| try testing.expectEqualStrings(want, got);
+    }
+}
+
+test "wrapShellCommandArgv: wsl:<distro> is the wsl row aimed at that distro (T3735)" {
+    var arena = testArena();
+    defer arena.deinit();
+    const argv = try wrapShellCommandArgv(arena.allocator(), "wsl:Ubuntu", "echo hi");
+    const want = [_][]const u8{ "wsl.exe", "-d", "Ubuntu", "-e", "/bin/sh", "-lic", "echo hi; exec \"${SHELL:-/bin/sh}\" -li" };
+    try testing.expectEqual(want.len, argv.len);
+    for (want, argv) |w, g| try testing.expectEqualStrings(w, g);
 }
 
 test "localExecArgv: --shell alone opens that shell (T1665)" {

@@ -206,6 +206,7 @@ pub fn missingResponse(
 // normalization, layout validation) lives in apprt/ipc/args.zig where it
 // is unit tested in the none-runtime build.
 const verb_args = apprt.ipc.args;
+const wsl_distros = @import("wsl_distros.zig");
 const split_name_collision = apprt.ipc.split_name_collision;
 
 const VerbArgs = verb_args.VerbArgs;
@@ -237,6 +238,56 @@ fn wrapCommandArgv(
     return verb_args.wrapShellCommandArgv(arena, shell, command);
 }
 
+/// `--shell=wsl:<distro>` naming a distro that is not installed (T3735): the
+/// refusal names the ones that are, read from the registry so WSL is never
+/// started to answer. `verbs.viewRefusal` calls it for every create verb.
+pub fn shellRefusal(alloc: Allocator, args: VerbArgs) Allocator.Error!?[]u8 {
+    const spec = nonEmpty(args.shell) orelse return null;
+    const want = verb_args.wslDistroSpec(spec) orelse return null;
+    var arena_state = std.heap.ArenaAllocator.init(alloc);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const installed = try wsl_distros.listInstalled(arena);
+    if (wsl_distros.find(installed, want) != null) return null;
+    if (installed.len == 0)
+        return try errorResponse(alloc, "--shell=wsl:{s}: no WSL distro is installed for this user", .{want});
+    const list = try std.mem.join(arena, ", ", installed);
+    return try errorResponse(
+        alloc,
+        "--shell=wsl:{s}: no WSL distro by that name is installed. Installed: {s} (use --shell=wsl:<name>)",
+        .{ want, list },
+    );
+}
+
+/// The WSL shell spec of a pane that opens a WSL shell with no command and no
+/// `-e` (T3735), or null. Such a pane is spawned `wsl.exe [-d <distro>] --cd
+/// <folder>` (`verb_args.wslInteractiveArgv`) rather than as a bare `wsl.exe`,
+/// which would land in the `/mnt/c` mirror of the app's folder.
+fn wslInteractive(
+    e_args: []const [:0]const u8,
+    command: ?[]const u8,
+    shell_flag: ?[]const u8,
+) ?[]const u8 {
+    if (e_args.len > 0 or nonEmpty(command) != null) return null;
+    const spec = nonEmpty(shell_flag) orelse return null;
+    return if (verb_args.isWslShell(spec)) spec else null;
+}
+
+/// The folder a verb ASKED for: `--working-directory` unless the CLI only
+/// filled in its own cwd (`--cwd-implicit`, T135). A WSL pane opens at `~`
+/// without one (T3735), so the caller's Windows folder must not stand in for
+/// a request.
+fn explicitFolder(args: VerbArgs) ?[]const u8 {
+    if (args.cwd_implicit) return null;
+    return nonEmpty(args.working_directory);
+}
+
+/// The `OPEN.shell` a LOCAL-agent pane carries: the program, so an agent that
+/// predates `wsl:<distro>` is never asked to run that as a file name.
+fn agentShell(shell_flag: ?[]const u8) ?[]const u8 {
+    return if (nonEmpty(shell_flag)) |s| verb_args.shellProgram(s) else null;
+}
+
 /// The exec-path (no session-persistence agent) argv for `-e`/`--command`/
 /// `--shell`; see `verb_args.localExecArgv`. T1665: `--shell` alone opens that
 /// shell here too, as it always did on the agent path.
@@ -246,7 +297,10 @@ fn execArgv(
     e_args: []const [:0]const u8,
     command: ?[]const u8,
     shell_flag: ?[]const u8,
+    working_directory: ?[]const u8,
 ) Allocator.Error!?[]const [:0]const u8 {
+    if (wslInteractive(e_args, command, shell_flag)) |spec|
+        return try verb_args.wslInteractiveArgv(arena, spec, nonEmpty(working_directory));
     return verb_args.localExecArgv(
         arena,
         e_args,
@@ -305,7 +359,14 @@ fn localAgentArgv(
     e_args: []const [:0]const u8,
     shell_flag: ?[]const u8,
     command: ?[]const u8,
+    working_directory: ?[]const u8,
 ) Allocator.Error!?[]const []const u8 {
+    if (wslInteractive(e_args, command, shell_flag)) |spec| {
+        const argv = try verb_args.wslInteractiveArgv(arena, spec, nonEmpty(working_directory));
+        const out = try arena.alloc([]const u8, argv.len);
+        for (argv, 0..) |a, i| out[i] = a;
+        return out;
+    }
     if (e_args.len > 0) {
         const words = try arena.alloc([]const u8, e_args.len);
         for (e_args, 0..) |a, i| words[i] = a;
@@ -541,15 +602,15 @@ pub fn openWindow(
             .remote = .{
                 .connection = conn,
                 .working_directory = nonEmpty(args.working_directory),
-                .shell = nonEmpty(args.shell),
+                .shell = agentShell(args.shell),
                 .command = remote_command,
-                .command_argv = try localAgentArgv(ctx, arena, args.e_args, args.shell, args.command),
+                .command_argv = try localAgentArgv(ctx, arena, args.e_args, args.shell, args.command, explicitFolder(args)),
                 .local_agent = true,
             },
             .env = env.items,
         };
     } else .{
-        .command_argv = try execArgv(ctx, arena, args.e_args, args.command, args.shell),
+        .command_argv = try execArgv(ctx, arena, args.e_args, args.command, args.shell, explicitFolder(args)),
         .working_directory = args.working_directory,
         .env = env.items,
     };
@@ -884,15 +945,15 @@ pub fn createSplit(
             .remote = .{
                 .connection = conn,
                 .working_directory = split_cwd,
-                .shell = nonEmpty(args.shell),
+                .shell = agentShell(args.shell),
                 .command = remote_command,
-                .command_argv = try localAgentArgv(ctx, arena, args.e_args, args.shell, command),
+                .command_argv = try localAgentArgv(ctx, arena, args.e_args, args.shell, command, explicitFolder(args)),
                 .local_agent = true,
             },
             .env = env.items,
         };
     } else .{
-        .command_argv = try execArgv(ctx, arena, args.e_args, command, args.shell),
+        .command_argv = try execArgv(ctx, arena, args.e_args, command, args.shell, explicitFolder(args)),
         .working_directory = args.working_directory,
         .env = env.items,
     };

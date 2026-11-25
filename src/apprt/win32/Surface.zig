@@ -1213,6 +1213,13 @@ fn initOnce(
                 // keep-alive lives in argv, which cannot ride the command
                 // string. The command above still travels as the label.
                 self.remote_command_argv = r.command_argv;
+            } else if (r.command_argv) |argv| {
+                // T3735: a WSL shell with no command (`--shell=wsl:<distro>`)
+                // is an argv too - `wsl.exe -d <distro> --cd ~` - and with no
+                // command to hang it on it used to be dropped, so the pane
+                // opened a bare `wsl.exe` in the `/mnt/c` mirror. Nothing else
+                // builds one for a command-less pane (`localAgentArgv`).
+                self.remote_command_argv = argv;
             }
         }
     }

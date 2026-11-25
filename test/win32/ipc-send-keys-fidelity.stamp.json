@@ -1,13 +1,13 @@
 {
     "guard":  "ipc-send-keys-fidelity",
     "script":  "test/win32/ipc-send-keys-fidelity.ps1",
-    "generated":  "2026-11-22T06:33:33-08:00",
-    "commit":  "004893d0e",
+    "generated":  "2026-11-25T08:20:55-08:00",
+    "commit":  "7c2cd96e1",
     "uncommitted":  [
-
+                        "src/apprt/ipc/args.zig"
                     ],
     "files":  {
-                  "src/apprt/ipc/args.zig":  "162ec96d3f4f113a9dcdb2dda1ec6116c8f87d1cafd8ccd4c3f79f1e5316fee5",
+                  "src/apprt/ipc/args.zig":  "dc9b1c4597e533feb94149f21c47aff6a6ed507355335bd4d71f9db450a93327",
                   "src/cli/send_keys.zig":  "eadc5860163f0131418b4826922cb715c8e8ebd7913d83ac4811fdcbd5cba395",
                   "test/win32/ipc-send-keys-fidelity.ps1":  "d0a06c8945ec9595b14d04eb46613389577dc4c43cb63277b103c269c2e6414e"
               },

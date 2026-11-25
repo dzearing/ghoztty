@@ -45,6 +45,9 @@
 #      and survives a relaunch. Pre-fix, persistence on: every new pane still
 #      ran cmd.exe, because the reload stored a clone of the config and
 #      `Config.clone` dropped `_command-explicit`. `-Wsl` adds the real-WSL arm.
+#   I  `--shell=wsl:<distro>` (T3735): a distro that is not installed is refused
+#      by +new-window and +split, naming the installed ones, and opens nothing.
+#      `-Wsl` adds the real arm: the pane runs `wsl.exe -d <distro> --cd ~`.
 #
 # Non-interactive; asserts and exits nonzero on any failure. Hermetic: a per-run
 # $env:LOCALAPPDATA + GHOSTTY_LOCAL_AGENT_BIN (so no real session-layout is
@@ -702,6 +705,58 @@ if ($Wsl -or (Test-WslDefaultDistroRunning)) {
     $script:skipped++
     "  SKIP H3 the real-WSL arm - $(Get-WslSkipReason); pass -Wsl to run it (it boots the WSL2 VM)"
 }
+
+# ---- I: --shell=wsl:<distro> (T3735) ---------------------------------------
+# A distro that is not installed is REFUSED, naming the installed ones, and
+# nothing opens - read from the registry, so this arm starts no WSL. The real
+# distro arm (the pane runs `wsl.exe -d <distro> --cd ~`) is gated like H3.
+$tmpI = Join-Path $root 'i'
+New-Item -ItemType Directory -Force (Get-GhozttyAgentStateDir -Root $tmpI) | Out-Null
+$env:LOCALAPPDATA = $tmpI
+$env:GHOSTTY_LOCAL_AGENT_BIN = $AgentExe
+# persistence: on (default) - the agent-backed path is the one that carries OPEN.argv, into a throwaway $env:LOCALAPPDATA.
+[void](Start-OnTestDesktop -Exe $Exe -Arguments @())
+$firstI = First-Pane $tmpI 'i' 60
+Assert "I.1 the app opened a window with a pane" ($firstI -ne '')
+$knownI = Leaf-Pids $tmpI 'i-k0'
+$rcI = Run-Cli '+new-window --shell=wsl:NoSuchDistroT3735' "$tmpI\nw.txt" 20
+$outI = Out-Text "$tmpI\nw.txt"
+Assert "I.2 +new-window --shell=wsl:<not installed> exits nonzero (got $rcI)" ($null -ne $rcI -and $rcI -ne 0)
+Assert "I.3 the refusal says no such distro is installed (got: $($outI.Trim()))" ($outI -match 'no WSL distro')
+$rcS = Run-Cli "+split --target=$firstI --direction=right --shell=wsl:NoSuchDistroT3735" "$tmpI\sp.txt" 20
+Assert "I.4 +split --shell=wsl:<not installed> is refused too (got $rcS)" ($null -ne $rcS -and $rcS -ne 0 -and (Out-Text "$tmpI\sp.txt") -match 'no WSL distro')
+$afterI = Leaf-Pids $tmpI 'i-k1'
+AssertEq "I.5 neither refusal opened a pane" $knownI.Count $afterI.Count
+
+if ($Wsl -or (Test-WslDefaultDistroRunning)) {
+    $lxss = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Lxss'
+    $distro = @(Get-ChildItem $lxss -ErrorAction SilentlyContinue | ForEach-Object { (Get-ItemProperty $_.PSPath).DistributionName } |
+        Where-Object { $_ -and $_ -notlike 'docker-desktop*' }) | Select-Object -First 1
+    if ($distro) {
+        $knownW = Leaf-Pids $tmpI 'i-k2'
+        Run-Cli "+new-window --shell=wsl:$distro" "$tmpI\nww.txt" 30 | Out-Null
+        $w = Wait-NewPaneShell $tmpI 'i-w' $knownW 60
+        AssertEq "I.6 +new-window --shell=wsl:$distro runs wsl.exe" 'wsl.exe' (Shell-Name $w)
+        $cl = if ($w) { [string]$w.Proc.CommandLine } else { '' }
+        Assert "I.7 the pane runs that distro in its home: -d $distro --cd ~ (got: $cl)" `
+            ($cl -match ('-d\s+"?' + [regex]::Escape($distro) + '"?\s+--cd\s+~'))
+        # A folder the caller DID ask for replaces the ~ (the CLI's own cwd,
+        # marked --cwd-implicit, never does - that is I.7).
+        $knownW = Leaf-Pids $tmpI 'i-k3'
+        Run-Cli "+new-window --shell=wsl:$distro --working-directory=$env:SystemRoot" "$tmpI\nww2.txt" 30 | Out-Null
+        $w2 = Wait-NewPaneShell $tmpI 'i-w2' $knownW 60
+        $cl2 = if ($w2) { [string]$w2.Proc.CommandLine } else { '' }
+        Assert "I.8 an explicit --working-directory reaches wsl --cd (got: $cl2)" `
+            ($cl2 -match ('--cd\s+"?' + [regex]::Escape($env:SystemRoot) + '"?'))
+    } else {
+        $script:skipped++
+        "  SKIP I.6-I.7 the real-distro arm - no user distro is registered"
+    }
+} else {
+    $script:skipped++
+    "  SKIP I.6-I.7 the real-distro arm - $(Get-WslSkipReason); pass -Wsl to run it (it boots the WSL2 VM)"
+}
+Stop-TestProcs
 
 # ---- teardown --------------------------------------------------------------
 Stop-TestProcs
