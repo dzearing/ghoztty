@@ -245,9 +245,9 @@ hl_wait_for 5 is_open
 r=$?
 [ "$(jget "$o" 'd["ran"]')" = true ] && [ $r = 0 ]
 hl_check "G31 running that entry opens the guide" $? "ran=$(jget "$o" 'd["ran"]') reply=$(printf '%s' "$o" | head -c 160)"
-closed() { [ "$(jget "$(pal)" 'd["open"]')" = false ]; }
+closed() { o=$(pal); [ "$(jget "$o" 'd["open"]')" = false ]; }
 hl_wait_for 5 closed
-hl_check "G32 and the palette closes behind it" $?
+hl_check "G32 and the palette closes behind it" $? "$o"
 sg --op=close > /dev/null
 
 hl_finish "$L"

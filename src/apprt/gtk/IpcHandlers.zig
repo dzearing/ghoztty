@@ -1101,8 +1101,14 @@ fn commandPaletteSeam(app: Context, request: Request) Allocator.Error![]u8 {
         return server.errorResponse(c_alloc, "unknown --op '{s}'", .{op});
     }
 
-    const palette = window.seamCommandPalette() orelse
-        return server.errorResponse(c_alloc, "this window's command palette was never opened", .{});
+    // A closed palette frees itself (its dialog's `closed` drops the last
+    // ref), so no palette is a closed one, not an error - unless the request
+    // needs one to act on.
+    const palette = window.seamCommandPalette() orelse {
+        if (query != null or std.mem.eql(u8, op, "run"))
+            return server.errorResponse(c_alloc, "the command palette is not open", .{});
+        return c_alloc.dupe(u8, "{\"success\":true,\"data\":{\"open\":false,\"pending\":false,\"ran\":null,\"rows\":[]}}");
+    };
     defer palette.unref();
     if (query) |q| palette.seamSetQuery(try arena.dupeZ(u8, q));
 
