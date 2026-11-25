@@ -186,7 +186,9 @@ tests" — while the unfiltered lane runs every one of its tests. Measured on
 tests): `-Dtest-filter=mac_layout_blob` matched nothing, yet the unfiltered
 win32 lane carried all its test names and went red on a planted failing test.
 T1979 read the first observation as "its tests never ran" and added an
-aggregator line for a module that was already covered. To ask whether a
+aggregator line for a module that was already covered, and T1348 did the same
+with `chrome_reposition.zig` (T2238 then planted a failing test at the parent
+commit: the unfiltered lane went red on it). To ask whether a
 module's tests run, read the unfiltered binary — that is what
 `test\win32\test-reach-audit.ps1` does — and keep the filter for running tests
 you already know are compiled in. Adding the aggregator line is still worth

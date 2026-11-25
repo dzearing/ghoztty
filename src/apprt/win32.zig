@@ -210,8 +210,11 @@ test {
     // What a pane keeps across an app-wide config push (T1957).
     _ = @import("win32/surface_sticky.zig");
     // The floating chrome's one reposition path (T1392) and the pixel proof of
-    // what its SWP_NOCOPYBITS does (T1348). Five overlays import it, and its
-    // tests still ran nowhere until this line: a `-Dtest-filter=chrome_reposition`
-    // run matched nothing.
+    // what its SWP_NOCOPYBITS does (T1348). Five overlays import it, and the
+    // unfiltered lane already ran its tests through theirs (T2238 measured it:
+    // a planted failure went red before this line existed). The line makes it
+    // filterable - `-Dtest-filter=chrome_reposition` matched nothing without
+    // it, because a filter drops the calling tests - and stops its coverage
+    // hanging on another file's tests.
     _ = @import("win32/chrome_reposition.zig");
 }
