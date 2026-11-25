@@ -187,6 +187,7 @@ test {
     _ = @import("win32/ipc_shortcut_guide.zig");
     _ = @import("win32/ipc_settings.zig");
     _ = @import("win32/ipc_workspaces.zig");
+    _ = @import("win32/ipc_restart_pane.zig");
     _ = @import("win32/whats_new_notes.zig");
     _ = @import("win32/winrt_comp.zig");
     _ = @import("win32/comp_spike_stats.zig");

@@ -20,6 +20,7 @@ const SettingsWindow = @import("SettingsWindow.zig");
 const relay_suspend = @import("../../remote/relay_suspend.zig");
 const AgentIntegrationsDialog = @import("AgentIntegrationsDialog.zig");
 const ConfirmDialog = @import("ConfirmDialog.zig");
+const pane_restart = @import("pane_restart.zig");
 const DarkMode = @import("DarkMode.zig");
 const bell_audio = @import("bell_audio.zig");
 const PathInstaller = @import("PathInstaller.zig");
@@ -224,6 +225,12 @@ const WM_APP_FORCE_CLOSE: u32 = w32.WM_APP + 45;
 /// pane-sidebar click asked for on show, once that click's handler returned.
 /// (+46/+47 are ViewerPane's.)
 const WM_APP_SHOW_WORKSPACE: u32 = w32.WM_APP + 48;
+
+/// Posted to `msg_hwnd` by `pane_restart.request` (T3752): run the Restart
+/// Pane with Shell a menu asked for, once that menu's handler - which runs
+/// inside the pane being replaced - has returned. (+49..+52 and +56 are
+/// taken, see ViewerPane, RelayWindowRestore and Window.)
+pub const WM_APP_RESTART_PANE: u32 = w32.WM_APP + 57;
 
 /// Ceiling on agent restarts spent chasing the bundled build in one app run
 /// (T147). Two: one for the ordinary "the binary was swapped under us" case,
@@ -562,6 +569,10 @@ force_close_count: usize = 0,
 /// The workspace a pane-sidebar click asked to put on show, waiting for
 /// `WM_APP_SHOW_WORKSPACE` (T3182). Re-checked, never dereferenced, before use.
 pending_show: ?PendingShow = null,
+
+/// The Restart Pane with Shell waiting for `WM_APP_RESTART_PANE` (T3752).
+/// Held by pane id, re-resolved before use.
+pending_restart: ?pane_restart.Pending = null,
 
 /// The HINSTANCE for this module.
 hinstance: w32.HINSTANCE,
@@ -14923,6 +14934,10 @@ fn msgWndProc(
     }
     if (msg == WM_APP_SHOW_WORKSPACE) {
         app.performPendingShow();
+        return 0;
+    }
+    if (msg == WM_APP_RESTART_PANE) {
+        pane_restart.perform(app);
         return 0;
     }
 

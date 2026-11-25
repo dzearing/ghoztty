@@ -5871,6 +5871,21 @@ $GuardTable = @(
             'test\win32\single-window-mode.ps1'
         )
     },
+    # Restart Pane with Shell (T3752, child of T3735). `restart-pane.ps1` is
+    # the only harness that swaps a live pane's shell and reads back that the
+    # pane kept its id and name while its process and session changed, and
+    # that a busy pane asks first.
+    [pscustomobject]@{
+        Name   = 'restart-pane'
+        Script = 'test\win32\restart-pane.ps1'
+        Stamp  = 'test\win32\restart-pane.stamp.json'
+        Covers = @(
+            'src\apprt\win32\pane_restart.zig',
+            'src\apprt\win32\restart_shell.zig',
+            'src\apprt\win32\ipc_restart_pane.zig',
+            'test\win32\restart-pane.ps1'
+        )
+    },
     # Settings > Remote Machines (T2686). `settings-remote-machines.ps1` is
     # the only harness that seeds the page from the device cache with the
     # relay held, lands presence, and saves Host Settings... from the page.

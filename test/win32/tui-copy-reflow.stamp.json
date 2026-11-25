@@ -1,15 +1,18 @@
 {
     "guard":  "tui-copy-reflow",
     "script":  "test/win32/tui-copy-reflow.ps1",
-    "generated":  "2026-11-15T01:13:19-08:00",
-    "commit":  "5270a272c",
+    "generated":  "2026-11-25T11:56:25-08:00",
+    "commit":  "0e6877a8c",
     "uncommitted":  [
-                        "src/terminal/formatter.zig"
+                        "src/apprt/win32/context_menu.zig"
                     ],
     "files":  {
-                  "src/apprt/win32/context_menu.zig":  "56fafd8841c7057f318ad26187fe8b4f944912702e29773596d24a217289c619",
+                  "src/apprt/win32/context_menu.zig":  "2a9069fde73deebf347d630af273e6336caf13b6608b358d38c1bd311af326bc",
                   "src/terminal/formatter.zig":  "3cc4768ebef1c21bd05c039ef04f2706fe3e344d3bf1424384d11566f50de7f1",
                   "src/terminal/hard_wrap.zig":  "a8dacf84c5fd552183a7e7ff27a776602143c86c01f11dcd485ce7459a9cb63d",
                   "test/win32/tui-copy-reflow.ps1":  "27aaf25b87bf115d160981b2a3cb856190ea4891ed0cd5abb2796247249d98ea"
-              }
+              },
+    "code":  {
+                 "test/win32/tui-copy-reflow.ps1":  "code1:153faa18cc89f5678eeb6b71953f534691f4325f3ed44c31b4e1651065b3c523"
+             }
 }

@@ -66,6 +66,8 @@ const translate_policy = @import("translate_policy.zig");
 const window_chord = @import("window_chord.zig");
 const banner_layout = @import("banner_layout.zig");
 const context_menu = @import("context_menu.zig");
+const restart_shell = @import("restart_shell.zig");
+const pane_restart = @import("pane_restart.zig");
 const menu_activation = @import("menu_activation.zig");
 const commands = @import("commands.zig");
 const menu_label = @import("menu_label.zig");
@@ -4141,6 +4143,10 @@ const JumpEntry = struct {
     /// The `~`-abbreviated cwd (terminal) or location (viewer), arena-owned;
     /// null when there is nothing to say or the title already says it.
     subtitle: ?[]const u8,
+    /// Set on a "Restart Pane with Shell: <shell>" row (T3752): the `--shell`
+    /// spec to restart `pane_id` (this palette's own pane) with, instead of
+    /// focusing it. Arena-owned.
+    restart_spec: ?[]const u8 = null,
 };
 
 /// Palette indexes >= palette_entries.len refer to user-configured
@@ -4246,6 +4252,27 @@ fn buildPaletteJumpEntries(self: *Surface) void {
     const home: ?[]const u8 = internal_os.home(&home_buf) catch null;
 
     var entries = std.ArrayList(JumpEntry).initCapacity(arena, 16) catch return;
+
+    // "Restart Pane with Shell: <shell>" (T3752), one row per installed shell,
+    // for the pane this palette was opened on. Rows rather than a nested list:
+    // typing "restart" or a shell's name finds them the way "Focus:" rows are
+    // found. Snapshotted here, like the jump rows, so the list is the one on
+    // the box when the palette opened.
+    restart: {
+        const pv = self.pane_view orelse break :restart;
+        if (!pane_restart.offered(pv)) break :restart;
+        const shells = pane_restart.installedChoices(arena) catch break :restart;
+        for (shells) |c| {
+            if (entries.items.len >= palette_jump.max_entries) break;
+            entries.append(arena, .{
+                .pane_id = arena.dupe(u8, self.paneId()) catch break :restart,
+                .label = restart_shell.paletteLabel(arena, c) catch break :restart,
+                .subtitle = null,
+                .restart_spec = c.spec,
+            }) catch break :restart;
+        }
+    }
+
     outer: for (self.app.windows.items) |window| {
         if (window.is_quick_terminal) continue;
         for (0..window.tab_count) |t| {
@@ -4821,6 +4848,20 @@ pub fn executePaletteSelection(self: *Surface) void {
         }
         @memcpy(id_buf[0..src.len], src);
         const id = id_buf[0..src.len];
+        // A "Restart Pane with Shell" row (T3752): copy the spec out too,
+        // then queue the restart - deferred, since this surface is the one
+        // being replaced.
+        if (self.palette_jump_entries[jidx].restart_spec) |spec_src| {
+            var spec_buf: [256]u8 = undefined;
+            if (spec_src.len > spec_buf.len) {
+                self.setCommandPaletteActive(false);
+                return;
+            }
+            @memcpy(spec_buf[0..spec_src.len], spec_src);
+            self.setCommandPaletteActive(false);
+            pane_restart.request(self.app, id, spec_buf[0..spec_src.len]);
+            return;
+        }
         self.setCommandPaletteActive(false);
         const target = self.app.ipcLookup(id) orelse return;
         IpcHandlers.focusTarget(target);
@@ -6297,6 +6338,17 @@ fn openContextMenu(self: *Surface, client_x: i32, client_y: i32) void {
     const menu = w32.CreatePopupMenu() orelse return;
     defer _ = w32.DestroyMenu(menu);
 
+    // Restart Pane with Shell (T3752): a submenu of the installed shells,
+    // after Terminal Read-only. Its command ids sit above every top-level id
+    // (`restart_shell.submenu_base`). Not offered for a pane on another
+    // machine, whose shells are not this machine's list.
+    var shells_arena = std.heap.ArenaAllocator.init(self.app.core_app.alloc);
+    defer shells_arena.deinit();
+    const shells: []const pane_restart.Choice = if (self.pane_view) |pv|
+        (if (pane_restart.offered(pv)) pane_restart.installedChoices(shells_arena.allocator()) catch &.{} else &.{})
+    else
+        &.{};
+
     const items = context_menu.build(.{
         .has_selection = self.core_surface.hasSelection(),
         .readonly = self.core_surface.readonly,
@@ -6304,6 +6356,8 @@ fn openContextMenu(self: *Surface, client_x: i32, client_y: i32) void {
     for (items) |item| switch (item) {
         .separator => _ = w32.AppendMenuW(menu, w32.MF_SEPARATOR, 0, null),
         .cmd => |c| {
+            defer if (c.id == context_menu.restart_shell_after and shells.len > 0)
+                self.appendRestartShellMenu(menu, shells);
             var flags: u32 = w32.MF_STRING;
             if (!c.enabled) flags |= w32.MF_GRAYED;
             if (c.checked) flags |= w32.MF_CHECKED;
@@ -6331,6 +6385,13 @@ fn openContextMenu(self: *Surface, client_x: i32, client_y: i32) void {
         null,
     );
 
+    if (restart_shell.submenuIndex(@intCast(cmd), shells.len)) |i| {
+        // Deferred to the top of the loop: this surface is the one being
+        // replaced, and we are inside its window procedure.
+        pane_restart.request(self.app, self.paneId(), shells[i].spec);
+        return;
+    }
+
     const id = std.meta.intToEnum(
         context_menu.Id,
         @as(usize, @intCast(cmd)),
@@ -6345,6 +6406,25 @@ fn openContextMenu(self: *Surface, client_x: i32, client_y: i32) void {
     _ = self.core_surface.performBindingAction(binding) catch |err| {
         log.err("context menu action failed err={}", .{err});
     };
+}
+
+/// The "Restart Pane with Shell" submenu (T3752), one item per shell.
+fn appendRestartShellMenu(self: *Surface, menu: w32.HMENU, shells: []const pane_restart.Choice) void {
+    _ = self;
+    const sub = w32.CreatePopupMenu() orelse return;
+    for (shells, 0..) |c, i| {
+        var wide: [128:0]u16 = undefined;
+        const n = std.unicode.utf8ToUtf16Le(wide[0 .. wide.len - 1], c.label) catch continue;
+        wide[n] = 0;
+        _ = w32.AppendMenuW(sub, w32.MF_STRING, restart_shell.submenu_base + i, wide[0..n :0]);
+    }
+    // MF_POPUP hands `sub` to `menu`, which destroys it with itself.
+    _ = w32.AppendMenuW(
+        menu,
+        w32.MF_POPUP,
+        @intFromPtr(sub),
+        std.unicode.utf8ToUtf16LeStringLiteral(restart_shell.title),
+    );
 }
 
 /// Menu item text for `id`: the base title, plus a tab and the accelerator

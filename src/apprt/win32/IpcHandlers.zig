@@ -22,6 +22,7 @@ const ipc_frame_pacing = @import("ipc_frame_pacing.zig");
 const ipc_shortcut_guide = @import("ipc_shortcut_guide.zig");
 const ipc_settings = @import("ipc_settings.zig");
 const ipc_workspaces = @import("ipc_workspaces.zig");
+const ipc_restart_pane = @import("ipc_restart_pane.zig");
 const PaneView = @import("PaneView.zig");
 const ViewerPane = @import("ViewerPane.zig");
 const Window = @import("Window.zig");
@@ -171,6 +172,12 @@ pub fn handleSeam(ctx: Context, request: Request) Allocator.Error!ipc_server.Sea
         // until the sidebar switch (T3182) lands. Release builds fall through
         // to unknown-action.
         return .{ .reply = try ipc_workspaces.handle(ctx.app, ctx.alloc, request.arguments) };
+    } else if (ipc_restart_pane.enabled and std.mem.eql(u8, request.action, "restart-pane")) {
+        // T3752: the DEBUG-ONLY seam for Restart Pane with Shell - the user's
+        // ways in are a context submenu and palette rows, which a test on the
+        // background desktop cannot click. Release builds fall through to
+        // unknown-action.
+        return .{ .reply = try ipc_restart_pane.handle(ctx.app, ctx.alloc, request.arguments) };
     }
 
     return .unhandled;

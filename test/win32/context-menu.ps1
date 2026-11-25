@@ -252,7 +252,9 @@ function Accel-For($parsed, [string]$base) {
 $expected = @(
     'Copy:grayed', 'Paste', 'Select All', '---',
     'Split Right', 'Split Left', 'Split Down', 'Split Up', '---',
-    'Reset Terminal', 'Terminal Read-only', '---',
+    # T3752: the Restart Pane with Shell submenu follows Read-only (its
+    # entries are the installed shells; restart-pane.ps1 drives them).
+    'Reset Terminal', 'Terminal Read-only', 'Restart Pane with Shell', '---',
     'Background Color...', '---',
     'Change Tab Title...', 'Change Pane Title...', 'Set Pane Banner...'
 )

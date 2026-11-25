@@ -28,6 +28,13 @@ pub const Id = enum(usize) {
     banner = 13,
 };
 
+/// The item the "Restart Pane with Shell" submenu follows (T3752): it sits
+/// in the Reset Terminal / Read-only group, the things you do TO the pane's
+/// process. Its entries are dynamic (the installed shells), so Surface.zig
+/// appends it there rather than this fixed-size model carrying it; its
+/// command ids are `restart_shell.submenu_base + index`, above every `Id`.
+pub const restart_shell_after: Id = .readonly;
+
 /// The binding action a menu item performs, or null when the apprt handles
 /// it locally (Background Color… opens a color picker, not a binding).
 ///
@@ -198,4 +205,23 @@ test "command ids are unique and nonzero" {
             seen.set(v);
         },
     };
+}
+
+test "restart-shell submenu ids sit above every top-level id" {
+    // T3752: TrackPopupMenuEx returns one number for the whole menu tree, so a
+    // submenu pick must never decode as a top-level item.
+    const restart_shell = @import("restart_shell.zig");
+    inline for (std.meta.fields(Id)) |f| {
+        try std.testing.expect(f.value < restart_shell.submenu_base);
+    }
+    // And the submenu follows an item that is actually in the menu.
+    const items = build(.{ .has_selection = false, .readonly = false });
+    var found = false;
+    for (items) |item| switch (item) {
+        .separator => {},
+        .cmd => |c| if (c.id == restart_shell_after) {
+            found = true;
+        },
+    };
+    try std.testing.expect(found);
 }

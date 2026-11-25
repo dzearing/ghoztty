@@ -286,6 +286,9 @@ test {
     // The installed WSL distros behind the per-pane shell pickers (T3735):
     // the catalog rules are pure; the registry read is Windows-only.
     _ = @import("win32/wsl_distros.zig");
+    // Restart Pane with Shell (T3752): the picker list, the carried folder
+    // and the submenu id range. Pure.
+    _ = @import("win32/restart_shell.zig");
 
     // Claude plugin → app migration (T870): manifest-driven uninstall via
     // Claude's own CLI (injected), banner-state carry-over, stale-script
