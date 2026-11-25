@@ -217,10 +217,10 @@ samples="$HL_RUNTIME/drag.jsonl"
 # Pressed, dragged far past the far pane's minimum and let go: the pane folds
 # into its strip, and the glide runs on after the hand (the 50ms tail).
 sample "$samples" 5 "--press=$gx,$gy" "--drag=2000,0" "--release=0,0"
-[ -n "$gx" ] && [ "$(judge "$samples" "$before" '
+[ -n "$gx" ] && [ "$(judge "$samples" "$before" '(
 sum(1 for p in A["panes"] if p["minimized"]) > sum(1 for p in B["panes"] if p["minimized"])
 and len(G) >= 3 and not A["gliding"]
-and all(p["drawn"] == p["frame"] for p in A["panes"] if not p["minimized"])')" = True ]
+and all(p["drawn"] == p["frame"] for p in A["panes"] if not p["minimized"]))')" = True ]
 hl_check "G17 a drag that folds a pane away glides it into its strip and settles after the release" $? \
     "gutter=$gx,$gy $(judge "$samples" "$before" '(sum(p["minimized"] for p in B["panes"]), [(t, s["gliding"], sum(p["minimized"] for p in s["panes"])) for t, s in S[:4]], len(G), A["gliding"], [(p["minimized"], p["drawn"], p["frame"]) for p in A["panes"]])')"
 
