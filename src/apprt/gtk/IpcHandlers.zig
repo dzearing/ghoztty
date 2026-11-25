@@ -704,7 +704,7 @@ fn paneDrag(app: Context, request: Request) Allocator.Error![]u8 {
     var bar_buf: [Window.max_tab_buttons]pane_drop.Rect = undefined;
     const bar = window.tabBarCandidate(&bar_buf);
 
-    const HeaderRep = struct { pane: []const u8, shown: bool, height: c_int, title: []const u8, content_height: c_int };
+    const HeaderRep = struct { pane: []const u8, shown: bool, height: c_int, title: []const u8, content_height: c_int, is_split: bool };
     var headers: std.ArrayList(HeaderRep) = .empty;
     var panes = paneIterator(app);
     while (panes.next()) |p| {
@@ -716,6 +716,7 @@ fn paneDrag(app: Context, request: Request) Allocator.Error![]u8 {
             .height = if (h) |v| v.height() else 0,
             .title = if (h) |v| try arena.dupe(u8, v.title()) else "",
             .content_height = p.surface.contentHeight(),
+            .is_split = p.surface.isSplit(),
         });
     }
     const Rep = struct {

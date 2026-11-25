@@ -3758,6 +3758,10 @@ pub const Surface = extern struct {
     /// Pushed by the tree on every rebuild rather than bound to it (T3615):
     /// a pane can move to another tab's tree, and a binding to the old tree
     /// would go on driving it from there.
+    pub fn isSplit(self: *Self) bool {
+        return self.private().is_split;
+    }
+
     pub fn setIsSplit(self: *Self, v: bool) void {
         const priv = self.private();
         if (priv.is_split == v) return;
