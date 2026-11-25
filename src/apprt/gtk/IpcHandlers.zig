@@ -716,9 +716,13 @@ fn paneDrag(app: Context, request: Request) Allocator.Error![]u8 {
         };
     }
     // A drop can carry the pane into another window, and close the one it
-    // left: report the window it is in now.
-    if (drop != null) window = ext.getAncestor(Window, surface.as(gtk.Widget)) orelse
+    // left: report the window it is in now. Found by its tree, not by
+    // widget ancestry - the tree it landed in rebuilds its widgets later.
+    if (drop != null) window = landed: {
+        var it = windowIterator(app);
+        while (it.next()) |w| if (w.splitTreeHolding(surface.paneId()) != null) break :landed w;
         return server.errorResponse(c_alloc, "pane '{s}' is in no window after the drop", .{target_name});
+    };
     var window_count: usize = 0;
     var wins = windowIterator(app);
     while (wins.next()) |_| window_count += 1;
