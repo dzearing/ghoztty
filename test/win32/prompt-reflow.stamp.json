@@ -1,10 +1,10 @@
 {
     "guard":  "prompt-reflow",
     "script":  "test/win32/prompt-reflow.ps1",
-    "generated":  "2026-11-25T02:38:30-08:00",
-    "commit":  "2ea2f1e0f",
+    "generated":  "2026-11-25T06:23:11-08:00",
+    "commit":  "12dad6b6f",
     "uncommitted":  [
-
+                        "test/win32/prompt-reflow.ps1"
                     ],
     "files":  {
                   "src/renderer/generic.zig":  "ca6734949bf21501fd37edef2a27aa71a878efb88f276f2b96e08da68335c6ff",
@@ -13,10 +13,10 @@
                   "src/termio/shell_integration.zig":  "77b1ca5e9aa49d6af14806ed8810e83150e5f50cff7a565c4b6db62bfc1ff15b",
                   "src/termio/Termio.zig":  "554f09163ae13c1cbfa5173076197af9fdbba6f0cb40e23aefdaf7db2b7bfd0a",
                   "src/termio/Thread.zig":  "2928f03d5827da98f687164d7c84f7d7e91aabc633120c738ed6c7d27a70b4e3",
-                  "test/win32/prompt-reflow.ps1":  "566e5e362676f4fe06e2364f1be7255015dc2d9f9c83acef163a2167e6f4aedf"
+                  "test/win32/prompt-reflow.ps1":  "5665e369b96b4ae54982da3f4ad6a09116cb27832e8186c9bbdc084558a9a531"
               },
     "code":  {
                  "src/shell-integration/powershell/ghostty.ps1":  "code1:6a22ff015f9f66f7f2a83b74b0c5e04b68c8eec3a0a1a0e553ed29910d94c2b6",
-                 "test/win32/prompt-reflow.ps1":  "code1:e48aef5a3e864405503bea54354527f4fc50073626e88bf38b3524f206fa8682"
+                 "test/win32/prompt-reflow.ps1":  "code1:46a5aa49ade025c7bf179b6d0864d211fa1561363433d6fe7e9d3cb92d6b5446"
              }
 }

@@ -74,14 +74,28 @@
 #
 # -NegativeControl inverts the held bound and 4's live bound, and MUST fail.
 #
+# SECTION E (T2259, `-Wsl`, opt-in): the same 1-6 over a wsl bash pane. It runs
+# INSTEAD of A-D, only against a distro that is already running - with none it
+# is a SKIP and wsl.exe is never even asked - and it never stamps the guard, so
+# a box without WSL up keeps the default run as the one that proves the code.
+# Its first runs (2026-11-25, Ubuntu) were RED on two filed defects, and E is
+# their oracle: the window-resize storm is all `debounce` because a wsl pane
+# gets no prompt marks (T3742), and the resize joins the `echo` row and its
+# output into one row (T3743). Divider drags held and applied once, as on A-D.
+#
 #   powershell -NoProfile -File test\win32\prompt-reflow.ps1
+#   powershell -NoProfile -File test\win32\prompt-reflow.ps1 -Wsl
 param(
     [string]$Exe,
     [string]$AgentExe,
     [int]$Moves = 40,
     [int]$MoveMs = 25,
     [switch]$NegativeControl,
-    [switch]$Interactive
+    [switch]$Interactive,
+    # T2259: run section E (a wsl bash pane) INSTEAD of A-D. Opt-in, because
+    # starting WSL is the user's call: E uses a distro that is ALREADY running
+    # and SKIPs otherwise, so the default run stays the one that can stamp.
+    [switch]$Wsl
 )
 
 # T351: shared kill helpers; drops an inherited $GHOZTTY_IPC_SOCKET.
@@ -184,9 +198,26 @@ function Read-Pane([string]$name) {
     return (& $Exe +read "--name=$name" --lines=40 2>$null | Out-String)
 }
 
-# A prompt is on screen: PowerShell's `PS C:\...>` or cmd's `C:\...>`.
+# A prompt is on screen: PowerShell's `PS C:\...>` or cmd's `C:\...>` - or,
+# in section E, bash's `user@host:/path$` (set per section).
+$script:PosixPrompt = $false
 function Test-PromptShown([string]$text) {
+    if ($script:PosixPrompt) { return [bool]($text -match '(?m)^\S+@\S+:[^\r\n]*[\$#]\s*$') }
     return [bool]($text -match '(?m)^(PS )?[A-Za-z]:\\[^\r\n]*>\s*$')
+}
+
+# T2259: a distro that is ALREADY running, or $null. Never boots WSL: with no
+# WSL VM process there is no wsl.exe call at all, and `-l --running` only lists
+# (scripts\linux\wsl-run.ps1 asks it the same way). The pane is then started
+# with `-d <that distro>`, because a bare `wsl.exe` names the DEFAULT distro,
+# which may be a stopped one and would boot it.
+function Get-RunningWslDistro {
+    if (-not @(Get-Process -Name 'vmmemWSL', 'vmmem' -ErrorAction SilentlyContinue).Count) { return $null }
+    $out = @(& wsl.exe -l --running -q 2>$null)
+    $names = @($out | ForEach-Object { (([string]$_) -replace "`0", '').Trim() } |
+        Where-Object { $_ -and $_ -notmatch '^There are no' -and $_ -notmatch '^docker-desktop' })
+    if ($names.Count) { return $names[0] }
+    return $null
 }
 
 function Wait-Prompt([string]$name, [int]$timeoutSec = 30) {
@@ -269,7 +300,8 @@ function Score-Held([string]$tag, [string]$what, $lines, [double]$secs, [bool]$a
     }
 }
 
-function Invoke-Section([string]$tag, [bool]$persist, [string]$shell, [bool]$holds) {
+function Invoke-Section([string]$tag, [bool]$persist, [string]$shell, [bool]$holds,
+        [string]$loop = 'ping -n 60 127.0.0.1') {
     $state = Join-Path $root "state-$tag"
     New-Item -ItemType Directory -Force (Get-GhozttyAgentStateDir -Root $state) | Out-Null
     $env:LOCALAPPDATA = $state
@@ -306,6 +338,9 @@ function Invoke-Section([string]$tag, [bool]$persist, [string]$shell, [bool]$hol
         $marked = ($text -match '(?m)^T2251-MARK\s*$') -and (Test-PromptShown $text)
     }
     Assert $marked "$tag the marker line printed and the shell is back at its prompt"
+    if (-not $marked) {
+        Write-Host "    pane tail: $((($text -split "`r?`n") | Where-Object { $_.Trim() } | Select-Object -Last 4) -join ' | ')"
+    }
     Start-Sleep -Milliseconds 800
 
     # ---- 1-3. divider drag over the prompt ------------------------------
@@ -327,17 +362,23 @@ function Invoke-Section([string]$tag, [bool]$persist, [string]$shell, [bool]$hol
     $after = Read-Pane 'reflow-right'
     Assert (Test-PromptShown $after) "$tag the prompt is on screen after the resizes"
     Assert ($after -match '(?m)^T2251-MARK\s*$') "$tag the output above the prompt survived the resizes"
+    if ($after -notmatch '(?m)^T2251-MARK\s*$') {
+        Write-Host "    pane after: $((($after -split "`r?`n") | Where-Object { $_.Trim() } | Select-Object -Last 6) -join ' | ')"
+    }
 
     # ---- 6. control: a running program still debounces ------------------
     # Every pane, so every resize the drag makes lands on a running program:
     # the leaf ids out of `+list --json` (the first pane has no name).
-    # ping runs the same in cmd and PowerShell, and prints a row a second.
-    $loop = 'ping -n 60 127.0.0.1'
+    # ping runs the same in cmd and PowerShell, and prints a row a second
+    # (the default $loop); section E passes a bash loop of the same shape.
     $listJson = (& $Exe +list --json 2>$null | Out-String)
     $ids = @([regex]::Matches($listJson, '"id"\s*:\s*"([0-9A-Fa-f-]{36})"') |
         ForEach-Object { $_.Groups[1].Value } | Select-Object -Unique)
     Assert ($ids.Count -ge 2) "$tag +list --json names both panes ($($ids.Count) pane id(s))"
-    foreach ($id in $ids) { & $Exe +send-keys "--target=$id" "$loop`n" 2>&1 | Out-Null }
+    foreach ($id in $ids) {
+        # argv-audit: $loop is one of two fixed literals (the ping default or section E's bash loop), no quotes or free text
+        & $Exe +send-keys "--target=$id" "$loop`n" 2>&1 | Out-Null
+    }
     Start-Sleep -Milliseconds 1500
     $mark = Get-LogMark $errlog
     $secs = Invoke-DividerDrag $top $Moves 8 0
@@ -351,17 +392,36 @@ $td = New-TestDesktop -Interactive:$Interactive
 try {
     Assert-GhozttyPrivateEndpoint -Exe $Exe
 
-    Write-Host '== A: cmd, local pane (the app owns the ConPTY)'
-    Invoke-Section 'A' $false 'cmd.exe' $false
+    if ($Wsl) {
+        # ---- E. wsl bash (T2259) -------------------------------------------
+        # bash's prompt arrives through wsl.exe inside the ConPTY. Ghoztty
+        # injects no integration into a wsl pane (shell_integration.zig,
+        # `bare_shells_without_integration`), so this measures whatever marks
+        # the distro's own bash sends; a pane with none is paced `debounce`
+        # and the storm's live bound says so.
+        $distro = Get-RunningWslDistro
+        if (-not $distro) {
+            Write-Host '  SKIP  E: no WSL distro is running, and this harness never starts one (starting WSL is the user''s call)' -ForegroundColor Yellow
+            $script:skipped++
+        } else {
+            Write-Host "== E: wsl bash ($distro, already running), local pane"
+            $script:PosixPrompt = $true
+            Invoke-Section 'E' $false "wsl.exe -d $distro" $true 'for i in $(seq 60); do echo row $i; sleep 1; done'
+            $script:PosixPrompt = $false
+        }
+    } else {
+        Write-Host '== A: cmd, local pane (the app owns the ConPTY)'
+        Invoke-Section 'A' $false 'cmd.exe' $false
 
-    Write-Host '== B: Windows PowerShell, local pane'
-    Invoke-Section 'B' $false 'powershell.exe' $true
+        Write-Host '== B: Windows PowerShell, local pane'
+        Invoke-Section 'B' $false 'powershell.exe' $true
 
-    Write-Host '== C: cmd, agent-backed pane (ghoztty-agent owns the ConPTY)'
-    Invoke-Section 'C' $true 'cmd.exe' $false
+        Write-Host '== C: cmd, agent-backed pane (ghoztty-agent owns the ConPTY)'
+        Invoke-Section 'C' $true 'cmd.exe' $false
 
-    Write-Host '== D: Windows PowerShell, agent-backed pane'
-    Invoke-Section 'D' $true 'powershell.exe' $true
+        Write-Host '== D: Windows PowerShell, agent-backed pane'
+        Invoke-Section 'D' $true 'powershell.exe' $true
+    }
 
     Complete-TestBody  # T1039: the run reached the end of its body
 }
@@ -374,8 +434,9 @@ finally {
 }
 
 # --- stamp (T783) ----------------------------------------------------------
-# Only a clean green run, never a negative control.
-if ($script:fail -eq 0 -and $script:skipped -eq 0 -and -not $NegativeControl) {
+# Only a clean green run, never a negative control - and never -Wsl, which runs
+# section E alone and so never measured A-D.
+if ($script:fail -eq 0 -and $script:skipped -eq 0 -and -not $NegativeControl -and -not $Wsl) {
     & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'scripts\guard-due.ps1') `
         update -Guard prompt-reflow -Repo $repo 2>&1 | ForEach-Object { "  $_" }
 }

@@ -1,7 +1,7 @@
 {
     "guard":  "unwired-hook",
     "script":  "test/win32/unwired-hook-audit.ps1",
-    "generated":  "2026-11-25T06:10:45-08:00",
+    "generated":  "2026-11-25T06:25:36-08:00",
     "commit":  "12dad6b6f",
     "uncommitted":  [
 
@@ -1583,7 +1583,7 @@
                   "test/win32/probe-topmost-restore.ps1":  "0def592e8312af57add7e40935b2be576d2cfc1ff7b2b7070f8a236af7432c5a",
                   "test/win32/process-family.ps1":  "793bb204dbd02d9837ff4b5efeb42f794c24954d80241ec77c270c45d25dc90b",
                   "test/win32/profile-latency.ps1":  "9318c45579dfb0fdfb21d15e691ac1b474548312a7eb7473d4b53bc71940a155",
-                  "test/win32/prompt-reflow.ps1":  "566e5e362676f4fe06e2364f1be7255015dc2d9f9c83acef163a2167e6f4aedf",
+                  "test/win32/prompt-reflow.ps1":  "5665e369b96b4ae54982da3f4ad6a09116cb27832e8186c9bbdc084558a9a531",
                   "test/win32/pty-holder.ps1":  "ac9811305a50f2a86dca0af16b2725c8414ed78ebe26c84572ca6599326af88e",
                   "test/win32/pty-host.ps1":  "eabce30049b73683fb21d99f383f7ed19916333bf05ffbad59cd932db9144efc",
                   "test/win32/quick-terminal-slide.ps1":  "86e609fdd30fe537e48d5ef68c3be7c6e8432c3c0f7513985f56604757233deb",
