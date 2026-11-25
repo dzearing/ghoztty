@@ -155,6 +155,30 @@ o=$(sg --op=open)
 hl_check "G21 a reopened guide keeps the toggle" $?
 sg --op=state --unbound=0 > /dev/null
 
+# ---- Run shows on hover as well as on the selection (T3639; Mac) -----------
+# `hover` is the row's motion-controller enter/leave call (no seat here for a
+# real pointer); `run_shown` is read off the Run button widgets themselves.
+o=$(sg --op=hover --row=new_tab --query=)
+[ "$(jget "$o" 'd["selected"]')" = null ] && [ "$(jget "$o" 'd["hovered"]')" = new_tab ] && [ "$(jget "$o" 'd["run_shown"]')" = '["new_tab"]' ]
+hl_check "G21b hovering New Tab with nothing selected shows its Run button, and only its" $? "selected=$(jget "$o" 'd["selected"]') hovered=$(jget "$o" 'd["hovered"]') run_shown=$(jget "$o" 'd["run_shown"]')"
+# Select the first runnable row that is not New Tab, then hover New Tab: both show.
+i=$(jget "$o" 'next(i for i,r in enumerate(d["rows"]) if r["runnable"] and r["id"]!="new_tab")')
+sg --op=select --down=1 > /dev/null
+[ "${i:-0}" -gt 0 ] && sg --op=select --down="$i" > /dev/null
+o=$(sg --op=hover --row=new_tab)
+sel=$(jget "$o" 'd["selected"]')
+[ "$sel" != null ] && [ "$sel" != new_tab ] && [ "$(jget "$o" 'sorted(d["run_shown"])')" = "$(jget "$o" 'sorted(["new_tab", d["selected"]])')" ]
+hl_check "G21c a hovered row and the selected row both show Run" $? "selected=$sel run_shown=$(jget "$o" 'd["run_shown"]')"
+o=$(sg --op=hover --row=none)
+o2=$(sg --op=hover --row=quit)
+[ "$(jget "$o" 'd["hovered"]')" = null ] && [ "$(jget "$o" 'd["run_shown"]')" = "[\"$sel\"]" ] \
+    && [ "$(jget "$o2" 'd["run_shown"]')" = "[\"$sel\"]" ]
+hl_check "G21d leaving hides it again (the selection keeps its own), and Quit (not runnable) never shows one" $? "after leave=$(jget "$o" 'd["run_shown"]') over quit=$(jget "$o2" 'd["run_shown"]')"
+sg --op=hover --row=new_tab > /dev/null
+o=$(sg --op=state --query=split)
+[ "$(jget "$o" 'd["hovered"]')" = null ] && [ "$(jget "$o" '"new_tab" in d["run_shown"]')" = false ]
+hl_check "G21e a rebuilt list forgets the hover" $? "hovered=$(jget "$o" 'd["hovered"]') run_shown=$(jget "$o" 'd["run_shown"]')"
+
 # ---- Run performs the row in the terminal window --------------------------------
 tabs() { cli +list --json 2>/dev/null | python3 -I -c 'import json,sys; d=json.load(sys.stdin)["data"]; print(sum(len(w["tabs"]) for w in d["windows"]))'; }
 t0=$(tabs)

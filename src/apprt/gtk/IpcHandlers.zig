@@ -1992,6 +1992,7 @@ fn writeSettingsState(jws: *std.json.Stringify, arena: Allocator, w_opt: anytype
 ///   --op=state       the model it shows
 ///   --op=select --down=<n>   Up/Down
 ///   --op=run         Return
+///   --op=hover --row=<id|none>   the pointer enters that row / leaves (T3639)
 ///   --op=escape      Escape
 ///   --op=cheat-sheet write the cheat sheet (never opens it); reply names it
 ///   --op=shot --path=<file.png>   the window from its own render
@@ -2103,8 +2104,10 @@ fn shortcutGuideSeam(app: Context, request: Request) Allocator.Error![]u8 {
     var unbound: ?bool = null;
     var down: i32 = 1;
     var shot_path: ?[]const u8 = null;
+    var hover_row: ?[]const u8 = null;
     for (request.arguments orelse &.{}) |arg| {
         if (std.mem.startsWith(u8, arg, "--op=")) op = arg["--op=".len..];
+        if (std.mem.startsWith(u8, arg, "--row=")) hover_row = arg["--row=".len..];
         if (std.mem.startsWith(u8, arg, "--path=")) shot_path = arg["--path=".len..];
         if (std.mem.startsWith(u8, arg, "--query=")) q = arg["--query=".len..];
         if (std.mem.startsWith(u8, arg, "--category=")) cat = arg["--category=".len..];
@@ -2143,6 +2146,17 @@ fn shortcutGuideSeam(app: Context, request: Request) Allocator.Error![]u8 {
         w.moveSelection(down);
     } else if (std.mem.eql(u8, op, "run")) {
         ran = w.runSelection();
+    } else if (std.mem.eql(u8, op, "hover")) {
+        // What the row's motion controller does on enter/leave.
+        const id = hover_row orelse return server.errorResponse(c_alloc, "--row=<id|none> is required for --op=hover", .{});
+        if (std.mem.eql(u8, id, "none")) {
+            w.setHover(null);
+        } else {
+            const index = for (w.rows, 0..) |r, i| {
+                if (std.mem.eql(u8, r.id, id)) break i;
+            } else return server.errorResponse(c_alloc, "no row '{s}' is shown", .{id});
+            w.setHover(index);
+        }
     } else if (std.mem.eql(u8, op, "escape")) {
         w.escape();
     } else if (std.mem.eql(u8, op, "cheat-sheet")) {
@@ -2205,6 +2219,13 @@ fn writeGuideState(w_opt: ?*const @import("ShortcutGuideWindow.zig"), ran: ?bool
                 try j.write(w.all_count);
                 try j.objectField("selected");
                 try j.write(if (w.selectedRow()) |row| row.id else null);
+                try j.objectField("hovered");
+                try j.write(if (w.hoveredRow()) |row| row.id else null);
+                // The rows whose Run button is showing, read off the widgets.
+                try j.objectField("run_shown");
+                try j.beginArray();
+                for (w.rows, 0..) |row, i| if (w.runShown(i)) try j.write(row.id);
+                try j.endArray();
                 try j.objectField("last_run");
                 try j.write(w.lastRun());
                 try j.objectField("counts");

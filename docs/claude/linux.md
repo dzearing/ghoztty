@@ -2041,20 +2041,27 @@ made once for both seats.
 - GtkSearchEntry reports `search-changed` after the fact, even for text the
   guide set: the handler ignores an unchanged query, or a selection made under
   a query is reset (G15b).
+- Run shows on the selected row AND the row under the pointer (T3639, Mac's
+  hover-or-selection): a `GtkEventControllerMotion` per runnable row calls
+  `setHover`; only the hovered row's own leave clears it (the next row's enter
+  can come first), and a list rebuild forgets the hover.
 - The unbound toggle persists in `$XDG_STATE_HOME/ghoztty/shortcut-guide-unbound[-debug]`;
   the cheat sheet is written to `$XDG_RUNTIME_DIR`.
-- **Seam**: debug-only `hl_ipc shortcut-guide --op=action|open|state|select|run|escape|cheat-sheet|shot|close
-  [--query=] [--category=] [--unbound=0|1] [--down=n] [--path=]`, win32's op
-  names and reply shape (`data.rows[]`). `shot` renders the whole window from
+- **Seam**: debug-only `hl_ipc shortcut-guide --op=action|open|state|select|run|hover|escape|cheat-sheet|shot|close
+  [--query=] [--category=] [--unbound=0|1] [--down=n] [--row=<id|none>] [--path=]`, win32's op
+  names and reply shape (`data.rows[]`, plus `hovered` and `run_shown` - the
+  rows whose Run button widget is visible). `hover` is the motion
+  controller's enter/leave call; the harness has no seat, so a real pointer
+  hover is NOT RUN. `shot` renders the whole window from
   its own render; a content-box shot comes out transparent behind white text.
 
 ```powershell
 powershell -NoProfile -File scripts\linux\wsl-run.ps1 -CommandFile test\linux\shortcut-guide.sh
 ```
 
-Ends `SHORTCUT GUIDE: ALL PASS` (28 checks); `NEGATIVE=1` presses Ctrl+/ and
-must go red; `SHOT_OUT=<dir>` keeps two PNGs. Still open: Run on hover T3639,
-a check through the menu item and the palette T3640.
+Ends `SHORTCUT GUIDE: ALL PASS` (32 checks); `NEGATIVE=1` presses Ctrl+/ and
+must go red; `SHOT_OUT=<dir>` keeps two PNGs. Still open: a check through the
+menu item and the palette T3640.
 
 ## Background windows: what stops when no one is looking (T3571)
 

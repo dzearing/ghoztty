@@ -94,6 +94,9 @@ category: ?Category = null,
 include_unbound: bool = false,
 /// Index into `rows`.
 selection: ?usize = null,
+/// Index into `rows` of the row under the pointer (T3639): its Run button
+/// shows as the selected row's does (Mac: hover or selection).
+hovered: ?usize = null,
 /// The last action a Run performed - the seam reports it.
 last_run: std.ArrayListUnmanaged(u8) = .empty,
 /// Set while the guide itself rebuilds or selects, so the list's and the
@@ -213,6 +216,28 @@ pub fn selectedRow(self: *const ShortcutGuideWindow) ?Row {
 
 pub fn lastRun(self: *const ShortcutGuideWindow) []const u8 {
     return self.last_run.items;
+}
+
+/// The row under the pointer, if any.
+pub fn hoveredRow(self: *const ShortcutGuideWindow) ?Row {
+    const h = self.hovered orelse return null;
+    if (h >= self.rows.len) return null;
+    return self.rows[h];
+}
+
+/// Whether the Run button of `rows[index]` is showing - read off the widget
+/// itself, so the seam reports what is drawn rather than the model.
+pub fn runShown(self: *const ShortcutGuideWindow, index: usize) bool {
+    if (index >= self.run_buttons.len) return false;
+    const btn = self.run_buttons[index] orelse return false;
+    return wk.gtk_widget_get_visible(btn) != 0;
+}
+
+/// The pointer entered (index) or left (null) a row: the row's motion
+/// controller and the seam's `hover` op both land here.
+pub fn setHover(self: *ShortcutGuideWindow, index: ?usize) void {
+    self.hovered = if (index) |i| (if (i < self.rows.len) i else null) else null;
+    self.syncRunButtons();
 }
 
 // ---------------------------------------------------------------------
@@ -485,6 +510,9 @@ fn fillList(self: *ShortcutGuideWindow) !void {
     var items: std.ArrayList(?usize) = .empty;
     self.run_buttons = try arena.alloc(?*wk.GtkWidget, self.rows.len);
     @memset(self.run_buttons, null);
+    // The rows are new widgets: whatever was under the pointer is gone, and
+    // the next motion over a new row says which one is.
+    self.hovered = null;
     var current_cat: ?Category = null;
     for (self.rows, 0..) |r, i| {
         if (current_cat != r.category) {
@@ -504,6 +532,14 @@ fn fillList(self: *ShortcutGuideWindow) !void {
         }
         const row = wk.gtk_list_box_row_new();
         wk.gtk_list_box_row_set_child(row, try self.rowWidget(arena, r, i));
+        if (r.runnable) {
+            // Hover shows the row's Run button (Mac: hover or selection).
+            const motion = wk.gtk_event_controller_motion_new();
+            wk.g_object_set_data(@ptrCast(motion), "guide-row", @ptrFromInt(i + 1));
+            _ = wk.g_signal_connect_data(@ptrCast(motion), "enter", @ptrCast(&onRowEnter), self, null, 0);
+            _ = wk.g_signal_connect_data(@ptrCast(motion), "leave", @ptrCast(&onRowLeave), self, null, 0);
+            wk.gtk_widget_add_controller(row, motion);
+        }
         wk.gtk_list_box_append(self.list, row);
         try items.append(arena, i);
     }
@@ -572,7 +608,7 @@ fn rowWidget(self: *ShortcutGuideWindow, arena: Allocator, r: Row, index: usize)
     wk.gtk_box_append(line, caps_col);
 
     // Run, offered only for rows safe to run from here; shown on the
-    // selected row (Mac shows it on hover/selection).
+    // selected row and on the row under the pointer (Mac: hover/selection).
     if (r.runnable) {
         const run = wk.gtk_button_new_from_icon_name("media-playback-start-symbolic");
         wk.gtk_widget_add_css_class(run, "flat");
@@ -609,9 +645,7 @@ fn showSelection(self: *ShortcutGuideWindow) void {
     const was = self.updating;
     self.updating = true;
     defer self.updating = was;
-    for (self.run_buttons, 0..) |b, i| if (b) |btn| {
-        wk.gtk_widget_set_visible(btn, @intFromBool(self.selection == i));
-    };
+    self.syncRunButtons();
     const sel = self.selection orelse {
         wk.gtk_list_box_unselect_all(self.list);
         return;
@@ -629,6 +663,13 @@ fn showSelection(self: *ShortcutGuideWindow) void {
     const h: f64 = @floatFromInt(wk.gtk_widget_get_height(row));
     const y: f64 = at.y;
     if (y < top) wk.gtk_adjustment_set_value(adj, y) else if (y + h > top + page) wk.gtk_adjustment_set_value(adj, y + h - page);
+}
+
+/// Each Run button shows on the selected row and on the hovered one.
+fn syncRunButtons(self: *ShortcutGuideWindow) void {
+    for (self.run_buttons, 0..) |b, i| if (b) |btn| {
+        wk.gtk_widget_set_visible(btn, @intFromBool(self.selection == i or self.hovered == i));
+    };
 }
 
 fn listIndexOf(self: *const ShortcutGuideWindow, row_index: usize) ?usize {
@@ -702,9 +743,20 @@ fn onListSelected(_: *wk.GtkWidget, row: ?*wk.GtkWidget, self: *ShortcutGuideWin
     const li: usize = @intCast(@max(0, wk.gtk_list_box_row_get_index(r)));
     if (li >= self.items.len) return;
     self.selection = self.items[li] orelse return;
-    for (self.run_buttons, 0..) |b, i| if (b) |btn| {
-        wk.gtk_widget_set_visible(btn, @intFromBool(self.selection == i));
-    };
+    self.syncRunButtons();
+}
+
+fn onRowEnter(ctl: *wk.GtkEventController, _: f64, _: f64, self: *ShortcutGuideWindow) callconv(.c) void {
+    const tag = @intFromPtr(wk.g_object_get_data(@ptrCast(ctl), "guide-row"));
+    if (tag == 0 or tag > self.rows.len) return;
+    self.setHover(tag - 1);
+}
+
+fn onRowLeave(ctl: *wk.GtkEventController, self: *ShortcutGuideWindow) callconv(.c) void {
+    const tag = @intFromPtr(wk.g_object_get_data(@ptrCast(ctl), "guide-row"));
+    // Only the row that is hovered clears it: GTK may report the next row's
+    // enter before this one's leave.
+    if (tag != 0 and self.hovered == tag - 1) self.setHover(null);
 }
 
 fn onListActivated(_: *wk.GtkWidget, row: *wk.GtkWidget, self: *ShortcutGuideWindow) callconv(.c) void {
