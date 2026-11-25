@@ -14,10 +14,11 @@
 # Input the headless harness does not have comes through debug-only seams:
 # keys through `press-key`, the pointer through `pane-mouse` (a motion, press
 # and release at a cell's centre, with modifiers). The clipboard is read back
-# through `read-clipboard`, from the GdkClipboard the copy filled: the headless
-# Weston has no seat, so no other Wayland client (wl-paste included) can be
-# offered a selection there at all. A link click is recorded, never opened,
-# through GHOZTTY_TEST_VIEWER_LINKS (`open <url>`).
+# through `read-clipboard`, from the GdkClipboard the copy filled - AND, since
+# T3620, from OUTSIDE the app: this run uses hl_start_seat (a headless sway,
+# which has the wl_seat the default Weston lacks), so `wl-paste` - another
+# Wayland client - must be offered the same clean text (P1-P5). A link click
+# is recorded, never opened, through GHOZTTY_TEST_VIEWER_LINKS (`open <url>`).
 #
 # Output: one PASS/FAIL line per check, then 'COPY REFLOW: ALL PASS' or
 # 'COPY REFLOW: <n> FAILURE(S)'. Exit 0 only on ALL PASS.
@@ -32,8 +33,9 @@ rc=$?
 hl_check "R1 zig build -Dapp-runtime=gtk -Doptimize=Debug exits 0" $rc "$(grep -m3 'error:' "$log" | tr '\n' ' ')"
 [ $rc = 0 ] || hl_finish "$LABEL"
 
-hl_start
-hl_check "R2 a private headless Weston is up" $?
+hl_start_seat
+hl_check "R2 a private headless compositor WITH a seat (sway) is up" $? "$(tail -2 "${HL_WESTON_LOG:-/dev/null}" 2>/dev/null | tr '\n' ' ')"
+[ -n "${HL_SOCKET:-}" ] && [ -S "$HL_RUNTIME/$HL_SOCKET" ] || hl_finish "$LABEL"
 app=$(hl_ghoztty) || hl_finish "$LABEL"
 cli() { env -u GHOZTTY_IPC_SOCKET -u GHOZTTY_PANE_ID "$app" "$@"; }
 
@@ -111,6 +113,15 @@ readclip() {
     [ -e "$f" ]
 }
 
+# outside <file> [--primary]: what ANOTHER Wayland client is offered - wl-paste,
+# through wlr-data-control, so it needs no focus of its own. Exact bytes.
+outside() {
+    local f=$1; shift
+    rm -f "$f" "$f.err"
+    hl_assert_isolated
+    timeout 10 wl-paste --no-newline "$@" > "$f" 2> "$f.err"
+}
+
 # ---- negative control: what +read returns is the screen as laid out --------
 cli +read --name="$pane" --lines=200 > "$fx/read.txt" 2>&1
 r=$(clean "$fx/read.txt")
@@ -126,11 +137,26 @@ hl_check "R9 select-all fills PRIMARY (copy-on-select)" $? "$(cat "$fx/sel-all-p
 r=$(clean "$fx/sel-all-primary.txt")
 hl_check "R10 ...and PRIMARY holds clean prose" $? "$r"
 
+# ---- outside the app (T3620) ---------------------------------------------------
+# Control first: until the app has been given one key serial, wlroots refuses
+# its set_selection ("serial 0 was never given to client"), so the PRIMARY it
+# just filled stays app-local. That is what proves P3-P5 can fail - and why
+# hl_key_serial exists.
+outside "$fx/out-primary0.txt" --primary
+! cmp -s "$fx/out-primary0.txt" "$fx/sel-all-primary.txt"
+hl_check "P1 control: with no key serial yet, wl-paste is NOT offered the app's PRIMARY" $? "$(head -c 120 "$fx/out-primary0.txt.err" 2>/dev/null)"
+hl_key_serial
+hl_check "P2 one Shift_L key event reaches the window (wtype, a virtual keyboard)" $?
+sleep 0.3
+
 hl_ipc press-key "--target=$pane" --key=ctrl+shift+c > /dev/null
 readclip "$fx/sel-all-clip.txt"
 hl_check "R11 Ctrl+Shift+C fills the clipboard" $? "$(cat "$fx/sel-all-clip.txt.err" 2>/dev/null)"
 r=$(clean "$fx/sel-all-clip.txt")
 hl_check "R12 ...and the clipboard holds clean prose" $? "$r"
+outside "$fx/out-clip.txt"
+cmp -s "$fx/out-clip.txt" "$fx/sel-all-clip.txt" && [ "$(clean "$fx/out-clip.txt")" = clean ]
+hl_check "P3 another app's paste (wl-paste) gets the SAME clean prose Ctrl+Shift+C copied" $? "$(head -c 120 "$fx/out-clip.txt.err" 2>/dev/null)"
 python3 -I -c 'import sys; t=open(sys.argv[1],encoding="utf-8").read(); sys.exit(0 if "⏺ " in t else 1)' "$fx/sel-all-clip.txt"
 hl_check "R13 the gutter glyph hangs in the margin and survives the dedent" $?
 
@@ -147,6 +173,9 @@ t = open(sys.argv[1], encoding="utf-8").read()
 p = open(sys.argv[2], encoding="utf-8").read()
 sys.exit(0 if t.rstrip("\n") == "⏺ " + p else 1)' "$fx/drag-primary.txt" "$fx/prose.txt"
 hl_check "R15 ...and it is the paragraph as one line, gutter and all, nothing else" $? "$(python3 -I -c 'import sys; print(repr(open(sys.argv[1],encoding="utf-8").read()[-100:]))' "$fx/drag-primary.txt" 2>/dev/null)"
+outside "$fx/out-drag-primary.txt" --primary
+cmp -s "$fx/out-drag-primary.txt" "$fx/drag-primary.txt"
+hl_check "P4 another app's middle-click paste (wl-paste --primary) gets the dragged paragraph as one line" $? "$(head -c 120 "$fx/out-drag-primary.txt.err" 2>/dev/null)"
 
 # ---- the URL broken across rows is one link -----------------------------------
 # A cell well inside each half: the first row (after the lead-in) and the last.
@@ -174,6 +203,9 @@ hl_ipc press-key "--target=$pane" --key=ctrl+shift+u > /dev/null
 readclip "$fx/copy-url.txt"
 [ "$(cat "$fx/copy-url.txt" 2>/dev/null)" = "$url" ]
 hl_check "R21 Copy URL over the first row copies the whole URL" $? "$(head -c 160 "$fx/copy-url.txt" 2>/dev/null)"
+outside "$fx/out-url.txt"
+[ "$(cat "$fx/out-url.txt" 2>/dev/null)" = "$url" ]
+hl_check "P5 another app's paste gets the WHOLE URL Copy URL copied" $? "$(head -c 160 "$fx/out-url.txt.err" 2>/dev/null)"
 
 grep -q 'leave the app\|refused to hand' "$APP_LOG"
 [ $? != 0 ]

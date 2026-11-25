@@ -56,19 +56,29 @@ hl_finish() {
 
 # ---- compositor ---------------------------------------------------------------
 HL_PIDS=""
-HL_WESTON_PID=""
+HL_WESTON_PID=""      # the private compositor's pid - Weston, or sway under hl_start_seat
 HL_RUNTIME=""
+HL_COMPOSITOR=""
 
 # hl_start [width] [height]: start the private headless Weston and export the
 # environment a GTK app needs to reach it - and only it. Returns 0 when the
 # socket is up, 1 (with the Weston log tail on stderr) when it is not.
+#
+# Weston headless has NO wl_seat, so nothing that needs a seat can be proven
+# under it (a cross-client paste above all). hl_start_seat is the other
+# compositor, for exactly that.
 hl_start() {
     local w=${1:-1280} h=${2:-800}
-    command -v weston >/dev/null 2>&1 || { echo "hl_start: weston is not installed (run scripts/linux/setup-distro.sh)" >&2; return 1; }
+    HL_COMPOSITOR=${HL_WANT_COMPOSITOR:-weston}
+    if [ "$HL_COMPOSITOR" = sway ]; then
+        command -v sway >/dev/null 2>&1 || { echo "hl_start_seat: sway is not installed (run scripts/linux/setup-distro.sh)" >&2; return 1; }
+    else
+        command -v weston >/dev/null 2>&1 || { echo "hl_start: weston is not installed (run scripts/linux/setup-distro.sh)" >&2; return 1; }
+    fi
     HL_RUNTIME=$(mktemp -d /tmp/ghoztty-hl.XXXXXX) || return 1
     chmod 0700 "$HL_RUNTIME"
     HL_SOCKET="wayland-hl-$$"
-    HL_WESTON_LOG="$HL_RUNTIME/weston.log"
+    HL_WESTON_LOG="$HL_RUNTIME/$HL_COMPOSITOR.log"
     trap 'hl_stop' EXIT
     trap 'exit 143' TERM; trap 'exit 130' INT    # so a killed test still runs the EXIT trap
     export XDG_RUNTIME_DIR="$HL_RUNTIME"
@@ -79,19 +89,69 @@ hl_start() {
     export XDG_CONFIG_HOME="$HL_RUNTIME/config"
     mkdir -p "$XDG_CONFIG_HOME"
     unset DISPLAY WAYLAND_SOCKET
-    local wgpu=""
-    if [ -e /dev/dxg ]; then wgpu="GALLIUM_DRIVER=d3d12"; fi
-    env $wgpu weston --backend=headless --renderer=gl --socket="$HL_SOCKET" \
-        --width="$w" --height="$h" --idle-time=0 > "$HL_WESTON_LOG" 2>&1 &
-    HL_WESTON_PID=$!
     local _
-    for _ in $(seq 1 100); do [ -S "$HL_RUNTIME/$HL_SOCKET" ] && break; sleep 0.1; done
+    if [ "$HL_COMPOSITOR" = sway ]; then
+        hl_start_sway_ "$w" "$h" || return 1
+    else
+        local wgpu=""
+        if [ -e /dev/dxg ]; then wgpu="GALLIUM_DRIVER=d3d12"; fi
+        env $wgpu weston --backend=headless --renderer=gl --socket="$HL_SOCKET" \
+            --width="$w" --height="$h" --idle-time=0 > "$HL_WESTON_LOG" 2>&1 &
+        HL_WESTON_PID=$!
+        for _ in $(seq 1 100); do [ -S "$HL_RUNTIME/$HL_SOCKET" ] && break; sleep 0.1; done
+    fi
     if [ ! -S "$HL_RUNTIME/$HL_SOCKET" ]; then
-        echo "hl_start: headless Weston did not come up: $(tail -2 "$HL_WESTON_LOG" | tr '\n' ' ')" >&2
+        echo "hl_start: headless $HL_COMPOSITOR did not come up: $(tail -2 "$HL_WESTON_LOG" | tr '\n' ' ')" >&2
         return 1
     fi
     export WAYLAND_DISPLAY="$HL_SOCKET" GDK_BACKEND=wayland
     return 0
+}
+
+# hl_start_seat [width] [height] (T3620): hl_start, but the private compositor
+# is a headless sway, which HAS a wl_seat - so a selection the app sets can be
+# offered to another client, and `wl-paste` (wlr-data-control) reads it with
+# no focus of its own. Same isolation, same refusals, same cleanup as hl_start.
+# No input devices (WLR_LIBINPUT_NO_DEVICES=1), no Xwayland, the pixman
+# renderer (wlroots' GL renderer wants a DRM render node, which WSL does not
+# have). A selection still needs one key serial first - see hl_key_serial.
+hl_start_seat() { HL_WANT_COMPOSITOR=sway hl_start "$@"; }
+
+# hl_start_sway_ <w> <h>: hl_start's sway half. sway 1.9 cannot be told a
+# socket name, so it picks one inside the private runtime dir and HL_SOCKET is
+# read back from there (never wayland-0: hl_isolation_problem refuses that
+# name, which is WSLg's).
+hl_start_sway_() {
+    local _ s
+    printf 'xwayland disable\noutput HEADLESS-1 resolution %sx%s\n' "$1" "$2" > "$HL_RUNTIME/sway.cfg"
+    env -u WAYLAND_DISPLAY -u SWAYSOCK -u I3SOCK WLR_BACKENDS=headless WLR_LIBINPUT_NO_DEVICES=1 \
+        WLR_RENDERER=pixman sway -c "$HL_RUNTIME/sway.cfg" > "$HL_WESTON_LOG" 2>&1 &
+    HL_WESTON_PID=$!
+    for _ in $(seq 1 100); do
+        s=$(cd "$HL_RUNTIME" && ls -1 2>/dev/null | grep -E '^wayland-[0-9]+$' | head -1)
+        [ -n "$s" ] && [ -S "$HL_RUNTIME/$s" ] && break
+        kill -0 "$HL_WESTON_PID" 2>/dev/null || break
+        sleep 0.1
+    done
+    [ -n "$s" ] || return 1
+    HL_SOCKET=$s
+    SWAYSOCK=$(ls -1 "$HL_RUNTIME"/sway-ipc.*.sock 2>/dev/null | head -1)
+    export SWAYSOCK
+    return 0
+}
+
+# hl_key_serial: give the focused window ONE real key event (Shift_L, through
+# a short-lived virtual keyboard - wtype), under hl_start_seat only. Why: GTK
+# claims a selection with its last key-press/button serial, and wlroots rejects
+# a set_selection whose serial the client was never given ("serial 0 was never
+# given to client") - with no input devices that serial is 0 until this runs,
+# so every copy stays app-local. A modifier-only tap is not enough (it sends
+# wl_keyboard.modifiers, not .key). Shift alone types nothing into a pane.
+hl_key_serial() {
+    [ "${HL_COMPOSITOR:-}" = sway ] || { echo "hl_key_serial: needs hl_start_seat (Weston headless has no seat)" >&2; return 1; }
+    command -v wtype >/dev/null 2>&1 || { echo "hl_key_serial: wtype is not installed (run scripts/linux/setup-distro.sh)" >&2; return 1; }
+    hl_assert_isolated
+    wtype -k Shift_L
 }
 
 # hl_isolation_problem: print the first reason the current environment could

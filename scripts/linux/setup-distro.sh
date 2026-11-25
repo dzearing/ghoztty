@@ -38,6 +38,10 @@ APT_PKGS=(
     # T3578: package.sh points the binary's RUNPATH at its private lib, and
     # package-deb.sh builds the .deb (dpkg-deb, dpkg-shlibdeps for Depends).
     patchelf dpkg-dev
+    # T3620: the harness's seat compositor (hl_start_seat - a headless sway,
+    # since Weston headless has no wl_seat), wtype for the one key serial a
+    # selection needs, and wl-clipboard (wl-paste) as the outside client.
+    sway wtype wl-clipboard
 )
 
 missing=()
