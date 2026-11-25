@@ -97,6 +97,8 @@ print(eval(sys.argv[1]))
 ' "$e" 2>/dev/null
 }
 is() { [ "$(field "$1" "$2")" = "$3" ]; }
+# isa <target> <expr> <want> [seam args...]: is, after those seam args.
+isa() { local t=$1 x=$2 w=$3; shift 3; [ "$(field "$t" "$x" "$@")" = "$w" ]; }
 # lst <python expr over W (windows by target) and T (every window's title)>
 lst() {
     cli +list --json 2>/dev/null | python3 -I -c '
@@ -121,9 +123,9 @@ kb=$(field wa 'head("wb")["pane"]')
 k1=$(field wa 'head("one")["pane"]')
 
 # ---- 1. the menu ---------------------------------------------------------------
-is wa '(m.get("row"), m.get("items"), m.get("groups"))' "('$kb', ['Create Group…', 'Move to Group'], ['grp'])" "--menu=$kb"
+isa wa '(m.get("row"), m.get("items"), m.get("groups"))' "('$kb', ['Create Group…', 'Move to Group'], ['grp'])" "--menu=$kb"
 hl_check "G2 a lone window's menu: Create Group..., Move to Group with the one group, no Remove" $? "$(sb wa)"
-is wa '(m.get("items"), m.get("groups"))' "(['Create Group…', 'Remove from Group'], [])" "--menu=$k1"
+isa wa '(m.get("items"), m.get("groups"))' "(['Create Group…', 'Remove from Group'], [])" "--menu=$k1"
 hl_check "G3 a grouped window's: no Move (its own group is the only one), and Remove from Group" $? "$(sb wa)"
 grep -q 'pane sidebar window menu open title=grp: one groups=0 remove=true' "$APP_LOG"
 hl_check "G3b the live menu was popped (logged)" $? "$(grep -a 'window menu' "$APP_LOG" | tail -3 | tr '\n' ' ')"
@@ -134,7 +136,7 @@ hl_wait_for 10 lst_is '"grp: wb" in T' True
 hl_check "G4 Move to Group retitles the window <group>: <its name>" $? "$(lst 'T')"
 hl_wait_for 10 is wa 'under("wb")' grp
 hl_check "G5 and it lists under that group" $? "$(sb wa)"
-is wa 'm.get("items")' "['Create Group…', 'Remove from Group']" "--menu=$kb"
+isa wa 'm.get("items")' "['Create Group…', 'Remove from Group']" "--menu=$kb"
 hl_check "G6 its menu now offers Remove from Group" $? "$(sb wa)"
 sb wa --menu-pick=remove > /dev/null
 hl_wait_for 10 lst_is '("wb" in T, "grp: wb" in T)' "(True, False)"
