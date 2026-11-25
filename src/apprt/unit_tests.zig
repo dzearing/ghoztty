@@ -680,6 +680,9 @@ test {
     // and divider inserts, and the in-place drop that does nothing (T3564).
     // No GTK imports.
     _ = @import("gtk/pane_drop_apply.zig");
+    // The card a pane drag carries: its size, hot spot and colours (T3617).
+    // No GTK imports.
+    _ = @import("gtk/pane_ghost_rules.zig");
     // The pane style: which windows get their own gradient desk, which card
     // is lit, the desk texture's size and pixels (T3566). No GTK imports.
     _ = @import("gtk/pane_style.zig");

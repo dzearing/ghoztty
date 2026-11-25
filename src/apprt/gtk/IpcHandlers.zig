@@ -65,6 +65,7 @@ const pane_style = @import("pane_style.zig");
 const Application = @import("class/application.zig").Application;
 const Window = @import("class/window.zig").Window;
 const pane_drop = @import("../win32/pane_drop.zig");
+const PaneDragGhost = @import("PaneDragGhost.zig");
 const PaneSidebar = @import("PaneSidebar.zig");
 const BannerEditor = @import("BannerEditor.zig");
 const pane_banner_rules = @import("pane_banner_rules.zig");
@@ -601,6 +602,8 @@ fn paneDrag(app: Context, request: Request) Allocator.Error![]u8 {
     var hover_arg: ?[]const u8 = null;
     var bar_of_arg: ?[]const u8 = null;
     var hover_leave = false;
+    var ghost_arg = false;
+    var ghost_png: ?[]const u8 = null;
     var fx: f64 = 0.5;
     var fy: f64 = 0.5;
     for (request.arguments orelse &.{}) |arg| {
@@ -612,6 +615,11 @@ fn paneDrag(app: Context, request: Request) Allocator.Error![]u8 {
         if (std.mem.startsWith(u8, arg, "--hover-tab=")) hover_arg = arg["--hover-tab=".len..];
         if (std.mem.eql(u8, arg, "--hover-leave")) hover_leave = true;
         if (std.mem.startsWith(u8, arg, "--bar-of=")) bar_of_arg = arg["--bar-of=".len..];
+        if (std.mem.eql(u8, arg, "--ghost")) ghost_arg = true;
+        if (std.mem.startsWith(u8, arg, "--ghost-png=")) {
+            ghost_arg = true;
+            ghost_png = arg["--ghost-png=".len..];
+        }
         if (std.mem.startsWith(u8, arg, "--fx=")) fx = std.fmt.parseFloat(f64, arg["--fx=".len..]) catch fx;
         if (std.mem.startsWith(u8, arg, "--fy=")) fy = std.fmt.parseFloat(f64, arg["--fy=".len..]) catch fy;
     }
@@ -630,6 +638,10 @@ fn paneDrag(app: Context, request: Request) Allocator.Error![]u8 {
     var window = target.window_();
     const surface = target.surface() orelse
         return server.errorResponse(c_alloc, "pane '{s}' is no longer alive", .{target_name});
+
+    // The card a drag of the target would carry, built before any drop the
+    // way a drag builds it at drag-begin (T3617).
+    const ghost_rep: ?GhostRep = if (ghost_arg) ghostReport(arena, surface, ghost_png) else null;
 
     var key_effect: ?[]const u8 = null;
     if (key_arg) |k| {
@@ -758,8 +770,10 @@ fn paneDrag(app: Context, request: Request) Allocator.Error![]u8 {
         dwell_tab: ?usize,
         tab_buttons: usize,
         window_count: usize,
+        ghost: ?GhostRep,
     };
     const rep: Rep = .{
+        .ghost = ghost_rep,
         .mode = window.rearrangeMode(),
         .tabs_visible = window.getTabsVisible(),
         .tabs_autohide = window.getTabsAutohide(),
@@ -776,6 +790,89 @@ fn paneDrag(app: Context, request: Request) Allocator.Error![]u8 {
     defer out.deinit();
     std.json.Stringify.value(rep, .{}, &out.writer) catch return error.OutOfMemory;
     return c_alloc.dupe(u8, out.written());
+}
+
+/// The `pane-drag --ghost` report (T3617): the card's planned geometry, the
+/// texture the renderer actually produced, and pixels sampled from it - the
+/// shadow margin, the shadow under the card, the strip against the colour it
+/// was planned in, the body, and how many of the strip's pixels the title's
+/// ink changed. `built` false means the drag would keep GTK's own icon.
+const GhostRep = struct {
+    built: bool,
+    title: []const u8 = "",
+    image_w: i32 = 0,
+    image_h: i32 = 0,
+    card_w: i32 = 0,
+    card_h: i32 = 0,
+    hot_x: i32 = 0,
+    hot_y: i32 = 0,
+    title_top: i32 = 0,
+    title_bottom: i32 = 0,
+    scale: c_int = 0,
+    texture_w: c_int = 0,
+    texture_h: c_int = 0,
+    bg: [3]u8 = .{ 0, 0, 0 },
+    strip_planned: [3]u8 = .{ 0, 0, 0 },
+    margin_px: ?[4]u8 = null,
+    shadow_px: ?[4]u8 = null,
+    strip_px: ?[4]u8 = null,
+    body_px: ?[4]u8 = null,
+    title_ink_px: usize = 0,
+    png: ?[]const u8 = null,
+};
+
+fn ghostReport(arena: Allocator, surface: *Surface, png_path: ?[]const u8) GhostRep {
+    const b = surface.dragGhost() orelse return .{ .built = false };
+    defer b.deinit();
+    const p = b.plan;
+    const lay = p.lay;
+    var rep: GhostRep = .{
+        .built = true,
+        .title = if (surface.rearrangeHeader()) |h| arena.dupe(u8, h.title()) catch "" else "",
+        .image_w = p.image.w,
+        .image_h = p.image.h,
+        .card_w = p.card.w,
+        .card_h = p.card.h,
+        .hot_x = p.hot_x,
+        .hot_y = p.hot_y,
+        .title_top = lay.title.top,
+        .title_bottom = lay.title.bottom,
+        .scale = b.scale,
+        .texture_w = wk.gdk_texture_get_width(b.texture),
+        .texture_h = wk.gdk_texture_get_height(b.texture),
+        .bg = .{ p.bg.r, p.bg.g, p.bg.b },
+        .strip_planned = .{ p.strip.r, p.strip.g, p.strip.b },
+    };
+    if (PaneDragGhost.Pixels.of(b)) |px| {
+        defer px.deinit();
+        rep.margin_px = px.at(1, 1);
+        rep.shadow_px = px.at(@divTrunc(p.image.w, 2), lay.card.bottom + 3);
+        const strip_y = lay.title.top + @divTrunc(lay.title.height(), 2);
+        rep.strip_px = px.at(lay.card.right - 4, strip_y);
+        rep.body_px = px.at(lay.body.right - 12, lay.body.bottom - 12);
+        // The title's ink: strip pixels in the left half (where the label
+        // starts) that are far from the strip's own colour.
+        var y = lay.title.top + 2;
+        while (y < lay.title.bottom - 2) : (y += 1) {
+            var x = lay.title.left + 8;
+            while (x < lay.title.left + @divTrunc(lay.title.width(), 2)) : (x += 1) {
+                const v = px.at(x, y) orelse continue;
+                const d = @max(@abs(@as(i32, v[0]) - p.strip.r), @max(@abs(@as(i32, v[1]) - p.strip.g), @abs(@as(i32, v[2]) - p.strip.b)));
+                if (d > 48) rep.title_ink_px += 1;
+            }
+        }
+    }
+    if (png_path) |path| {
+        const bytes = wk.gdk_texture_save_to_png_bytes(b.texture);
+        defer wk.g_bytes_unref(bytes);
+        var len: usize = 0;
+        if (wk.g_bytes_get_data(bytes, &len)) |data| {
+            if (std.fs.cwd().writeFile(.{ .sub_path = path, .data = data[0..len] })) |_| {
+                rep.png = path;
+            } else |err| log.warn("pane-drag --ghost-png: {s}: {}", .{ path, err });
+        }
+    }
+    return rep;
 }
 
 /// `close-dialog --target=<pane|window> [--op=pane|tab|window]

@@ -638,6 +638,41 @@ pub extern fn gtk_box_reorder_child_after(box: *GtkWidget, child: *GtkWidget, si
 pub extern fn gtk_box_insert_child_after(box: *GtkWidget, child: *GtkWidget, sibling: ?*GtkWidget) void;
 pub extern fn gtk_widget_get_parent(widget: *GtkWidget) ?*GtkWidget;
 
+// The ghost card a pane drag carries (T3617): drawn with GtkSnapshot, rendered
+// to a texture by the window's renderer, set as the drag's icon.
+/// `graphene_size_t`.
+pub const GrapheneSize = extern struct { width: f32 = 0, height: f32 = 0 };
+/// `GskRoundedRect`: bounds, then the top-left, top-right, bottom-right and
+/// bottom-left corner radii.
+pub const GskRoundedRect = extern struct { bounds: GrapheneRect = .{}, corner: [4]GrapheneSize = .{ .{}, .{}, .{}, .{} } };
+pub const PangoLayout = opaque {};
+pub const PangoFontDescription = opaque {};
+/// `PANGO_SCALE`, `PANGO_ELLIPSIZE_END`.
+pub const pango_scale: c_int = 1024;
+pub const pango_ellipsize_end: c_int = 3;
+pub extern fn gsk_rounded_rect_init_from_rect(self: *GskRoundedRect, bounds: *const GrapheneRect, radius: f32) *GskRoundedRect;
+pub extern fn gtk_snapshot_push_rounded_clip(snapshot: *GtkSnapshot, bounds: *const GskRoundedRect) void;
+pub extern fn gtk_snapshot_push_clip(snapshot: *GtkSnapshot, bounds: *const GrapheneRect) void;
+pub extern fn gtk_snapshot_pop(snapshot: *GtkSnapshot) void;
+pub extern fn gtk_snapshot_save(snapshot: *GtkSnapshot) void;
+pub extern fn gtk_snapshot_restore(snapshot: *GtkSnapshot) void;
+pub extern fn gtk_snapshot_translate(snapshot: *GtkSnapshot, point: *const GraphenePoint) void;
+pub extern fn gtk_snapshot_append_color(snapshot: *GtkSnapshot, color: *const GdkRGBA, bounds: *const GrapheneRect) void;
+pub extern fn gtk_snapshot_append_outset_shadow(snapshot: *GtkSnapshot, outline: *const GskRoundedRect, color: *const GdkRGBA, dx: f32, dy: f32, spread: f32, blur_radius: f32) void;
+pub extern fn gtk_snapshot_append_border(snapshot: *GtkSnapshot, outline: *const GskRoundedRect, border_width: *const [4]f32, border_color: *const [4]GdkRGBA) void;
+pub extern fn gtk_snapshot_append_layout(snapshot: *GtkSnapshot, layout: *PangoLayout, color: *const GdkRGBA) void;
+pub extern fn gtk_snapshot_append_texture(snapshot: *GtkSnapshot, texture: *GdkTexture, bounds: *const GrapheneRect) void;
+pub extern fn gtk_snapshot_free_to_paintable(snapshot: *GtkSnapshot, size: ?*const GrapheneSize) ?*GdkPaintable;
+pub extern fn gtk_drag_source_set_icon(source: *GtkEventController, paintable: ?*GdkPaintable, hot_x: c_int, hot_y: c_int) void;
+pub extern fn gtk_widget_create_pango_layout(widget: *GtkWidget, text: ?[*:0]const u8) *PangoLayout;
+pub extern fn pango_layout_set_width(layout: *PangoLayout, width: c_int) void;
+pub extern fn pango_layout_set_ellipsize(layout: *PangoLayout, ellipsize: c_int) void;
+pub extern fn pango_layout_set_font_description(layout: *PangoLayout, desc: ?*const PangoFontDescription) void;
+pub extern fn pango_layout_get_pixel_size(layout: *PangoLayout, width: ?*c_int, height: ?*c_int) void;
+pub extern fn pango_font_description_from_string(str: [*:0]const u8) *PangoFontDescription;
+pub extern fn pango_font_description_set_absolute_size(desc: *PangoFontDescription, size: f64) void;
+pub extern fn pango_font_description_free(desc: *PangoFontDescription) void;
+
 // --- Stacked panes: the stage the shared layout places (T3567) ---------------
 
 pub const GtkLayoutManager = opaque {};

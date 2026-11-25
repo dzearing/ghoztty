@@ -15,9 +15,9 @@
 //! it. GTK runs one pointer drag at a time, so the pane being dragged is
 //! module state set at `drag-begin` - the drop never needs to read the bytes,
 //! the Mac's `PaneDragSession` shape. The pointer is an open hand over the
-//! header and GTK shows its own drag icon; the ghost card, the hover handle
-//! with the mode off, a new window and cross-window drops are follow-up cards
-//! filed from T3564.
+//! header, and the drag carries a ghost card of the pane held by its title
+//! strip (T3617, `PaneDragGhost.zig`); the hover handle with the mode off and
+//! the live drop preview are follow-up cards.
 //!
 //! **The tab bar (T3615).** The window's `AdwTabBar` takes pane drops too: a
 //! release there moves the pane into a new tab of its own at the index under
@@ -35,6 +35,7 @@
 const std = @import("std");
 const wk = @import("webkit.zig");
 const pane_drop = @import("../win32/pane_drop.zig");
+const Ghost = @import("PaneDragGhost.zig");
 
 const log = std.log.scoped(.gtk_pane_drag);
 
@@ -74,6 +75,16 @@ pub const Header = struct {
     label: *wk.GtkWidget,
     /// The pane this header drags: a borrow of the surface's own id buffer.
     pane_id: []const u8,
+    /// The drag source, for the ghost card set as its icon at drag-begin.
+    source: *wk.GtkEventController,
+    /// Builds the pane's ghost card (T3617; `Surface.dragGhost`), or null to
+    /// keep GTK's own icon.
+    ghost: ?GhostSource = null,
+
+    pub const GhostSource = struct {
+        owner: *anyopaque,
+        build: *const fn (owner: *anyopaque) ?Ghost.Built,
+    };
 
     pub fn create(alloc: std.mem.Allocator, pane: []const u8) !*Header {
         const self = try alloc.create(Header);
@@ -96,9 +107,8 @@ pub const Header = struct {
         wk.gtk_widget_set_halign(label, 1); // GTK_ALIGN_START
         wk.gtk_box_append(box, label);
 
-        self.* = .{ .box = box, .label = label, .pane_id = pane };
-
         const source = wk.gtk_drag_source_new();
+        self.* = .{ .box = box, .label = label, .pane_id = pane, .source = source };
         wk.gtk_drag_source_set_actions(source, wk.gdk_action_move);
         _ = wk.g_signal_connect_data(source, "prepare", @ptrCast(&onPrepare), self, null, 0);
         _ = wk.g_signal_connect_data(source, "drag-begin", @ptrCast(&onDragBegin), self, null, 0);
@@ -143,7 +153,14 @@ pub const Header = struct {
 
     fn onDragBegin(_: *wk.GtkEventController, _: *wk.GdkDrag, self: *Header) callconv(.c) void {
         setDragged(self.pane_id);
-        log.info("drag began pane={s}", .{self.pane_id});
+        // The ghost card under the pointer, held by its title strip (Mac
+        // `PaneDragGhost`); the drag source keeps its own reference.
+        const g = if (self.ghost) |src| src.build(src.owner) else null;
+        if (g) |b| {
+            defer b.deinit();
+            wk.gtk_drag_source_set_icon(self.source, b.paintable, b.plan.hot_x, b.plan.hot_y);
+            log.info("drag began pane={s} ghost={d}x{d} hot={d},{d}", .{ self.pane_id, b.plan.image.w, b.plan.image.h, b.plan.hot_x, b.plan.hot_y });
+        } else log.info("drag began pane={s} ghost=none", .{self.pane_id});
     }
 
     fn onDragEnd(_: *wk.GtkEventController, _: *wk.GdkDrag, _: c_int, self: *Header) callconv(.c) void {

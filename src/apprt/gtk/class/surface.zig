@@ -44,6 +44,7 @@ const viewer_chrome = @import("../viewer_chrome.zig");
 const IpcHandlers = @import("../IpcHandlers.zig");
 const PaneBanner = @import("../PaneBanner.zig");
 const PaneDrag = @import("../PaneDrag.zig");
+const PaneDragGhost = @import("../PaneDragGhost.zig");
 const RemoteLink = @import("../RemoteLink.zig");
 const disconnect_offer = @import("../disconnect_offer.zig");
 const wk = @import("../webkit.zig");
@@ -1407,6 +1408,7 @@ pub const Surface = extern struct {
         const parent = gl.getParent() orelse return null;
         const box = gobject.ext.cast(gtk.Box, parent) orelse return null;
         const header = PaneDrag.Header.create(std.heap.c_allocator, self.paneId()) catch return null;
+        header.ghost = .{ .owner = self, .build = &dragGhostThunk };
         const box_w: *wk.GtkWidget = @ptrCast(box);
         wk.gtk_orientable_set_orientation(box_w, 1); // GTK_ORIENTATION_VERTICAL
         wk.gtk_box_prepend(box_w, header.box);
@@ -1424,6 +1426,32 @@ pub const Surface = extern struct {
         const header = self.private().rearrange_header orelse return;
         const t: []const u8 = if (self.getEffectiveTitle()) |v| v else self.paneId();
         header.setTitle(t);
+    }
+
+    /// The card a drag of this pane carries (T3617, Mac `PaneDragGhost`):
+    /// the pane's content - the terminal, or a viewer's page - in a card of
+    /// its background with the header's label in the title strip. Also the
+    /// `pane-drag --ghost` seam's, so the seam reads the card a real drag
+    /// shows. The caller deinits it.
+    pub fn dragGhost(self: *Self) ?PaneDragGhost.Built {
+        const priv = self.private();
+        const content: *wk.GtkWidget = if (priv.viewer) |v|
+            @ptrCast(@alignCast(v.widget()))
+        else
+            @ptrCast(priv.gl_area.as(gtk.Widget));
+        const title: []const u8 = if (priv.rearrange_header) |h| h.title() else if (self.getEffectiveTitle()) |v| v else self.paneId();
+        const bg: color_math.Rgb = priv.background_tint orelse bg: {
+            const config_obj = Application.default().getConfig();
+            defer config_obj.unref();
+            const c = config_obj.get().background;
+            break :bg .{ .r = c.r, .g = c.g, .b = c.b };
+        };
+        return PaneDragGhost.build(content, title, bg);
+    }
+
+    fn dragGhostThunk(owner: *anyopaque) ?PaneDragGhost.Built {
+        const self: *Self = @ptrCast(@alignCast(owner));
+        return self.dragGhost();
     }
 
     /// What a banner's relative links resolve against: this pane's working
