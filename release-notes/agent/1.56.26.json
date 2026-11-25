@@ -1,0 +1,11 @@
+{
+  "version": "1.56.26",
+  "sections": [
+    { "title": "New",
+      "items": [
+        { "text": "Remote panes get a defined way to talk to the app you are looking at, and a written trust rule for it." },
+        { "text": "A pane on another machine can now hand its window a file and the pictures beside it, and nothing outside that folder." },
+        { "text": "A page from another machine can now have everything it loads fetched by that machine, so its localhost is the right one." }
+      ] }
+  ]
+}

@@ -1,0 +1,19 @@
+{
+  "version": "1.56.26",
+  "sections": [
+    { "title": "New",
+      "items": [
+        { "text": "On Linux every pane is a sheet of tinted glass over the window's gradient." },
+        { "text": "On Linux a window keeps its gradient across a relaunch, and the gradient now fills the whole window." }
+      ] },
+    { "title": "Fixes",
+      "items": [
+        { "text": "The caption maximize-click harness is confirmed green again; T2232's stall fix had already cured it." }
+      ] },
+    { "title": "Improvements",
+      "items": [
+        { "text": "The 8-pane divider-drag slowdown does not reproduce on an idle box, and the drag test now records how busy the GPU was." },
+        { "text": "Dragging a divider no longer re-cuts every dimmed pane's hidden wash outline on each mouse move." }
+      ] }
+  ]
+}
