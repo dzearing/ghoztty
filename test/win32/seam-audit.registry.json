@@ -275,6 +275,11 @@
             "unset": "shipped-elsewhere",
             "note": "T2514: stands in for a machine with no WGL_NV_DX_interop2 (Mesa, WARP, RDP); unset = interop probed for real, which every other run does. comp-present.ps1 L sets it."
         },
+        "GHOZTTY_PANE_ADOPT_SIMULATE_FAIL": {
+            "class": "fault",
+            "unset": "shipped-elsewhere",
+            "note": "T3739: debug builds fail every move of a pane's GL context onto its own window, the user's blank-pane state; unset = the move is attempted for real, which every other run does. comp-present.ps1 R2 sets it."
+        },
         "GHOZTTY_CONPTY_SYNC_HOLD": {
             "class": "non-default",
             "unset": "shipped-elsewhere",

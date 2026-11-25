@@ -11,9 +11,11 @@
 //! panes the top-level ever held at once, not by how many ever closed.
 //!
 //! What is parked is the bare HWND: hidden, `GWLP_USERDATA` cleared, its pixel
-//! format already set (a window takes one pixel format for life, so the next
-//! pane skips `SetPixelFormat`). The GL context is NOT kept; the next pane
-//! creates its own on the same DC.
+//! format already set when its pane ever drew into it (a window takes one
+//! pixel format for life, so the next pane skips `SetPixelFormat`). The GL
+//! context is NOT kept; the next pane creates its own on the same DC - never
+//! on a composition helper while the window carries a format (T3739,
+//! `contextHome`).
 //!
 //! `GHOZTTY_PANE_REUSE=0` turns it off, for A/B runs and as an escape hatch.
 const std = @import("std");
@@ -79,6 +81,29 @@ pub const Parked = struct {
 
 pub fn reusable(p: Parked) bool {
     return p.class_matches and p.userdata == 0 and p.parent_matches;
+}
+
+/// Where a new pane makes its GL context, given the pixel format its window
+/// already carries (T3739). `carried_format` is `GetPixelFormat` of the
+/// window's DC: always 0 for a fresh window, and for a parked one 0 only when
+/// the pane before it never drew into its window (a composition pane that
+/// stayed on its helper, T2788).
+pub const ContextHome = struct {
+    /// The context may go on a hidden helper (the composition path's T2788
+    /// shape). Only while the window carries no format of its own: a helper
+    /// context made against the helper's format is not one a window that
+    /// already took a format for life is guaranteed to accept, and a
+    /// SwapBuffers fallback then cannot move the context onto the window -
+    /// the T3739 blank pane. A window that carries a format has already paid
+    /// what the helper saves (its moves wait on its GPU work anyway), so its
+    /// context goes on the window itself and is made with that very format.
+    helper_ok: bool,
+    /// The window still needs `SetPixelFormat` before a context can go on it.
+    set_format: bool,
+};
+
+pub fn contextHome(carried_format: i32) ContextHome {
+    return .{ .helper_ok = carried_format == 0, .set_format = carried_format == 0 };
 }
 
 /// A LIFO of parked handles. `H` is the handle type (`w32.HWND` in the app,
@@ -158,6 +183,19 @@ test "a parked handle is reused only while still ours" {
     try std.testing.expect(!reusable(.{ .class_matches = false, .userdata = 0, .parent_matches = true }));
     try std.testing.expect(!reusable(.{ .class_matches = true, .userdata = 0x1000, .parent_matches = true }));
     try std.testing.expect(!reusable(.{ .class_matches = true, .userdata = 0, .parent_matches = false }));
+}
+
+test "T3739: a window that carries a pixel format keeps its pane's context on itself" {
+    // A fresh window, or a parked one whose pane never drew into it: the
+    // helper is allowed and the window has no format yet.
+    const fresh = contextHome(0);
+    try std.testing.expect(fresh.helper_ok);
+    try std.testing.expect(fresh.set_format);
+    // A parked window that took a format for life: never a helper (its
+    // context could not be moved back onto it), and no second SetPixelFormat.
+    const parked = contextHome(7);
+    try std.testing.expect(!parked.helper_ok);
+    try std.testing.expect(!parked.set_format);
 }
 
 test "pool is LIFO, bounded, deduplicated, and drains empty" {

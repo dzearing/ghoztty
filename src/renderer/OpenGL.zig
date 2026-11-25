@@ -136,6 +136,13 @@ comp: ?*gl_comp_present.Presenter = null,
 /// rebuilt.
 comp_tried: bool = false,
 
+/// T3739: when the composition path failed and the context could not move
+/// onto the pane's window either, the frame (ms timestamp) at or after which
+/// the composition path is tried again; 0 when none is scheduled. Bounded by
+/// `gl_comp_present.strandedRetryDelay` over `comp_retries`.
+comp_retry_at_ms: i64 = 0,
+comp_retries: usize = 0,
+
 /// The window presenter path (T2610 step 3c, T2615): when the surface has a
 /// `present_link`, `present` blits the target into one of the link's two
 /// slot textures through this FBO, and `drawFrameEnd` fences and publishes
@@ -932,6 +939,8 @@ fn markLost(self: *OpenGL, why: []const u8, report: bool) void {
     }
     // The rebuilt context gets to choose its path again.
     self.comp_tried = false;
+    self.comp_retry_at_ms = 0;
+    self.comp_retries = 0;
 
     // The window presenter path (T2616): the FBO, the slot sizes and the
     // owed publish all name the dead group's objects. The link's own slot
@@ -1475,8 +1484,13 @@ pub fn present(self: *OpenGL, target: Target) !void {
 /// composition path lock the shared texture for this frame (T2466). Null
 /// means: blit into the window's default framebuffer, as before.
 fn compBegin(self: *OpenGL, width: usize, height: usize) ?gl.Framebuffer {
-    if (!self.comp_tried) {
+    // T3739: a stranded pane (see `compLeaveHelper`) tries again when due.
+    const retry_due = self.comp == null and self.comp_retry_at_ms != 0 and
+        std.time.milliTimestamp() >= self.comp_retry_at_ms;
+    if (!self.comp_tried or retry_due) {
         self.comp_tried = true;
+        self.comp_retry_at_ms = 0;
+        if (retry_due) log.info("retrying the composition path for a pane that could not draw (attempt {})", .{self.comp_retries});
         if (gl_comp_present.enabled()) self.compInit(width, height);
     }
     // T2515: a chain's alpha mode is fixed when it is made, so an opaque one
@@ -1575,8 +1589,17 @@ fn compFail(self: *OpenGL, err: anyerror) void {
 /// needs it on the pane's own window.
 fn compLeaveHelper(self: *OpenGL) void {
     if (comptime apprt.runtime != apprt.win32) return;
-    if (!self.rt_surface.adoptPaneDrawable())
-        log.warn("could not move the pane context onto its window; this pane may not show", .{});
+    if (self.rt_surface.adoptPaneDrawable()) return;
+    // T3739: the context is still on the helper, so nothing this pane draws
+    // reaches the screen. Try the composition path again rather than stay
+    // blank; `adoptPaneDrawable` has logged why the move failed.
+    if (gl_comp_present.strandedRetryDelay(self.comp_retries)) |ms| {
+        self.comp_retries += 1;
+        self.comp_retry_at_ms = std.time.milliTimestamp() + ms;
+        log.warn("could not move the pane context onto its window; retrying the composition path in {}ms (attempt {} of {})", .{ ms, self.comp_retries, gl_comp_present.stranded_retry_ms.len });
+    } else {
+        log.warn("could not move the pane context onto its window; this pane may not show (composition retries exhausted)", .{});
+    }
 }
 
 /// May the renderer free this pane's targets now that it is hidden (T2474)?

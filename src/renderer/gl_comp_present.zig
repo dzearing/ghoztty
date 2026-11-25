@@ -1162,6 +1162,29 @@ pub const Presenter = struct {
     }
 };
 
+/// T3739: the composition path failed AND the pane's context could not move
+/// onto its own window for SwapBuffers, so the pane draws nowhere visible.
+/// Rather than stay blank for the life of the context it tries the
+/// composition path again after `delay(attempt)` ms, a bounded number of
+/// times. Null: no attempts left.
+pub const stranded_retry_ms = [_]u32{ 250, 1000, 4000, 15000, 60000 };
+
+pub fn strandedRetryDelay(attempt: usize) ?u32 {
+    if (attempt >= stranded_retry_ms.len) return null;
+    return stranded_retry_ms[attempt];
+}
+
+test "T3739: a stranded pane retries the composition path a bounded number of times, backing off" {
+    var prev: u32 = 0;
+    for (0..stranded_retry_ms.len) |i| {
+        const d = strandedRetryDelay(i).?;
+        try std.testing.expect(d > prev);
+        prev = d;
+    }
+    try std.testing.expectEqual(@as(?u32, null), strandedRetryDelay(stranded_retry_ms.len));
+    try std.testing.expectEqual(@as(?u32, null), strandedRetryDelay(100));
+}
+
 test "knobOn accepts 1/true/on and nothing else" {
     try std.testing.expect(knobOn("1"));
     try std.testing.expect(knobOn(" true\r\n"));

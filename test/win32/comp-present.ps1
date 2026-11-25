@@ -73,6 +73,13 @@
 #      WARP-only GL or Remote Desktop, every pane logs `composition present
 #      unavailable` at the interop stage, builds no chain, and draws through
 #      SwapBuffers - a banner pane included, its strip a popup over the band.
+#   R. A pane on a REUSED window (T2597) that already carries a pixel format
+#      puts its context on that window, so when its present fails it draws
+#      through SwapBuffers instead of staying blank (T3739, the user's WSL
+#      pane). R3 proves the window really was reused.
+#   R2. A pane whose context cannot move onto its window (the debug seam
+#      GHOZTTY_PANE_ADOPT_SIMULATE_FAIL=1) retries the composition path with
+#      a backoff and builds a fresh chain, instead of drawing nowhere.
 #
 # NOT asserted here: the pixels DWM shows. This harness runs on a background
 # desktop, which DWM never composes and Windows.Graphics.Capture refuses
@@ -107,7 +114,7 @@ if (-not (Test-Path $Exe)) { "SETUP FAIL: $Exe not found - build it first"; exit
 
 $root = Join-Path $env:TEMP "ghoztty-comp-present-$PID"
 $savedLocalAppData = $env:LOCALAPPDATA
-$knobs = 'GHOZTTY_COMP_PRESENT', 'GHOZTTY_COMP_PRESENT_FAIL_AFTER', 'GHOZTTY_GL_SIMULATE_RESET_AFTER', 'GHOZTTY_COMP_PRESENT_SIMULATE_NO_INTEROP', 'GHOZTTY_PANE_GL_HELPER', 'GHOZTTY_COMP_SHARED_DEVICE'
+$knobs = 'GHOZTTY_COMP_PRESENT', 'GHOZTTY_COMP_PRESENT_FAIL_AFTER', 'GHOZTTY_GL_SIMULATE_RESET_AFTER', 'GHOZTTY_COMP_PRESENT_SIMULATE_NO_INTEROP', 'GHOZTTY_PANE_GL_HELPER', 'GHOZTTY_COMP_SHARED_DEVICE', 'GHOZTTY_PANE_ADOPT_SIMULATE_FAIL', 'GHOZTTY_PANE_REUSE'
 $saved = @{}
 foreach ($k in $knobs) { $saved[$k] = [Environment]::GetEnvironmentVariable($k) }
 
@@ -295,6 +302,82 @@ try {
     $na = Count-Log $b.Err $adoptLine
     Assert "B6 each fallen-back pane moved its context onto its own window ($na of $nb)" ($na -eq $nb)
     Assert "B7 and no move failed" ((Read-Text $b.Err) -notmatch 'could not move the pane context')
+
+    # ========================================================================
+    "== R: a pane on a reused window that carries a pixel format falls back and still draws (T3739)"
+    # ========================================================================
+    # The user's shape: a pane that fell back to SwapBuffers gave its window a
+    # pixel format for life; closed, the window is parked (T2597) and the next
+    # pane takes it. That pane's context used to go on a composition helper,
+    # and when ITS present failed the context could not be moved onto the
+    # reused window - a blank pane with a live shell. Now it goes on the
+    # window itself, made with the format the window carries.
+    Set-Knobs '1' '5' $null
+    $r = Start-Arm 'r' @('--undo-timeout=1s', '--confirm-close-surface=false')
+    Assert "R0 the arm's window came up" ($r.Top -ne [IntPtr]::Zero -and $null -ne $r.Win)
+    & $Exe +split "--target=$($r.Target)" '--direction=right' '--name=compr2' 2>$null | Out-Null
+    $adopt0 = Count-Log $r.Err $adoptLine
+    for ($i = 0; $i -lt 30 -and (Count-Log $r.Err $adoptLine) -lt 2; $i++) {
+        # argv-audit: output to draw, plain ASCII words with no quotes or metacharacters
+        & $Exe +send-keys '--target=compr2' "echo give-it-a-format-$i" Enter 2>$null | Out-Null
+        # argv-audit: output to draw, plain ASCII words with no quotes or metacharacters
+        & $Exe +send-keys "--target=$($r.Target)" "echo frame-$i" Enter 2>$null | Out-Null
+        Start-Sleep -Milliseconds 250
+    }
+    Assert "R1 the split pane fell back and gave its own window a pixel format ($(Count-Log $r.Err $adoptLine) adopt lines)" `
+        ((Count-Log $r.Err $adoptLine) -ge 2)
+    & $Exe +close '--target=compr2' 2>$null | Out-Null
+    Assert "R2 its window was parked for reuse" (Wait-Log $r.Err 'terminal pane window parked for reuse' 10000)
+    $helpers = Count-Log $r.Err $helperLine
+    $fails = Count-Log $r.Err $failLine
+    & $Exe +split "--target=$($r.Target)" '--direction=right' '--name=compr3' 2>$null | Out-Null
+    Assert "R3 the next pane took the parked window (so this arm cannot pass by not reusing)" `
+        (Wait-Log $r.Err 'terminal pane reuses a parked window' 10000)
+    Assert "R4 it saw the window's format and put its context on the window itself" `
+        (Wait-Log $r.Err 'parked window carries a pixel format: true \(context on the window itself: true\)' 5000)
+    for ($i = 0; $i -lt 30 -and (Count-Log $r.Err $failLine) -le $fails; $i++) {
+        # argv-audit: output to draw, plain ASCII words with no quotes or metacharacters
+        & $Exe +send-keys '--target=compr3' "echo reused-$i" Enter 2>$null | Out-Null
+        Start-Sleep -Milliseconds 250
+    }
+    Assert "R5 the reused pane's present failed too (the simulated failure reached it)" ((Count-Log $r.Err $failLine) -gt $fails)
+    Assert "R6 and no context was put on a helper for it ($helpers -> $(Count-Log $r.Err $helperLine))" `
+        ((Count-Log $r.Err $helperLine) -eq $helpers)
+    Assert "R7 no move failed, so the pane is not left blank" ((Read-Text $r.Err) -notmatch 'could not move the pane context')
+    & $Exe +send-keys '--target=compr3' 'echo drawn-on-a-reused-window' Enter 2>$null | Out-Null
+    # Test-DrawsText polls the renderer's own target until a capture arrives.
+    Assert "R8 the app is still running and the reused pane draws text" ((Test-Alive $r) -and (Test-DrawsText 'compr3'))
+
+    # ========================================================================
+    "== R2: a pane whose context cannot move onto its window retries the composition path (T3739)"
+    # ========================================================================
+    # GHOZTTY_PANE_ADOPT_SIMULATE_FAIL=1 makes every move fail, the state the
+    # user's pane was left in. Before T3739 that pane drew nowhere for the
+    # life of its context; now it schedules a composition retry, which builds
+    # a fresh chain the pane presents through again.
+    $env:GHOZTTY_PANE_ADOPT_SIMULATE_FAIL = '1'
+    try {
+        Set-Knobs '1' '5' $null
+        $r2 = Start-Arm 'r2'
+        Assert "R2.0 the arm's window came up" ($r2.Top -ne [IntPtr]::Zero -and $null -ne $r2.Win)
+        $onBefore = Count-Log $r2.Err $onLine
+        $sw = [System.Diagnostics.Stopwatch]::StartNew()
+        while ($sw.ElapsedMilliseconds -lt 20000 -and (Count-Log $r2.Err 'retrying the composition path for a pane') -lt 2) {
+            # argv-audit: output to draw, plain ASCII words with no quotes or metacharacters
+            & $Exe +send-keys "--target=$($r2.Target)" "echo stranded" Enter 2>$null | Out-Null
+            Start-Sleep -Milliseconds 200
+        }
+        $text = Read-Text $r2.Err
+        Assert "R2.1 the simulated move failure is logged with both formats" `
+            ($text -match 'pane context could not move onto its window: GetLastError=\d+ window format=\d+ \(carried=\w+\) helper format=\d+ simulated=true')
+        Assert "R2.2 a retry was scheduled with a backoff" ($text -match 'retrying the composition path in 250ms \(attempt 1 of 5\)')
+        $nRetry = Count-Log $r2.Err 'retrying the composition path for a pane'
+        Assert "R2.3 the pane retried, more than once ($nRetry retries)" ($nRetry -ge 2)
+        Assert "R2.4 each retry built a fresh chain ($onBefore -> $(Count-Log $r2.Err $onLine) chain lines)" `
+            ((Count-Log $r2.Err $onLine) -ge ($onBefore + 2))
+        Assert "R2.5 the app is still running and the pane draws text" ((Test-Alive $r2) -and (Test-DrawsText $r2.Target))
+        Assert "R2.6 no OpenGL error and no failed draw" ($text -notmatch 'error\(opengl\)' -and $text -notmatch 'error drawing err=')
+    } finally { Remove-Item env:GHOZTTY_PANE_ADOPT_SIMULATE_FAIL -ErrorAction SilentlyContinue }
 
     # ========================================================================
     "== C: a lost device on the composition path rebuilds its chain"
@@ -975,4 +1058,4 @@ if ($script:failures -eq 0) {
 }
 
 Write-Host ''
-Write-TestVerdict -Pass $script:passes -Fail $script:failures -Label 'comp-present' -MinPass 87
+Write-TestVerdict -Pass $script:passes -Fail $script:failures -Label 'comp-present' -MinPass 103

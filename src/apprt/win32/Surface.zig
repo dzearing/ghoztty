@@ -1023,8 +1023,14 @@ fn initOnce(
     // (release, 120 Hz glide A/B x3: slow batches 45-47% -> 4%, late
     // 325-357 -> 28-37). A pane that falls back to SwapBuffers moves its
     // context back onto its own window (`adoptPaneDrawable`).
+    //
+    // T3739: never for a reused window that already carries a pixel format.
+    // Its context goes on the window itself, made with that format, so a
+    // SwapBuffers fallback has nothing to move (`pane_pool.contextHome`).
+    const home = pane_pool.contextHome(if (reused) |h| windowPixelFormat(h) else 0);
+    if (reused != null) log.info("parked window carries a pixel format: {} (context on the window itself: {})", .{ !home.set_format, !home.helper_ok });
     const on_helper = shared == null and gl_comp_present.enabled() and paneHelperEnabled() and
-        self.initHelperDrawable(app);
+        home.helper_ok and self.initHelperDrawable(app);
 
     // Get the device context. With CS_OWNDC, this DC is valid for
     // the lifetime of the window.
@@ -1037,9 +1043,10 @@ fn initOnce(
         self.hdc = null;
     };
 
-    // Set up the pixel format for OpenGL. A parked window already has it: a
-    // window takes one pixel format for life (T2597).
-    if (shared == null and reused == null and !on_helper) try self.setupPixelFormat();
+    // Set up the pixel format for OpenGL. A parked window whose pane drew into
+    // it already has it: a window takes one pixel format for life (T2597). One
+    // whose pane stayed on a composition helper has none yet (T3739).
+    if (shared == null and home.set_format and !on_helper) try self.setupPixelFormat();
 
     // Create the WGL context — a robust one where the driver offers it, so a
     // graphics driver reset or swap is something the renderer can detect and
@@ -1695,11 +1702,25 @@ pub fn adoptPaneDrawable(self: *Surface) bool {
     const hwnd = self.hwnd orelse return false;
     const hglrc = self.hglrc orelse return false;
     const dc = w32.GetDC(hwnd) orelse return false;
-    if (GetPixelFormat(dc) == 0) setupGlPixelFormat(dc) catch {
+    const carried = GetPixelFormat(dc);
+    if (carried == 0) setupGlPixelFormat(dc) catch {
+        log.warn("pane window pixel format failed (GetLastError={}); the context stays on its helper", .{w32.GetLastError()});
         _ = w32.ReleaseDC(hwnd, dc);
         return false;
     };
-    if (gl_loader.active().makeCurrent(@ptrCast(dc), @ptrCast(hglrc)) == 0) {
+    const simulated = simulateAdoptFail();
+    if (simulated or gl_loader.active().makeCurrent(@ptrCast(dc), @ptrCast(hglrc)) == 0) {
+        // T3739: name both formats, so a mismatch reads as one in the log.
+        const err = w32.GetLastError();
+        const helper_format = if (self.hdc) |h| GetPixelFormat(h) else 0;
+        log.warn(
+            "pane context could not move onto its window: GetLastError={} window format={} (carried={}) helper format={} simulated={}",
+            .{ err, GetPixelFormat(dc), carried != 0, helper_format, simulated },
+        );
+        // The context was current on the helper; put it back there, so the
+        // renderer still has a current context to retry the composition path
+        // with (`OpenGL.compLeaveHelper`).
+        if (self.hdc) |h| _ = gl_loader.active().makeCurrent(@ptrCast(h), @ptrCast(hglrc));
         _ = w32.ReleaseDC(hwnd, dc);
         return false;
     }
@@ -1710,6 +1731,25 @@ pub fn adoptPaneDrawable(self: *Surface) bool {
 }
 
 extern "gdi32" fn GetPixelFormat(hdc: w32.HDC) callconv(.winapi) i32;
+
+/// `GHOZTTY_PANE_ADOPT_SIMULATE_FAIL=1` (debug builds only, T3739): every
+/// `adoptPaneDrawable` fails as if `wglMakeCurrent` had refused the pane's
+/// window, so the stranded-pane retry can be watched (test\win32\comp-present.ps1
+/// arm R2). Never read in a release build.
+fn simulateAdoptFail() bool {
+    if (comptime @import("builtin").mode != .Debug) return false;
+    const raw = std.process.getEnvVarOwned(std.heap.page_allocator, "GHOZTTY_PANE_ADOPT_SIMULATE_FAIL") catch return false;
+    defer std.heap.page_allocator.free(raw);
+    return gl_comp_present.knobOn(raw);
+}
+
+/// The pixel format `hwnd` carries (0: none yet). Terminal pane windows are
+/// CS_OWNDC, so the DC asked for here is the one the pane will use.
+fn windowPixelFormat(hwnd: w32.HWND) i32 {
+    const dc = w32.GetDC(hwnd) orelse return 0;
+    defer _ = w32.ReleaseDC(hwnd, dc);
+    return GetPixelFormat(dc);
+}
 
 /// The window turned translucent or opaque (T2515, `window_translucent`).
 /// UI thread; a change forces a frame, so the composition path re-decides
