@@ -1798,14 +1798,21 @@ pub const Surface = extern struct {
     /// Callback used to determine whether unfocused-split-fill / unfocused-split-opacity
     /// should be applied to the surface
     fn closureShouldUnfocusedSplitBeShown(
-        self: *Self,
+        _: *Self,
         search_active: c_int,
         focused: c_int,
         is_split: c_int,
+        config_: ?*Config,
     ) callconv(.c) c_int {
         // Not on glass (T3622): there focus changes only the rim and glow.
+        // The config is bound so a reload that turns glass on or off
+        // re-evaluates this.
+        const on_glass = if (config_) |c| glass: {
+            const cfg = c.get();
+            break :glass pane_style.hasGlass(Window.paneStyleOf(cfg), cfg.@"macos-pane-glass");
+        } else false;
         return @intFromBool(pane_style.showsUnfocusedWash(
-            self.isOnGlass(),
+            on_glass,
             search_active != 0,
             focused != 0,
             is_split != 0,

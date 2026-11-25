@@ -164,21 +164,17 @@ read -r tr tg tb <<< "$(px "$r" $(( rx + rw / 2 )) $(( ry + rh / 2 )))"
 read -r dr dg db <<< "$(px "$r" $(( rx - 3 )) $(( ry + rh / 2 )))"
 near "$tr" "$tg" "$tb" 32 48 64 && ! near "$dr" "$dg" "$db" 32 48 64
 hl_check "S15 its terminal keeps the theme colour and sits on a desk of its own" $? "terminal=$tr,$tg,$tb desk=$dr,$dg,$db"
-
 # ---- glass panes (T3622; pane-style.md "Glass panes") ------------------------
-# mix <alpha> <r g b desk>: what a sheet of the terminal's #203040 at <alpha>
-# over that desk pixel composites to. dist <r g b> <r g b>: sum of |deltas|.
-mix() { awk -v t="$1" -v r="$2" -v g="$3" -v b="$4" 'BEGIN{printf "%d %d %d\n", 32*t+r*(1-t)+0.5, 48*t+g*(1-t)+0.5, 64*t+b*(1-t)+0.5}'; }
-dist() { awk -v a="$1" -v b="$2" -v c="$3" -v x="$4" -v y="$5" -v z="$6" 'function d(p,q){return p>q?p-q:q-p} BEGIN{print d(a,x)+d(b,y)+d(c,z)}'; }
-# centre_vs_mix <pane-id>: 'dist r g b' - the card's middle against 40% of the
-# terminal over the desk just left of the card on the same row.
-centre_vs_mix() {
-    local x y w h r g b dr dg db
-    read -r x y w h <<< "$(geom "$1")"
-    read -r r g b <<< "$(px "$1" $(( x + w / 2 )) $(( y + h / 2 )))"
-    read -r dr dg db <<< "$(px "$1" $(( x - 3 )) $(( y + h / 2 )))"
-    echo "$(dist $r $g $b $(mix 0.40 $dr $dg $db)) $r $g $b desk=$dr,$dg,$db"
-}
+# The desk under a card cannot be read directly (the gutter beside a card is
+# inside its drop shadow), so the oracle is a DIFFERENCE: every probe is read
+# under two terminal backgrounds, #203040 and #000000, both dark so the desk
+# is the same. A glass sheet keeps 40% of the background, so the pixel moves by
+# 40% of (32,48,64) = (13,19,26); under a banner card 25% = (8,12,16); a solid
+# terminal moves by all of it, and a white page or a wash not at all.
+# probe <pane-id> <x> <y>: 'r g b' of that window pixel.
+probe() { px "$1" "$2" "$3"; }
+# moved <r g b before> <r g b after> <er eg eb>: each channel moved by e +-4.
+moved() { awk -v a="$1" -v b="$2" -v c="$3" -v x="$4" -v y="$5" -v z="$6" -v p="$7" -v q="$8" -v s="$9" 'function d(u,v){return u>v?u-v:v-u} BEGIN{exit !(d(a-x,p)<=4 && d(b-y,q)<=4 && d(c-z,s)<=4)}'; }
 read -r bx by bw bh <<< "$(geom "$b")"
 wash_cfg='unfocused-split-opacity = 0.5\nunfocused-split-fill = #ff0000\n'
 
@@ -186,50 +182,59 @@ wash_cfg='unfocused-split-opacity = 0.5\nunfocused-split-fill = #ff0000\n'
 printf "${base_cfg}${wash_cfg}" > "$cfg_dir/config.ghostty"
 cli +reload --config > /dev/null 2>&1
 sleep 1
-read -r wr wg wb <<< "$(px "$b" $(( bx + bw / 2 )) $(( by + bh / 2 )))"
+read -r wr wg wb <<< "$(probe "$b" $(( bx + bw / 2 )) $(( by + bh / 2 )))"
 [ "${wr:-0}" -ge 90 ]
 hl_check "G1 control: elevated WITHOUT glass keeps the unfocused wash (b goes red)" $? "b=$wr,$wg,$wb"
 
-printf "${base_cfg}${wash_cfg}macos-pane-glass = true\n" > "$cfg_dir/config.ghostty"
+glass_cfg="${base_cfg}${wash_cfg}macos-pane-glass = true\n"
+printf "$glass_cfg" > "$cfg_dir/config.ghostty"
 o=$(cli +reload --config 2>&1); rc=$?
-sleep 1
-read -r ga gr gg gb gd <<< "$(centre_vs_mix "$a")"
-[ $rc = 0 ] && ! near "$gr" "$gg" "$gb" 32 48 64 && [ "${ga:-999}" -le 24 ]
-hl_check "G2 glass on a reload: a card's middle is 40% terminal over the desk, not the terminal" $? "rc=$rc dist=$ga centre=$gr,$gg,$gb $gd $o"
-read -r cy cr cg cb cd <<< "$(centre_vs_mix "$c")"
-read -r by2 br2 bg2 bb2 bd2 <<< "$(centre_vs_mix "$b")"
-[ "${cy:-999}" -le 24 ] && [ "${by2:-999}" -le 24 ]
-hl_check "G3 the focused pane (c) and an unfocused one (b) are the same glass" $? "c dist=$cy $cr,$cg,$cb $cd | b dist=$by2 $br2,$bg2,$bb2 $bd2"
-[ "${br2:-999}" -lt 90 ]
-hl_check "G4 no unfocused wash on glass (b is not red under unfocused-split-opacity = 0.5)" $? "b=$br2,$bg2,$bb2"
-
-# A banner card: the pane's sheet thins to 25% under it, and the card draws
-# no wash of its own.
-read -r ax ay aw ah <<< "$(geom "$a")"
+# A banner card on a, and a markdown viewer pane under b.
 cli +set-banner --target="$a" 'glass banner' > /dev/null 2>&1
-sleep 1
-read -r nr ng nb <<< "$(px "$a" $(( ax + 10 )) $(( ay + 10 )))"
-read -r ndr ndg ndb <<< "$(px "$a" $(( ax - 3 )) $(( ay + 10 )))"
-d25=$(dist $nr $ng $nb $(mix 0.25 $ndr $ndg $ndb)); d40=$(dist $nr $ng $nb $(mix 0.40 $ndr $ndg $ndb))
-[ "$d25" -le 16 ] && [ "$d25" -lt "$d40" ]
-hl_check "G5 under a banner card the sheet is the thinner 25% glass, no wash" $? "banner=$nr,$ng,$nb desk=$ndr,$ndg,$ndb d25=$d25 d40=$d40"
-read -r ga2 _ <<< "$(centre_vs_mix "$a")"
-[ "${ga2:-999}" -le 24 ]
-hl_check "G6 below the banner the pane is still the 40% sheet" $? "dist=$ga2"
-cli +set-banner --target="$a" '' > /dev/null 2>&1
-
-# A template viewer page goes see-through: the sheet is its background.
 doc="$HL_RUNTIME/glass.md"
 printf '# Glass\n\nA line.\n' > "$doc"
 cli +split --pane=b --name=gv --direction=down --view="$doc" > /dev/null 2>&1
 v=""; for _ in $(seq 1 50); do v=$(id_of ps gv); [ -n "$v" ] && break; sleep 0.2; done
 sleep 3
+
+# The probes, by pane: centre of a (below its banner), of b (unfocused), of
+# c (focused), a point inside a's banner card, the bottom of the viewer page.
+read -r ax ay aw ah <<< "$(geom "$a")"
+read -r bx by bw bh <<< "$(geom "$b")"
+read -r cx cy cw ch <<< "$(geom "$c")"
 read -r vx vy vw vh <<< "$(geom "${v:-x}")"
-read -r vr vg vb <<< "$(px "${v:-x}" $(( ${vx:-0} + ${vw:-0} / 2 )) $(( ${vy:-0} + ${vh:-0} - 12 )))"
-read -r vdr vdg vdb <<< "$(px "${v:-x}" $(( ${vx:-0} - 3 )) $(( ${vy:-0} + ${vh:-0} - 12 )))"
-vd=$(dist ${vr:-0} ${vg:-0} ${vb:-0} $(mix 0.40 ${vdr:-0} ${vdg:-0} ${vdb:-0}))
-[ -n "$v" ] && [ "$vd" -le 24 ]
-hl_check "G7 a markdown viewer's page is see-through over the pane's sheet (not white)" $? "v=$v page=$vr,$vg,$vb desk=$vdr,$vdg,$vdb dist=$vd"
+pts=("$a $(( ax + aw / 2 )) $(( ay + ah / 2 ))"
+     "$b $(( bx + bw / 2 )) $(( by + bh / 2 ))"
+     "$c $(( cx + cw / 2 )) $(( cy + ch / 2 ))"
+     "$a $(( ax + 10 )) $(( ay + 10 ))"
+     "${v:-x} $(( ${vx:-0} + ${vw:-0} / 2 )) $(( ${vy:-0} + ${vh:-0} - 12 ))")
+before=(); for p in "${pts[@]}"; do before+=("$(probe $p)"); done
+printf "${glass_cfg}background = #000000\n" > "$cfg_dir/config.ghostty"
+cli +reload --config > /dev/null 2>&1
+sleep 2
+after=(); for p in "${pts[@]}"; do after+=("$(probe $p)"); done
+printf "$glass_cfg" > "$cfg_dir/config.ghostty"
+cli +reload --config > /dev/null 2>&1
+pair() { echo "${before[$1]// /,} -> ${after[$1]// /,}"; }
+
+[ $rc = 0 ] && moved ${before[0]} ${after[0]} 13 19 26
+hl_check "G2 glass on a reload: a card is 40% of its terminal's background over the desk" $? "rc=$rc a $(pair 0) $o"
+moved ${before[1]} ${after[1]} 13 19 26 && moved ${before[2]} ${after[2]} 13 19 26
+hl_check "G3 the focused pane (c) and an unfocused one (b) are the same 40% glass" $? "b $(pair 1) | c $(pair 2)"
+read -r br2 bg2 bb2 <<< "${before[1]}"
+[ "${br2:-999}" -lt 90 ]
+hl_check "G4 no unfocused wash on glass (b is not red under unfocused-split-opacity = 0.5)" $? "b=${before[1]}"
+moved ${before[3]} ${after[3]} 8 12 16
+hl_check "G5 under a banner card the sheet thins to 25% glass, and the card adds no wash" $? "banner $(pair 3)"
+[ -n "$v" ] && moved ${before[4]} ${after[4]} 13 19 26
+hl_check "G6 a markdown viewer's page is see-through over the pane's 40% sheet (not white)" $? "v=$v page $(pair 4)"
+cli +set-banner --target="$a" '' > /dev/null 2>&1
+cli +close --pane="${v:-x}" > /dev/null 2>&1
+read -r gr gg gb <<< "${before[0]}"
+! near "$gr" "$gg" "$gb" 32 48 64
+hl_check "G7 control: the glass pane is not its solid terminal colour" $? "a=${before[0]}"
+
+
 
 # Flat has no glass: with macos-pane-glass still true, the terminal draws its
 # own background again.
