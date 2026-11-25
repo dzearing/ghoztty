@@ -19,6 +19,14 @@
 # lands in that tab's layout from the tab the pane left - which closes when
 # it empties. A window's only pane never leaves it.
 #
+# T3616 adds ANOTHER window (X1-X12): a pane of one window dropped on a pane
+# of another splits or swaps there (SplitTree.dropPaneAt finds the source
+# app-wide), dropped on its tab bar becomes a tab there (--bar-of aims the
+# seam at that window's bar), the rearrange mode follows the pane, a dwell on
+# the other window's tab opens it, and a window's LAST pane may join another
+# window - the window it emptied closes without asking (Mac
+# PaneMoveCoordinator.allows: nothing closed, its contents moved).
+#
 # Run it ONLY through the wrapper:
 #
 #   powershell -NoProfile -File scripts\linux\wsl-run.ps1 -CommandFile test\linux\cli-pane-drag.sh
@@ -328,6 +336,78 @@ r=$(pd --target=solo --drop-tab=0)
 sleep 0.5
 [ "$(pf "$r" "d['drop']['outcome']")" = in_place ] && has_window solo && [ "$(pf "$(pd --target=solo)" "d['tab_count']")" = 1 ]
 hl_check "D31 a window's only pane dropped on its tab stays: the window keeps its one tab" $? "$r"
+
+# --- into ANOTHER window (T3616) -----------------------------------------------------
+
+# w2: f (unnamed) | e, rearrange mode OFF. dw is in the mode with
+# "b | *V(d,H(c,a))", solo in the mode with its one pane.
+cli +new-window --target=w2 > /dev/null 2>&1
+hl_wait_for 15 has_window w2
+f=$(list_py shape w2)
+cli +split --target=w2 --name=e > /dev/null 2>&1
+w2_is() { [ "$(tabs_of w2)" = "$1" ]; }
+dw_is() { [ "$(tabs_of dw)" = "$1" ]; }
+dw_gone() { ! has_window dw; }
+hl_wait_for 15 w2_is "*H($f,e)"
+s=$(list_py shape solo)
+pid_e=$(pid_in w2 e); pid_f=$(pid_in w2 "$f"); pid_s=$(pid_in solo "$s")
+nwin() { pf "$(pd --target="$1")" "d['window_count']"; }
+win0=$(nwin c)
+[ "$(pf "$(pd --target=e)" "d['mode']")" = False ] && [ -n "$f" ] && [ -n "$s" ] && [ "${win0:-0}" -ge 3 ]
+hl_check "X1 a second window w2 holds H(f,e), out of rearrange mode" $? "w2=$(tabs_of w2) solo=$s windows=$win0"
+
+xdrop() { # xdrop <label> <want target> <want dw tabs|-> <want w2 tabs> <pd args...>
+    local label=$1 want_t=$2 want_dw=$3 want_w2=$4; shift 4
+    local r t o
+    r=$(pd "$@")
+    t=$(pf "$r" "d['drop']['target']"); o=$(pf "$r" "d['drop']['outcome']")
+    hl_wait_for 5 w2_is "$want_w2"
+    [ "$want_dw" = - ] && hl_wait_for 5 dw_gone
+    [ "$t" = "$want_t" ] && [ "$o" = moved ] && w2_is "$want_w2" \
+        && { [ "$want_dw" = - ] || dw_is "$want_dw"; }
+    hl_check "$label" $? "target=$t outcome=$o dw=$(tabs_of dw) w2=$(tabs_of w2) reply=$r"
+}
+xdrop "X2 c dropped on e's lower half in w2 splits e there; it leaves dw" split "b | *V(d,$a)" "*H($f,V(e,c))" \
+    --target=c --drop-on=e --fx=0.5 --fy=0.92
+r=$(pd --target=c)
+[ "$(pf "$r" "d['mode']")" = True ] && [ "$(hdr "$r" "$c" shown)" = True ] && [ "$(hdr "$r" "$(list_py id w2 e)" shown)" = True ]
+hl_check "X3 the mode follows the pane: w2 is now in rearrange mode, every pane with a header" $? "$r"
+xdrop "X4 d from dw swaps with e in w2: each window takes the other's pane" swap "b | *V(e,$a)" "*H($f,V(d,c))" \
+    --target="$d" --drop-on=e --fx=0.5 --fy=0.5
+xdrop "X5 a dropped on w2's tab bar becomes a new tab there, before its one tab" new_tab "b | *e" "*$a | H($f,V(d,c))" \
+    --target="$a" --bar-of=c --drop-tab=0
+xdrop "X6 e, its tab's only pane, dropped on w2's second tab button: its dw tab closes" new_tab "*b" "$a | *e | H($f,V(d,c))" \
+    --target=e --bar-of=c --drop-tab=1
+
+pd --target=b --bar-of=c --hover-tab=2 > /dev/null
+r=$(pd --target=c)   # w2's own state: armed, not yet switched
+w2_third() { w2_is "$a | e | *H($f,V(d,c))"; }
+armed=1; [ "$(pf "$r" "d['dwell_tab']")" = 2 ] && [ "$(pf "$r" "d['selected_tab']")" = 1 ] && armed=0
+hl_wait_for 5 w2_third
+[ $armed = 0 ] && w2_third
+hl_check "X7 a drag from dw resting on w2's third tab arms w2's dwell, which then opens it" $? "$r w2=$(tabs_of w2)"
+xdrop "X8 b, dw's last pane, joins c in w2: dw closes, as a window whose contents moved away" split - "$a | e | *H($f,V(d,H(c,b)))" \
+    --target=b --drop-on=c --fx=0.92 --fy=0.5
+win1=$(nwin c)
+! has_window dw && [ "$win1" = $((win0 - 1)) ]
+hl_check "X8b dw is gone, one window fewer, and no close confirmation held it" $? "windows $win0 -> $win1 $(cli +list --json 2>/dev/null | head -c 300)"
+r=$(pd --target="$s" --bar-of=c --drop-tab=0)
+solo_gone() { ! has_window solo; }
+hl_wait_for 5 solo_gone
+[ "$(pf "$r" "d['drop']['outcome']")" = moved ] && w2_is "*$s | $a | e | H($f,V(d,H(c,b)))" && [ "$(nwin c)" = $((win0 - 2)) ]
+hl_check "X9 solo's only pane dropped on w2's tab bar becomes a tab there, and solo closes" $? "$r w2=$(tabs_of w2)"
+
+[ "$(pid_in w2 "$a")" = "$pid_a" ] && [ "$(pid_in w2 b)" = "$pid_b" ] && [ "$(pid_in w2 c)" = "$pid_c" ] \
+    && [ "$(pid_in w2 d)" = "$pid_d" ] && [ "$(pid_in w2 e)" = "$pid_e" ] && [ "$(pid_in w2 "$s")" = "$pid_s" ] \
+    && alive "$pid_a" && alive "$pid_b" && alive "$pid_c" && alive "$pid_d" && alive "$pid_e" && alive "$pid_s"
+hl_check "X10 every cross-window drop MOVED the panes: same shells, still running" $? \
+    "a=$pid_a/$(pid_in w2 "$a") b=$pid_b/$(pid_in w2 b) c=$pid_c/$(pid_in w2 c) d=$pid_d/$(pid_in w2 d) e=$pid_e/$(pid_in w2 e) s=$pid_s/$(pid_in w2 "$s")"
+cli +send-keys --target=b 'echo X11_$((40+4))' Enter > /dev/null 2>&1
+read_b() { cli +read --name=b --lines=20 2>/dev/null | grep -q 'X11_44'; }
+hl_wait_for 10 read_b
+hl_check "X11 the pane whose window closed under it still runs its shell" $?
+grep -q 'arrived from another window' "$APP_LOG" && grep -q 'from another window)' "$APP_LOG"
+hl_check "X12 the app logged both kinds of cross-window arrival" $?
 
 # Moving a live pane's widgets from one tab's tree into another's is where
 # GTK complains (a widget with two parents, a destroyed child): none of it.

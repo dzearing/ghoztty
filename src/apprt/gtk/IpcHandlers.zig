@@ -583,10 +583,15 @@ fn paneStack(app: Context, request: Request) Allocator.Error![]u8 {
 /// a tab the dwell switched to), `--drop-at` one in the selected tab's split
 /// area, `--drop-tab` the middle of the n-th tab's button on the bar.
 /// `--hover-tab` moves the drag onto the n-th tab's button (the dwell clock,
-/// `Window.tabDwellAt`); `--hover-leave` takes it off the bar. Reply `drop`:
+/// `Window.tabDwellAt`); `--hover-leave` takes it off the bar.
+/// `--bar-of=<pane>` aims `--drop-tab`, `--hover-tab` and `--hover-leave`
+/// at the tab bar of THAT pane's window instead of the target's - a drag
+/// that ends in another window (T3616). Reply `drop`:
 /// the resolved `target` kind, its `side`/`pane`/`index`, and `outcome`
 /// (`moved|in_place|not_here|none`); `tab_count`, `selected_tab`,
-/// `dwell_tab` and `tab_buttons` (the bar's buttons the resolver reads).
+/// `dwell_tab` and `tab_buttons` (the bar's buttons the resolver reads),
+/// all of the window the target pane is in AFTER any drop, and
+/// `window_count`, the app's windows (a window a drop emptied is gone).
 fn paneDrag(app: Context, request: Request) Allocator.Error![]u8 {
     var target_arg: ?[]const u8 = null;
     var key_arg: ?[]const u8 = null;
@@ -594,6 +599,7 @@ fn paneDrag(app: Context, request: Request) Allocator.Error![]u8 {
     var at_arg: ?[]const u8 = null;
     var tab_arg: ?[]const u8 = null;
     var hover_arg: ?[]const u8 = null;
+    var bar_of_arg: ?[]const u8 = null;
     var hover_leave = false;
     var fx: f64 = 0.5;
     var fy: f64 = 0.5;
@@ -605,6 +611,7 @@ fn paneDrag(app: Context, request: Request) Allocator.Error![]u8 {
         if (std.mem.startsWith(u8, arg, "--drop-tab=")) tab_arg = arg["--drop-tab=".len..];
         if (std.mem.startsWith(u8, arg, "--hover-tab=")) hover_arg = arg["--hover-tab=".len..];
         if (std.mem.eql(u8, arg, "--hover-leave")) hover_leave = true;
+        if (std.mem.startsWith(u8, arg, "--bar-of=")) bar_of_arg = arg["--bar-of=".len..];
         if (std.mem.startsWith(u8, arg, "--fx=")) fx = std.fmt.parseFloat(f64, arg["--fx=".len..]) catch fx;
         if (std.mem.startsWith(u8, arg, "--fy=")) fy = std.fmt.parseFloat(f64, arg["--fy=".len..]) catch fy;
     }
@@ -620,7 +627,7 @@ fn paneDrag(app: Context, request: Request) Allocator.Error![]u8 {
         }),
         .not_found => return server.errorResponse(c_alloc, "pane '{s}' not found in registry", .{target_name}),
     };
-    const window = target.window_();
+    var window = target.window_();
     const surface = target.surface() orelse
         return server.errorResponse(c_alloc, "pane '{s}' is no longer alive", .{target_name});
 
@@ -645,20 +652,27 @@ fn paneDrag(app: Context, request: Request) Allocator.Error![]u8 {
         }
     }.f;
 
-    if (hover_leave) window.cancelTabDwell();
+    // The window whose tab bar the drag is over: the target's own, or the
+    // one `--bar-of` names.
+    const bar_window: *Window = if (bar_of_arg) |b| switch (try resolve(arena, app, b)) {
+        .found => |t| t.window_(),
+        else => return server.errorResponse(c_alloc, "--bar-of: pane '{s}' not found", .{b}),
+    } else window;
+
+    if (hover_leave) bar_window.cancelTabDwell();
     if (hover_arg) |h| {
-        const p = buttonPoint(window, h) orelse
+        const p = buttonPoint(bar_window, h) orelse
             return server.errorResponse(c_alloc, "--hover-tab: no tab button {s} on a visible tab bar", .{h});
-        window.tabDwellAt(p.x, p.y);
+        bar_window.tabDwellAt(p.x, p.y);
     }
 
     const Drop = struct { target: []const u8, outcome: []const u8, side: ?[]const u8, pane: ?[]const u8, index: ?usize, x: f64, y: f64 };
     var drop: ?Drop = null;
     if (tab_arg) |t| {
-        const p = buttonPoint(window, t) orelse
+        const p = buttonPoint(bar_window, t) orelse
             return server.errorResponse(c_alloc, "--drop-tab: no tab button {s} on a visible tab bar", .{t});
         const id = try arena.dupe(u8, surface.paneId());
-        const r = window.dropOnTabBar(id, p.x, p.y);
+        const r = bar_window.dropOnTabBar(id, p.x, p.y);
         drop = .{ .target = r.target, .outcome = r.outcome, .side = null, .pane = null, .index = r.index, .x = p.x, .y = p.y };
     }
     if (on_arg != null or at_arg != null) {
@@ -701,6 +715,14 @@ fn paneDrag(app: Context, request: Request) Allocator.Error![]u8 {
             .y = y,
         };
     }
+    // A drop can carry the pane into another window, and close the one it
+    // left: report the window it is in now.
+    if (drop != null) window = ext.getAncestor(Window, surface.as(gtk.Widget)) orelse
+        return server.errorResponse(c_alloc, "pane '{s}' is in no window after the drop", .{target_name});
+    var window_count: usize = 0;
+    var wins = windowIterator(app);
+    while (wins.next()) |_| window_count += 1;
+
     var bar_buf: [Window.max_tab_buttons]pane_drop.Rect = undefined;
     const bar = window.tabBarCandidate(&bar_buf);
 
@@ -731,6 +753,7 @@ fn paneDrag(app: Context, request: Request) Allocator.Error![]u8 {
         selected_tab: ?usize,
         dwell_tab: ?usize,
         tab_buttons: usize,
+        window_count: usize,
     };
     const rep: Rep = .{
         .mode = window.rearrangeMode(),
@@ -743,6 +766,7 @@ fn paneDrag(app: Context, request: Request) Allocator.Error![]u8 {
         .selected_tab = window.selectedTabIndex(),
         .dwell_tab = window.tabDwell(),
         .tab_buttons = if (bar) |b| b.tab_button_rects.len else 0,
+        .window_count = window_count,
     };
     var out: std.Io.Writer.Allocating = .init(c_alloc);
     defer out.deinit();

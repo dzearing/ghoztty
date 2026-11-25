@@ -418,14 +418,26 @@ pub const SplitTree = extern struct {
         return result;
     }
 
-    /// The drop of a pane that is in ANOTHER tab of this window into this
-    /// tree (T3615): both trees change, the pane that lands is the very one
-    /// that left, and a tab it was the last pane of closes. A pane of another
-    /// window is not here yet (cross-window drops are T3616).
+    /// The drop of a pane that is in ANOTHER tree into this one - another tab
+    /// of this window (T3615), or a tab of another window (T3616): both trees
+    /// change, the pane that lands is the very one that left, and a tab it
+    /// was the last pane of closes - and with it a window that had no other
+    /// tab. That is the Mac's rule too (`PaneMoveCoordinator.allows`: joining
+    /// an EXISTING window is always allowed, a window's last pane included;
+    /// nothing is closed, its contents moved).
     fn dropArriving(self: *Self, dragged_id: []const u8, target: pane_drop.Target) []const u8 {
         const window = ext.getAncestor(Window, self.as(gtk.Widget)) orelse return "not_here";
-        const source = window.splitTreeHolding(dragged_id) orelse return "not_here";
+        const home = Window.paneHome(dragged_id, window) orelse return "not_here";
+        const source = home.tree;
         if (source == self) return "not_here";
+        const cross_window = home.window != window;
+        // Held through the move: the source's tab - and window - may close
+        // under it when it empties.
+        _ = source.as(gobject.Object).ref();
+        defer source.as(gobject.Object).unref();
+        _ = home.window.as(gobject.Object).ref();
+        defer home.window.as(gobject.Object).unref();
+        const source_mode = home.window.rearrangeMode();
         const src_tree = source.private().tree orelse return "not_here";
         const dest_tree = self.private().tree orelse return "not_here";
         const alloc = Application.default().allocator();
@@ -443,13 +455,28 @@ pub const SplitTree = extern struct {
                     const h = pane_drop_apply.handleOf(Surface.Tree, &m.dest, surfaceId, dragged_id) orelse return "not_here";
                     break :dragged m.dest.nodes[h.idx()].leaf;
                 };
+                // A swap sends the pane it landed on the other way.
+                const partner: ?*Surface = partner: {
+                    if (target != .swap) break :partner null;
+                    const h = pane_drop_apply.handleOf(Surface.Tree, &m.source, surfaceId, target.swap.pane) orelse break :partner null;
+                    break :partner m.source.nodes[h.idx()].leaf;
+                };
                 // The source first: it may empty, and its tab then closes;
                 // the pane lives on in `m.dest` meanwhile.
                 source.rearrange(&m.source);
                 self.rearrange(&m.dest);
                 self.private().last_focused.set(dragged_surface);
                 self.as(gobject.Object).notifyByPspec(properties.@"active-surface".impl.param_spec);
-                log.info("pane {s} arrived from another tab", .{dragged_id});
+                if (cross_window) {
+                    if (partner) |p| {
+                        window.finishArrival(&.{ dragged_surface, p }, source_mode);
+                    } else {
+                        window.finishArrival(&.{dragged_surface}, source_mode);
+                    }
+                    log.info("pane {s} arrived from another window", .{dragged_id});
+                } else {
+                    log.info("pane {s} arrived from another tab", .{dragged_id});
+                }
                 return "moved";
             },
         }
@@ -476,6 +503,24 @@ pub const SplitTree = extern struct {
         const alloc = Application.default().allocator();
         var rest = try tree.remove(alloc, h);
         defer rest.deinit();
+        self.rearrange(&rest);
+        return true;
+    }
+
+    /// Take `surface` out of this tree without closing it, even when it is
+    /// the only pane - the tree then empties and its tab closes (T3616: a
+    /// pane leaving for ANOTHER window, which `releaseSurface` refuses for a
+    /// lone pane because within one window its tab is already its own). The
+    /// caller holds a reference to `surface`, and one to this tree's window,
+    /// across the move. False when the pane is not here.
+    pub fn takeSurface(self: *Self, surface: *Surface) Allocator.Error!bool {
+        const tree = self.private().tree orelse return false;
+        const h = pane_drop_apply.handleOf(Surface.Tree, tree, surfaceId, surface.paneId()) orelse return false;
+        const alloc = Application.default().allocator();
+        var rest = try tree.remove(alloc, h);
+        defer rest.deinit();
+        _ = self.as(gobject.Object).ref();
+        defer self.as(gobject.Object).unref();
         self.rearrange(&rest);
         return true;
     }
@@ -2053,9 +2098,11 @@ pub const SplitTree = extern struct {
         }
 
         // A pane that arrived while its window is in rearrange mode - a new
-        // split, a drop - grows its header like the rest (T3564).
+        // split, a drop - grows its header like the rest (T3564); one that
+        // arrived from a window in the mode into one out of it - the pane a
+        // cross-window swap sends back (T3616) - loses its header.
         if (ext.getAncestor(Window, self.as(gtk.Widget))) |window| {
-            if (window.rearrangeMode()) self.syncRearrangeHeaders(true);
+            self.syncRearrangeHeaders(window.rearrangeMode());
         }
 
         // Every pane is a card, and the focused one of several is lit (T3566).

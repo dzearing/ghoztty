@@ -1367,6 +1367,38 @@ pub const Window = extern struct {
         return null;
     }
 
+    /// Where a dragged pane lives: its window and its tab's split tree.
+    pub const PaneHome = struct { window: *Self, tree: *SplitTree };
+
+    /// The window and split tree holding the pane `id`, looked for in
+    /// `near` first and then in every other window of the app (T3616): a
+    /// drag can end in any window, so its drop finds the source app-wide.
+    pub fn paneHome(id: []const u8, near: *Self) ?PaneHome {
+        if (near.splitTreeHolding(id)) |t| return .{ .window = near, .tree = t };
+        var node: ?*glib.List = Application.default().as(gtk.Application).getWindows();
+        while (node) |n| : (node = n.f_next) {
+            const obj: *gobject.Object = @ptrCast(@alignCast(n.f_data orelse continue));
+            const other = gobject.ext.cast(Self, obj) orelse continue;
+            if (other == near) continue;
+            if (other.splitTreeHolding(id)) |t| return .{ .window = other, .tree = t };
+        }
+        return null;
+    }
+
+    /// A pane drag from `source` window landed in this one (T3616; Mac
+    /// `PaneMoveCoordinator.finishRelocation`). The panes in `moved` moved
+    /// rather than closed, so a Disconnect's detach pin from the window they
+    /// left does not follow them; and the mode follows the pane - a drag made
+    /// in rearrange mode leaves the window it landed in rearrangeable too.
+    /// `source_mode` is read before the move, since the window it left may
+    /// have closed with its last pane. Then this window comes forward: the
+    /// pane the user dropped here is the one that types.
+    pub fn finishArrival(self: *Self, moved: []const *Surface, source_mode: bool) void {
+        for (moved) |s| s.clearDetachPin();
+        if (source_mode and !self.rearrangeMode()) self.setRearrangeMode(true);
+        self.as(gtk.Window).present();
+    }
+
     /// The selected tab's position, or null with none.
     pub fn selectedTabIndex(self: *Self) ?usize {
         const tab_view = self.private().tab_view;
@@ -1467,15 +1499,26 @@ pub const Window = extern struct {
         if (target != .new_tab) return .{ .target = @tagName(target), .outcome = "not_here" };
         var result: PaneDrag.DropResult = .{ .target = "new_tab", .index = target.new_tab.index };
 
-        // A pane of another window is a cross-window drop (T3616).
-        const source = self.splitTreeHolding(dragged_id) orelse {
+        const home = paneHome(dragged_id, self) orelse {
             result.outcome = "not_here";
             return result;
         };
+        const source = home.tree;
         const surface = source.surfaceById(dragged_id) orelse {
             result.outcome = "not_here";
             return result;
         };
+
+        // A pane of another window becomes a new tab of THIS window at the
+        // index under the pointer (T3616; Mac `.newTab`, which allows it even
+        // for a window's last pane: the pane lives on here, and the window it
+        // emptied closes as any window does whose contents moved away).
+        if (home.window != self) {
+            result.outcome = if (self.adoptFromWindow(home, surface, target.new_tab.index)) "moved" else "not_here";
+            log.info("tab bar drop pane={s} index={d} outcome={s} (from another window)", .{ dragged_id, target.new_tab.index, result.outcome });
+            return result;
+        }
+
         const tab_view = self.private().tab_view;
         const source_tab = ext.getAncestor(Tab, source.as(gtk.Widget)) orelse {
             result.outcome = "not_here";
@@ -1527,6 +1570,33 @@ pub const Window = extern struct {
         const n = self.private().tab_view.getNPages();
         _ = self.attachTabPage(tab, @intCast(@min(@as(c_int, @intCast(position)), n)));
         tab.getSplitTree().focusSurface(surface);
+        return true;
+    }
+
+    /// Move `surface`, a pane of ANOTHER window (`home`), into a new tab of
+    /// this window at `position`, selected and focused (T3616). The same
+    /// pane: shell, scrollback, pane id and agent session go with it. Its old
+    /// tab closes when it was that tab's only pane, and its old window when
+    /// that was the window's only tab - the source goes first and holds a
+    /// reference through it, since closing may destroy it mid-call.
+    fn adoptFromWindow(self: *Self, home: PaneHome, surface: *Surface, position: usize) bool {
+        _ = surface.ref();
+        defer surface.unref();
+        const source_window = home.window;
+        _ = source_window.as(gobject.Object).ref();
+        defer source_window.as(gobject.Object).unref();
+        const source_mode = source_window.rearrangeMode();
+
+        const taken = home.tree.takeSurface(surface) catch false;
+        if (!taken) return false;
+        const tab = Tab.newAdopting(self.private().config, surface) catch |err| {
+            log.warn("new tab for a pane from another window failed err={}", .{err});
+            return false;
+        };
+        const n = self.private().tab_view.getNPages();
+        _ = self.attachTabPage(tab, @intCast(@min(@as(c_int, @intCast(position)), n)));
+        tab.getSplitTree().focusSurface(surface);
+        self.finishArrival(&.{surface}, source_mode);
         return true;
     }
 
