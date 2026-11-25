@@ -1603,7 +1603,7 @@ fn writeLiveState(jws: *std.json.Stringify, w: anytype) !void {
     if (HostSettingsDialog.current()) |d| {
         try jws.beginObject();
         try jws.objectField("id");
-        try jws.write(d.id());
+        try jws.write(d.deviceId());
         try jws.objectField("title");
         try jws.write(std.mem.span(wk.adw_alert_dialog_get_heading(d.dialog) orelse ""));
         try jws.objectField("body");

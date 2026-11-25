@@ -36,7 +36,7 @@ pub fn title(buf: []u8, name: []const u8) [:0]const u8 {
     return std.fmt.bufPrintZ(buf, "Host Settings for \u{201c}{s}\u{201d}", .{name}) catch "Host Settings";
 }
 
-pub const OnSaved = *const fn (ctx: ?*anyopaque, id: []const u8) void;
+pub const OnSaved = *const fn (ctx: ?*anyopaque, device_id: []const u8) void;
 
 gpa: Allocator,
 dialog: *wk.GtkWidget,
@@ -159,7 +159,7 @@ pub fn present(
     return true;
 }
 
-pub fn id(self: *const HostSettingsDialog) []const u8 {
+pub fn deviceId(self: *const HostSettingsDialog) []const u8 {
     return self.id_buf[0..self.id_len];
 }
 
@@ -221,7 +221,7 @@ fn setText(entry: *wk.GtkWidget, text: []const u8) void {
 }
 
 fn save(self: *HostSettingsDialog) void {
-    const key = self.id();
+    const key = self.deviceId();
     host_defaults.update(self.gpa, .{ .relay = key }, .{
         .working_directory = self.workingDirectory(),
         .shell = self.shellText(),

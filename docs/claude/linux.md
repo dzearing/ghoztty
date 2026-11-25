@@ -1850,7 +1850,7 @@ Ends `SETTINGS WINDOW: ALL PASS` (76 checks: W1-W20 for the window and
 All Settings, P1-P23 for the pages, L1-L10 less L5 for list keys, F1-F8 for
 the Font picker, C1-C14 with C4b and C11b for Config file and the toast).
 Left off the pages for their own cards: the preview and
-themes T3636, the agent status and Remote Machines T3635, color wells and the
+themes T3636, color wells and the
 folder picker T3759, search across the pages T3760. Also
 still to port: the file-mode and local-time fix T3634 (until it lands, a
 backup's date in Restore... reads in UTC: `ConfigFileStore.localNow` is
@@ -1931,6 +1931,52 @@ Seam ops (win32's names, each clicking the drawn button): `open_editor`,
 --index` (the confirmed half), `undo`, `show_change`, `dismiss`, `toast_ms`.
 With `GHOZTTY_SETTINGS_SHELL_DRY` set, a launch is recorded in
 `advanced.last_shell` (`editor|open|reveal|folder <path>`) instead of run.
+
+### Sessions & Agent status and Remote Machines (T3635)
+
+`src/apprt/gtk/SettingsLive.zig`, Mac's `AgentStatusSection` and
+`RemoteMachinesSection`; the words are win32's pure `settings_live.zig`.
+Both are re-read each time their page is SHOWN (`setPage`), as Mac's
+`.onAppear` / `.task`; the seam's `--page=session|remote` is that showing.
+
+- **Agent**: Status ("Running · pid N" with a green dot, else "Not running -
+  it starts with the first terminal", grey), Running build (the shared
+  connection's HELLO stamp, with the stale suffix), This app's agent (only
+  once the launch's upgrade check probed it), Socket (the info file's, else
+  where it will be; `~` for home). Read by `LocalAgent.liveStatus` from
+  `port.json` and a liveness check: showing the page **never dials, never
+  spawns and never runs `ghoztty-agent --version`** (N3 proves it with
+  `session-persistence = false`).
+- **Remote Machines**: the account from local state only (a stored sign-in
+  or `GHOSTTY_RELAY_TOKEN`; unconfigured when no OAuth client id resolves),
+  rows seeded from the remembered directory as "checking…" (amber), then one
+  fetch on a worker thread (`ipc_remote_window.resolveToken` - which may renew
+  over the network - and `relay_directory.listDevices`) lands through
+  `g_idle_add`, tagged with the showing's generation so a late reply for an
+  older showing or a closed window is dropped. A 401 empties the rows and
+  deletes the cache. Mac's "New Remote Window..." button waits for the GTK
+  chooser (T3674).
+- **Host Settings...** is `src/apprt/gtk/HostSettingsDialog.zig`, an
+  `AdwAlertDialog` with Mac's title, body, two fields ("Remote default"
+  placeholders) and the shell presets behind a drop-down; Save writes
+  `host_defaults` keyed by the device id. The chooser (T3674) reuses it.
+- **Where the stores live on Linux** (shared files, a non-Windows branch):
+  host defaults `$XDG_CONFIG_HOME/ghoztty/host_defaults[-debug].json`
+  (`GHOSTTY_HOST_DEFAULTS` overrides), the machine cache
+  `$XDG_CACHE_HOME/ghoztty/machines[-debug].json`.
+
+Seam: `--op=host_settings --value=<device id>` (the row's button),
+`host-settings-fill --key=working_directory|shell --value=`,
+`host-settings-preset --index=`, `host-settings-answer --value=save|cancel`
+(in a separate request from the one that opened it); state adds `live`.
+
+```powershell
+powershell -NoProfile -File scripts\linux\wsl-run.ps1 -CommandFile test\linux\settings-live.sh
+```
+
+Ends `SETTINGS LIVE: ALL PASS` (24 checks, against a python relay on
+loopback). `NEGATIVE=1` has the relay call every machine offline and must
+fail R3.
 
 ## The keyboard shortcut guide (T3570)
 

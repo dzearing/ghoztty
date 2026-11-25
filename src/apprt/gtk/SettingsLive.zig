@@ -57,18 +57,6 @@ socket_shown_buf: [512]u8 = undefined,
 build_buf: [128]u8 = undefined,
 agent_rows: ?AgentRows = null,
 
-const AgentRows = struct {
-    status: *wk.GtkWidget,
-    status_dot: *wk.GtkWidget,
-    status_value: *wk.GtkWidget,
-    running_build: *wk.GtkWidget,
-    running_build_value: *wk.GtkWidget,
-    bundled: *wk.GtkWidget,
-    bundled_value: *wk.GtkWidget,
-    socket: *wk.GtkWidget,
-    socket_value: *wk.GtkWidget,
-};
-
 // ---- Remote Machines -----------------------------------------------------
 
 /// Owns `email` and every machine's strings; reset by `snap`.
@@ -88,6 +76,18 @@ gen: u64 = 0,
 remote_group: ?*wk.GtkWidget = null,
 account_row: ?*wk.GtkWidget = null,
 machine_rows: std.ArrayListUnmanaged(MachineRow) = .empty,
+
+const AgentRows = struct {
+    status: *wk.GtkWidget,
+    status_dot: *wk.GtkWidget,
+    status_value: *wk.GtkWidget,
+    running_build: *wk.GtkWidget,
+    running_build_value: *wk.GtkWidget,
+    bundled: *wk.GtkWidget,
+    bundled_value: *wk.GtkWidget,
+    socket: *wk.GtkWidget,
+    socket_value: *wk.GtkWidget,
+};
 
 pub const MachineRow = struct { row: *wk.GtkWidget, dot: *wk.GtkWidget, button: *wk.GtkWidget };
 

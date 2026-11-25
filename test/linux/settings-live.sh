@@ -107,8 +107,9 @@ a_pid=$(jget "$o" 'd["live"]["agent"]["pid"]')
   && [ "$(jget "$o" 'd["live"]["agent"]["drawn"]["dot"]')" = green ]
 hl_check "A1 Status reads the live agent from its info file: 'Running · pid $agent', green dot" $? "$(jget "$o" 'd["live"]["agent"]')"
 sock=$(jget "$o" 'd["live"]["agent"]["drawn"]["socket"]')
-[ "$sock" = "$state/agent.sock" ] && [ -S "$sock" ]
-hl_check "A2 Socket names the agent's own socket" $? "drawn=$sock"
+# (pgrep's pattern is N3's, so this is also N3's positive control.)
+[ "$sock" = "$state/agent.sock" ] && [ -S "$sock" ] && pgrep -f "ghoztty-agent.*$XDG_CONFIG_HOME/ghoztty/local-agent" | grep -qx "$agent"
+hl_check "A2 Socket names the agent's own socket" $? "drawn=$sock procs=$(pgrep -af "ghoztty-agent.*$XDG_CONFIG_HOME" | tr '\n' ' ')"
 rb=$(jget "$o" 'd["live"]["agent"]["drawn"]["running_build"]')
 [ -n "$rb" ] && [ "$rb" != null ] && [ "$rb" = "$(jget "$o" 'd["live"]["agent"]["running_build"]')" ]
 hl_check "A3 Running build is the build the shared connection shook hands with" $? "running_build=$rb"
@@ -121,14 +122,17 @@ titles=$(jget "$o" '",".join(d["live"]["agent"]["drawn"]["titles"])')
 hl_check "A4 the Agent group draws Mac's four rows and caption (This app's agent only once probed: $bb; --version says $want_bb)" $? "titles=$titles"
 
 # ---- Remote Machines: the account and the relay's machines ---------------
+# The first answer is held back 4 s, so R2 sees the page before it lands.
+echo slow > "$mode"
 o=$(st --op=state --page=remote)
 [ "$(jget "$o" 'd["visible_page"]')" = remote ] \
   && [ "$(jget "$o" 'd["live"]["remote"]["account"]')" = signed_in ] \
   && [ "$(jget "$o" 'd["live"]["remote"]["drawn"]["title"]')" = "Signed in as your account" ] \
   && [ "$(jget "$o" 'd["live"]["remote"]["drawn"]["caption"]')" = "Machines enrolled in your account appear below." ]
 hl_check "R1 the account row: 'Signed in as your account' (an env token has no email) and Mac's caption" $? "$(jget "$o" 'd["live"]["remote"]["drawn"]')"
-[ "$(jget "$o" 'd["live"]["remote"]["rows_drawn"]')" = 0 ] && [ ! -e "$cache" ]
-hl_check "R2 nothing remembered yet: no rows until the fetch answers (and no cache file)" $? "rows=$(jget "$o" 'd["live"]["remote"]["rows_drawn"]')"
+[ "$(jget "$o" 'd["live"]["remote"]["rows_drawn"]')" = 0 ] && [ "$(jget "$o" 'd["live"]["remote"]["fetching"]')" = true ] && [ ! -e "$cache" ]
+hl_check "R2 nothing remembered yet: no rows while the fetch is out (and no cache file); the window answered at once" $? "rows=$(jget "$o" 'd["live"]["remote"]["rows_drawn"]') fetching=$(jget "$o" 'd["live"]["remote"]["fetching"]') cache=$(ls "$cache" 2>&1)"
+echo ok > "$mode"
 fetched() { [ "$(lv '["remote"]["fetched"]')" = true ]; }
 hl_wait_for 15 fetched
 o=$(st --op=state)
@@ -174,9 +178,11 @@ o=$(st --op=state)
 hl_check "H2 the shell field's presets are Mac's list (the 5th is /bin/bash)" $? "shell=$(hd_get '["shell"]')"
 st --op=host-settings-answer --value=save > /dev/null
 o=$(st --op=state)
-[ "$(hd_get '')" = null ] && grep -q '"key":"dev-on"' "$hd" && grep -q '"working_directory":"/srv/work"' "$hd" && grep -q '"shell":"/bin/bash"' "$hd" \
+# hd_entry <key>: that machine's stored entry as JSON (null when absent).
+hd_entry() { python3 -I -c 'import json,sys; h=[e for e in json.load(open(sys.argv[1])).get("hosts",[]) if e.get("key")==sys.argv[2]]; print(json.dumps(h[0] if h else None, sort_keys=True))' "$hd" "$1" 2>/dev/null || echo null; }
+[ "$(hd_get '')" = null ] && [ "$(hd_entry dev-on)" = '{"key": "dev-on", "shell": "/bin/bash", "working_directory": "/srv/work"}' ] \
   && [ "$(m '[0]["drawn"]["caption"]')" = "online · folder: /srv/work · shell: /bin/bash" ]
-hl_check "H3 Save writes the host defaults keyed by device id, and the row re-reads them" $? "file=$(cat "$hd" 2>/dev/null) caption=$(m '[0]["drawn"]["caption"]')"
+hl_check "H3 Save writes the host defaults keyed by device id, and the row re-reads them" $? "entry=$(hd_entry dev-on) caption=$(m '[0]["drawn"]["caption"]')"
 before=$(cat "$hd")
 st --op=host_settings --value=dev-on > /dev/null
 o=$(st --op=state)
@@ -192,7 +198,7 @@ st --op=host-settings-fill --key=working_directory --value= > /dev/null
 st --op=host-settings-fill --key=shell --value='  ' > /dev/null
 st --op=host-settings-answer --value=save > /dev/null
 o=$(st --op=state)
-! grep -q 'dev-on' "$hd" && [ "$(m '[0]["drawn"]["caption"]')" = "online · folder: remote default · shell: remote default" ]
+[ "$(hd_entry dev-on)" = null ] && [ "$(m '[0]["drawn"]["caption"]')" = "online · folder: remote default · shell: remote default" ]
 hl_check "H5 saving both fields empty clears the machine's defaults (back to remote default)" $? "file=$(cat "$hd" 2>/dev/null)"
 
 # ---- a 401 empties the list and forgets the cache -------------------------
@@ -225,8 +231,10 @@ hl_check "N1 with no agent: 'Not running — it starts with the first terminal',
 hl_check "N2 Socket still names where the agent will listen (Mac's line)" $? "$(jget "$o" 'd["live"]["agent"]["drawn"]["socket"]')"
 sleep 1
 st --op=state --page=updates > /dev/null; st --op=state --page=session > /dev/null; sleep 1
-! hl_agent_pid > /dev/null && ! pgrep -f "^$agent_bin" > /dev/null
-hl_check "N3 showing the page twice started no agent" $? "agent=$(hl_agent_pid) procs=$(pgrep -af ghoztty-agent | tr '\n' ' ')"
+# Only an agent of THIS harness counts (its state dir is under our private
+# XDG_CONFIG_HOME); the distro may run others.
+! hl_agent_pid > /dev/null && ! pgrep -f "ghoztty-agent.*$XDG_CONFIG_HOME/ghoztty/local-agent" > /dev/null
+hl_check "N3 showing the page twice started no agent" $? "agent=$(hl_agent_pid) procs=$(pgrep -af "ghoztty-agent.*$XDG_CONFIG_HOME" | tr '\n' ' ')"
 o=$(st --op=state --page=remote)
 [ "$(jget "$o" 'd["live"]["remote"]["account"]')" = unconfigured ] \
   && [ "$(jget "$o" 'd["live"]["remote"]["drawn"]["title"]')" = "Not signed in" ] \
