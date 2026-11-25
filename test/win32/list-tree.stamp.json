@@ -1,22 +1,22 @@
 {
     "guard":  "list-tree",
     "script":  "test/win32/list-tree.ps1",
-    "generated":  "2026-11-24T03:56:18-08:00",
-    "commit":  "696762529",
+    "generated":  "2026-11-24T18:34:42-08:00",
+    "commit":  "f17b0d76f",
     "uncommitted":  [
                         "test/win32/lib/TestDesktop.ps1"
                     ],
     "files":  {
                   "test/win32/float-on-top.ps1":  "b4f9825a9e63f8400b54c33ab6f85ae3866af58e9306305c63c033c818b9239d",
                   "test/win32/lib/ListTree.ps1":  "b34980aaae91d3fb167ada3273c91c4a2d9da5803e526799072e1ea33de1063c",
-                  "test/win32/lib/TestDesktop.ps1":  "9128062457c903e169d5d099e15c5348bfe81de919be75dc767ee1dd94abbaf2",
+                  "test/win32/lib/TestDesktop.ps1":  "b04f6334ae0d17f1f2903e5a2e28302d3da73968715073bdeb944eeba6f7ed65",
                   "test/win32/list-tree.ps1":  "5c4fb21485592f6d33195c4cf11c49fd25bf23cc2e286b5175e257698486d902",
                   "test/win32/viewer-diff.ps1":  "52073bc4114f711bdbc1afc35a37c929fa8cee624b03bf28c85bf38702cbfe69"
               },
     "code":  {
                  "test/win32/float-on-top.ps1":  "code1:d53accfbf5f179fe1ee0bbd4f254bfa69e3fac41969294433a82f9b7162c860a",
                  "test/win32/lib/ListTree.ps1":  "code1:695444427992a0a14706606d4ba48ac2a04e7c42be2ed74d2271151558419fc7",
-                 "test/win32/lib/TestDesktop.ps1":  "code1:e7ad1516762d657591bf69a122d4026e8ea0ffc99290b8a6a52631d4634c3278",
+                 "test/win32/lib/TestDesktop.ps1":  "code1:9974d87f19158c6f77fd0b9b162c20c0987a717bf25fab44b4cd9fde7b6999ef",
                  "test/win32/list-tree.ps1":  "code1:8f43e5054450f510fd62872707e282791da7211ca55004068761cef8801c8f50",
                  "test/win32/viewer-diff.ps1":  "code1:eabf183eebf419d54c4d0c86be7b63c7317bb6ab4be27712dd5ac2140a421046"
              }

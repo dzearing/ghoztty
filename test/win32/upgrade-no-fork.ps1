@@ -574,6 +574,11 @@ $sandboxExe = Join-Path $installDir 'ghoztty.exe'
 # so the build-mode + freshness pre-flight asks about the bytes it copies.
 . (Join-Path $PSScriptRoot 'lib\BuildMode.ps1')
 Assert-GhozttyIsolatedBuild -Exe $Exe | Out-Null
+# T2201: and every process that could start it - the CLI calls, the upgrade
+# script, the windows it relaunches - runs on a background desktop, so nothing
+# this section starts can land on the user's screen.
+. (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
+$null = New-TestDesktop
 $upgrade = Join-Path $Repo 'scripts\upgrade-ghoztty-windows.ps1'
 $upgradeLog = Join-Path $tempDir 'ghoztty-upgrade.log'
 
@@ -629,15 +634,25 @@ function Stop-SandboxProcs {
 # check can miss a command that already exited, and "did the relaunch run?" has
 # to be answerable minutes later.
 function New-ResumeCommand($markerFile) { return "cmd /c echo started > $markerFile" }
-function Run-Sandbox($argsLine, $out, $timeoutSec = 30) {
-    $p = Start-Process -FilePath cmd.exe -WindowStyle Hidden -PassThru -WorkingDirectory $workDir `
-        -ArgumentList "/c `"`"$sandboxExe`" $argsLine > `"$out`" 2>&1`""
-    $null = $p.Handle   # before any wait, or ExitCode reads empty (lib\ExitCodeAudit.ps1)
-    if (-not $p.WaitForExit($timeoutSec * 1000)) {
-        Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+# T2201: every sandbox CLI call runs ON THE TEST DESKTOP. Section B's cold
+# `+new-window` auto-launches the sandbox app, and an auto-launched app lands on
+# the desktop of the CLI process that spawned it - which, through the old
+# `cmd /c` wrapper, was the user's screen. $cliArgs is an array; an element with
+# whitespace is quoted by the helper, so `+send-keys` text travels as one argv.
+# The output file keeps the old wrapper's contract (stdout then stderr), so
+# every reader below is unchanged. Returns the exit code, or $null on timeout.
+function Run-Sandbox([string[]]$cliArgs, $out, $timeoutSec = 30) {
+    $r = $null
+    try {
+        $r = Invoke-OnTestDesktop -Exe $sandboxExe -Arguments $cliArgs -WorkingDirectory $workDir `
+            -TimeoutSec $timeoutSec
+    } catch {
+        [IO.File]::WriteAllText($out, "Run-Sandbox: $($_.Exception.Message)")
         return $null
     }
-    return $p.ExitCode
+    [IO.File]::WriteAllText($out, [string]$r.Output)
+    if ($r.TimedOut) { return $null }
+    return $r.ExitCode
 }
 function Out-Text($f) { if (Test-Path $f) { Get-Content $f -Raw } else { '' } }
 function Find-Leaf($node) {
@@ -652,7 +667,7 @@ function Find-Leaf($node) {
 }
 function Get-Tree($tag) {
     $f = Join-Path $root "list-$tag.json"
-    if ((Run-Sandbox '+list --json' $f 25) -ne 0) { return $null }
+    if ((Run-Sandbox @('+list', '--json') $f 25) -ne 0) { return $null }
     try { return (Out-Text $f | ConvertFrom-Json) } catch { return $null }
 }
 function Windows-Of($tree) {
@@ -682,9 +697,11 @@ function Wait-Windows($tag, $count, $timeoutSec = 60) {
 }
 # Run the upgrade script synchronously against the sandbox, from a launcher
 # directory it must not leak (the T132 trap), and keep its log per section.
-# Every argument with whitespace is quoted: -ArgumentList joins the array with
-# spaces, so an unquoted 'cmd /c echo ...' silently becomes four arguments and
-# -ResumeCommand ends up as 'cmd'.
+# Every argument with whitespace is quoted by Invoke-OnTestDesktop, so
+# 'cmd /c echo ...' stays ONE argument and -ResumeCommand is not cut to 'cmd'.
+# T2201: the script runs on the TEST DESKTOP too - it kills the sandbox app and
+# Start-Process'es it back, and that relaunch (and section C's resume window)
+# inherits this powershell's desktop exactly as the CLI's auto-launch does.
 function Invoke-Upgrade($tag, $extraArgs, $timeoutSec = 300) {
     $a = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $upgrade,
         '-Staging', $stagingDir, '-InstallDir', $installDir,
@@ -692,20 +709,20 @@ function Invoke-Upgrade($tag, $extraArgs, $timeoutSec = 300) {
         # T1569: the default mirror list is the REAL Desktop and share portables,
         # and without this every run here copied the Debug sandbox exe into both.
         '-NoExtraInstalls') + $extraArgs
-    $quoted = $a | ForEach-Object {
-        $s = [string]$_
-        if ($s -match '[\s&<>|]') { '"' + $s + '"' } else { $s }
-    }
+    $a = @($a | ForEach-Object { [string]$_ })
     Remove-Item $upgradeLog -Force -ErrorAction SilentlyContinue
     $savedLane = $env:GHOZTTY_LOOP_LANE
     $env:GHOZTTY_LOOP_LANE = 'a'   # sandbox target; see Invoke-InSandboxTemp (T1254)
-    $p = Start-Process -FilePath powershell.exe -WindowStyle Hidden -PassThru `
-        -WorkingDirectory 'C:\Windows\System32' -ArgumentList $quoted
-    $env:GHOZTTY_LOOP_LANE = $savedLane
-    $null = $p.Handle   # before any wait, or ExitCode reads empty (lib\ExitCodeAudit.ps1)
     $code = $null
-    if ($p.WaitForExit($timeoutSec * 1000)) { $code = $p.ExitCode }
-    else { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue }
+    try {
+        $r = Invoke-OnTestDesktop -Exe (Join-Path $PSHOME 'powershell.exe') -Arguments $a `
+            -WorkingDirectory 'C:\Windows\System32' -TimeoutSec $timeoutSec
+        if (-not $r.TimedOut) { $code = $r.ExitCode }
+    } catch {
+        Write-Host "  Invoke-Upgrade($tag): $($_.Exception.Message)"
+    } finally {
+        $env:GHOZTTY_LOOP_LANE = $savedLane
+    }
     if (Test-Path $upgradeLog) { Copy-Item $upgradeLog (Join-Path $root "upgrade-$tag.log") -Force }
     return $code
 }
@@ -750,7 +767,7 @@ try {
     # ========================================================================
     "== B: a surviving session is REUSED, not forked"
     # ========================================================================
-    $codeB = Run-Sandbox "+new-window --target=main --working-directory=$workDir" `
+    $codeB = Run-Sandbox @('+new-window', '--target=main', "--working-directory=$workDir") `
         (Join-Path $root 'new-window.txt') 60
     Assert "B1 the sandbox instance launched and took a window" ($codeB -eq 0)
     $treeB = Wait-Windows 'b0' 1 60
@@ -835,7 +852,7 @@ try {
     # typed characters echo at its prompt - proof of delivery, not of intent.
     $tail = ''
     for ($i = 0; $i -lt 12; $i++) {
-        Run-Sandbox "+read --name=$paneId --lines=60" (Join-Path $root 'read-b.txt') 25 | Out-Null
+        Run-Sandbox @('+read', "--name=$paneId", '--lines=60') (Join-Path $root 'read-b.txt') 25 | Out-Null
         $tail = Out-Text (Join-Path $root 'read-b.txt')
         if (Test-LoopPromptArrived -Tail $tail -Text $promptB) { break }
         Start-Sleep -Milliseconds 900
@@ -875,11 +892,11 @@ while ((Get-Date) -lt $deadline) {
     if ([Console]::KeyAvailable) { [void][Console]::ReadKey($true) } else { Start-Sleep -Milliseconds 15 }
 }
 '@, (New-Object Text.UTF8Encoding($false)))
-    Run-Sandbox "+send-keys --target=$paneId `"powershell -NoProfile -File $swallowPath`" Enter" `
+    Run-Sandbox @('+send-keys', "--target=$paneId", "powershell -NoProfile -File $swallowPath", 'Enter') `
         (Join-Path $root 'send-swallow.txt') 30 | Out-Null
     $swallowUp = $false
     for ($i = 0; $i -lt 20; $i++) {
-        Run-Sandbox "+read --name=$paneId --lines=20" (Join-Path $root 'read-swallow.txt') 25 | Out-Null
+        Run-Sandbox @('+read', "--name=$paneId", '--lines=20') (Join-Path $root 'read-swallow.txt') 25 | Out-Null
         if ((Out-Text (Join-Path $root 'read-swallow.txt')) -match 'SWALLOW-READY') { $swallowUp = $true; break }
         Start-Sleep -Milliseconds 700
     }
@@ -908,7 +925,7 @@ while ((Get-Date) -lt $deadline) {
         ($null -ne (Get-Process -Id $loop.Id -ErrorAction SilentlyContinue))
 
     # Free the pane again for C/D.
-    Run-Sandbox "+send-keys --target=$paneId C-c" (Join-Path $root 'send-swallow-stop.txt') 30 | Out-Null
+    Run-Sandbox @('+send-keys', "--target=$paneId", 'C-c') (Join-Path $root 'send-swallow-stop.txt') 30 | Out-Null
     Start-Sleep -Seconds 2
 
     # ========================================================================
@@ -920,7 +937,7 @@ while ((Get-Date) -lt $deadline) {
 
     # `+new-window --target=main` focuses an existing 'main' instead of
     # creating one, so clear it: the relaunch case is "nothing survived".
-    Run-Sandbox '+close --target=main' (Join-Path $root 'close-main.txt') 30 | Out-Null
+    Run-Sandbox @('+close', '--target=main') (Join-Path $root 'close-main.txt') 30 | Out-Null
     Start-Sleep -Seconds 2
 
     $markerC = Join-Path $root 'relaunched-c.marker'
@@ -978,6 +995,7 @@ while ((Get-Date) -lt $deadline) {
 } finally {
     # ---- teardown ----------------------------------------------------------
     Stop-SandboxProcs
+    Remove-TestDesktop
     if ($loop) { Stop-Process -Id $loop.Id -Force -ErrorAction SilentlyContinue }
     $env:USERNAME = $savedUser
     if ($null -eq $savedSuffix) { Remove-Item Env:\GHOZTTY_PIPE_SUFFIX -ErrorAction SilentlyContinue }
