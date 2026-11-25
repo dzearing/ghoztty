@@ -52,6 +52,7 @@
 const ActivityMonitor = @This();
 
 const std = @import("std");
+const wheel_accum = @import("wheel_accum.zig");
 const builtin = @import("builtin");
 const Allocator = std.mem.Allocator;
 
@@ -521,6 +522,10 @@ card_count: usize = 0,
 /// that dialed on focus would open a connection per keystroke.
 card_focus: i32 = 0,
 carousel_scroll: i32 = 0,
+/// Wheel remainders carried between messages, one per scroller since their
+/// units differ (pixels of carousel, rows of table) (T3738, `wheel_accum`).
+wheel_cards: wheel_accum.Accum = .{},
+wheel_rows: wheel_accum.Accum = .{},
 /// Card under the pointer, or -1.
 card_hover: i32 = -1,
 

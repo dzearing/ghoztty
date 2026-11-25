@@ -1,14 +1,14 @@
 {
     "guard":  "activity-show-all-disabled",
     "script":  "test/win32/activity-show-all-disabled.ps1",
-    "generated":  "2026-11-24T03:06:11-08:00",
-    "commit":  "696762529",
+    "generated":  "2026-11-25T08:40:44-08:00",
+    "commit":  "31b9a7fd7",
     "uncommitted":  [
-                        "test/win32/activity-show-all-disabled.ps1"
+                        "src/apprt/win32/activity_input.zig"
                     ],
     "files":  {
                   "src/apprt/win32/activity_hover.zig":  "74526e80991c065954218644d4d6fa846ae70fc774529498140e044538072029",
-                  "src/apprt/win32/activity_input.zig":  "a50f18512b9626f3f8368f3ac23125eb49ba5b03596dc0f127c5804fab7580c3",
+                  "src/apprt/win32/activity_input.zig":  "4bd759d75a01633ffb0c0967ee4d9988591d8b842487aabf50b952e6b13d55c3",
                   "src/apprt/win32/activity_sample.zig":  "af20d356ad8d6c6a970586c6b3cd07323e6f2c2699d9671fcb0d3e85782602b1",
                   "src/apprt/win32/activity_view.zig":  "01a5d5e795559f3839cc2028f33c97384e251d6214006cedf1abb947832759ea",
                   "test/win32/activity-show-all-disabled.ps1":  "358b03418a949cddb116a5af988f1d5461497a536f5e64d7ce85dd985c99432e"

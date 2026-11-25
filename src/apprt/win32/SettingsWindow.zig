@@ -65,6 +65,7 @@ const SettingsModel = @import("SettingsModel.zig");
 const SettingsSources = @import("SettingsSources.zig");
 const LineEdit = @import("settings_line_edit.zig");
 const layout = @import("settings_window_layout.zig");
+const wheel_accum = @import("wheel_accum.zig");
 const notes_render = @import("whats_new_notes.zig");
 const settings_pages = @import("settings_pages.zig");
 const settings_advanced = @import("settings_advanced.zig");
@@ -310,6 +311,8 @@ hover_hand: bool = false,
 scroll: i32 = 0,
 content_h: i32 = 0,
 thumb_drag_dy: i32 = -1,
+/// The wheel remainder carried between messages (T3738, `wheel_accum`).
+wheel: wheel_accum.Accum = .{},
 tracking_leave: bool = false,
 hits: std.ArrayListUnmanaged(Hit) = .empty,
 /// A slider being dragged (T2681): its key, its track, and the value it
@@ -3500,9 +3503,10 @@ fn wndProc(hwnd: w32.HWND, msg: u32, wparam: usize, lparam: isize) callconv(.win
             return 0;
         },
         w32.WM_MOUSEWHEEL => {
-            const delta: i16 = @bitCast(@as(u16, @intCast((wparam >> 16) & 0xFFFF)));
-            const notches = @divTrunc(@as(i32, delta), w32.WHEEL_DELTA);
-            self.scrollBy(-notches * layout.px(dip.wheel_step, self.scale));
+            // Carried, not truncated: a touchpad's deltas below 120 used to
+            // round to nothing and the page never moved (T3738).
+            const step = layout.px(dip.wheel_step, self.scale);
+            self.scrollBy(-self.wheel.amount(wheel_accum.deltaOf(wparam), step));
             return 0;
         },
         w32.WM_LBUTTONDOWN, w32.WM_LBUTTONDBLCLK => {

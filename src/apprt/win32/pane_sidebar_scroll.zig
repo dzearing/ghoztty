@@ -15,10 +15,12 @@
 //! The header, its buttons and the search field never scroll (Mac keeps them
 //! above the `ScrollView`).
 //!
-//! Imports only `pane_sidebar.zig`, so it runs in every test lane.
+//! Imports only `pane_sidebar.zig` and `wheel_accum.zig`, so it runs in every
+//! test lane.
 
 const std = @import("std");
 const sb = @import("pane_sidebar.zig");
+const wheel_accum = @import("wheel_accum.zig");
 
 const Layout = sb.Layout;
 const Rect = sb.Rect;
@@ -189,18 +191,17 @@ pub fn revealOffset(l: *const Layout, r: Rect, current: i32, scale: f32) i32 {
 /// Turns wheel deltas into pixels, carrying the remainder so a precision
 /// touchpad's small deltas add up instead of rounding away. Positive delta
 /// (the wheel rolled away from the user) scrolls up, which lowers the offset.
+/// The carry is the shared `wheel_accum` one (T3738), which also drops the
+/// remainder on a change of direction.
 pub const Wheel = struct {
-    rem: i32 = 0,
+    acc: wheel_accum.Accum = .{},
 
     pub fn step(self: *Wheel, delta: i32, lines: u32, line_h: i32) i32 {
-        const total = delta * @as(i32, @intCast(@min(lines, 100))) * line_h + self.rem;
-        const moved = @divTrunc(total, 120);
-        self.rem = total - moved * 120;
-        return -moved;
+        return -self.acc.amount(delta, @as(i32, @intCast(@min(lines, 100))) * line_h);
     }
 
     pub fn reset(self: *Wheel) void {
-        self.rem = 0;
+        self.acc.reset();
     }
 };
 

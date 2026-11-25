@@ -33,6 +33,7 @@ const App = @import("App.zig");
 const Window = @import("Window.zig");
 const build_config = @import("../../build_config.zig");
 const layout = @import("whats_new_layout.zig");
+const wheel_accum = @import("wheel_accum.zig");
 const panel_theme = @import("panel_theme.zig");
 const provenance = @import("provenance.zig");
 const release_notes = @import("release_notes.zig");
@@ -206,6 +207,8 @@ notes: notes_render.Renderer,
 hover_link: ?[*]const u8 = null,
 /// Grab offset while dragging the scroll thumb; -1 when not dragging.
 thumb_drag_dy: i32 = -1,
+/// The wheel remainder carried between messages (T3738, `wheel_accum`).
+wheel: wheel_accum.Accum = .{},
 
 // ---------------------------------------------------------------------
 // Open / close
@@ -669,10 +672,9 @@ fn wndProc(hwnd: w32.HWND, msg: u32, wparam: usize, lparam: isize) callconv(.win
             return 0;
         },
         w32.WM_MOUSEWHEEL => {
-            const delta: i16 = @bitCast(@as(u16, @intCast((wparam >> 16) & 0xFFFF)));
+            // Carried, not truncated, so a touchpad scrolls (T3738).
             const m = layout.metrics(self.scale);
-            const notches = @divTrunc(@as(i32, delta), w32.WHEEL_DELTA);
-            self.scrollBy(-notches * m.wheel_step);
+            self.scrollBy(-self.wheel.amount(wheel_accum.deltaOf(wparam), m.wheel_step));
             return 0;
         },
         w32.WM_LBUTTONDOWN => {

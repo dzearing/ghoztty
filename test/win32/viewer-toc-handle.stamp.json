@@ -1,11 +1,9 @@
 {
     "guard":  "viewer-toc-handle",
     "script":  "test/win32/viewer-toc-handle.ps1",
-    "generated":  "2026-11-22T21:11:01-08:00",
-    "commit":  "efd138326",
+    "generated":  "2026-11-25T08:54:26-08:00",
+    "commit":  "31b9a7fd7",
     "uncommitted":  [
-                        "src/apprt/win32/viewer_toc_paint.zig",
-                        "src/apprt/win32/viewer_toc_place.zig",
                         "src/apprt/win32/ViewerTOCPanel.zig"
                     ],
     "files":  {
@@ -13,7 +11,7 @@
                   "src/apprt/win32/viewer_toc_layout.zig":  "9f24eedd78eb88d2083bf724ce8a96a1b928dd65044ef8f07e239f274d78679c",
                   "src/apprt/win32/viewer_toc_paint.zig":  "2224e5af2ab63bfbc5dc7d8568f362a8cf1d84f44c79bf1bbb0539685f0fbccc",
                   "src/apprt/win32/viewer_toc_place.zig":  "d315b06cc2b2ea283a6d8805d0c48bd64eb509b6048aa2c6fec9863ef1b62238",
-                  "src/apprt/win32/ViewerTOCPanel.zig":  "40cf934ddeaa2b6e4a484b710279d7443698226b1b0f19a96248a4f5f7d6ed31",
+                  "src/apprt/win32/ViewerTOCPanel.zig":  "078f58e513a7cc782fb29c1fa91081b355a07118894eef39bb641552410a5700",
                   "test/win32/viewer-toc-handle.ps1":  "c03d9bea47d45df56e8df941ddc0e2156e4af4b5474a2ecf2ec4e1672b97ab9d"
               },
     "code":  {

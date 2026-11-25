@@ -1,10 +1,10 @@
 {
     "guard":  "whats-new",
     "script":  "test/win32/whats-new.ps1",
-    "generated":  "2026-11-10T18:41:08-08:00",
-    "commit":  "fa2726019",
+    "generated":  "2026-11-25T08:41:29-08:00",
+    "commit":  "31b9a7fd7",
     "uncommitted":  [
-                        "src/apprt/win32/release_notes.zig"
+                        "src/apprt/win32/WhatsNewWindow.zig"
                     ],
     "files":  {
                   "src/apprt/win32/ipc_whats_new.zig":  "35f9a55aca347095990a162cba08e95edf95b3ff9440b04c9dd58370a58e1d10",
@@ -13,8 +13,11 @@
                   "src/apprt/win32/whats_new_layout.zig":  "b6b8eb2feb08dabd5e2e5649f5d0212e83e36afd3f12fe0b7bb764aa7cd97c8e",
                   "src/apprt/win32/whats_new_notes.zig":  "88dba1ab5c90dd4e4a80833b83c6ca4e84a5f3fa6ee875673d03d04bdf8d2cf1",
                   "src/apprt/win32/whats_new_seen.zig":  "48ce76465a617e7c7266a927be9af6554e2a94f2c41059077637bc1b3426a2fb",
-                  "src/apprt/win32/WhatsNewWindow.zig":  "60a5dcde676c94fb20e8854e25eefb9900f5b2bc49e8ccf76b06d67445628a54",
+                  "src/apprt/win32/WhatsNewWindow.zig":  "62c2b1bb334001541e5110480978386f1524bb4dcf1852bd3569d9392eacfe8b",
                   "src/build/GhosttyReleaseNotes.zig":  "2bf24e82595069dd2fa1e29120e406276f2c5a2b1ca0f80ba95e3eb1417d04d6",
                   "test/win32/whats-new.ps1":  "2dd7e75d9014532aa4be67f64269147a6245630877a8b1ff3b4e54660a7609d2"
-              }
+              },
+    "code":  {
+                 "test/win32/whats-new.ps1":  "code1:3d583831201859c265091e65855ea6233c1f19bd3ce31fa97ba508e97442f914"
+             }
 }

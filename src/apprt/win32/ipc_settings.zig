@@ -642,6 +642,12 @@ fn writeState(jws: *std.json.Stringify, alloc: Allocator, w_opt: ?*SettingsWindo
         try jws.write(w.curated_hits);
         try jws.objectField("revealed");
         try jws.write(w.revealed_key);
+        // The page's scroll offset and height (T3738): the oracle for the
+        // wheel, which a touchpad's small deltas used to leave at zero.
+        try jws.objectField("scroll");
+        try jws.write(w.scroll);
+        try jws.objectField("content_h");
+        try jws.write(w.content_h);
         // Appearance > Theme, as the section reads it.
         try jws.objectField("theme");
         {

@@ -1,10 +1,9 @@
 {
     "guard":  "viewer-feedback-images",
     "script":  "test/win32/viewer-feedback-images.ps1",
-    "generated":  "2026-11-22T18:48:48-08:00",
-    "commit":  "d68c974a4",
+    "generated":  "2026-11-25T08:41:39-08:00",
+    "commit":  "31b9a7fd7",
     "uncommitted":  [
-                        "src/apprt/win32/viewer_feedback_carousel.zig",
                         "src/apprt/win32/ViewerFeedbackBar.zig"
                     ],
     "files":  {
@@ -12,7 +11,7 @@
                   "src/apprt/win32/viewer_feedback_carousel.zig":  "d2f764277f746ed8c67e586e3ddb1088b518eea440d1c81ba38fd90a506fa6d5",
                   "src/apprt/win32/viewer_feedback_images.zig":  "6a0f71807506bce40a00a8444c7d4ca3d93c6aec343cac2e97c1344363d4c67e",
                   "src/apprt/win32/viewer_feedback_report.zig":  "74fd27fb98919ed12aca9e5d481d61743c0f9310c833726169d4b00e40b30c75",
-                  "src/apprt/win32/ViewerFeedbackBar.zig":  "4591b0f25871ccbfb6e0419b54459873c602b7b090c54cac2001bef1a81e2b61",
+                  "src/apprt/win32/ViewerFeedbackBar.zig":  "d2e13e9fab90fafe5015e738f61cdb639246b403ef9ededec322878e14c724fd",
                   "src/apprt/win32/ViewerFeedbackSend.zig":  "d66362a90e415480fa5bd6c48481707d6683dd93ca3f7449b1ce2af953d86588",
                   "src/viewer/composer.js":  "ba5e2801f2702309b5707497de1ab122b7837da482bf6c15919ed947c8b87eb5",
                   "test/win32/lib/ComposerSurface.ps1":  "7edd6dccc01fa8654f186ad97e64fb13bd9199305aa0424aebfbe7537e39d287",

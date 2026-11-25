@@ -49,6 +49,7 @@
 const ViewerFeedbackBar = @This();
 
 const std = @import("std");
+const wheel_accum = @import("wheel_accum.zig");
 const Allocator = std.mem.Allocator;
 
 const w32 = @import("win32.zig");
@@ -297,6 +298,8 @@ lines: u32 = 1,
 images: u32 = 0,
 /// How far the thumbnail strip is scrolled, in physical pixels.
 carousel_scroll: i32 = 0,
+/// The wheel remainder carried between messages (T3738, `wheel_accum`).
+wheel: wheel_accum.Accum = .{},
 /// The viewport width the strip was last REPORTED at, so a resize that changes
 /// whether the ribbon overflows re-states it once rather than on every bounds
 /// sync (T668).
@@ -1099,8 +1102,10 @@ fn wndProc(
         },
 
         w32.WM_MOUSEWHEEL => {
-            const raw: i16 = @bitCast(@as(u16, @intCast((wparam >> 16) & 0xFFFF)));
-            self.scrollCarousel(@divTrunc(@as(i32, raw), @as(i32, w32.WHEEL_DELTA)));
+            // Whole detents, carried: a touchpad's small deltas add up to a
+            // thumbnail step instead of rounding to none (T3738).
+            const n = self.wheel.notches(wheel_accum.deltaOf(wparam));
+            if (n != 0) self.scrollCarousel(n);
             return 0;
         },
 

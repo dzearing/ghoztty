@@ -1,13 +1,13 @@
 {
     "guard":  "chooser-kill-hover",
     "script":  "test/win32/chooser-kill-hover.ps1",
-    "generated":  "2026-11-23T16:06:28-08:00",
-    "commit":  "9a546a377",
+    "generated":  "2026-11-25T08:40:55-08:00",
+    "commit":  "31b9a7fd7",
     "uncommitted":  [
-                        "test/win32/chooser-kill-hover.ps1"
+                        "src/apprt/win32/MachineChooser.zig"
                     ],
     "files":  {
-                  "src/apprt/win32/MachineChooser.zig":  "7829560bfc2d4e6be520b86a83bd5639a92076fb3fff2a6c8db1d8c7b9c5bfa1",
+                  "src/apprt/win32/MachineChooser.zig":  "c53d1e23c4422762e38c000b7ac91807332c27693e4c895d0e9875a30392be7e",
                   "src/apprt/win32/session_roster_input.zig":  "db8f3b93c2cf2a08d644ac6dfe74a5ab5abb9503f0305b391f7dfeccb30e71aa",
                   "src/apprt/win32/session_roster_paint.zig":  "dff7f62acb9f8d079371247854d2cc5078e6a0cafea0814e8dc243ee9ff36e04",
                   "src/apprt/win32/session_roster_rows.zig":  "d3a7948e536cd20c83dce0063bada8f8d853416f90cb5d47ede0d33bb0948b18",

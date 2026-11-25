@@ -38,6 +38,7 @@
 const ViewerTOCPanel = @This();
 
 const std = @import("std");
+const wheel_accum = @import("wheel_accum.zig");
 const Allocator = std.mem.Allocator;
 
 const w32 = @import("win32.zig");
@@ -249,6 +250,8 @@ scale: f32 = 1.0,
 row_font: ?*anyopaque = null,
 header_font: ?*anyopaque = null,
 line_h: i32 = 16,
+/// The wheel remainder carried between messages (T3738, `wheel_accum`).
+wheel: wheel_accum.Accum = .{},
 caption_line_h: i32 = 14,
 
 // Theme, derived in applyTheme.
@@ -1012,9 +1015,9 @@ fn wndProc(
         },
 
         w32.WM_MOUSEWHEEL => {
-            const delta: i32 = @as(i16, @bitCast(@as(u16, @intCast((wparam >> 16) & 0xFFFF))));
-            // Three text lines per notch — the Windows list default.
-            const step = @divTrunc(delta * 3 * self.line_h, 120);
+            // Three text lines per notch — the Windows list default. Carried,
+            // so a touchpad's remainders add up instead of rounding off (T3738).
+            const step = self.wheel.amount(wheel_accum.deltaOf(wparam), 3 * self.line_h);
             const before = self.scroll;
             self.scroll -= step;
             self.clampScroll();

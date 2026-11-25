@@ -30,6 +30,7 @@ const Allocator = std.mem.Allocator;
 
 const App = @import("dialog_app.zig").App; // the real App, or the app-less stub (T2197)
 const layout = @import("whats_new_layout.zig");
+const wheel_accum = @import("wheel_accum.zig");
 const notes_render = @import("whats_new_notes.zig");
 const panel_theme = @import("panel_theme.zig");
 const release_notes = @import("release_notes.zig");
@@ -56,6 +57,8 @@ scroll: i32 = 0,
 content_h: i32 = 0,
 /// Grab offset while dragging the scroll thumb; -1 when not dragging.
 thumb_drag_dy: i32 = -1,
+/// The wheel remainder carried between messages (T3738, `wheel_accum`).
+wheel: wheel_accum.Accum = .{},
 hover_link: bool = false,
 /// The app whose theme this paints from, and whose `openUrl` a clicked link
 /// goes through. Null on the app-less dialog paths, which never carry notes.
@@ -355,10 +358,9 @@ fn wndProc(hwnd: w32.HWND, msg: u32, wparam: usize, lparam: isize) callconv(.win
             return 0;
         },
         w32.WM_MOUSEWHEEL => {
-            const delta: i16 = @bitCast(@as(u16, @intCast((wparam >> 16) & 0xFFFF)));
+            // Carried, not truncated, so a touchpad scrolls (T3738).
             const m = self.renderer.metrics();
-            const notches = @divTrunc(@as(i32, delta), w32.WHEEL_DELTA);
-            self.scrollBy(-notches * m.wheel_step);
+            self.scrollBy(-self.wheel.amount(wheel_accum.deltaOf(wparam), m.wheel_step));
             return 0;
         },
         w32.WM_LBUTTONDOWN => {

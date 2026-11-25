@@ -196,6 +196,52 @@ try {
     Assert ($null -ne $cs -and [bool]$cs.readonly) 'C0: cursor-style, set in a later include, is read-only'
     Assert ($cs -and ([string]$cs.override) -like '*later.ghostty') "C0: ...naming the include that sets it (override='$($cs.override)')"
 
+    # =====================================================================
+    # W: a touchpad's small wheel deltas scroll the page (T3738). A precision
+    # touchpad - a Remote Desktop trackpad above all - sends WM_MOUSEWHEEL in
+    # deltas well below one 120 detent; the window used to truncate each to
+    # zero notches and never move. Real messages, posted to the window itself.
+    # =====================================================================
+    $sw = @(Get-TestWindows -ProcessId $app.Pid -Class 'GhozttySettings')
+    if ($sw.Count -ge 1) {
+        $swh = [IntPtr]$sw[0].Hwnd
+        function Read-SettingsScroll { $st = Invoke-Settings @('--op=state'); return [int]$st.data.scroll }
+        function Wait-SettingsScroll([int]$from) {
+            $deadline = (Get-Date).AddSeconds(3)
+            # Moved, then settled: every posted delta has been taken, not just the first.
+            do {
+                $v = Read-SettingsScroll
+                if ($v -ne $from) { Start-Sleep -Milliseconds 250; return (Read-SettingsScroll) }
+                Start-Sleep -Milliseconds 50
+            } while ((Get-Date) -lt $deadline)
+            return $v
+        }
+        function Post-Wheel([int]$delta, [int]$times) {
+            $w = [IntPtr]([int64][uint32]([int64]($delta -band 0xFFFF) * 65536))
+            for ($i = 0; $i -lt $times; $i++) { [void](Send-TestRawMessage -Window $swh -Message 0x020A -WParam $w) }
+        }
+        $s0 = Invoke-Settings @('--op=state')
+        Assert ([int]$s0.data.content_h -gt 2000 -and [int]$s0.data.scroll -eq 0) "W: All Settings is tall enough to scroll and starts at the top (content_h=$($s0.data.content_h) scroll=$($s0.data.scroll))"
+        # One delta of 15 (an eighth of a detent) moves the page on its own.
+        Post-Wheel -15 1
+        $one = Wait-SettingsScroll 0
+        Assert ($one -gt 0) "W: a single 15-unit touchpad delta scrolls down (scroll 0 -> $one)"
+        # Seven more add up to exactly one detent: the remainder is carried.
+        Post-Wheel -15 7
+        $eight = Wait-SettingsScroll $one
+        Post-Wheel -120 1
+        $detent = Wait-SettingsScroll $eight
+        Assert ($eight -gt $one -and ($detent - $eight) -eq $eight) "W: eight deltas of 15 scroll exactly as far as one mouse-wheel detent ($eight vs $($detent - $eight))"
+        # And back up the same way, to the top.
+        Post-Wheel 15 16
+        Post-Wheel 120 1
+        $deadline = (Get-Date).AddSeconds(3)
+        do { $back = Read-SettingsScroll; if ($back -eq 0) { break }; Start-Sleep -Milliseconds 50 } while ((Get-Date) -lt $deadline)
+        Assert ($back -eq 0) "W: small upward deltas scroll back to the top (scroll=$back)"
+    } else {
+        Assert $false 'W: the Settings window is there to post wheel deltas to'
+    }
+
     $s = Invoke-Settings @('--op=state', '--filter=changed')
     $changed = @($s.data.rows)
     Assert ($changed.Count -gt 0 -and $changed.Count -lt $total) "B: Changed narrows the list ($($changed.Count) of $total)"

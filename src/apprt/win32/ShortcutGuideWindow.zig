@@ -41,6 +41,7 @@ const input = @import("../../input.zig");
 const keybind_list = @import("../../config/keybind_list.zig");
 const catalog_mod = @import("shortcut_catalog.zig");
 const layout = @import("shortcut_guide_layout.zig");
+const wheel_accum = @import("wheel_accum.zig");
 const notes_render = @import("whats_new_notes.zig");
 const panel_theme = @import("panel_theme.zig");
 const system_colors = @import("system_colors.zig");
@@ -100,6 +101,8 @@ hover_run: bool = false,
 scroll: i32 = 0,
 content_h: i32 = 0,
 thumb_drag_dy: i32 = -1,
+/// The wheel remainder carried between messages (T3738, `wheel_accum`).
+wheel: wheel_accum.Accum = .{},
 tracking_leave: bool = false,
 /// The terminal window the guide was opened from: the first choice for
 /// running a row (Mac's `TerminalController.preferredParent`).
@@ -1132,9 +1135,9 @@ fn wndProc(hwnd: w32.HWND, msg: u32, wparam: usize, lparam: isize) callconv(.win
             return 0;
         },
         w32.WM_MOUSEWHEEL => {
-            const delta: i16 = @bitCast(@as(u16, @intCast((wparam >> 16) & 0xFFFF)));
-            const notches = @divTrunc(@as(i32, delta), w32.WHEEL_DELTA);
-            self.scrollBy(-notches * layout.px(dip.wheel_step, self.scale));
+            // Carried, not truncated, so a touchpad scrolls (T3738).
+            const step = layout.px(dip.wheel_step, self.scale);
+            self.scrollBy(-self.wheel.amount(wheel_accum.deltaOf(wparam), step));
             return 0;
         },
         w32.WM_LBUTTONDOWN, w32.WM_LBUTTONDBLCLK => {

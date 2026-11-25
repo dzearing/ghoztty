@@ -46,6 +46,7 @@
 const MachineChooser = @This();
 
 const std = @import("std");
+const wheel_accum = @import("wheel_accum.zig");
 const Allocator = std.mem.Allocator;
 const App = @import("App.zig");
 const Window = @import("Window.zig");
@@ -339,6 +340,8 @@ id: u64,
 /// The selected machine's live sessions (T318). Only the Local row has one
 /// today; a remote machine's roster comes over its own transport in T319.
 roster: SessionRoster,
+/// The session list's wheel remainder (T3738, `wheel_accum`).
+session_wheel: wheel_accum.Accum = .{},
 
 /// Every machine's last LOADED session count, keyed by machine (T1745) - what
 /// each list row's count capsule shows. The roster above is only ever the
@@ -4681,7 +4684,10 @@ fn onSessionWheel(self: *MachineChooser, wheel_delta: i16) bool {
     // Three card-heights per notch, the way a list scrolls three lines.
     const m = chooser_sessions.metrics(self.window.scale);
     const step = (m.title_h + m.pad_y * 2) * 3;
-    const delta: i32 = if (wheel_delta > 0) -step else step;
+    // Proportional and carried (T3738): a touchpad's many small deltas used
+    // to scroll three whole cards EACH, so the list leapt to its end.
+    const delta = -self.session_wheel.amount(wheel_delta, step);
+    if (delta == 0) return true;
     if (self.roster.scrollBy(delta, view.rows, view.region, self.window.scale)) {
         self.refreshSessions();
     }

@@ -233,8 +233,7 @@ pub fn onMouseMove(self: *ActivityMonitor, x: i32, y: i32) void {
 /// message that does not carry client coordinates, and reading its lParam as
 /// client would scroll the carousel from the middle of the table.
 pub fn onWheel(self: *ActivityMonitor, delta: i16, screen_x: i32, screen_y: i32) void {
-    const notches: i32 = @divTrunc(@as(i32, delta), @as(i32, w32.WHEEL_DELTA));
-
+    // Carried, not truncated, so a touchpad's deltas below 120 scroll (T3738).
     if (cards_mod.hasCarousel(self.card_count)) {
         var pt: w32.POINT = .{ .x = screen_x, .y = screen_y };
         if (w32.ScreenToClient(self.hwnd, &pt) != 0) {
@@ -244,7 +243,7 @@ pub fn onWheel(self: *ActivityMonitor, delta: i16, screen_x: i32, screen_y: i32)
                 // agree about what a step is.
                 const step = layout_mod.cardRect(l, 1, 0, self.scale).left -
                     layout_mod.cardRect(l, 0, 0, self.scale).left;
-                self.carousel_scroll -= notches * step;
+                self.carousel_scroll -= self.wheel_cards.amount(delta, step);
                 self.clampCarousel();
                 _ = w32.InvalidateRect(self.hwnd, null, 0);
                 return;
@@ -252,7 +251,9 @@ pub fn onWheel(self: *ActivityMonitor, delta: i16, screen_x: i32, screen_y: i32)
         }
     }
 
-    self.scroll -= notches * 3;
+    const rows = self.wheel_rows.amount(delta, 3);
+    if (rows == 0) return;
+    self.scroll -= rows;
     self.clampScroll();
     // A cell tip names the row that WAS under the pointer (T1548).
     hover_help.onTableScrolled(self);
