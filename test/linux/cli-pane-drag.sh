@@ -327,4 +327,9 @@ sleep 0.5
 [ "$(pf "$r" "d['drop']['outcome']")" = in_place ] && has_window solo && [ "$(pf "$(pd --target=solo)" "d['tab_count']")" = 1 ]
 hl_check "D31 a window's only pane dropped on its tab stays: the window keeps its one tab" $? "$r"
 
+# Moving a live pane's widgets from one tab's tree into another's is where
+# GTK complains (a widget with two parents, a destroyed child): none of it.
+! grep -E -- '-(CRITICAL|WARNING) \*\*' "$APP_LOG" > /dev/null
+hl_check "D32 the app logged no GTK critical or warning through the moves" $? "$(grep -E -m5 -- '-(CRITICAL|WARNING) \*\*' "$APP_LOG" | tr '\n' ' ')"
+
 hl_finish "$L"
