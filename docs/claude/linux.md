@@ -1631,9 +1631,56 @@ Ends `STACK GLIDE: ALL PASS`: one sampler process polls the seam every ~40ms
 through a stretched glide (strip click, then a close) and checks the motion,
 the held content, the fades and the resize counts.
 
-Not yet: the gutter bar and double-click
-(T3626), strips as blades with their shadows (T3729), collapses in the session layout and undo (T3627), the featured side
-pane (T3628), live relabel, strip drags and a column test (T3629).
+### The gutter bar and double-click (T3626)
+
+Every divider and grip shows a 4px accent bar with a soft glow down the
+middle of its gutter (Mac `GutterBar`): half strength under the pointer, full
+while dragged, one at a time.
+
+- **One widget, above every card.** `newStage` appends a non-targetable
+  `.gutter-bar` box (CSS: `@accent_bg_color`, `box-shadow: 0 0 5px` at 0.9)
+  as the stage's last child; `placeBar` allocates it over the lit gutter's
+  core and keeps it last after `paintByElevation` reorders the cards.
+  Opacity is the strength (0.5 / 1).
+- **Which gutter** is `gutter_bar_rules.zig` (pure, none lane; sizes and
+  strengths from win32's `gutter_bar.zig`): `litBar` runs on every layout,
+  so the bar is drawn where the layout leaves the gutter and stops where the
+  edge stops. A drag's bar stays on its divider while that divider is laid
+  out; once a fold replaces it (or for a grip, whose index is not stable) it
+  moves to the gutter running the same way, across the same span, nearest
+  where the bar was (`place`). Mid-glide it follows the gutter as drawn
+  (`Slide.shownGutter`). The hover bar is re-asked of every layout from the
+  last pointer position (`Private.pointer`, the motion controller's `motion`
+  and `leave`), so a gutter that moved out from under a still pointer goes
+  out, and every gutter re-checks when a drag ends.
+- **Double-click** is the second press on a gutter inside the desktop's
+  `gtk-double-click-time`/`-distance` (`isDoublePress`; the stage's drag
+  gesture sees every press, so there is no second gesture to group). A
+  divider evens out the panes across it in its direction only
+  (`equalizeOnly` of the visible tree, lifted back with
+  `pane_stash.liftRatios`, as win32's `equalizeSplitsOnly`); a grip between
+  two cards evens the run on show (`stack_drag.evenRun`); the grip where a
+  run meets its strips has none, so its second press is a drag. Either way
+  the press answers `even` and begins no drag.
+- The `pane-stack` seam takes `--hover=x,y` and `--leave` (the motion
+  controller's calls), reports the stage's `bar` (`kind`, `direction`,
+  `strength`, `gutter`, `core`) and `origin` (the stage in its window, to
+  read a `capture-pane --window` picture), and runs its arguments in order,
+  so `--press=P --release=0,0 --press=P` is a double-click.
+
+```powershell
+powershell -NoProfile -File scripts\linux\wsl-run.ps1 -CommandFile test\linux\gutter-bar.sh
+```
+
+Ends `GUTTER BAR: ALL PASS`: hover/leave/drag strengths, the bar 4px down its
+gutter, the accent in the window's own render while a drag is held (and not
+at rest), the bar moving to the edge grip when a drag tucks the far pane, and
+the divider (both directions) and grip double-clicks.
+
+Not yet: strips as blades with their shadows (T3729), collapses in the
+session layout and undo (T3627), the featured side pane (T3628), live
+relabel, strip drags and a column test (T3629), and the bar on a side
+panel's edge (the pane sidebar's, a viewer's contents).
 
 ## Resize pacing (T3568)
 

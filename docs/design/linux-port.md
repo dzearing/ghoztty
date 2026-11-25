@@ -108,7 +108,7 @@ first commit on `main`), so `next` takes them in that order within the P2 band:
 | pane-rearrange | L11b T3564 (done: mode, headers, in-window drops; tab bar + tab dwell T3615 done; + cross-window T3616, ghost/preview/hover handle T3617, new window/pop-out T3618) |
 | copy-reflow | L11c T3565 (done: every GTK copy path reaches the shared cleanup; + seat for a cross-app paste T3620, rectangle T3621) |
 | pane-style | L11d T3566 (done: desk, elevated cards, focus glow, flat, `--color=random` gradient; + glass T3622 done, seed persistence and desk under sidebar/header T3623 done, flat gutter T3624) |
-| stacked-panes | L11e T3567 (done: one stage the shared layout places, minimum + strips, focus brings forward, gutter drags, `+list minimized`; + glides T3625, gutter bar T3626, persistence/undo T3627, featured side pane T3628, live relabel/strip drag/columns T3629) |
+| stacked-panes | L11e T3567 (done: one stage the shared layout places, minimum + strips, focus brings forward, gutter drags, `+list minimized`; + glides T3625 done, gutter bar and double-click T3626 done, persistence/undo T3627, featured side pane T3628, live relabel/strip drag/columns T3629) |
 | terminal-resize | L11f T3568 |
 | settings | L11g T3569 |
 | keyboard-shortcuts | L11h T3570 (done: Ctrl+Shift+/, menu, palette, live catalog, search, Run, cheat sheet; + Run on hover T3639, menu/palette check T3640) |
