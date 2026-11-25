@@ -329,7 +329,7 @@ hl_check "D31 a window's only pane dropped on its tab stays: the window keeps it
 
 # Moving a live pane's widgets from one tab's tree into another's is where
 # GTK complains (a widget with two parents, a destroyed child): none of it.
-! grep -E -- '-(CRITICAL|WARNING) \*\*' "$APP_LOG" > /dev/null
+[ -s "$APP_LOG" ] && grep -q 'tab bar drop pane=' "$APP_LOG" && ! grep -E -- '-(CRITICAL|WARNING) \*\*' "$APP_LOG" > /dev/null
 hl_check "D32 the app logged no GTK critical or warning through the moves" $? "$(grep -E -m5 -- '-(CRITICAL|WARNING) \*\*' "$APP_LOG" | tr '\n' ' ')"
 
 hl_finish "$L"
