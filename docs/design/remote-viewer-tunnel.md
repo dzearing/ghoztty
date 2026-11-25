@@ -163,7 +163,7 @@ Windows task that needs it first. Every Mac task is `seat: mac`.
 
 | Area | Windows / shared | Mac |
 |---|---|---|
-| IPC proxy + `app_ipc` frames + env rewrite + scope policy | T2217 | T2218 |
+| IPC proxy + `app_ipc` frames + env rewrite + scope policy | T2217 (wire + policy), T3710 (agent proxy + env rewrite), T3711 (app dispatcher); GTK: T3712 | T2218 |
 | Remote file content: fetch, granted roots, live reload, relative assets, remote git diff | T2219 | T2220 |
 | HTTP tunnel for pages and websites (decision 3) | T2221 | T2222 |
 | Origin chip, title suffix, persistence/restore of tunnelled viewers | T2223 | T2224 |

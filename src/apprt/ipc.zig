@@ -416,6 +416,11 @@ pub const server = @import("ipc/server.zig");
 /// two Zig servers answer with the same bytes and sentences.
 pub const verbs = @import("ipc/verbs.zig");
 
+/// What a `+verb` run inside a REMOTE pane may do to this app (T2217): the
+/// per-verb scope table, the target-in-scope rule and the shared refusal
+/// wording every frontend enforces on a forwarded request.
+pub const remote_origin = @import("ipc/remote_origin.zig");
+
 /// `verbs.Terminal` over the shared core Surface, which both Zig frontends
 /// host one of per terminal pane. Not referenced by the none-lane tests.
 pub const CoreTerminal = @import("ipc/core_terminal.zig").CoreTerminal;
@@ -436,6 +441,7 @@ test {
     _ = target_lookup;
     _ = server;
     _ = verbs;
+    _ = remote_origin;
     _ = @import("ipc/list.zig");
 }
 

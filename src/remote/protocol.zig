@@ -58,6 +58,7 @@
 //! | v1 | `reply_correlation` | `req_id` on OPEN/ATTACH, echoed on every reply to them | client discards late replies by count (needs `open_failed`/`attach_failed`) |
 //! | v1 | `holder_lost` | `EXIT.lost` for a bound session whose host died; `RELAUNCH.fresh_shell` / `.replay_from` | the pane closes as if its program finished |
 //! | v1 | `session_taken` | `DETACHED{taken}` on a session's own channel when another viewer attaches it | the losing pane is not told (its stream just stops) |
+//! | v1 | `app_ipc` | `APP_REQUEST` 0x80 / `APP_RESPONSE` 0x81: a session's `+verb` reaches the app showing it | no proxy; the child keeps the baked local `GHOZTTY_IPC_SOCKET` |
 //!
 //! Two rules make that table load-bearing rather than decorative:
 //!
@@ -247,6 +248,18 @@ pub const FrameType = enum(u8) {
     // peer that does not know them).
     sessions_sub = 0x7c, // C→A  {}
     sessions_unsub = 0x7d, // C→A  {}
+
+    // Remote-pane IPC (T2217; docs/design/remote-viewer-tunnel.md decision 2).
+    // A `ghoztty +verb` run inside a session reaches the agent's per-session
+    // proxy endpoint on the agent's machine; the agent wraps the request and
+    // sends it to the app showing that session, which serves it through its
+    // ordinary IPC dispatcher under the remote-origin policy
+    // (`apprt/ipc/remote_origin.zig`) and answers with `app_response`. The
+    // REQUEST travels A→C, the reverse of every other request on this wire.
+    // Gated on `capability.app_ipc` (new opcodes are a fatal framing error to
+    // a peer that does not know them).
+    app_request = 0x80, // A→C  {session_id, req_id, request}
+    app_response = 0x81, // C→A  {session_id, req_id, response?, error?}
 };
 
 /// True for the frame types that ride the DATA lane (§4.3). Everything else
@@ -359,6 +372,11 @@ pub fn isRpcReply(t: FrameType) bool {
         .session_cpu_unsub,
         .sessions_sub,
         .sessions_unsub,
+        // The agent's request and the client's answer to it (T2217). The
+        // CLIENT parks on nothing here: `app_request` is a push it serves, and
+        // `app_response` is parked on by the AGENT's proxy, not by `rpcCall`.
+        .app_request,
+        .app_response,
         => false,
     };
 }
@@ -918,6 +936,18 @@ pub const capability = struct {
     /// stream just stops); its stale input is still dropped by the agent,
     /// which needs no capability because it changes nothing on the wire.
     pub const session_taken = "session_taken";
+
+    /// **A session's `ghoztty +verb` reaches the app showing it** (T2217;
+    /// docs/design/remote-viewer-tunnel.md decision 2). The agent serves an
+    /// owner-only IPC endpoint per session on ITS machine, points the child's
+    /// `GHOZTTY_IPC_SOCKET` at it, and forwards each request to the app as
+    /// `APP_REQUEST` (0x80); the app answers with `APP_RESPONSE` (0x81).
+    ///
+    /// Gated because both are new opcodes, and because the fallback differs
+    /// on both sides: against an older app the agent hosts no proxy and leaves
+    /// the child's env exactly as the app baked it; against an older agent the
+    /// app keeps baking its local endpoint, as before.
+    pub const app_ipc = "app_ipc";
 };
 
 /// The kind of pseudo-terminal a peer spawns its children on. Wire-visible
@@ -1150,6 +1180,11 @@ pub const Negotiated = struct {
     /// `DETACHED{taken}`, and the viewer shows it in that pane only. False
     /// against either older peer: the loser is not told.
     session_taken: bool = false,
+
+    /// True iff BOTH peers advertised `capability.app_ipc` (T2217) — the agent
+    /// may host a per-session IPC proxy and send `APP_REQUEST`, and the app
+    /// answers it. False against either older peer: no proxy, no rewrite.
+    app_ipc: bool = false,
 };
 
 /// True iff `caps` contains the capability string `name`.
@@ -1208,6 +1243,8 @@ pub fn negotiate(local: Hello, remote: Hello) ProtocolError!Negotiated {
             hasCapability(remote.capabilities, capability.reply_correlation),
         .session_taken = hasCapability(local.capabilities, capability.session_taken) and
             hasCapability(remote.capabilities, capability.session_taken),
+        .app_ipc = hasCapability(local.capabilities, capability.app_ipc) and
+            hasCapability(remote.capabilities, capability.app_ipc),
     };
 }
 
@@ -1633,6 +1670,46 @@ pub const Detached = struct {
     reason: Reason = .taken,
 
     pub const Reason = enum { taken };
+};
+
+/// The most IPC bytes one `APP_REQUEST` or `APP_RESPONSE` carries: the same
+/// 1 MiB both local IPC ends already cap a request and a reply at
+/// (`apprt/win32/IpcServer.zig` `max_request_len`, `os/ipc_client.zig`
+/// `max_response`), so a forwarded verb is never bigger than a local one.
+pub const max_app_ipc_bytes: usize = 1_048_576;
+
+/// `APP_REQUEST` (0x80, A→C; T2217). Sent only to a peer that negotiated
+/// `capability.app_ipc`, on the control channel.
+pub const AppRequest = struct {
+    /// The session whose child ran the verb. The app serves the request as the
+    /// local pane bound to this session, and takes the request's ORIGIN from
+    /// the connection it arrived on - never from anything in `request`.
+    session_id: []const u8,
+    /// Chosen by the agent, echoed on the `AppResponse`, so the proxy hands
+    /// each answer to the CLI that asked even when several are in flight.
+    req_id: u64,
+    /// The IPC request JSON exactly as the CLI wrote it to the proxy
+    /// endpoint. At most `max_app_ipc_bytes`.
+    request: []const u8,
+};
+
+/// `APP_RESPONSE` (0x81, C→A; T2217): the answer to one `AppRequest`.
+/// Exactly one of `response` and `@"error"` is set.
+pub const AppResponse = struct {
+    session_id: []const u8,
+    req_id: u64,
+    /// The IPC reply JSON the app's dispatcher produced, returned to the CLI
+    /// verbatim - including a refusal, which is an ordinary error reply.
+    response: ?[]const u8 = null,
+    /// Set when the app could not serve the request at all (no pane bound to
+    /// that session any more, an oversized request). The proxy turns it into
+    /// an IPC error reply, so the CLI still prints a sentence and exits.
+    @"error": ?[]const u8 = null,
+
+    /// Exactly one of the two answers is present.
+    pub fn isWellFormed(self: AppResponse) bool {
+        return (self.response == null) != (self.@"error" == null);
+    }
 };
 
 /// `META` (0x21). All fields optional; `listening_ports` powers auto-forward
@@ -3561,6 +3638,67 @@ test "T1506 session_taken negotiates on the intersection; Detached round-trips a
     );
     defer later.deinit();
     try testing.expectEqual(Detached.Reason.taken, later.value.reason);
+}
+
+test "T2217 app_ipc negotiates on the intersection; APP_REQUEST/APP_RESPONSE frame and round-trip" {
+    const alloc = testing.allocator;
+    const both = [_][]const u8{capability.app_ipc};
+    const other = [_][]const u8{capability.rpc};
+
+    try testing.expect((try negotiate(
+        .{ .transfer_encoding = .raw, .capabilities = &both },
+        .{ .transfer_encoding = .raw, .capabilities = &both },
+    )).app_ipc);
+    // Either side older: false, so the agent hosts no proxy (older app) and
+    // the app keeps baking its local endpoint (older agent).
+    try testing.expect(!(try negotiate(
+        .{ .transfer_encoding = .raw, .capabilities = &both },
+        .{ .transfer_encoding = .raw, .capabilities = &other },
+    )).app_ipc);
+    try testing.expect(!(try negotiate(
+        .{ .transfer_encoding = .raw, .capabilities = &other },
+        .{ .transfer_encoding = .raw, .capabilities = &both },
+    )).app_ipc);
+
+    // Both opcodes ride control and neither is a client RPC reply.
+    for ([_]FrameType{ .app_request, .app_response }) |t| {
+        try testing.expect(!onDataLane(t));
+        try testing.expect(!isRpcReply(t));
+    }
+
+    // The IPC JSON rides as a string, quotes and all, and survives a frame.
+    const ipc_json =
+        \\{"action":"split","arguments":["--view=README.md"],"caller_pane":"x"}
+    ;
+    const enc = try encodeJson(alloc, AppRequest{ .session_id = "s-1", .req_id = 7, .request = ipc_json });
+    defer alloc.free(enc);
+    var buf: [1024]u8 = undefined;
+    const framed = (Frame{ .type = .app_request, .channel = 0, .seq = 0, .payload = enc }).encodeInto(&buf);
+    const back = try Frame.decode(framed);
+    try testing.expectEqual(FrameType.app_request, back.type);
+    var req = try parseJson(AppRequest, alloc, back.payload);
+    defer req.deinit();
+    try testing.expectEqualStrings("s-1", req.value.session_id);
+    try testing.expectEqual(@as(u64, 7), req.value.req_id);
+    try testing.expectEqualStrings(ipc_json, req.value.request);
+
+    // A response carries exactly one answer; unknown fields are tolerated.
+    const ok_enc = try encodeJson(alloc, AppResponse{ .session_id = "s-1", .req_id = 7, .response = "{\"success\":true}" });
+    defer alloc.free(ok_enc);
+    var ok = try parseJson(AppResponse, alloc, ok_enc);
+    defer ok.deinit();
+    try testing.expect(ok.value.isWellFormed());
+    try testing.expectEqualStrings("{\"success\":true}", ok.value.response.?);
+
+    var err = try parseJson(AppResponse, alloc,
+        \\{"session_id":"s-1","req_id":8,"error":"no pane","later":1}
+    );
+    defer err.deinit();
+    try testing.expect(err.value.isWellFormed());
+    try testing.expectEqualStrings("no pane", err.value.@"error".?);
+
+    try testing.expect(!(AppResponse{ .session_id = "s", .req_id = 1 }).isWellFormed());
+    try testing.expect(!(AppResponse{ .session_id = "s", .req_id = 1, .response = "a", .@"error" = "b" }).isWellFormed());
 }
 
 test "T1793 holder_lost negotiates on the intersection; EXIT.lost and the RELAUNCH fields are additive" {
