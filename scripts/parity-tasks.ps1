@@ -3062,6 +3062,15 @@ switch ($Command) {
             Write-Host ("SCAFFOLD BACKLOG: {0} open card(s) filed before T{1} still have the placeholder Summary: {2}{3} (write them at triage; {4} open card(s) still have placeholder validation criteria)" -f $scaffoldBacklog.Count, $ScaffoldGateFromId, $shownIds, $more, $criteriaBacklogCount)
         }
 
+        # T3721: the turn is about to end with the WSL VM it kept up still
+        # held. Informational (the turn may have more Linux steps queued), and
+        # the same line step 0's claim prints, so the next turn hears it too.
+        try {
+            . (Join-Path $RepoRoot 'scripts\lib\WslLease.ps1')
+            $wslLease = Get-WslLeaseReport $RepoRoot
+            if ($wslLease) { Write-Host $wslLease }
+        } catch { }
+
         # A ring of tasks that wait on each other (T1133). Checked over the
         # whole graph rather than per task, because a cycle is a property of
         # the graph and no single file in it looks wrong.

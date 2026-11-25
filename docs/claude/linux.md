@@ -28,6 +28,7 @@ What it guarantees:
 | Distro | `-d Ubuntu` always (`-Distro` to change it); `docker-desktop` is refused. |
 | PATH | `zig-out/bin` first, every `/mnt/*` entry (the Windows PATH WSL appends) dropped, so a bare `ghoztty` cannot reach the user's Windows terminal through interop. |
 | Cleanup | If no distro was running before the call, the distro is terminated and the VM shut down afterwards (the user's `vmIdleTimeout=-1` would otherwise hold the memory forever). `-KeepRunning` skips it. A VM someone else started is left alone. |
+| Lease (T3721) | A `-KeepRunning` call that found the VM idle writes a lease (`temp\wsl-run\lease.json`: distro, the VM's `boot_id`, lane, time). **`wsl-run.ps1 -Release` gives it back**: terminates the distro and shuts the VM down when nothing else runs. It refuses (exit 2) with no lease, and while any WSL session is attached from Windows (a `wsl.exe` process - the user's shells live in the same Ubuntu); a lease whose VM has restarted since is `RELEASE STALE`, cleared, and nothing is stopped. `-LeaseStatus` reports it without calling `wsl.exe`. `-NoLease` (what `open.ps1` passes) keeps a person's VM up and records nothing, so no lane can release it. Step 0's claim and `parity-tasks.ps1 validate` print `WSL LEASE HELD` while one is held. |
 
 Exit codes: the step's own; 2 refused; 3 the distro is not installed.
 
@@ -35,7 +36,11 @@ Exit codes: the step's own; 2 refused; 3 the distro is not installed.
 `swap=16GB`, `vmIdleTimeout=-1`) and tuned for their other WSL work.
 
 Acceptance: `test\linux\wsl-run-guard.ps1` (refusals, argv, job arithmetic,
-plan contents) - it never boots WSL, and asserts so.
+plan contents, and section L for the lease and `-Release`, all with WSL state
+faked) - it never boots WSL, and asserts so.
+
+**A turn that used `-KeepRunning` ends with `-Release`** once its last Linux
+step is done; that is the only sanctioned way to give the memory back.
 
 ## Where the repo lives in WSL: the in-distro clone, by a mile
 

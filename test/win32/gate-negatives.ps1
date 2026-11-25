@@ -139,6 +139,10 @@ $Registry = @(
     # T2393: reported, never fatal - the deny-git-autostash hook stops new
     # entries and dropping old ones is the user's call.
     [pscustomobject]@{ Label = 'STASH LITTER'; Kind = 'status' }
+    # T3721: a WSL VM a -KeepRunning call kept up and never released. Reported
+    # by claim AND validate, never fatal - the turn may still have Linux steps
+    # queued. Driven in section L of test\linux\wsl-run-guard.ps1.
+    [pscustomobject]@{ Label = 'WSL LEASE HELD'; Kind = 'status'; Via = 'scripts\lib\WslLease.ps1' }
     # T1658: reported, never fatal - the runners already wait on the same lock;
     # the line only says why. Driven in section I of test\win32\machine-lock.ps1.
     [pscustomobject]@{ Label = 'TEST RUN IN FLIGHT'; Kind = 'status' }

@@ -1,23 +1,25 @@
 {
     "guard":  "gate-negatives",
     "script":  "test/win32/gate-negatives.ps1",
-    "generated":  "2026-11-25T02:18:19-08:00",
-    "commit":  "99f0ba4bb",
+    "generated":  "2026-11-25T02:47:05-08:00",
+    "commit":  "8328deb2f",
     "uncommitted":  [
-                        "scripts/parity-tasks.ps1"
+                        "scripts/go-loop-exec.ps1",
+                        "scripts/parity-tasks.ps1",
+                        "test/win32/gate-negatives.ps1"
                     ],
     "files":  {
                   "scripts/ci-status.ps1":  "e71f5180b132afed86eebc918efd289b1b2e9e35ffc1d46a28881cfe573eca5a",
-                  "scripts/go-loop-exec.ps1":  "f14b52f885f4db1e3a9aa1a1707bf51710558711f624dd1c98f7ac7319f43ebe",
+                  "scripts/go-loop-exec.ps1":  "b53ccb692d0ee00de70e8172c5289867df6e2885436dd0a7eaf279cf543ed377",
                   "scripts/lib/DigestState.ps1":  "3b0d48ec0c53dfeace8df7d1d9fd675b3541f1f9205a0af31987bdf60be00d0e",
-                  "scripts/parity-tasks.ps1":  "7cd6a50968a10e7768e6843d09ba1a27712a8863102265857d838007328fa8df",
-                  "test/win32/gate-negatives.ps1":  "08ee7c4d67c664a4d594cafc39aa0a0c5c7e8d4f28e72a9a0532427d9510a45a"
+                  "scripts/parity-tasks.ps1":  "90b54903d5f131cd1fe225c956ec3296eaf940f12f598e45903d6f7740daa3e1",
+                  "test/win32/gate-negatives.ps1":  "31f3a328a6bdd3ec8e5c45db112efc03c74458898c828778621249062033207b"
               },
     "code":  {
                  "scripts/ci-status.ps1":  "code1:d631ebeec06660b4b6c364a6e17c0a9eb90cf84c0774f932325b9f57d6bd4aa9",
-                 "scripts/go-loop-exec.ps1":  "code1:103e27c205828413a02f929cdad757568b445762ace4c8c156829d043dd4372d",
+                 "scripts/go-loop-exec.ps1":  "code1:3880cd447c8315aca00ad673df994fdef54f14ae3e407f6942af87d2b8217af1",
                  "scripts/lib/DigestState.ps1":  "code1:d956d293f941b58701840da44538dff6fbdb86bf7bc24b1debc7c656a67362ad",
-                 "scripts/parity-tasks.ps1":  "code1:805e29bac6365c882ce80889e5845ee8822dadb571c0fc3b6498a3d615d2e686",
-                 "test/win32/gate-negatives.ps1":  "code1:5ccb1533357d1a73b0cec8e181c10e8d274c7b235ff300d58dd6624b0452fe43"
+                 "scripts/parity-tasks.ps1":  "code1:5b2149bd2925227ec0a227790ae93f8cec18130762f9ee2d1997456bbb3e6f0a",
+                 "test/win32/gate-negatives.ps1":  "code1:c2a22ba927b3a78d281e5d3110d5618977d8d4c6daeb61634fe655a32aaa0cee"
              }
 }

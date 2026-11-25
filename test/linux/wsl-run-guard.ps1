@@ -25,6 +25,13 @@
 #   G. Repo: the default is the in-distro clone; -Repo mnt exports a Linux
 #      GIT_DIR (a worktree's .git file names a Windows path) with optional
 #      locks off.
+#   L. Lease (T3721): -KeepRunning on an idle VM plans a lease, -NoLease and a
+#      running VM do not; -Release refuses without a lease, clears a stale one
+#      (VM restarted) without stopping anything, refuses while a WSL session
+#      is attached, and otherwise terminates the distro and shuts the VM down
+#      only when nothing else runs. All WSL state is faked (-FakeRunning,
+#      -FakeBootId, -FakeAttached turn every state-changing wsl.exe call into
+#      a printed line) and the lease lives in a temp file.
 #   Z. WSL state unchanged.
 #
 # Exit 0 all pass, 1 any fail. ASCII only, PS 5.1.
@@ -137,6 +144,65 @@ $r = Invoke-Wrapper @('-Plan', '-Repo', 'mnt', '-FakeFreeGB', '40', '--', 'true'
 Check 'G3 -Repo mnt exports a Linux GIT_DIR with optional locks off' (($r.Text -match "export GIT_DIR='/mnt/[a-z]/") -and ($r.Text -match 'GIT_OPTIONAL_LOCKS=0') -and ($r.Text -notmatch "GIT_DIR='[A-Za-z]:")) $r.Text
 $r = Invoke-Wrapper @('-Plan', '-Repo', 'nfs', '-FakeFreeGB', '40', '--', 'true') $lane
 Check 'G4 an unknown -Repo is refused' ($r.Code -eq 2) $r.Text
+
+# --- L. lease (T3721) ------------------------------------------------------------
+. (Join-Path $root 'scripts\lib\WslLease.ps1')
+$leaseFile = Join-Path $env:TEMP ("wsl-run-guard-lease-{0}.json" -f $PID)
+if (Test-Path $leaseFile) { Remove-Item $leaseFile -Force }
+$le = @{ GHOZTTY_LOOP_LANE = 'l'; GHOZTTY_WSL_MIN_FREE_GB = $null; GHOZTTY_WSL_LEASE_FILE = $leaseFile }
+function Set-TestLease([string]$bootId) {
+    $env:GHOZTTY_WSL_LEASE_FILE = $leaseFile
+    try { Write-WslLease $root 'Ubuntu' $bootId 'l' } finally { $env:GHOZTTY_WSL_LEASE_FILE = $null }
+}
+
+$r = Invoke-Wrapper @('-Plan', '-KeepRunning', '-FakeRunning', 'none', '-FakeFreeGB', '40', '--', 'true') $le
+Check 'L1 -KeepRunning on an idle VM plans a lease' ($r.Text -match 'WSL-RUN PLAN cleanup=lease') $r.Text
+$r = Invoke-Wrapper @('-Plan', '-FakeRunning', 'none', '-FakeFreeGB', '40', '--', 'true') $le
+Check 'L2 a plain call on an idle VM plans the shutdown' ($r.Text -match 'WSL-RUN PLAN cleanup=shutdown') $r.Text
+$r = Invoke-Wrapper @('-Plan', '-KeepRunning', '-NoLease', '-FakeRunning', 'none', '-FakeFreeGB', '40', '--', 'true') $le
+Check 'L3 -NoLease keeps the VM for a person and records nothing' ($r.Text -match 'WSL-RUN PLAN cleanup=keep') $r.Text
+$r = Invoke-Wrapper @('-Plan', '-KeepRunning', '-FakeRunning', 'Ubuntu', '-FakeFreeGB', '40', '--', 'true') $le
+Check 'L4 a VM already running is left alone and not leased' ($r.Text -match 'WSL-RUN PLAN cleanup=leave') $r.Text
+
+$r = Invoke-Wrapper @('-LeaseStatus') $le
+Check 'L5 -LeaseStatus with no lease says NONE, exit 0' (($r.Code -eq 0) -and ($r.Text -match 'WSL-RUN LEASE NONE')) $r.Text
+$r = Invoke-Wrapper @('-Release', '-FakeRunning', 'Ubuntu', '-FakeBootId', 'b1', '-FakeAttached', '0') $le
+Check 'L6 -Release with no lease is REFUSED (exit 2) and stops nothing' (($r.Code -eq 2) -and ($r.Text -match 'WSL-RUN REFUSED no lease') -and ($r.Text -notmatch 'would run')) $r.Text
+
+Set-TestLease 'b1'
+$r = Invoke-Wrapper @('-LeaseStatus') $le
+Check 'L7 -LeaseStatus reports a held lease with the release command' (($r.Text -match 'WSL LEASE HELD: lane l booted the Ubuntu VM') -and ($r.Text -match 'wsl-run\.ps1 -Release')) $r.Text
+$env:GHOZTTY_WSL_LEASE_FILE = $leaseFile
+try { $rep = Get-WslLeaseReport $root } finally { $env:GHOZTTY_WSL_LEASE_FILE = $null }
+Check 'L8 Get-WslLeaseReport (what claim and validate print) names the held lease' ($rep -match '^WSL LEASE HELD: ') $rep
+
+$r = Invoke-Wrapper @('-Release', '-FakeRunning', 'Ubuntu', '-FakeBootId', 'b2', '-FakeAttached', '0') $le
+Check 'L9 a VM restarted since the lease is STALE: nothing stopped, lease cleared' (($r.Code -eq 0) -and ($r.Text -match 'WSL-RUN RELEASE STALE') -and ($r.Text -notmatch 'would run') -and -not (Test-Path $leaseFile)) $r.Text
+
+Set-TestLease 'b1'
+$r = Invoke-Wrapper @('-Release', '-FakeRunning', 'Ubuntu', '-FakeBootId', 'b1', '-FakeAttached', '1') $le
+Check 'L10 an attached WSL session REFUSES the release and keeps the lease' (($r.Code -eq 2) -and ($r.Text -match 'WSL-RUN REFUSED 1 WSL session') -and ($r.Text -notmatch 'would run') -and (Test-Path $leaseFile)) $r.Text
+
+$r = Invoke-Wrapper @('-Release', '-FakeRunning', 'Ubuntu', '-FakeBootId', 'b1', '-FakeAttached', '0') $le
+Check 'L11 our VM, nobody attached: terminate AND shut down, lease cleared' (($r.Code -eq 0) -and ($r.Text -match 'would run: wsl\.exe --terminate Ubuntu') -and ($r.Text -match 'would run: wsl\.exe --shutdown') -and ($r.Text -match 'WSL-RUN RELEASED') -and -not (Test-Path $leaseFile)) $r.Text
+
+Set-TestLease 'b1'
+$r = Invoke-Wrapper @('-Release', '-FakeRunning', 'Ubuntu,docker-desktop', '-FakeBootId', 'b1', '-FakeAttached', '0') $le
+Check 'L12 another distro running: terminate only, the VM is kept for it' (($r.Text -match 'would run: wsl\.exe --terminate Ubuntu') -and ($r.Text -notmatch '--shutdown') -and ($r.Text -match 'VM kept for: docker-desktop')) $r.Text
+
+Set-TestLease 'b1'
+$r = Invoke-Wrapper @('-Release', '-FakeRunning', 'none', '-FakeBootId', 'b1', '-FakeAttached', '0') $le
+Check 'L13 the VM already down: nothing to stop, lease cleared' (($r.Code -eq 0) -and ($r.Text -match 'nothing to stop: the VM is already down') -and ($r.Text -notmatch 'would run') -and -not (Test-Path $leaseFile)) $r.Text
+
+[System.IO.File]::WriteAllText($leaseFile, '{not json')
+$r = Invoke-Wrapper @('-LeaseStatus') $le
+Check 'L14 negative control: a torn lease file still reads HELD, never NONE' ($r.Text -match 'WSL LEASE HELD') $r.Text
+Remove-Item $leaseFile -Force -ErrorAction SilentlyContinue
+
+$openText = [System.IO.File]::ReadAllText((Join-Path $root 'scripts\linux\open.ps1'))
+$openCalls = @([regex]::Matches($openText, '-KeepRunning[^\r\n]*'))
+$openNoLease = @($openCalls | Where-Object { $_.Value -match '-NoLease' })
+Check 'L15 every open.ps1 -KeepRunning call passes -NoLease (a person''s app is never a lane lease)' (($openCalls.Count -ge 3) -and ($openNoLease.Count -eq $openCalls.Count)) ("calls=$($openCalls.Count) noLease=$($openNoLease.Count)")
 
 # --- Z. nothing booted ---------------------------------------------------------
 $runningAtEnd = @(Get-Running)

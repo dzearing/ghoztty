@@ -13,7 +13,9 @@
 # display, so no lane (not even lane l) calls it - the same rule as WSL
 # itself. It goes through scripts\linux\wsl-run.ps1 like every Linux command
 # (memory guard, distro pinned, Windows PATH dropped) with -AllowAnyLane and
-# -KeepRunning, because the app must outlive the call.
+# -KeepRunning -NoLease, because the app must outlive the call and belongs to
+# the person who opened it: no lane lease is recorded, so a lane's -Release
+# can never take it down (T3721).
 #
 # What it runs: lane l's in-distro build at ~/ghoztty-l/zig-out (a Debug build:
 # its socket and agent dir are the -debug ones, so it never meets anything
@@ -40,7 +42,7 @@ $log = '/tmp/ghoztty-open.log'
 
 if ($Stop) {
     # Only our build's processes, by full path - never a bare 'ghoztty'.
-    & $wslRun -AllowAnyLane -KeepRunning -Repo mnt -MinFreeGB 1 -Step "pkill -f '^$bin( |$)' && echo 'OPEN stopped the Linux Ghoztty' || echo 'OPEN no Linux Ghoztty was running'"
+    & $wslRun -AllowAnyLane -KeepRunning -NoLease -Repo mnt -MinFreeGB 1 -Step "pkill -f '^$bin( |$)' && echo 'OPEN stopped the Linux Ghoztty' || echo 'OPEN no Linux Ghoztty was running'"
     exit $LASTEXITCODE
 }
 
@@ -50,7 +52,7 @@ if ($Build) {
     $laneL = Join-Path (Split-Path (Split-Path (Split-Path $PSScriptRoot -Parent) -Parent) -Parent) 'ghoztty-l'
     $laneWslRun = Join-Path $laneL 'scripts\linux\wsl-run.ps1'
     if (-not (Test-Path $laneWslRun)) { Write-Host "OPEN FAILED no lane-l worktree at $laneL"; exit 1 }
-    & $laneWslRun -AllowAnyLane -KeepRunning -Step 'zig build -Dapp-runtime=gtk -Doptimize=Debug -fno-sys=gtk4-layer-shell'
+    & $laneWslRun -AllowAnyLane -KeepRunning -NoLease -Step 'zig build -Dapp-runtime=gtk -Doptimize=Debug -fno-sys=gtk4-layer-shell'
     if ($LASTEXITCODE -ne 0) { Write-Host "OPEN FAILED the Linux build exited $LASTEXITCODE"; exit $LASTEXITCODE }
 }
 
@@ -67,5 +69,5 @@ else
   echo 'OPEN FAILED the app exited at startup; last lines of its log:'; tail -15 $log; exit 1
 fi
 "@
-& $wslRun -AllowAnyLane -KeepRunning -Repo mnt -MinFreeGB 8 -Step $step
+& $wslRun -AllowAnyLane -KeepRunning -NoLease -Repo mnt -MinFreeGB 8 -Step $step
 exit $LASTEXITCODE

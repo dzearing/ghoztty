@@ -733,6 +733,15 @@ switch ($Action) {
             "  STASH LITTER: $($stashRows.Count) autostash entr$(if ($stashRows.Count -eq 1) { 'y' } else { 'ies' }) on the shared stash (oldest $($oldest[0]) from $($oldest[1])) - not this turn's work; never pop one as your own, inspect with git stash show -p (T2393)"
         }
 
+        # T3721: a previous turn kept the WSL VM up with wsl-run -KeepRunning
+        # and never gave it back; vmIdleTimeout=-1 holds that memory until
+        # somebody does. Reported, never fatal. Reads one file, no wsl.exe.
+        try {
+            . (Join-Path $PSScriptRoot 'lib\WslLease.ps1')
+            $wslLease = Get-WslLeaseReport $Repo
+            if ($wslLease) { "  $wslLease" }
+        } catch { }
+
         # T1658: a test run a previous turn backgrounded and then reset away
         # from is still running - the claim reports stranded FILES above, and
         # this is the stranded RUN. Reported, never fatal: acceptance-parallel

@@ -1,16 +1,16 @@
 {
     "guard":  "loop-lanes",
     "script":  "test/win32/loop-lanes.ps1",
-    "generated":  "2026-11-25T01:14:25-08:00",
-    "commit":  "05452d54d",
+    "generated":  "2026-11-25T03:02:02-08:00",
+    "commit":  "8328deb2f",
     "uncommitted":  [
-                        "scripts/task-dashboard.js"
+                        "scripts/go-loop-exec.ps1"
                     ],
     "files":  {
                   "scripts/daily-publish.ps1":  "08178386e3525122b9715a9bb5f32e0d28175c7440f15f684764251ab7e50c66",
                   "scripts/deliver-windows-build.ps1":  "8871956f8ac46b4e5c163adab71ee284bb218cdcf0b4a43e0801b9db28baaa07",
                   "scripts/go-loop-boot.ps1":  "62b910dada177775a1dbecdfde944ca014ce9b93ab427d97640edfa4d536a5ef",
-                  "scripts/go-loop-exec.ps1":  "f14b52f885f4db1e3a9aa1a1707bf51710558711f624dd1c98f7ac7319f43ebe",
+                  "scripts/go-loop-exec.ps1":  "b53ccb692d0ee00de70e8172c5289867df6e2885436dd0a7eaf279cf543ed377",
                   "scripts/go-loop-health.ps1":  "a6183dc09cf4d308bda7253e5022d6d1774c0cfc89ae36ce909977f92eaed160",
                   "scripts/go-loop-watchdog.ps1":  "37f19f9ce08a701645b7267fea8411125b9112d83ef5ff0cbddb8e380f058d67",
                   "scripts/launch-upgrade.ps1":  "cdac13e044f5b31ec2346cbd23556ea45ddf937972e033f56f7a6451ffbaaaa1",
@@ -25,7 +25,7 @@
                  "scripts/daily-publish.ps1":  "code1:c79847df5820acf00a04aff0243182aff6c0fa0014189faa2df8c2676fc3d2c8",
                  "scripts/deliver-windows-build.ps1":  "code1:bc76ee0f44f0689302d4dbde5c99ad983ad8e94a6627aa8ba50e7b1c2228693f",
                  "scripts/go-loop-boot.ps1":  "code1:3a6f52330144f61ecaa7cdcde3b7a9eb84aa47ba0be12584cf71696f6fc55ba0",
-                 "scripts/go-loop-exec.ps1":  "code1:103e27c205828413a02f929cdad757568b445762ace4c8c156829d043dd4372d",
+                 "scripts/go-loop-exec.ps1":  "code1:3880cd447c8315aca00ad673df994fdef54f14ae3e407f6942af87d2b8217af1",
                  "scripts/go-loop-health.ps1":  "code1:c67d25bc9b09f198b4164195424250a8c11e1f568a72c0814e02ac7be7211b54",
                  "scripts/go-loop-watchdog.ps1":  "code1:f50b5b1f370dd50442c1878b13fe2db23ae608bc7c686d8611493965e2091914",
                  "scripts/launch-upgrade.ps1":  "code1:bafd3732a4b148f497466a6a7215616df33652dfe4755e2aae4a986da0f32f9d",

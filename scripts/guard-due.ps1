@@ -6520,13 +6520,17 @@ $GuardTable = @(
     # harness (with its ledger-off negative control) is its only proof.
     # The one Linux entry point (T3329): every refusal that keeps WSL from
     # booting on a short box or from a Windows lane, and the argv path that a
-    # param() block silently broke. Its harness never boots WSL.
+    # param() block silently broke. Its harness never boots WSL. Since T3721
+    # also the -KeepRunning lease and -Release (section L), and open.ps1's
+    # -NoLease that keeps a person's VM out of a lane's reach.
     [pscustomobject]@{
         Name   = 'wsl-run'
         Script = 'test\linux\wsl-run-guard.ps1'
         Stamp  = 'test\linux\wsl-run-guard.stamp.json'
         Covers = @(
             'scripts\linux\wsl-run.ps1',
+            'scripts\lib\WslLease.ps1',
+            'scripts\linux\open.ps1',
             'test\linux\wsl-run-guard.ps1'
         )
     },

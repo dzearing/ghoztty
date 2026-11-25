@@ -1,17 +1,17 @@
 {
     "guard":  "parity-tasks-split-deps",
     "script":  "test/win32/parity-tasks-split-deps.ps1",
-    "generated":  "2026-11-25T02:13:18-08:00",
-    "commit":  "99f0ba4bb",
+    "generated":  "2026-11-25T02:49:29-08:00",
+    "commit":  "8328deb2f",
     "uncommitted":  [
                         "scripts/parity-tasks.ps1"
                     ],
     "files":  {
-                  "scripts/parity-tasks.ps1":  "7cd6a50968a10e7768e6843d09ba1a27712a8863102265857d838007328fa8df",
+                  "scripts/parity-tasks.ps1":  "90b54903d5f131cd1fe225c956ec3296eaf940f12f598e45903d6f7740daa3e1",
                   "test/win32/parity-tasks-split-deps.ps1":  "8c46aad821f38235db6b0e6b8680752e044ecca1886e529ecd61e548d2bbc630"
               },
     "code":  {
-                 "scripts/parity-tasks.ps1":  "code1:805e29bac6365c882ce80889e5845ee8822dadb571c0fc3b6498a3d615d2e686",
+                 "scripts/parity-tasks.ps1":  "code1:5b2149bd2925227ec0a227790ae93f8cec18130762f9ee2d1997456bbb3e6f0a",
                  "test/win32/parity-tasks-split-deps.ps1":  "code1:4d0b9f273c3b0033363ce4753a9408f28ebb0e087b5dd178cda82586209877bc"
              }
 }
