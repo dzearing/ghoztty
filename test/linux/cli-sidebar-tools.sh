@@ -154,11 +154,12 @@ cli +send-keys --target="$b" 'sleep 300' Enter > /dev/null 2>&1
 dlg=$(hl_ipc close-dialog "--target=$b" --op=pane 2>&1)
 case "$dlg" in *'"open":true'*) ctl=0 ;; *) ctl=1 ;; esac
 hl_check "B9 control: with a program running, the pane's keyboard close asks first" $ctl "$dlg"
-hl_ipc close-dialog "--target=$b" --answer=cancel > /dev/null 2>&1
-# The answered dialog animates out: wait until it is gone, so B11 reads only
-# what the sidebar's x put up (nothing).
-no_dialog() { case "$(hl_ipc close-dialog "--target=$1" 2>&1)" in *'"open":false'*) true ;; *) false ;; esac; }
-hl_wait_for 10 no_dialog "$b"
+# Answered Cancel until it is gone, so B11 reads only what the sidebar's x
+# put up (nothing). An answer that lands in the main-loop turn that presented
+# the dialog leaves it on the window's dialog stack (the seam's own note), so
+# each try answers again.
+cancel_gone() { case "$(hl_ipc close-dialog "--target=$1" --answer=cancel 2>&1)" in *'"open":false'*) true ;; *) false ;; esac; }
+hl_wait_for 10 cancel_gone "$b"
 hl_check "B9b the control's dialog is answered Cancel and goes" $?
 hl_wait_for 10 lst_is 'len(ids("wa"))' 2
 sb wa "--click=tool:close:$b" > /dev/null
