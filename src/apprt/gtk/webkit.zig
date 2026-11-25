@@ -430,6 +430,9 @@ pub const GBytes = opaque {};
 pub extern fn g_file_read(file: *GFile, cancellable: ?*anyopaque, err: *?*GError) ?*GInputStream;
 pub extern fn gdk_texture_new_from_filename(path: [*:0]const u8, err: *?*GError) ?*GdkTexture;
 pub extern fn gdk_texture_save_to_png_bytes(texture: *GdkTexture) *GBytes;
+/// The texture's pixels as `GDK_MEMORY_B8G8R8A8_PREMULTIPLIED` (cairo's
+/// ARGB32 on a little-endian host), `stride` bytes a row.
+pub extern fn gdk_texture_download(texture: *GdkTexture, data: [*]u8, stride: usize) void;
 pub extern fn g_bytes_get_size(bytes: *GBytes) usize;
 pub extern fn g_bytes_unref(bytes: *GBytes) void;
 pub extern fn g_memory_input_stream_new_from_bytes(bytes: *GBytes) *GInputStream;

@@ -18,6 +18,10 @@
 # - Ctrl+C (and Ctrl+Insert) copies the picture and its file (T3534): a
 #   texture, text/uri-list and x-special/gnome-copied-files, read back
 #   through GDK; Ctrl+Shift+C and the address field's Ctrl+C are not it;
+# - a phone photo whose EXIF says "turn a quarter" (Orientation=6) shows
+#   upright AND copies upright (T3603): GDK hands the copy the pixels as
+#   stored, so the copy turns them itself, and a host-decoded TIFF is
+#   turned before it is served;
 # - +list reports the pane as a viewer at its file.
 #
 # Run it ONLY through the wrapper, from this box:
@@ -65,11 +69,13 @@ def png(w, h, rgb):
     return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0))
             + chunk(b"IDAT", zlib.compress(raw, 9)) + chunk(b"IEND", b""))
 
-def tiff(w, h, rgb):
+def tiff(w, h, rgb, orientation=0):
     pixels = bytes(rgb) * (w * h)
-    entries = [(256, 3, 1, w), (257, 3, 1, h), (258, 3, 3, 8 + 2 + 12 * 12 + 4), (259, 3, 1, 1),
+    entries = [(256, 3, 1, w), (257, 3, 1, h), (258, 3, 3, 0), (259, 3, 1, 1),
                (262, 3, 1, 2), (273, 4, 1, 0), (277, 3, 1, 3), (278, 3, 1, h), (279, 4, 1, len(pixels)),
                (282, 5, 1, 0), (283, 5, 1, 0), (296, 3, 1, 1)]
+    if orientation:
+        entries.insert(6, (274, 3, 1, orientation))
     ifd_at = 8
     after_ifd = ifd_at + 2 + 12 * len(entries) + 4
     bps_at = after_ifd
@@ -92,6 +98,22 @@ def tiff(w, h, rgb):
     out += pixels
     return bytes(out)
 
+def jpeg(w, h, orientation):
+    # GdkPixbuf encodes it (python3-gi is in setup-distro.sh's list); the
+    # EXIF block is spliced in after the JFIF header, where a camera puts it.
+    import gi
+    gi.require_version("GdkPixbuf", "2.0")
+    from gi.repository import GdkPixbuf, GLib
+    px = b"".join(bytes((220, 30, 30) if x < w // 2 else (30, 30, 220)) for y in range(h) for x in range(w))
+    pb = GdkPixbuf.Pixbuf.new_from_bytes(GLib.Bytes.new(px), GdkPixbuf.Colorspace.RGB, False, 8, w, h, w * 3)
+    ok, data = pb.save_to_bufferv("jpeg", ["quality"], ["95"])
+    data = bytes(data)
+    exif = (b"MM\x00\x2a" + struct.pack(">IH", 8, 1) + struct.pack(">HHIHH", 274, 3, 1, orientation, 0)
+            + struct.pack(">I", 0))
+    app1 = b"\xff\xe1" + struct.pack(">H", 2 + 6 + len(exif)) + b"Exif\x00\x00" + exif
+    at = 4 + struct.unpack(">H", data[4:6])[0] if data[2:4] == b"\xff\xe0" else 2
+    return data[:at] + app1 + data[at:]
+
 def icns(*pngs):
     body = b""
     for kind, data in pngs:
@@ -102,7 +124,10 @@ kind, path = sys.argv[1], sys.argv[2]
 if kind == "png":
     w, h, r, g, b = map(int, sys.argv[3:8]); data = png(w, h, (r, g, b))
 elif kind == "tiff":
-    w, h = map(int, sys.argv[3:5]); data = tiff(w, h, (0, 128, 255))
+    w, h = map(int, sys.argv[3:5]); o = int(sys.argv[5]) if len(sys.argv) > 5 else 0
+    data = tiff(w, h, (0, 128, 255), o)
+elif kind == "jpeg":
+    w, h, o = map(int, sys.argv[3:6]); data = jpeg(w, h, o)
 elif kind == "icns":
     data = icns((b"icp4", png(16, 16, (255, 0, 0))), (b"ic12", png(64, 64, (0, 255, 0))))
 elif kind == "heic":
@@ -116,6 +141,8 @@ fixture() { python3 "$HL_RUNTIME/fixtures.py" "$@"; }
 fixture png "$fx/big.png" 4000 3000 200 30 30
 fixture png "$fx/small.png" 32 32 30 200 30
 fixture tiff "$fx/photo.tiff" 300 200
+fixture jpeg "$fx/portrait.jpg" 40 20 6
+fixture tiff "$fx/portrait.tiff" 40 20 6
 fixture icns "$fx/icon.icns"
 fixture heic "$fx/fake.heic"
 fixture broken "$fx/broken.png"
@@ -213,6 +240,20 @@ type $fx/fake.heic
 activate
 wait
 probe $CARD
+key <Control>l
+type $fx/portrait.jpg
+activate
+wait
+image
+key <Control>c
+clipboard
+key <Control>l
+type $fx/portrait.tiff
+activate
+wait
+image
+key <Control>c
+clipboard
 EOF
 
 dump="$HL_RUNTIME/viewer-dump"
@@ -350,7 +391,7 @@ has "$c1" "GdkTexture" && has "$c1" "text/uri-list" && has "$c1" "x-special/gnom
 hl_check "I30 ...offering the picture, a uri-list and a file manager's copied-files list" $? "$c1"
 has "$c1" "local=true" && has "$c1" "image/png" && [ "$(ct 1)" = "clipboard-texture 32x32" ]
 hl_check "I31 ...on the clipboard: a reader gets the 32x32 picture back as PNG" $? "$c1 / $(ct 1)"
-grep -q "viewer image copy ok=true size=32x32 file=true route=browser offered=.* path=$fx/small.png" "$APP_LOG"
+grep -q "viewer image copy ok=true size=32x32 file=true route=browser .*offered=.* path=$fx/small.png" "$APP_LOG"
 hl_check "I32 ...and the log names the copy and the file" $? "$(grep -m2 'viewer image copy' "$APP_LOG" | tr '\n' ' ')"
 c2=$(cb 2)
 grep -q '^key <Control><Shift>c handled=false' "$out" && has "$c2" "copies=1 "
@@ -358,6 +399,26 @@ hl_check "I33 Ctrl+Shift+C is not the picture's copy, and the address field keep
 c3=$(cb 3)
 grep -q '^key <Control>Insert handled=true' "$out" && has "$c3" "copies=2 ok=true size=64x64 file=true" && [ "$(ct 3)" = "clipboard-texture 64x64" ]
 hl_check "I34 Ctrl+Insert copies too, and an .icns copies its largest embedded PNG" $? "$c3 / $(ct 3)"
+
+# ---- a phone photo copies upright (T3603) -------------------------------------
+# Stored 40x20 with Orientation=6 ("turn a quarter clockwise"): the pane shows
+# it 20x40, and the copy must be the picture the pane shows.
+iA=$(grep '^image ' "$out" | tail -2 | head -1); iB=$(grep '^image ' "$out" | tail -1)
+has "$iA" "natural=20x40"
+hl_check "I35 an Orientation=6 JPEG shows upright (WebKit applies the EXIF turn: 20x40)" $? "$iA"
+c4=$(cb 4)
+has "$c4" "ok=true size=20x40" && [ "$(ct 4)" = "clipboard-texture 20x40" ] \
+    && grep -q "viewer image copy ok=true size=20x40 .*orient=rotate_90 turned=true .*path=$fx/portrait.jpg" "$APP_LOG"
+hl_check "I36 ...and Ctrl+C copies it upright too, not as stored (40x20)" $? "$c4 / $(ct 4) / $(grep 'viewer image copy.*portrait.jpg' "$APP_LOG")"
+# A TIFF is decoded here and served as PNG, which carries no tag: GDK's TIFF
+# loader shows it as stored, so the host turns it before serving (win32's
+# T3043) - the pane and the copy both come out upright.
+has "$iB" "route=wic" && has "$iB" "natural=20x40" \
+    && grep -q "viewer image served rev=.* route=wic decode_ms=[0-9]* orient=rotate_90" "$APP_LOG"
+hl_check "I37 an Orientation=6 TIFF (decoded on the host) shows upright too" $? "$iB / $(grep 'served.*orient=rotate' "$APP_LOG")"
+c5=$(cb 5)
+has "$c5" "ok=true size=20x40" && [ "$(ct 5)" = "clipboard-texture 20x40" ]
+hl_check "I38 ...and copies upright" $? "$c5 / $(ct 5) / $(grep 'viewer image copy.*portrait.tiff' "$APP_LOG")"
 
 grep -E 'panic|reached unreachable' "$APP_LOG" > /dev/null 2>&1
 [ $? != 0 ] && kill -0 "$APP" 2>/dev/null

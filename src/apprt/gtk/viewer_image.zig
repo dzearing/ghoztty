@@ -37,6 +37,7 @@ const testing = std.testing;
 const Allocator = std.mem.Allocator;
 
 const shared = @import("../win32/viewer_image.zig");
+const image_clipboard = @import("../win32/image_clipboard.zig");
 const content = @import("../win32/viewer_content.zig");
 const scheme = @import("viewer_scheme.zig");
 
@@ -165,6 +166,87 @@ pub fn copyDecodes(r: Route) enum { file, icns } {
     };
 }
 
+/// The EXIF Orientation tag's turn (T3603), win32's T1910 type: the pure
+/// pixel turn is `image_clipboard.orientInto`, shared as-is.
+pub const Orientation = image_clipboard.Orientation;
+pub const orientInto = image_clipboard.orientInto;
+pub const sizeOk = image_clipboard.sizeOk;
+
+/// How much of a file `exifOrientation` reads. A camera writes its EXIF block
+/// straight after the JPEG's start marker and a TIFF's first directory near
+/// the front; a file that puts it later shows as stored, which is the safe
+/// side of wrong.
+pub const exif_head_bytes: usize = 256 * 1024;
+
+/// The EXIF Orientation (tag 274) of a JPEG or TIFF, from the first bytes of
+/// the file (T3603). A phone stores a portrait photo in sensor order and
+/// records the quarter turn here; WebKit applies it when it draws the pane
+/// (`image-orientation: from-image`), but GDK's loaders hand back the pixels
+/// as stored - measured 2026-11-24: GTK 4.14's `gdk_texture_new_from_filename`
+/// returns an Orientation=6 40x20 JPEG as 40x20. So the copy reads the tag
+/// itself. Anything it cannot read - another format, a malformed or
+/// truncated block - is `.normal`, as the browser would show it.
+pub fn exifOrientation(head: []const u8) Orientation {
+    if (head.len >= 4 and (std.mem.eql(u8, head[0..4], "II*\x00") or std.mem.eql(u8, head[0..4], "MM\x00*")))
+        return tiffOrientation(head);
+    if (head.len < 2 or head[0] != 0xFF or head[1] != 0xD8) return .normal;
+    var i: usize = 2;
+    while (head.len - i >= 2) {
+        if (head[i] != 0xFF) return .normal;
+        const marker = head[i + 1];
+        // Fill bytes before a marker, and the markers that carry no length.
+        if (marker == 0xFF) {
+            i += 1;
+            continue;
+        }
+        if (marker == 0x01 or (marker >= 0xD0 and marker <= 0xD7)) {
+            i += 2;
+            continue;
+        }
+        // The picture data (or its end): every EXIF block comes before it.
+        if (marker == 0xDA or marker == 0xD9) return .normal;
+        if (head.len - i < 4) return .normal;
+        const len = std.mem.readInt(u16, head[i + 2 ..][0..2], .big);
+        if (len < 2) return .normal;
+        const end = i + 2 + @as(usize, len);
+        if (end > head.len) return .normal;
+        const body = head[i + 4 .. end];
+        if (marker == 0xE1 and body.len >= 6 and std.mem.eql(u8, body[0..6], "Exif\x00\x00"))
+            return tiffOrientation(body[6..]);
+        i = end;
+    }
+    return .normal;
+}
+
+/// Tag 274 from the first directory of a TIFF structure (a .tiff file, or
+/// the body of a JPEG's EXIF block - offsets count from its byte-order mark).
+fn tiffOrientation(t: []const u8) Orientation {
+    if (t.len < 8) return .normal;
+    const endian: std.builtin.Endian = if (t[0] == 'I' and t[1] == 'I')
+        .little
+    else if (t[0] == 'M' and t[1] == 'M')
+        .big
+    else
+        return .normal;
+    if (std.mem.readInt(u16, t[2..4], endian) != 42) return .normal;
+    const ifd: usize = std.mem.readInt(u32, t[4..8], endian);
+    if (ifd > t.len or t.len - ifd < 2) return .normal;
+    const count = std.mem.readInt(u16, t[ifd..][0..2], endian);
+    var e = ifd + 2;
+    for (0..count) |_| {
+        if (t.len - e < 12) return .normal;
+        if (std.mem.readInt(u16, t[e..][0..2], endian) == 274) {
+            // SHORT, one value, held in the first two bytes of the field.
+            const typ = std.mem.readInt(u16, t[e + 2 ..][0..2], endian);
+            const n = std.mem.readInt(u32, t[e + 4 ..][0..4], endian);
+            if (typ != 3 or n != 1) return .normal;
+            return Orientation.fromTag(std.mem.readInt(u16, t[e + 8 ..][0..2], endian));
+        }
+        e += 12;
+    }
+    return .normal;
+}
+
 // -------------------------------------------------------------------------
 // Tests
 // -------------------------------------------------------------------------
@@ -184,6 +266,84 @@ test "T3534: an icon set copies its embedded PNG, everything else its file" {
     try testing.expectEqual(.icns, copyDecodes(.icns));
     try testing.expectEqual(.file, copyDecodes(.browser));
     try testing.expectEqual(.file, copyDecodes(.wic));
+}
+
+/// A TIFF structure whose first directory holds `tags` (tag, type, count,
+/// value), in `endian` order - the shape a camera writes.
+fn testTiff(buf: []u8, endian: std.builtin.Endian, tags: []const [4]u32) []u8 {
+    @memcpy(buf[0..2], if (endian == .little) "II" else "MM");
+    std.mem.writeInt(u16, buf[2..4], 42, endian);
+    std.mem.writeInt(u32, buf[4..8], 8, endian);
+    std.mem.writeInt(u16, buf[8..10], @intCast(tags.len), endian);
+    var e: usize = 10;
+    for (tags) |t| {
+        std.mem.writeInt(u16, buf[e..][0..2], @intCast(t[0]), endian);
+        std.mem.writeInt(u16, buf[e + 2 ..][0..2], @intCast(t[1]), endian);
+        std.mem.writeInt(u32, buf[e + 4 ..][0..4], t[2], endian);
+        std.mem.writeInt(u32, buf[e + 8 ..][0..4], 0, endian);
+        if (t[1] == 3) std.mem.writeInt(u16, buf[e + 8 ..][0..2], @intCast(t[3]), endian) else std.mem.writeInt(u32, buf[e + 8 ..][0..4], t[3], endian);
+        e += 12;
+    }
+    std.mem.writeInt(u32, buf[e..][0..4], 0, endian);
+    return buf[0 .. e + 4];
+}
+
+/// SOI, a JFIF APP0, an EXIF APP1 around `tiff`, then the start of scan.
+fn testJpeg(buf: []u8, tiff: []const u8) []u8 {
+    const app0 = "\xFF\xD8\xFF\xE0\x00\x10JFIF\x00\x01\x01\x00\x00\x01\x00\x01\x00\x00";
+    @memcpy(buf[0..app0.len], app0);
+    var i: usize = app0.len;
+    buf[i] = 0xFF;
+    buf[i + 1] = 0xE1;
+    std.mem.writeInt(u16, buf[i + 2 ..][0..2], @intCast(2 + 6 + tiff.len), .big);
+    @memcpy(buf[i + 4 ..][0..6], "Exif\x00\x00");
+    @memcpy(buf[i + 10 ..][0..tiff.len], tiff);
+    i += 10 + tiff.len;
+    @memcpy(buf[i..][0..4], "\xFF\xDA\x00\x02");
+    return buf[0 .. i + 4];
+}
+
+test "T3603: a phone JPEG's EXIF orientation is read, in either byte order" {
+    var tb: [128]u8 = undefined;
+    var jb: [256]u8 = undefined;
+    // Make, then Orientation: the tag is found past other entries.
+    const be = testTiff(&tb, .big, &.{ .{ 271, 2, 4, 0 }, .{ 274, 3, 1, 6 } });
+    try testing.expectEqual(Orientation.rotate_90, exifOrientation(testJpeg(&jb, be)));
+    try testing.expect(exifOrientation(testJpeg(&jb, be)).swapsAxes());
+    const le = testTiff(&tb, .little, &.{.{ 274, 3, 1, 8 }});
+    try testing.expectEqual(Orientation.rotate_270, exifOrientation(testJpeg(&jb, le)));
+    const flip = testTiff(&tb, .little, &.{.{ 274, 3, 1, 3 }});
+    try testing.expectEqual(Orientation.rotate_180, exifOrientation(testJpeg(&jb, flip)));
+}
+
+test "T3603: a TIFF file carries the tag in its own first directory" {
+    var tb: [128]u8 = undefined;
+    try testing.expectEqual(Orientation.rotate_90, exifOrientation(testTiff(&tb, .little, &.{ .{ 256, 3, 1, 40 }, .{ 274, 3, 1, 6 } })));
+    try testing.expectEqual(Orientation.transpose, exifOrientation(testTiff(&tb, .big, &.{.{ 274, 3, 1, 5 }})));
+}
+
+test "T3603: no tag, another format, or a malformed block shows the picture as stored" {
+    var tb: [128]u8 = undefined;
+    var jb: [256]u8 = undefined;
+    // No orientation tag at all.
+    const none = testTiff(&tb, .big, &.{.{ 271, 2, 4, 0 }});
+    try testing.expectEqual(Orientation.normal, exifOrientation(testJpeg(&jb, none)));
+    // A value outside 1-8, and the tag stored as a LONG.
+    try testing.expectEqual(Orientation.normal, exifOrientation(testJpeg(&jb, testTiff(&tb, .big, &.{.{ 274, 3, 1, 9 }}))));
+    try testing.expectEqual(Orientation.normal, exifOrientation(testJpeg(&jb, testTiff(&tb, .big, &.{.{ 274, 4, 1, 6 }}))));
+    // Not a JPEG or TIFF; empty; a PNG.
+    try testing.expectEqual(Orientation.normal, exifOrientation(""));
+    try testing.expectEqual(Orientation.normal, exifOrientation("\x89PNG\r\n\x1a\n"));
+    // Truncated anywhere inside the EXIF block: never reads past the end.
+    const whole = testJpeg(&jb, testTiff(&tb, .big, &.{.{ 274, 3, 1, 6 }}));
+    for (0..whole.len) |n| _ = exifOrientation(whole[0..n]);
+    // A directory offset past the end, and a segment length of zero.
+    var bad = testTiff(&tb, .little, &.{.{ 274, 3, 1, 6 }});
+    std.mem.writeInt(u32, bad[4..8], 0xFFFF_FFF0, .little);
+    try testing.expectEqual(Orientation.normal, exifOrientation(bad));
+    try testing.expectEqual(Orientation.normal, exifOrientation("\xFF\xD8\xFF\xE1\x00\x00"));
+    // The scan starts before any EXIF block: nothing after it is read.
+    try testing.expectEqual(Orientation.normal, exifOrientation("\xFF\xD8\xFF\xDA\x00\x02\xFF\xE1"));
 }
 
 test "url: the template origin's sentinel, one revision per load" {

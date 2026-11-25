@@ -238,11 +238,20 @@ pub fn copy(self: *ViewerImage, v: *Viewer) Copy {
     const zpath = alloc.dupeZ(u8, path) catch return result;
     defer alloc.free(zpath);
 
-    const tex = decodeForCopy(alloc, zpath, self.route) orelse {
+    const stored = decodeForCopy(alloc, zpath, self.route) orelse {
         log.info("viewer image copy ok=false why=decode path={s}", .{path});
         return result;
     };
-    defer wk.g_object_unref(tex);
+    defer wk.g_object_unref(stored);
+    // The picture the pane SHOWS: WebKit turns a phone photo upright by its
+    // EXIF tag, GDK does not (T3603). An icon set's PNG carries no tag.
+    const orientation: rules.Orientation = switch (rules.copyDecodes(self.route)) {
+        .file => readOrientation(path),
+        .icns => .normal,
+    };
+    const upright = if (orientation == .normal) null else turned(alloc, stored, orientation);
+    defer if (upright) |t| wk.g_object_unref(t);
+    const tex = upright orelse stored;
 
     // The picture first, so a reader that takes the first format it knows
     // takes the pixels; the file after it, for the reader that wants no
@@ -294,10 +303,39 @@ pub fn copy(self: *ViewerImage, v: *Viewer) Copy {
     const f = std.mem.span(fs);
     result.formats_len = @min(f.len, result.formats_buf.len);
     @memcpy(result.formats_buf[0..result.formats_len], f[0..result.formats_len]);
-    log.info("viewer image copy ok={} size={d}x{d} file={} route={s} offered={s} path={s}", .{
-        result.ok, result.width, result.height, result.file, @tagName(self.route), result.formats(), path,
+    log.info("viewer image copy ok={} size={d}x{d} file={} route={s} orient={s} turned={} offered={s} path={s}", .{
+        result.ok,       result.width,     result.height, result.file, @tagName(self.route), @tagName(orientation),
+        upright != null, result.formats(), path,
     });
     return result;
+}
+
+/// The file's EXIF orientation, from its first bytes (`rules.exifOrientation`).
+fn readOrientation(path: []const u8) rules.Orientation {
+    var head: [rules.exif_head_bytes]u8 = undefined;
+    return rules.exifOrientation(head[0..readHead(path, &head)]);
+}
+
+/// `stored` turned upright per `o`, as a new texture (caller unrefs), or null
+/// when it cannot be - the copy then carries the picture as stored, which is
+/// still a picture (win32's `image_copy` keeps the same fallback).
+fn turned(alloc: std.mem.Allocator, stored: *wk.GdkTexture, o: rules.Orientation) ?*wk.GdkTexture {
+    const w: u32 = @intCast(@max(0, wk.gdk_texture_get_width(stored)));
+    const h: u32 = @intCast(@max(0, wk.gdk_texture_get_height(stored)));
+    if (!rules.sizeOk(w, h)) return null;
+    const len = @as(usize, w) * h * 4;
+    const pixels = alloc.alloc(u8, len) catch return null;
+    defer alloc.free(pixels);
+    wk.gdk_texture_download(stored, pixels.ptr, @as(usize, w) * 4);
+    const out = alloc.alloc(u8, len) catch return null;
+    defer alloc.free(out);
+    // Four bytes a pixel, whatever their order: the turn moves pixels whole.
+    rules.orientInto(out, pixels, w, h, o) catch return null;
+    const ow: u32 = if (o.swapsAxes()) h else w;
+    const oh: u32 = if (o.swapsAxes()) w else h;
+    const gb = wk.g_bytes_new(out.ptr, out.len);
+    defer wk.g_bytes_unref(gb);
+    return wk.gdk_memory_texture_new(@intCast(ow), @intCast(oh), wk.GDK_MEMORY_B8G8R8A8_PREMULTIPLIED, gb, @as(usize, ow) * 4);
 }
 
 /// The picture the pane shows, as a texture: an icon set's largest PNG, else
@@ -396,6 +434,7 @@ const Job = struct {
     revision: u64,
     bytes: ?*wk.GBytes = null,
     codec: ?shared.Codec = null,
+    orientation: rules.Orientation = .normal,
     decode_ms: i64 = 0,
 };
 
@@ -421,9 +460,15 @@ fn decodeOnWorker(req: *wk.URISchemeRequest, path: []const u8, revision: u64) vo
 fn decodeJob(job: *Job) void {
     const t0 = std.time.milliTimestamp();
     var err: ?*wk.GError = null;
-    if (wk.gdk_texture_new_from_filename(job.path.ptr, &err)) |tex| {
-        job.bytes = wk.gdk_texture_save_to_png_bytes(tex);
-        wk.g_object_unref(tex);
+    if (wk.gdk_texture_new_from_filename(job.path.ptr, &err)) |stored| {
+        defer wk.g_object_unref(stored);
+        // The PNG this serves carries no EXIF, so the turn a TIFF's tag asks
+        // for is applied here or nowhere: GDK's TIFF loader shows it as
+        // stored (measured, T3603), and win32 serves it upright (T3043).
+        job.orientation = readOrientation(job.path);
+        const upright = if (job.orientation == .normal) null else turned(std.heap.c_allocator, stored, job.orientation);
+        defer if (upright) |t| wk.g_object_unref(t);
+        job.bytes = wk.gdk_texture_save_to_png_bytes(upright orelse stored);
     } else {
         if (err) |e| {
             log.info("viewer image: GDK cannot decode {s}: {s}", .{ job.path, std.mem.span(e.message orelse "?") });
@@ -461,7 +506,7 @@ fn finishJob(data: ?*anyopaque) callconv(.c) c_int {
         defer wk.g_object_unref(stream);
         const size = wk.g_bytes_get_size(b);
         wk.webkit_uri_scheme_request_finish(job.req, stream, @intCast(size), "image/png");
-        log.info("viewer image served rev={d} bytes={d} mime=image/png route=wic decode_ms={d}", .{ job.revision, size, job.decode_ms });
+        log.info("viewer image served rev={d} bytes={d} mime=image/png route=wic decode_ms={d} orient={s}", .{ job.revision, size, job.decode_ms, @tagName(job.orientation) });
         return 0;
     }
     // The card the page's `failed` will put up: titled with the loader to
