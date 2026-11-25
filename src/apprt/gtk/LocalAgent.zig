@@ -101,17 +101,17 @@ bundled_version_probed: bool = false,
 /// way win32's runs after its restore (T3600). Set by `AgentUpgrade.start`.
 on_resolved: ?*const fn () void = null,
 
-/// What a skewed dial learned. `peer_proto_version` is null when the peer
-/// never sent a HELLO we could parse.
-pub const Skew = struct {
-    peer_proto_version: ?u16 = null,
-};
-
 /// Called after a NEW pane's request replaced a dead agent's connection
 /// (T3400), so the panes still riding the old one get rebuilt. Set by
 /// `AgentRecovery.start`; must not rebuild synchronously (it runs while a
 /// pane is being built).
 on_reconnected: ?*const fn () void = null,
+
+/// What a skewed dial learned. `peer_proto_version` is null when the peer
+/// never sent a HELLO we could parse.
+pub const Skew = struct {
+    peer_proto_version: ?u16 = null,
+};
 
 /// Retire a connection whose agent died or whose link stayed down: it stops
 /// carrying anything and is shut down OFF the GTK thread (win32's T229 rule -
