@@ -1,0 +1,19 @@
+{
+  "version": "1.56.25",
+  "sections": [
+    { "title": "New",
+      "items": [
+        { "text": "Linux panes drop onto the tab bar, and a 500ms rest on a tab opens it mid-drag." },
+        { "text": "A Linux pane dragged into another window splits, swaps or becomes a tab there, and a window's last pane may leave it." },
+        { "text": "The release step's link rewriter retargets the site's Setup download once the page offers one." },
+        { "text": "A Linux pane drag carries a ghost card of the pane under the pointer." },
+        { "text": "WIP: the pane-drag --ghost report writes its colours as number arrays." },
+        { "text": "A Linux pane drag carries a ghost card of the pane, proven headless." },
+        { "text": "A Linux pane let go over nothing, or its header's new button, opens it in a window of its own." }
+      ] },
+    { "title": "Fixes",
+      "items": [
+        { "text": "The desktop-launch audit now sees camelCase exe names like $testExe, so a test that starts the app under one cannot slip past it." }
+      ] }
+  ]
+}
