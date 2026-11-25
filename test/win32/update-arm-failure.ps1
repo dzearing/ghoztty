@@ -148,7 +148,7 @@ try {
 
 $env:GHOZTTY_UPDATE_URL = $feedUrl
 $env:GHOZTTY_UPDATE_MSI_CODE = '0'
-$env:GHOZTTY_URL_SCHEME = 'off'
+# GHOZTTY_URL_SCHEME=off is set by New-ApplierSandbox for the run (T2195).
 Remove-Item Env:GHOZTTY_UPDATE_AUTO_APPLY -ErrorAction SilentlyContinue
 if ($NegativeControl) {
     Write-Host 'NEGATIVE CONTROL: the arm is NOT forced to fail - this run MUST fail'
@@ -217,7 +217,7 @@ Complete-TestBody  # T1039
     Remove-Item Env:GHOZTTY_UPDATE_URL -ErrorAction SilentlyContinue
     Remove-Item Env:GHOZTTY_UPDATE_MSI_CODE -ErrorAction SilentlyContinue
     Remove-Item Env:GHOZTTY_UPDATE_ARM_FAIL -ErrorAction SilentlyContinue
-    Remove-Item Env:GHOZTTY_URL_SCHEME -ErrorAction SilentlyContinue
+    Restore-ApplierSandboxEnv -Sandbox $sandbox
     # The negative control's app quits to install and is reopened by the
     # applier; those pids are ours too.
     $script:reopened = @(Get-ImagePids $sandbox.Exe | Where-Object { $_ -ne $script:appPid })

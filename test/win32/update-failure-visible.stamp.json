@@ -1,20 +1,20 @@
 {
     "guard":  "update-failure-visible",
     "script":  "test/win32/update-failure-visible.ps1",
-    "generated":  "2026-11-22T14:10:16-08:00",
-    "commit":  "04583b4d2",
+    "generated":  "2026-11-24T17:03:03-08:00",
+    "commit":  "7487344ff",
     "uncommitted":  [
-                        "src/apprt/win32/update_apply.zig",
-                        "src/apprt/win32/update_install.zig"
+                        "test/win32/lib/ApplierSandbox.ps1",
+                        "test/win32/update-failure-visible.ps1"
                     ],
     "files":  {
                   "src/apprt/win32/update_apply.zig":  "3c1dc00f07f7af391e6b2531c9a25b720abe5b097183480f63e6a68cf523f119",
                   "src/apprt/win32/update_install.zig":  "9523be7a31405350edf0795f6be857b756468b3de3bf4a259703e90cfd35f2b5",
-                  "test/win32/lib/ApplierSandbox.ps1":  "82870ff2c01dd3d3e36b1b1f8ff7ed7359059245db8e5d88ac9e30838e177bd8",
-                  "test/win32/update-failure-visible.ps1":  "c8e5dbcf196daf7908d01c6660052aee5479c7946d53a557381dc24ac5bc06d3"
+                  "test/win32/lib/ApplierSandbox.ps1":  "ce597e00f51636bb21da6be95d8058525016e51ff18722125c4bf387cd41333b",
+                  "test/win32/update-failure-visible.ps1":  "d74635ae29d85fa767b62d2eff51f8e798eddfc1a3780a05694c94bb460d5a07"
               },
     "code":  {
-                 "test/win32/lib/ApplierSandbox.ps1":  "code1:8bf850c25defcbb6cdc5be992c46adfea22afb675fdbf58c914b156e69ba48ca",
-                 "test/win32/update-failure-visible.ps1":  "code1:18fc114a59ee9faf7b388ede0d6ecd86f2e7cf2e6cb6db6eb4b1824ed6bb4d7d"
+                 "test/win32/lib/ApplierSandbox.ps1":  "code1:3d41e1bfcdd50de97efd44c8aea391dee98a6858f650e0895d2717466a551476",
+                 "test/win32/update-failure-visible.ps1":  "code1:a30a3ca26e5fa463e0b62bd9ec579f4a322f5b700b517c71044cbdab841a84cc"
              }
 }

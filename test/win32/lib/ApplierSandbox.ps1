@@ -75,7 +75,56 @@ function New-ApplierSandbox {
     # somewhere it must never reap from.
     [void](Register-RepoBuildTeardown -Exe $sandboxExe -Quiet)
 
-    return [pscustomobject]@{ Dir = $dir; Exe = $sandboxExe }
+    # T2195: every arm ends with the applier relaunching the app OUT OF THIS
+    # DIRECTORY, and a Debug build registers HKCU ghoztty-debug:// wherever it
+    # runs - so each run used to leave the dev build's links opening an exe the
+    # teardown then deleted. Registration is off for the run; a value the caller
+    # set on purpose is kept (the Set-GhozttyTestIsolation rule, T2196), and
+    # Restore-ApplierSandboxEnv puts the old value back.
+    $hadScheme = Test-Path Env:GHOZTTY_URL_SCHEME
+    $savedScheme = $env:GHOZTTY_URL_SCHEME
+    if (-not $env:GHOZTTY_URL_SCHEME) { $env:GHOZTTY_URL_SCHEME = 'off' }
+
+    return [pscustomobject]@{
+        Dir              = $dir
+        Exe              = $sandboxExe
+        HadUrlScheme     = $hadScheme
+        SavedUrlScheme   = $savedScheme
+        SchemeCmdBefore  = (Get-DebugUrlSchemeCommand)
+    }
+}
+
+# The registered open-command of the dev build's link handler, or $null when
+# none is registered. This is the value a sandboxed relaunch used to rewrite.
+$script:DebugSchemeCommandKey = 'HKCU:\Software\Classes\ghoztty-debug\shell\open\command'
+
+function Get-DebugUrlSchemeCommand {
+    $p = Get-ItemProperty -LiteralPath $script:DebugSchemeCommandKey -ErrorAction SilentlyContinue
+    if ($null -eq $p) { return $null }
+    return [string]$p.'(default)'
+}
+
+function Test-ApplierSandboxSchemeIntact {
+    <#
+    .SYNOPSIS
+    True when the dev link handler still names what it named before the sandbox
+    was made - i.e. nothing relaunched out of the sandbox re-registered it.
+    #>
+    param([Parameter(Mandatory = $true)]$Sandbox)
+    $now = Get-DebugUrlSchemeCommand
+    return ([string]$now -eq [string]$Sandbox.SchemeCmdBefore) -and
+        -not ([string]$now).ToLowerInvariant().Contains(([string]$Sandbox.Dir).ToLowerInvariant())
+}
+
+function Restore-ApplierSandboxEnv {
+    <#
+    .SYNOPSIS
+    Put GHOZTTY_URL_SCHEME back the way New-ApplierSandbox found it. Teardown.
+    #>
+    param($Sandbox)
+    if ($null -eq $Sandbox) { return }
+    if ($Sandbox.HadUrlScheme) { $env:GHOZTTY_URL_SCHEME = $Sandbox.SavedUrlScheme }
+    else { Remove-Item Env:GHOZTTY_URL_SCHEME -ErrorAction SilentlyContinue }
 }
 
 function Stop-ApplierSandbox {

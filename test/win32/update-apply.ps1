@@ -389,6 +389,10 @@ Assert ($strays.Count -eq 0) "harness: nothing sidelined the repo build ($($stra
 # Reported first, then repaired: the assertion above is the finding, and a run
 # that quietly fixed the damage before looking would never have one.
 Restore-RepoBuild -ExePath $exe
+# T2195: the two arms above relaunched the app out of the sandbox; it must not
+# have re-pointed the dev build's ghoztty-debug:// handler at that temp dir.
+Assert (Test-ApplierSandboxSchemeIntact -Sandbox $sandbox) "harness: the dev link handler still names what it named before ($(Get-DebugUrlSchemeCommand))"
+Restore-ApplierSandboxEnv -Sandbox $sandbox
 
 # -- 12. the repair itself, demonstrated (T1268) --------------------------
 # Section 11 is the alarm; this is the proof that the thing it triggers can

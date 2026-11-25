@@ -1,12 +1,10 @@
 {
     "guard":  "argv-hazard",
     "script":  "test/win32/argv-hazard-audit.ps1",
-    "generated":  "2026-11-24T16:27:31-08:00",
-    "commit":  "acf50e902",
+    "generated":  "2026-11-24T17:12:24-08:00",
+    "commit":  "7487344ff",
     "uncommitted":  [
-                        "scripts/floor-lane.ps1",
-                        "scripts/guard-due.ps1",
-                        "scripts/lib/FloorSource.ps1"
+
                     ],
     "files":  {
                   "scripts/acceptance-parallel.ps1":  "664d7cc264cd257377d66545ca9960556802361c0ad3c6fab635a67e755c6d96",
@@ -46,7 +44,7 @@
                   "scripts/fork-identity.ps1":  "229e1f428c4dcb47e51b54b4786c2850275e09b34126470db2f64c0efe546981",
                   "scripts/ghoztty-agent-watcher.ps1":  "51f93a125f8c81543a365acc9a990175f3b1b599184c19e2a87748b417559db4",
                   "scripts/ghoztty-cleanup.ps1":  "d2307b4c4df220c56944c340fbf60863f23f869fcd52e18acb195627c0aefde9",
-                  "scripts/git-commit-guard.ps1":  "53cdbaf6d93ea215acd424b2a82217f6146223e95e992c52bd3cfa2ae13864c5",
+                  "scripts/git-commit-guard.ps1":  "c9b31b95c7e9e278e40d1ebf8e4696fa9891302493446a5e31df8cbe9b2d9cf8",
                   "scripts/glass-viewer-onscreen.ps1":  "402d6bedef7961f660a9806dd9cb9bea09da4050b8bee78a0755ba8ceb528685",
                   "scripts/go-loop-boot.ps1":  "62b910dada177775a1dbecdfde944ca014ce9b93ab427d97640edfa4d536a5ef",
                   "scripts/go-loop-exec.ps1":  "f14b52f885f4db1e3a9aa1a1707bf51710558711f624dd1c98f7ac7319f43ebe",

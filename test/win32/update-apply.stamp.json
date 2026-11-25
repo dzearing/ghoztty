@@ -1,22 +1,22 @@
 {
     "guard":  "update-apply",
     "script":  "test/win32/update-apply.ps1",
-    "generated":  "2026-11-22T14:26:51-08:00",
-    "commit":  "04583b4d2",
+    "generated":  "2026-11-24T17:00:31-08:00",
+    "commit":  "7487344ff",
     "uncommitted":  [
-                        "src/apprt/win32/update_apply.zig",
-                        "src/apprt/win32/update_install.zig"
+                        "test/win32/lib/ApplierSandbox.ps1",
+                        "test/win32/update-apply.ps1"
                     ],
     "files":  {
                   "src/apprt/win32/install_location.zig":  "724fa228ee06cc60787c0710347a1002cf4d2bfcfe83e584259f36897eaf5717",
                   "src/apprt/win32/update_apply.zig":  "3c1dc00f07f7af391e6b2531c9a25b720abe5b097183480f63e6a68cf523f119",
                   "src/apprt/win32/update_check.zig":  "e8c76a63e80081788c5f082f1f2b9282ac78e19ff132a590c87767a658500489",
                   "src/apprt/win32/update_install.zig":  "9523be7a31405350edf0795f6be857b756468b3de3bf4a259703e90cfd35f2b5",
-                  "test/win32/lib/ApplierSandbox.ps1":  "82870ff2c01dd3d3e36b1b1f8ff7ed7359059245db8e5d88ac9e30838e177bd8",
-                  "test/win32/update-apply.ps1":  "a3529be88058645f186aa3466b225ecc953a9e92659cdbfb5f38727d7edb49de"
+                  "test/win32/lib/ApplierSandbox.ps1":  "ce597e00f51636bb21da6be95d8058525016e51ff18722125c4bf387cd41333b",
+                  "test/win32/update-apply.ps1":  "246ffffc4826ce5ef3cd70d14d66bb507bda06dd420e871b0b862933c3657c6d"
               },
     "code":  {
-                 "test/win32/lib/ApplierSandbox.ps1":  "code1:8bf850c25defcbb6cdc5be992c46adfea22afb675fdbf58c914b156e69ba48ca",
-                 "test/win32/update-apply.ps1":  "code1:c78da8290b0186328af7eae2785f866e53086565fe223f5839e3a4271c770265"
+                 "test/win32/lib/ApplierSandbox.ps1":  "code1:3d41e1bfcdd50de97efd44c8aea391dee98a6858f650e0895d2717466a551476",
+                 "test/win32/update-apply.ps1":  "code1:1dba5ffc455865e0d25bc860d362a255c24abd8185759b3b4c3bab379a639a13"
              }
 }

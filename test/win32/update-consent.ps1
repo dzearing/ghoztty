@@ -172,7 +172,7 @@ $env:GHOZTTY_UPDATE_MSI_CODE = '0'
 # The app runs out of a temp directory here, and a Debug build registers its
 # ghoztty-debug:// handler wherever it runs from - left on, this run would
 # point the dev build's links at a directory the teardown deletes.
-$env:GHOZTTY_URL_SCHEME = 'off'
+# GHOZTTY_URL_SCHEME=off is set by New-ApplierSandbox for the run (T2195).
 Remove-Item Env:GHOZTTY_UPDATE_AUTO_APPLY -ErrorAction SilentlyContinue
 
 # ------------------------------------- A: a staged update waits for consent
@@ -273,7 +273,7 @@ Complete-TestBody  # T1039: the last statement of the body an unwind can skip
     Write-Host '== teardown'
     Remove-Item Env:GHOZTTY_UPDATE_URL -ErrorAction SilentlyContinue
     Remove-Item Env:GHOZTTY_UPDATE_MSI_CODE -ErrorAction SilentlyContinue
-    Remove-Item Env:GHOZTTY_URL_SCHEME -ErrorAction SilentlyContinue
+    Restore-ApplierSandboxEnv -Sandbox $sandbox
     $script:launched = @(Get-TestLaunchedPids) + $script:reopened
     [void](Stop-ApplierSandbox -Sandbox $sandbox)
     Remove-TestDesktop

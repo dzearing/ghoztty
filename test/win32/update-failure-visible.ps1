@@ -502,6 +502,10 @@ try {
     # Reported first, then repaired: the assertion above is the finding, and a
     # run that quietly fixed the damage before looking would never have one.
     Restore-RepoBuild -ExePath $Exe
+    # T2195: every arm reopened the app out of the sandbox; none may have
+    # re-pointed the dev build's ghoztty-debug:// handler at that temp dir.
+    Assert "E3 the dev link handler still names what it named before ($(Get-DebugUrlSchemeCommand))" `
+        (Test-ApplierSandboxSchemeIntact -Sandbox $sandbox)
 
     # LAST statement of the top-level try (T1039): an unwind from anywhere
     # above must not reach the verdict as if the run had finished.
@@ -516,6 +520,7 @@ try {
     $env:LOCALAPPDATA = $savedLocalAppData
     Remove-TestDesktop
     if ($sandbox) { [void](Stop-ApplierSandbox -Sandbox $sandbox) }
+    Restore-ApplierSandboxEnv -Sandbox $sandbox
     [void](Stop-RepoGhoztty -Exe $Exe -SettleMs 600)
     # However this run ended - an assertion walked off the bottom, or something
     # threw before arm E could even look - the repo build is put back on the way

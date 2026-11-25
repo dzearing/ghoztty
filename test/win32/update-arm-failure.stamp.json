@@ -1,12 +1,11 @@
 {
     "guard":  "update-arm-failure",
     "script":  "test/win32/update-arm-failure.ps1",
-    "generated":  "2026-11-22T21:35:12-08:00",
-    "commit":  "9d2120a31",
+    "generated":  "2026-11-24T17:03:20-08:00",
+    "commit":  "7487344ff",
     "uncommitted":  [
-                        "src/apprt/win32/confirm_dialog_layout.zig",
-                        "src/apprt/win32/confirm_dialog_window.zig",
-                        "src/apprt/win32/ConfirmDialog.zig"
+                        "test/win32/lib/ApplierSandbox.ps1",
+                        "test/win32/update-arm-failure.ps1"
                     ],
     "files":  {
                   "src/apprt/win32/confirm_dialog_layout.zig":  "cf61d58e920b246a7e0f70ce0036a62263e583e7acbe61769eac9afcf657ba99",
@@ -15,11 +14,11 @@
                   "src/apprt/win32/update_apply.zig":  "3c1dc00f07f7af391e6b2531c9a25b720abe5b097183480f63e6a68cf523f119",
                   "src/apprt/win32/update_badge.zig":  "ae2e792492c96ae7b19ac3e7a08fa87e1f34d56e5a47c0ed1469fd54a859a546",
                   "src/apprt/win32/update_install.zig":  "9523be7a31405350edf0795f6be857b756468b3de3bf4a259703e90cfd35f2b5",
-                  "test/win32/lib/ApplierSandbox.ps1":  "82870ff2c01dd3d3e36b1b1f8ff7ed7359059245db8e5d88ac9e30838e177bd8",
-                  "test/win32/update-arm-failure.ps1":  "8515f763fee00ff1075617caadfb9f44e5cb8ec211e9d351ad23bbaa2c68d123"
+                  "test/win32/lib/ApplierSandbox.ps1":  "ce597e00f51636bb21da6be95d8058525016e51ff18722125c4bf387cd41333b",
+                  "test/win32/update-arm-failure.ps1":  "f83ee14adcbd496ec449c338f4087397072c710e4bfca200270262c4a8737398"
               },
     "code":  {
-                 "test/win32/lib/ApplierSandbox.ps1":  "code1:8bf850c25defcbb6cdc5be992c46adfea22afb675fdbf58c914b156e69ba48ca",
-                 "test/win32/update-arm-failure.ps1":  "code1:8fe9ecd884db1ca1acf9a4b9b6231ff10d1ee9974524c6720a55b682a9e382ff"
+                 "test/win32/lib/ApplierSandbox.ps1":  "code1:3d41e1bfcdd50de97efd44c8aea391dee98a6858f650e0895d2717466a551476",
+                 "test/win32/update-arm-failure.ps1":  "code1:0f9a2819797115849fc32c98fd3fc1a85430ac11b087f84b7e7983656e4ba958"
              }
 }

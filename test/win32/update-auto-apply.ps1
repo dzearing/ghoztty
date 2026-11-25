@@ -287,6 +287,10 @@ Reset-UpdateState
 $strays = @(Get-SidelinedBuild -ExePath $exe)
 Assert ((Test-Path $exe) -and $strays.Count -eq 0) 'harness: the repo build is exactly where it was'
 Restore-RepoBuild -ExePath $exe
+# T2195: every arm reopened the app out of the sandbox; none may have re-pointed
+# the dev build's ghoztty-debug:// handler at that temp dir.
+Assert (Test-ApplierSandboxSchemeIntact -Sandbox $sandbox) "harness: the dev link handler still names what it named before ($(Get-DebugUrlSchemeCommand))"
+Restore-ApplierSandboxEnv -Sandbox $sandbox
 Remove-TestDesktop | Out-Null
 Write-Host ''
 if ($script:fail -eq 0) { Remove-Item -Recurse -Force $work -ErrorAction SilentlyContinue }
