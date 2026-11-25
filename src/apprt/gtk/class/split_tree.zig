@@ -28,6 +28,7 @@ const pane_style = @import("../pane_style.zig");
 const pane_stage = @import("../pane_stage_rules.zig");
 const pane_stack_grid = @import("../../win32/pane_stack_grid.zig");
 const pane_stash = @import("../../win32/pane_stash.zig");
+const pane_sidebar_add = @import("../../win32/pane_sidebar_add.zig");
 const pane_stack_layout = @import("../../win32/pane_stack_layout.zig");
 const pane_stack_state = @import("../../win32/pane_stack_state.zig");
 const stack_drag = @import("../../win32/stack_drag.zig");
@@ -1642,6 +1643,11 @@ pub const SplitTree = extern struct {
             log.warn("invalid split direction for split-tree.new-split: {s}", .{dir.?});
             return;
         };
+
+        // A split by hand (a keybind, the menu, the palette): the direction
+        // a sidebar window row's + repeats (T3606, Mac `PaneSplitMemory`).
+        // `+split` calls `newSplitAt` directly and never lands here.
+        pane_sidebar_add.noteManualSplit(direction);
 
         self.newSplit(
             direction,

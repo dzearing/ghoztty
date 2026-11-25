@@ -31,9 +31,19 @@
 //! Parity is behavior and information, not pixels (docs/design/linux-port.md):
 //! stock libadwaita widgets, no glide. Every window redraws for a shared
 //! change at once rather than when it is next key - a GTK window lists a few
-//! panes, and there is no per-frame cost to defer. Not here yet: drag to
-//! reorder and the stash tray (T3607), group editing (T3608), a row's tools,
-//! the hover tint and the busy sheen (T3606).
+//! panes, and there is no per-frame cost to defer.
+//!
+//! Hovering a panel row shows its buttons (T3606): a pane of this window
+//! offers - (stash) or the restore, then x; another window's pane the x
+//! alone; a window row, a project and the Ungrouped header + then x where
+//! the count was. The panel header has a + of its own (a new window). Every
+//! close from here asks nothing and raises nothing, and runs on the next
+//! main-loop turn; every + takes focus, as its keybind does.
+//!
+//! Not here yet: drag to reorder and the stash tray (T3607), group editing
+//! (T3608), and from T3606's remainder (T3695) this window's own header row
+//! and the rail's +, rename in place, the hover tint, the busy sheen, the
+//! width grip and hero-mode suppression.
 //!
 //! GTK main thread only.
 const PaneSidebar = @This();
@@ -52,6 +62,7 @@ const rows = @import("pane_sidebar_rows.zig");
 const all = @import("pane_sidebar_all.zig");
 const search_cap = @import("../win32/pane_sidebar_search.zig").cap;
 const pane_stash = @import("../win32/pane_stash.zig");
+const add_rules = @import("../win32/pane_sidebar_add.zig");
 const Application = @import("class/application.zig").Application;
 const Window = @import("class/window.zig").Window;
 const Surface = @import("class/surface.zig").Surface;
@@ -184,6 +195,7 @@ fn toggleFold(kind: RowKind, key: u64) void {
 // One window's sidebar
 
 pub const RowKind = enum { pane, window, project, ungrouped, tile };
+pub const Tool = rows.Tool;
 
 /// One drawn row: what the seam reports, and what a click does.
 pub const Row = struct {
@@ -208,6 +220,17 @@ pub const Row = struct {
     folded: bool = false,
     depth: u8 = 0,
     selection: all.HeadSelection = .none,
+    /// A pane of the window (active tab) this sidebar is drawn in.
+    own: bool = false,
+    /// The buttons hovering offers (T3606), and the box that holds them:
+    /// hidden until the pointer is over the row.
+    tools: []const rows.Tool = &.{},
+    tools_box: ?*wk.GtkWidget = null,
+    /// A header's count, which its buttons take the place of on hover.
+    count_widget: ?*wk.GtkWidget = null,
+    hovered: bool = false,
+    /// A header's windows (tab keys), what its x closes; owned.
+    members: []const u64 = &.{},
 };
 
 alloc: Allocator,
@@ -218,8 +241,13 @@ card: *wk.GtkWidget,
 toggle: *wk.GtkWidget,
 title: *wk.GtkWidget,
 count_label: *wk.GtkWidget,
+/// The panel header's + (T3606): a new window, as Ctrl+Shift+N.
+add_button: *wk.GtkWidget,
 scope_button: *wk.GtkWidget,
 search: *wk.GtkWidget,
+/// The id of the row under the pointer, kept across a redraw (the rows are
+/// rebuilt, the pointer has not moved); null when none is.
+hover_id: ?[]u8 = null,
 list: *wk.GtkWidget,
 drawn: std.ArrayListUnmanaged(*Row) = .empty,
 mode: rows.Mode = .mini,
@@ -267,6 +295,14 @@ pub fn create(alloc: Allocator, window: *Window) Allocator.Error!*PaneSidebar {
     wk.gtk_widget_add_css_class(count_label, "dim-label");
     wk.gtk_widget_add_css_class(count_label, "caption");
     wk.gtk_box_append(header, count_label);
+    // The + left of the scope button (the panel only, T3606): a new window.
+    const add_button = wk.gtk_button_new_from_icon_name("list-add-symbolic");
+    wk.gtk_widget_add_css_class(add_button, "flat");
+    wk.gtk_widget_set_focus_on_click(add_button, 0);
+    wk.gtk_widget_set_focusable(add_button, 0);
+    wk.gtk_widget_set_tooltip_text(add_button, rows.toolTip(.add, false));
+    _ = wk.g_signal_connect_data(add_button, "clicked", @ptrCast(&onHeaderAddClicked), self, null, 0);
+    wk.gtk_box_append(header, add_button);
     // The scope button at the trailing edge (the panel only).
     const scope_button = wk.gtk_button_new_from_icon_name("view-list-symbolic");
     wk.gtk_widget_add_css_class(scope_button, "flat");
@@ -303,6 +339,7 @@ pub fn create(alloc: Allocator, window: *Window) Allocator.Error!*PaneSidebar {
         .toggle = toggle,
         .title = title,
         .count_label = count_label,
+        .add_button = add_button,
         .scope_button = scope_button,
         .search = search,
         .list = list,
@@ -316,6 +353,7 @@ pub fn destroy(self: *PaneSidebar) void {
     self.idle = 0;
     self.clearRows();
     self.drawn.deinit(self.alloc);
+    if (self.hover_id) |h| self.alloc.free(h);
     self.alloc.destroy(self);
 }
 
@@ -350,6 +388,7 @@ fn clearRows(self: *PaneSidebar) void {
         self.alloc.free(r.label);
         if (r.subtitle) |s| self.alloc.free(s);
         if (r.tooltip) |t| self.alloc.free(t);
+        if (r.members.len > 0) self.alloc.free(r.members);
         self.alloc.destroy(r);
     }
     self.drawn.clearRetainingCapacity();
@@ -373,6 +412,7 @@ pub fn refresh(self: *PaneSidebar) void {
     wk.gtk_widget_set_visible(self.title, @intFromBool(expanded));
     wk.gtk_widget_set_visible(self.count_label, @intFromBool(expanded and every));
     wk.gtk_widget_set_visible(self.scope_button, @intFromBool(expanded));
+    wk.gtk_widget_set_visible(self.add_button, @intFromBool(expanded));
     wk.gtk_widget_set_tooltip_text(self.scope_button, if (every) "Show This Window's Panes" else "Show All Windows");
     if (every) wk.gtk_widget_add_css_class(self.scope_button, "pane-sidebar-scope-on") else wk.gtk_widget_remove_css_class(self.scope_button, "pane-sidebar-scope-on");
     wk.gtk_widget_set_visible(self.search, @intFromBool(expanded and every));
@@ -413,7 +453,7 @@ pub fn refresh(self: *PaneSidebar) void {
     var leaves: std.ArrayListUnmanaged(*Surface) = .empty;
     defer leaves.deinit(self.alloc);
     collectLeaves(self.alloc, tree, &leaves) catch {};
-    for (leaves.items) |v| self.addPaneRow(v, v == active, expanded, home, 0) catch |err| {
+    for (leaves.items) |v| self.addPaneRow(v, v == active, expanded, home, 0, true) catch |err| {
         log.warn("pane sidebar row failed err={}", .{err});
         break;
     };
@@ -543,7 +583,7 @@ fn refreshAll(self: *PaneSidebar, expanded: bool, home: ?[]const u8) Allocator.E
         .pane => {
             const v = g.surfaces[item.window][item.pane];
             const w = g.windows[item.window];
-            try self.addPaneRow(v, w.own and g.actives[item.window] == v, true, home, item.depth);
+            try self.addPaneRow(v, w.own and g.actives[item.window] == v, true, home, item.depth, w.own);
         },
         else => try self.addHeadRow(item),
     };
@@ -551,7 +591,7 @@ fn refreshAll(self: *PaneSidebar, expanded: bool, home: ?[]const u8) Allocator.E
 
 /// A pane's row: its icon, and (expanded) its name with its directory under
 /// it. Indented one step under its window in the all-windows outline.
-fn addPaneRow(self: *PaneSidebar, surface: *Surface, selected: bool, expanded: bool, home: ?[]const u8, depth: u8) Allocator.Error!void {
+fn addPaneRow(self: *PaneSidebar, surface: *Surface, selected: bool, expanded: bool, home: ?[]const u8, depth: u8, own: bool) Allocator.Error!void {
     var lb: [rows.TEXT_BUF_LEN]u8 = undefined;
     var sb: [rows.TEXT_BUF_LEN]u8 = undefined;
     const viewer = surface.isViewer();
@@ -590,9 +630,17 @@ fn addPaneRow(self: *PaneSidebar, surface: *Surface, selected: bool, expanded: b
     }
     wk.gtk_button_set_child(button, content);
 
+    // The row: the button that focuses the pane, then (the panel) the
+    // buttons hovering shows at its trailing edge (T3606). Siblings, not
+    // children: a button inside a button would take the row's click.
+    const outer = wk.gtk_box_new(orientation_horizontal, 2);
+    wk.gtk_widget_add_css_class(outer, "pane-sidebar-item");
+    wk.gtk_widget_set_hexpand(button, 1);
+    wk.gtk_box_append(outer, button);
+
     r.* = .{
         .sidebar = self,
-        .widget = button,
+        .widget = outer,
         .kind = .pane,
         .id = pane_id,
         .label = label,
@@ -602,10 +650,91 @@ fn addPaneRow(self: *PaneSidebar, surface: *Surface, selected: bool, expanded: b
         .viewer = viewer,
         .stashed = stashed,
         .depth = depth,
+        .own = own,
+        .tools = rows.paneTools(expanded, own, stashed),
     };
     _ = wk.g_signal_connect_data(button, "clicked", @ptrCast(&onRowClicked), r, null, 0);
+    self.addTools(r, outer, false);
     try self.drawn.append(self.alloc, r);
-    wk.gtk_box_append(self.list, button);
+    wk.gtk_box_append(self.list, outer);
+}
+
+/// The row's hover buttons (`r.tools`), in a box at the end of `row` that
+/// stays hidden until the pointer is over the row, and the pointer tracking
+/// that shows it. `window_row`: a window header (its + adds a pane).
+fn addTools(self: *PaneSidebar, r: *Row, row: *wk.GtkWidget, window_row: bool) void {
+    const motion = wk.gtk_event_controller_motion_new();
+    _ = wk.g_signal_connect_data(motion, "enter", @ptrCast(&onRowEnter), r, null, 0);
+    _ = wk.g_signal_connect_data(motion, "leave", @ptrCast(&onRowLeave), r, null, 0);
+    wk.gtk_widget_add_controller(row, motion);
+    if (r.tools.len == 0) return;
+
+    const box = wk.gtk_box_new(orientation_horizontal, 0);
+    wk.gtk_widget_add_css_class(box, "pane-sidebar-tools");
+    wk.gtk_widget_set_valign(box, align_center);
+    for (r.tools) |t| {
+        const b = wk.gtk_button_new_from_icon_name(switch (t) {
+            .stash => "list-remove-symbolic",
+            .restore => "edit-undo-symbolic",
+            .add => "list-add-symbolic",
+            .close => "window-close-symbolic",
+        });
+        wk.gtk_widget_add_css_class(b, "flat");
+        wk.gtk_widget_add_css_class(b, "circular");
+        wk.gtk_widget_add_css_class(b, "pane-sidebar-tool");
+        wk.gtk_widget_set_focus_on_click(b, 0);
+        wk.gtk_widget_set_focusable(b, 0);
+        var tip_buf: [160]u8 = undefined;
+        const tip: [:0]const u8 = if (t == .add and (r.kind == .project or r.kind == .ungrouped))
+            groupAddTip(r, &tip_buf)
+        else
+            rows.toolTip(t, window_row);
+        wk.gtk_widget_set_tooltip_text(b, tip);
+        const cb: *const anyopaque = switch (t) {
+            .stash, .restore => @ptrCast(&onToolStash),
+            .add => @ptrCast(&onToolAdd),
+            .close => @ptrCast(&onToolClose),
+        };
+        _ = wk.g_signal_connect_data(b, "clicked", cb, r, null, 0);
+        wk.gtk_box_append(box, b);
+    }
+    r.tools_box = box;
+    wk.gtk_box_append(row, box);
+    // A redraw under a still pointer keeps the row it is over hovered.
+    const hovered = if (self.hover_id) |h| std.mem.eql(u8, h, r.id) else false;
+    showTools(r, hovered);
+}
+
+fn groupAddTip(r: *const Row, buf: *[160]u8) [:0]const u8 {
+    if (r.kind == .ungrouped) return rows.toolTip(.add, false);
+    const t = add_rules.projectAddTip(r.label, buf[0 .. buf.len - 1]);
+    buf[t.len] = 0;
+    return buf[0..t.len :0];
+}
+
+/// Show or hide a row's buttons; a header's count gives them its place.
+fn showTools(r: *Row, on: bool) void {
+    r.hovered = on;
+    if (r.tools_box) |b| wk.gtk_widget_set_visible(b, @intFromBool(on));
+    if (r.count_widget) |c| if (r.tools_box != null) wk.gtk_widget_set_visible(c, @intFromBool(!on));
+}
+
+fn onRowEnter(_: *wk.GtkEventController, _: f64, _: f64, r: *Row) callconv(.c) void {
+    r.sidebar.setHover(r.id);
+}
+
+fn onRowLeave(_: *wk.GtkEventController, r: *Row) callconv(.c) void {
+    const self = r.sidebar;
+    if (self.hover_id) |h| if (std.mem.eql(u8, h, r.id)) self.setHover(null);
+}
+
+/// The row under the pointer (by id; null: none): its buttons show, every
+/// other row's hide. The seam's `--hover` drives the same path.
+pub fn setHover(self: *PaneSidebar, id: ?[]const u8) void {
+    if (self.hover_id) |h| self.alloc.free(h);
+    self.hover_id = null;
+    if (id) |i| self.hover_id = self.alloc.dupe(u8, i) catch null;
+    for (self.drawn.items) |r| showTools(r, if (self.hover_id) |h| std.mem.eql(u8, h, r.id) else false);
 }
 
 const outline_indent: c_int = 16;
@@ -676,6 +805,7 @@ fn addHeadRow(self: *PaneSidebar, item: all.Item) Allocator.Error!void {
 
     var cb: [16]u8 = undefined;
     const count_z = std.fmt.bufPrintZ(&cb, "{d}", .{item.count}) catch "";
+    var count_widget: *wk.GtkWidget = undefined;
     if (kind == .window) {
         // The name raises the window; the chevron folds it.
         const button = rowButton(false, null);
@@ -689,6 +819,7 @@ fn addHeadRow(self: *PaneSidebar, item: all.Item) Allocator.Error!void {
         const count = wk.gtk_label_new(count_z);
         wk.gtk_widget_add_css_class(count, "dim-label");
         wk.gtk_box_append(content, count);
+        count_widget = count;
         wk.gtk_button_set_child(button, content);
         wk.gtk_box_append(row, button);
         _ = wk.g_signal_connect_data(button, "clicked", @ptrCast(&onRowClicked), r, null, 0);
@@ -702,7 +833,10 @@ fn addHeadRow(self: *PaneSidebar, item: all.Item) Allocator.Error!void {
         const count = wk.gtk_label_new(count_z);
         wk.gtk_widget_add_css_class(count, "dim-label");
         wk.gtk_box_append(row, count);
+        count_widget = count;
     }
+    const members = try self.alloc.dupe(u64, item.members);
+    errdefer self.alloc.free(members);
 
     r.* = .{
         .sidebar = self,
@@ -716,8 +850,12 @@ fn addHeadRow(self: *PaneSidebar, item: all.Item) Allocator.Error!void {
         .depth = item.depth,
         .selection = item.selection,
         .selected = item.selection == .accent,
+        .tools = rows.headTools(true),
+        .count_widget = count_widget,
+        .members = members,
     };
     _ = wk.g_signal_connect_data(chevron, "clicked", @ptrCast(&onFoldClicked), r, null, 0);
+    self.addTools(r, row, kind == .window);
     try self.drawn.append(self.alloc, r);
     wk.gtk_box_append(self.list, row);
 }
@@ -763,6 +901,197 @@ fn onRowClicked(_: *wk.GtkWidget, r: *Row) callconv(.c) void {
 
 fn onFoldClicked(_: *wk.GtkWidget, r: *Row) callconv(.c) void {
     toggleFold(r.kind, r.key);
+}
+
+// ---------------------------------------------------------------------------
+// A row's buttons (T3606; docs/reference/pane-sidebar.md "Rows and tiles",
+// "Adding from the sidebar", "Closing from the sidebar")
+
+fn onToolStash(_: *wk.GtkWidget, r: *Row) callconv(.c) void {
+    _ = toggleStash(r.id);
+}
+
+fn onToolAdd(_: *wk.GtkWidget, r: *Row) callconv(.c) void {
+    r.sidebar.addFromRow(r);
+}
+
+fn onToolClose(_: *wk.GtkWidget, r: *Row) callconv(.c) void {
+    r.sidebar.closeFromRow(r);
+}
+
+fn onHeaderAddClicked(_: *wk.GtkWidget, self: *PaneSidebar) callconv(.c) void {
+    self.newWindowHere();
+}
+
+/// A row's button, by tool and row id (the seam): what a click on it does.
+/// False when the row is not drawn or does not offer that button.
+pub fn clickTool(self: *PaneSidebar, tool: rows.Tool, id: []const u8) bool {
+    const r = self.rowById(id) orelse return false;
+    if (std.mem.indexOfScalar(rows.Tool, r.tools, tool) == null) return false;
+    switch (tool) {
+        .stash, .restore => _ = toggleStash(r.id),
+        .add => self.addFromRow(r),
+        .close => self.closeFromRow(r),
+    }
+    return true;
+}
+
+const FoundPane = struct { win: *Window, tab: *Tab, surface: *Surface };
+
+/// The pane with this id in any window (any tab), or null.
+fn findPane(pane_id: []const u8) ?FoundPane {
+    var node: ?*glib.List = Application.default().as(gtk.Application).getWindows();
+    while (node) |n| {
+        node = n.f_next;
+        const obj: *gobject.Object = @ptrCast(@alignCast(n.f_data orelse continue));
+        const win = gobject.ext.cast(Window, obj) orelse continue;
+        // A window being disposed has dropped its sidebar: never reach into it.
+        if (win.paneSidebar() == null) continue;
+        const tab_view = win.getTabView();
+        const pages: usize = @intCast(@max(tab_view.getNPages(), 0));
+        for (0..pages) |i| {
+            const page = tab_view.getNthPage(@intCast(i));
+            const tab = gobject.ext.cast(Tab, page.getChild()) orelse continue;
+            const tree = tab.getSurfaceTree() orelse continue;
+            var it = tree.iterator();
+            while (it.next()) |entry| {
+                if (std.mem.eql(u8, entry.view.paneId(), pane_id)) return .{ .win = win, .tab = tab, .surface = entry.view };
+            }
+        }
+    }
+    return null;
+}
+
+const FoundTab = struct { win: *Window, tab: *Tab };
+
+/// The window (a tab) with this key, or null when it is gone.
+fn findTab(key: u64) ?FoundTab {
+    var node: ?*glib.List = Application.default().as(gtk.Application).getWindows();
+    while (node) |n| {
+        node = n.f_next;
+        const obj: *gobject.Object = @ptrCast(@alignCast(n.f_data orelse continue));
+        const win = gobject.ext.cast(Window, obj) orelse continue;
+        if (win.paneSidebar() == null) continue;
+        const tab_view = win.getTabView();
+        const pages: usize = @intCast(@max(tab_view.getNPages(), 0));
+        for (0..pages) |i| {
+            const page = tab_view.getNthPage(@intCast(i));
+            const tab = gobject.ext.cast(Tab, page.getChild()) orelse continue;
+            if (@intFromPtr(tab) == key) return .{ .win = win, .tab = tab };
+        }
+    }
+    return null;
+}
+
+/// A row's - or its restore: stash the pane, or bring a stashed one back to
+/// its slot, focused (win32 `paneSidebarToggleStash`). The last pane on
+/// screen is not stashed. False when the pane is gone or refused.
+fn toggleStash(pane_id: []const u8) bool {
+    const f = findPane(pane_id) orelse return false;
+    const tree = f.tab.getSplitTree();
+    if (pane_stash.isStashed(f.surface)) {
+        log.info("pane sidebar restore pane={s}", .{pane_id});
+        return tree.restoreSurface(f.surface, true);
+    }
+    tree.stashSurface(f.surface) catch |err| {
+        log.info("pane sidebar stash refused pane={s} err={}", .{ pane_id, err });
+        return false;
+    };
+    log.info("pane sidebar stash pane={s}", .{pane_id});
+    return true;
+}
+
+/// A row's x: a pane's closes that pane (its window too, when it was the
+/// last), a header's every window it heads (`Row.members`). Nothing is asked
+/// and nothing is raised; the sessions end, parked for undo as any close.
+/// The close runs on the next main-loop turn, so a window can close itself
+/// from its own sidebar - this row is freed by then.
+fn closeFromRow(self: *PaneSidebar, r: *const Row) void {
+    const p = self.alloc.create(PendingClose) catch return;
+    p.* = .{ .alloc = self.alloc };
+    switch (r.kind) {
+        .pane => p.pane = self.alloc.dupe(u8, r.id) catch null,
+        .window, .project, .ungrouped => p.keys = self.alloc.dupe(u64, r.members) catch &.{},
+        .tile => {},
+    }
+    log.info("pane sidebar close {s} id={s} windows={d}", .{ @tagName(r.kind), r.id, p.keys.len });
+    _ = wk.g_idle_add(@ptrCast(&onPendingClose), p);
+}
+
+const PendingClose = struct {
+    alloc: Allocator,
+    pane: ?[]u8 = null,
+    keys: []const u64 = &.{},
+};
+
+fn onPendingClose(p: *PendingClose) callconv(.c) c_int {
+    defer {
+        if (p.pane) |id| p.alloc.free(id);
+        p.alloc.free(p.keys);
+        p.alloc.destroy(p);
+    }
+    // Found again by identity: a window may have closed since the click.
+    if (p.pane) |id| if (findPane(id)) |f| {
+        _ = f.tab.getSplitTree().closeSurfaceNow(f.surface);
+    };
+    for (p.keys) |k| if (findTab(k)) |f| {
+        _ = f.win.closeTabNow(f.tab);
+    };
+    return 0; // G_SOURCE_REMOVE
+}
+
+/// A header's + (Mac `PaneSidebarAdd`): a window row's raises that window
+/// and splits its focused pane the way the user last split one by hand; a
+/// project's opens a window from its first window as listed, titled into the
+/// group under a free placeholder name; the Ungrouped header's an untitled
+/// window from its first. Each takes focus, as the keybinds do.
+fn addFromRow(self: *PaneSidebar, r: *const Row) void {
+    if (r.members.len == 0) return;
+    const first = findTab(r.members[0]) orelse return;
+    const parent: ?*Surface = first.tab.getActiveSurface();
+    switch (r.kind) {
+        .window => {
+            const dir = add_rules.split_memory.last;
+            log.info("pane sidebar add pane dir={s}", .{@tagName(dir)});
+            _ = raiseWindow(r.key);
+            first.tab.getSplitTree().newSplit(add_rules.as(Surface.Tree.Split.Direction, dir), parent, .none) catch |err| {
+                log.warn("pane sidebar add pane failed err={}", .{err});
+            };
+        },
+        .ungrouped => {
+            log.info("pane sidebar add ungrouped window", .{});
+            _ = first.win.as(gtk.Widget).activateAction("win.new-window", null);
+        },
+        .project => {
+            var arena_state = std.heap.ArenaAllocator.init(self.alloc);
+            defer arena_state.deinit();
+            const arena = arena_state.allocator();
+            const g = self.gather(arena) catch return;
+            const taken = arena.alloc([]const u8, g.windows.len) catch return;
+            for (g.windows, taken) |w, *t| t.* = w.name;
+            var tb: [512]u8 = undefined;
+            const title = add_rules.newWindowTitle(&tb, r.label, taken);
+            if (title.len == 0) return;
+            log.info("pane sidebar add window in group title={s}", .{title});
+            const core = if (parent) |s| s.core() else null;
+            _ = Application.default().newWindowFromSidebar(core, title);
+        },
+        .pane, .tile => {},
+    }
+}
+
+/// The panel header's +: a new window, exactly Ctrl+Shift+N from this
+/// window's focused pane.
+fn newWindowHere(self: *PaneSidebar) void {
+    log.info("pane sidebar add window (header)", .{});
+    _ = self.window.as(gtk.Widget).activateAction("win.new-window", null);
+}
+
+/// The panel header's + (the seam). False when it is not on screen.
+pub fn clickHeaderAdd(self: *PaneSidebar) bool {
+    if (wk.gtk_widget_get_visible(self.add_button) == 0) return false;
+    self.newWindowHere();
+    return true;
 }
 
 /// The row with this id as drawn now (the seam's clicks).
@@ -940,9 +1269,13 @@ pub fn report(self: *PaneSidebar, arena: Allocator) Allocator.Error!rows.Report 
         .folded = r.folded,
         .depth = r.depth,
         .selection = @tagName(r.selection),
+        .tools = r.tools,
+        .hovered = r.hovered,
+        .tools_shown = if (r.tools_box) |b| wk.gtk_widget_get_visible(b) != 0 else false,
     };
     var qb: [search_cap * 3]u8 = undefined;
     return .{
+        .add_shown = wk.gtk_widget_get_visible(self.add_button) != 0,
         .mode = @tagName(self.mode),
         .expanded = shared.expanded,
         .hidden = shared.hidden,

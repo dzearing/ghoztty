@@ -219,7 +219,8 @@ pub fn handleSeam(app: Context, request: Request) Allocator.Error!server.SeamRep
 }
 
 /// `pane-sidebar --target=<pane|window> [--search=<text>]
-/// [--search-key=enter|escape] [--click=toggle|scope|<row id>|fold:<row id>]`
+/// [--search-key=enter|escape] [--hover=<row id>|]
+/// [--click=toggle|scope|add|<row id>|fold:<row id>|tool:<button>:<row id>]`
 /// (T3557, T3558): what the target window's pane sidebar shows - its mode,
 /// the shared flags, the scope and search, and every row as drawn (id,
 /// label, subtitle, tooltip, selected; a header's count and fold) - after an
@@ -234,11 +235,13 @@ fn paneSidebar(app: Context, request: Request) Allocator.Error![]u8 {
     var click_arg: ?[]const u8 = null;
     var search_arg: ?[]const u8 = null;
     var key_arg: ?[]const u8 = null;
+    var hover_arg: ?[]const u8 = null;
     for (request.arguments orelse &.{}) |arg| {
         if (std.mem.startsWith(u8, arg, "--target=")) target_arg = arg["--target=".len..];
         if (std.mem.startsWith(u8, arg, "--click=")) click_arg = arg["--click=".len..];
         if (std.mem.startsWith(u8, arg, "--search=")) search_arg = arg["--search=".len..];
         if (std.mem.startsWith(u8, arg, "--search-key=")) key_arg = arg["--search-key=".len..];
+        if (std.mem.startsWith(u8, arg, "--hover=")) hover_arg = arg["--hover=".len..];
     }
     const target_name = target_arg orelse return server.errorResponse(c_alloc, "--target is required for pane-sidebar", .{});
 
@@ -275,11 +278,25 @@ fn paneSidebar(app: Context, request: Request) Allocator.Error![]u8 {
         } else if (std.mem.startsWith(u8, click, "fold:")) {
             if (!sidebar.clickFold(click["fold:".len..]))
                 return server.errorResponse(c_alloc, "no sidebar header '{s}'", .{click["fold:".len..]});
+        } else if (std.mem.eql(u8, click, "add")) {
+            if (!sidebar.clickHeaderAdd()) return server.errorResponse(c_alloc, "the header's + is not shown", .{});
+        } else if (std.mem.startsWith(u8, click, "tool:")) {
+            // tool:<stash|restore|add|close>:<row id> (T3606).
+            const rest = click["tool:".len..];
+            const colon = std.mem.indexOfScalar(u8, rest, ':') orelse
+                return server.errorResponse(c_alloc, "--click=tool:<name>:<row id>", .{});
+            const tool = std.meta.stringToEnum(PaneSidebar.Tool, rest[0..colon]) orelse
+                return server.errorResponse(c_alloc, "no sidebar button '{s}'", .{rest[0..colon]});
+            if (!sidebar.clickTool(tool, rest[colon + 1 ..]))
+                return server.errorResponse(c_alloc, "no '{s}' button on sidebar row '{s}'", .{ rest[0..colon], rest[colon + 1 ..] });
         } else if (!sidebar.clickRow(click)) {
             return server.errorResponse(c_alloc, "no sidebar row for '{s}'", .{click});
         }
     }
     sidebar.refresh();
+    // The pointer over a row (its buttons show), or with an empty value off
+    // every row - the motion controller's enter and leave (T3606).
+    if (hover_arg) |h| sidebar.setHover(if (h.len == 0) null else h);
     const rep = try sidebar.report(arena);
     var out: std.Io.Writer.Allocating = .init(arena);
     std.json.Stringify.value(.{ .success = true, .sidebar = rep }, .{}, &out.writer) catch return error.OutOfMemory;

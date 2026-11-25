@@ -1164,6 +1164,8 @@ pub const Application = extern struct {
                 };
                 // Off THIS pane, not whichever the tree last saw focused.
                 const t = tree orelse return false;
+                // A viewer's split chord is a split by hand (T3606).
+                @import("../../win32/pane_sidebar_add.zig").noteManualSplit(dir);
                 t.newSplit(switch (dir) {
                     .right => .right,
                     .left => .left,
@@ -1624,6 +1626,19 @@ pub const Application = extern struct {
             .view = view,
             .activate = take_focus,
         });
+    }
+
+    /// A pane sidebar + (T3606, Mac `newWindowFromSidebar`): a new window
+    /// exactly as Ctrl+Shift+N opens one from `parent` (its inherited
+    /// config and working directory), in front - a manual surface, so it
+    /// takes focus. A group header's + pins `title` so the window lands in
+    /// the group (`+new-window --title`'s pin).
+    pub fn newWindowFromSidebar(self: *Self, parent: ?*CoreSurface, title: ?[]const u8) *Window {
+        self.private().requested_window = true;
+        const win = Window.new(self, .none);
+        Action.initAndShowWindow(self, win, parent, .{});
+        if (title) |t| if (t.len > 0) win.setTitleOverride(t);
+        return win;
     }
 
     /// A window rebuilt by a session restore (T3397), at its recorded size

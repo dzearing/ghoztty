@@ -308,6 +308,28 @@ label.resize-overlay {
 }
 
 /*
+ * A hovered row's buttons (T3606, Mac PaneSidebarItemButton): an 18px
+ * circle whose wash deepens and whose glyph brightens under the pointer.
+ */
+.pane-sidebar .pane-sidebar-tools {
+  margin-right: 6px;
+}
+
+.pane-sidebar button.pane-sidebar-tool {
+  min-width: 18px;
+  min-height: 18px;
+  padding: 0;
+  margin: 0 1px 0 1px;
+  background-color: alpha(currentColor, 0.08);
+  opacity: 0.75;
+}
+
+.pane-sidebar button.pane-sidebar-tool:hover {
+  background-color: alpha(currentColor, 0.18);
+  opacity: 1;
+}
+
+/*
  * The keyboard shortcut guide (T3570): keycaps and row badges.
  */
 .ghoztty-shortcut-guide label.ghoztty-keycap {

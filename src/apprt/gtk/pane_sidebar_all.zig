@@ -21,9 +21,9 @@
 //! turns their lines into the rows `PaneSidebar.zig` draws. No GTK imports:
 //! it runs in the none lane.
 //!
+//! A header's hover + and x (T3606) read `Item.members` for what they close.
 //! Not here yet: dragging rows (windows, groups, panes) and the stash tray
-//! (T3607); group editing - the window-row menu and the headers' tools
-//! (T3608); a row's own tools, the hover tint and the busy sheen (T3606).
+//! (T3607); group editing - the window-row menu, renaming (T3608).
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -74,6 +74,10 @@ pub const Item = struct {
     key: u64 = 0,
     /// A window row's selection (`pane_sidebar.headSelection`).
     selection: HeadSelection = .none,
+    /// The windows (their keys) a header's x closes (T3606): a window row's
+    /// own; a project's (or Ungrouped's) every window it lists - while
+    /// searching, only the matching ones it counts, folded or not.
+    members: []const u64 = &.{},
 };
 
 /// A project's fold key (shared `folded_projects`); the Ungrouped header's
@@ -204,6 +208,7 @@ pub fn build(arena: Allocator, windows: []const Window, query: ?[]const u8, shar
                     .count = outline.projectSize(listed_placed, line.index),
                     .folded = spec.project_folded,
                     .key = projectKey(pj),
+                    .members = try memberKeys(arena, windows, listed_placed, pj),
                 };
             } else {
                 var lones: usize = 0;
@@ -217,6 +222,7 @@ pub fn build(arena: Allocator, windows: []const Window, query: ?[]const u8, shar
                     .count = lones,
                     .folded = spec.project_folded,
                     .key = projectKey(ungrouped_key_name),
+                    .members = try memberKeys(arena, windows, listed_placed, null),
                 };
             }
         },
@@ -233,6 +239,7 @@ pub fn build(arena: Allocator, windows: []const Window, query: ?[]const u8, shar
                 .depth = line.depth,
                 .key = w.key,
                 .selection = ps.headSelection(.window, w.own, spec.folded, false, true),
+                .members = try arena.dupe(u64, &.{w.key}),
             };
         },
         .pane => {
@@ -247,6 +254,20 @@ pub fn build(arena: Allocator, windows: []const Window, query: ?[]const u8, shar
         },
     };
     return out;
+}
+
+/// The keys of the listed windows grouped under `project` (null: the lone
+/// ones the Ungrouped header heads), in the list's order.
+fn memberKeys(arena: Allocator, windows: []const Window, listed: []const outline.Placed, project: ?[]const u8) Allocator.Error![]u64 {
+    var out: std.ArrayListUnmanaged(u64) = .empty;
+    for (listed) |p| {
+        const same = if (project) |pj|
+            (if (p.project) |q| std.mem.eql(u8, q, pj) else false)
+        else
+            p.project == null;
+        if (same) try out.append(arena, windows[p.index].key);
+    }
+    return out.items;
 }
 
 /// The collapsed all-windows rail: one tile per window, in the list's order,
@@ -346,12 +367,17 @@ test "T3558: project windows group under their header, lone windows first under 
     // Labeled by the worktree, in Finder order (2 before 10).
     try testing.expectEqualStrings("wt-2", items[3].label);
     try testing.expectEqualStrings("wt-10", items[4].label);
+    // T3606: each header's x closes the windows it heads.
+    try testing.expectEqualSlices(u64, &.{2}, items[0].members);
+    try testing.expectEqualSlices(u64, &.{2}, items[1].members);
+    try testing.expectEqualSlices(u64, &.{ 3, 1 }, items[2].members);
 
     // Folding the project hides its windows' rows; the header stays.
     shared.toggleProject(testing.allocator, items[2].key);
     items = try build(arena, &wins, null, &shared, null);
     try testing.expectEqualStrings("UWP", kinds(items, &buf));
     try testing.expect(items[2].folded);
+    try testing.expectEqualSlices(u64, &.{ 3, 1 }, items[2].members);
 
     // With no group there is no Ungrouped header: a flat list.
     const flat = [_]Window{
@@ -418,6 +444,15 @@ test "T3558: a search keeps every term's panes, drops windows with none, and unf
 
     items = try build(arena, &wins, "~/src", &shared, "/home/ann");
     try testing.expectEqualStrings("Wpp", kinds(items, &buf));
+
+    // T3606: while searching, a header closes only the windows it lists.
+    const g_wins = [_]Window{
+        .{ .name = "p: a", .key = 7, .opened = 1, .panes = &a_panes },
+        .{ .name = "p: b", .key = 8, .opened = 2, .panes = &b_panes },
+    };
+    items = try build(arena, &g_wins, "htop", &shared, null);
+    try testing.expectEqualStrings("PWp", kinds(items, &buf));
+    try testing.expectEqualSlices(u64, &.{8}, items[0].members);
 
     // The window's own name matches all of its panes.
     items = try build(arena, &wins, "ops", &shared, null);

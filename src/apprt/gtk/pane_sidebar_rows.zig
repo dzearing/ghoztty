@@ -124,6 +124,37 @@ pub fn save(path: []const u8, p: Prefs) void {
     f.writeAll(prefs.format(&buf, p)) catch {};
 }
 
+/// A hovered row's buttons (T3606; Mac `PaneSidebarItemButton`, win32
+/// T2280/T2298/T2323): stash or restore, add, close.
+pub const Tool = enum { stash, restore, add, close };
+
+/// A pane row's buttons, in order (Mac `PaneSidebarRow`): in the panel, a
+/// row of the window the sidebar is in offers - (stash) or, stashed, the
+/// restore, then x; another window's row the x alone. A rail tile has none.
+pub fn paneTools(expanded: bool, own: bool, stashed: bool) []const Tool {
+    if (!expanded) return &.{};
+    if (!own) return &.{.close};
+    return if (stashed) &.{ .restore, .close } else &.{ .stash, .close };
+}
+
+/// A window row's, a project's or the Ungrouped header's buttons: + then x,
+/// where its count was. Only the panel's outline has headers.
+pub fn headTools(expanded: bool) []const Tool {
+    return if (expanded) &.{ .add, .close } else &.{};
+}
+
+/// A button's tooltip. `window_row`: a window row's + adds a pane to it,
+/// where the panel header's and a group header's open a window (the caller
+/// names the group's own, `pane_sidebar_add.projectAddTip`).
+pub fn toolTip(t: Tool, window_row: bool) [:0]const u8 {
+    return switch (t) {
+        .stash => "Stash",
+        .restore => "Restore",
+        .add => if (window_row) "New pane" else "New window",
+        .close => if (window_row) "Close window" else "Close",
+    };
+}
+
 /// The debug seam's report of one window's sidebar, as JSON the acceptance
 /// script reads (`pane-sidebar` seam, `IpcHandlers.zig`).
 pub const Report = struct {
@@ -145,6 +176,8 @@ pub const Report = struct {
     window_count: usize = 0,
     /// The header's caption.
     title: []const u8 = "",
+    /// The panel header's + (a new window, T3606) is on screen.
+    add_shown: bool = false,
     rows: []const Row,
 
     pub const Row = struct {
@@ -169,6 +202,11 @@ pub const Report = struct {
         depth: u8 = 0,
         /// A window header's pill: `none`, `unemphasized`, `accent`.
         selection: []const u8 = "none",
+        /// The buttons the row offers on hover (T3606), and whether the
+        /// pointer is over it so they are on screen now.
+        tools: []const Tool = &.{},
+        hovered: bool = false,
+        tools_shown: bool = false,
     };
 };
 
@@ -217,6 +255,18 @@ test "T3557: a row is named by its banner's title, else its title, else its dire
     t = text(.{}, null, &a, &b);
     try testing.expectEqualStrings("terminal", t.label);
     try testing.expect(t.subtitle == null);
+}
+
+test "T3606: a row's hover buttons - stash/restore and x on this window's rows, x alone on another's, none in the rail" {
+    try testing.expectEqualSlices(Tool, &.{ .stash, .close }, paneTools(true, true, false));
+    try testing.expectEqualSlices(Tool, &.{ .restore, .close }, paneTools(true, true, true));
+    try testing.expectEqualSlices(Tool, &.{.close}, paneTools(true, false, false));
+    try testing.expectEqualSlices(Tool, &.{.close}, paneTools(true, false, true));
+    try testing.expectEqual(@as(usize, 0), paneTools(false, true, false).len);
+    try testing.expectEqualSlices(Tool, &.{ .add, .close }, headTools(true));
+    try testing.expectEqual(@as(usize, 0), headTools(false).len);
+    try testing.expectEqualStrings("Stash", toolTip(.stash, false));
+    try testing.expectEqualStrings("New window", toolTip(.add, false));
 }
 
 test "T3557: the mode follows the shared flags, and a narrow window gets the rail" {
