@@ -117,6 +117,19 @@ function New-LParam([int]$x, [int]$y) {
     return [IntPtr](([int64]$y -shl 16) -bor ($x -band 0xFFFF))
 }
 
+# Box GPU 3D load, summed over every engine instance and capped at 100; -1
+# when the counter is unavailable. Recorded beside section D because a clock
+# verdict is a property of the box as much as of the code (T2241): the
+# 2026-10-24 "41.6ms at 8 panes, paint 21ms" reds were taken under a
+# GPU-heavy game, and an idle re-run on 2026-11-25 read 14.9ms / paint 1.4ms.
+function Get-GpuLoad3D {
+    try {
+        $s = (Get-Counter '\GPU Engine(*engtype_3D)\Utilization Percentage' -ErrorAction Stop).CounterSamples
+        return [int][math]::Min(100, ($s | Measure-Object -Property CookedValue -Sum).Sum)
+    } catch { return -1 }
+}
+$GPU_BUSY_PCT = 50
+
 function Get-VisiblePanes([IntPtr]$top) {
     return @(Get-TestChildWindows -Window $top -Class 'GhozttyTerminal' | Where-Object Visible)
 }
@@ -385,6 +398,7 @@ try {
     # have shaped, and a count whose drag printed nothing stays MISSING from
     # its table - section A fails on it - instead of borrowing another
     # count's sample.
+    $gpuStart = Get-GpuLoad3D
     $serial = @{}; $fanout = @{}; $batched = @{}; $tree = @{}; $treeSerial = @{}
     $shapes = [ordered]@{ serial = $serial; fanout = $fanout; batched = $batched; tree = $tree; treeserial = $treeSerial }
     foreach ($mode in $shapes.Keys) {
@@ -393,6 +407,8 @@ try {
             if ($r.ContainsKey($c)) { $shapes[$mode][$c] = $r[$c] }
         }
     }
+    $gpuEnd = Get-GpuLoad3D
+    Rep "box GPU 3D load: ${gpuStart}% before the drags, ${gpuEnd}% after (-1 = counter unavailable)"
     Rep ''
 
     # ---- A. the oracle is live in both shapes ---------------------------
@@ -463,9 +479,13 @@ try {
     # build machine, and the claim being defended is "the drag keeps up", not a
     # 60 fps guarantee the box cannot promise under load.
     $worst = ($batched.Values | Measure-Object -Property MeanUs -Maximum).Maximum
+    # The verdict is unchanged by the load; only its label says what the box
+    # was doing, so a red under a busy GPU is re-run idle before it is filed.
+    $gpuBusy = ([math]::Max($gpuStart, $gpuEnd) -ge $GPU_BUSY_PCT)
     Assert ($worst -le (2 * $FRAME_US)) `
     ("every batched drag holds two frames or better (worst mean ${worst}us, " +
-        "budget $(2 * $FRAME_US)us)")
+        "budget $(2 * $FRAME_US)us; box GPU 3D load ${gpuStart}%/${gpuEnd}%" +
+        $(if ($gpuBusy) { " - GPU-BUSY BOX: re-run idle before filing this as a regression (T2241)" } else { '' }) + ")")
     $ticks = ($batched.Values | Measure-Object -Property Ticks -Minimum).Minimum
     Assert ($ticks -ge 8) `
     ("each measured drag really moved (fewest ticks in a batched drag: $ticks)")
