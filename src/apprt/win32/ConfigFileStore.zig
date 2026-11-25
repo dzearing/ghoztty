@@ -8,8 +8,10 @@
 //! - A symlinked config (dotfiles) is written through the link, to its
 //!   target, so the link survives.
 //! - The write is atomic: `managed_file.writeAtomicNoFollow` on the resolved
-//!   target (temp beside it, then one NT rename). Mac's "keeps the file's
-//!   permissions" has no `mode_t` here; as in `managed_file`, the replaced
+//!   target (temp beside it, then one rename). It keeps the file's
+//!   permissions, as on the Mac: off Windows the replaced file's mode bits
+//!   are carried onto the temp before the rename (a 0600 config stays 0600,
+//!   T3634); Windows has no `mode_t`, so as in `managed_file` the replaced
 //!   file takes the folder's inherited ACL, which for `%LOCALAPPDATA%` is
 //!   already owner-only.
 //! - Before the first change in a session the current file is copied to
@@ -297,8 +299,9 @@ pub fn restore(self: *ConfigFileStore, alloc: Allocator, backup: []const u8) !Ch
     return self.edit(alloc, Restore{ .text = &text });
 }
 
-/// The local wall clock (Windows `GetLocalTime`; UTC elsewhere, where this
-/// file is only ever compiled for its tests).
+/// The local wall clock: Windows `GetLocalTime`; libc `localtime_r` on the
+/// Linux (GTK) Settings window, so a backup there is named in local time as
+/// on the Mac and Windows (T3634). UTC only for a build without libc.
 pub fn localNow() Stamp {
     if (builtin.os.tag == .windows) {
         var st: SYSTEMTIME = undefined;
@@ -312,7 +315,15 @@ pub fn localNow() Stamp {
             .second = @intCast(st.wSecond),
         };
     }
-    const secs: u64 = @intCast(@max(0, std.time.timestamp()));
+    if (comptime builtin.link_libc) {
+        if (libcLocal(std.time.timestamp())) |s| return s;
+    }
+    return utcStamp(std.time.timestamp());
+}
+
+/// `secs` (Unix time) as UTC.
+fn utcStamp(timestamp: i64) Stamp {
+    const secs: u64 = @intCast(@max(0, timestamp));
     const es: std.time.epoch.EpochSeconds = .{ .secs = secs };
     const yd = es.getEpochDay().calculateYearDay();
     const md = yd.calculateMonthDay();
@@ -339,6 +350,42 @@ const SYSTEMTIME = extern struct {
 };
 
 extern "kernel32" fn GetLocalTime(lpSystemTime: *SYSTEMTIME) callconv(.winapi) void;
+
+/// `timestamp` in the process's local time zone (TZ / /etc/localtime), or
+/// null when libc cannot convert it.
+fn libcLocal(timestamp: i64) ?Stamp {
+    const t: c_long = @intCast(timestamp);
+    var tm: CTm = undefined;
+    if (localtime_r(&t, &tm) == null) return null;
+    return .{
+        .year = @intCast(tm.tm_year + 1900),
+        .month = @intCast(tm.tm_mon + 1),
+        .day = @intCast(tm.tm_mday),
+        .hour = @intCast(tm.tm_hour),
+        .minute = @intCast(tm.tm_min),
+        .second = @intCast(@min(tm.tm_sec, 59)),
+    };
+}
+
+/// POSIX `struct tm` as glibc, musl and Darwin lay it out.
+const CTm = extern struct {
+    tm_sec: c_int,
+    tm_min: c_int,
+    tm_hour: c_int,
+    tm_mday: c_int,
+    tm_mon: c_int,
+    tm_year: c_int,
+    tm_wday: c_int,
+    tm_yday: c_int,
+    tm_isdst: c_int,
+    tm_gmtoff: c_long,
+    tm_zone: ?[*:0]const u8,
+};
+
+extern "c" fn localtime_r(timep: *const c_long, result: *CTm) ?*CTm;
+extern "c" fn setenv(name: [*:0]const u8, value: [*:0]const u8, overwrite: c_int) c_int;
+extern "c" fn unsetenv(name: [*:0]const u8) c_int;
+extern "c" fn tzset() void;
 
 // Tests: a port of Mac `ConfigFileStoreTests` — file I/O around the text
 // editor: creation, backups, symlinks, no-op edits, outside edits, UTF-8.
@@ -620,4 +667,53 @@ test "ConfigFileStore: the default backup folder sits under LOCALAPPDATA" {
     const dir = try defaultBackupDir(a);
     defer a.free(dir);
     try testing.expect(std.mem.endsWith(u8, dir, "\\ghoztty\\config-backups"));
+}
+
+test "ConfigFileStore: a set keeps the config's permissions (posix)" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    var fx = try Fixture.init();
+    defer fx.deinit();
+    var s = try fx.store(10, localNow);
+    defer s.deinit();
+    try fx.write(config_sub, "font-size = 12\n");
+    {
+        const f = try fx.tmp.dir.openFile(config_sub, .{});
+        defer f.close();
+        try f.chmod(0o600);
+    }
+    try testing.expect(try editSet(&s, "font-size", "14"));
+    try fx.expectContents(config_sub, "font-size = 14\n");
+    const st = try fx.tmp.dir.statFile(config_sub);
+    try testing.expectEqual(@as(std.fs.File.Mode, 0o600), st.mode & 0o7777);
+}
+
+test "ConfigFileStore: off Windows the backup clock is local time, not UTC" {
+    if (builtin.os.tag == .windows or !builtin.link_libc) return error.SkipZigTest;
+    // A fixed zone five hours behind UTC, whatever zone the box is in; the
+    // caller's TZ comes back afterwards.
+    const saved = std.posix.getenv("TZ");
+    var saved_buf: [256]u8 = undefined;
+    const saved_z: ?[:0]const u8 = if (saved) |v|
+        (std.fmt.bufPrintZ(&saved_buf, "{s}", .{v}) catch return error.SkipZigTest)
+    else
+        null;
+    defer {
+        if (saved_z) |v| _ = setenv("TZ", v.ptr, 1) else _ = unsetenv("TZ");
+        tzset();
+    }
+    _ = setenv("TZ", "GHZ+5", 1);
+    tzset();
+
+    // 2027-01-15 08:30:45 UTC is 03:30:45 in GHZ+5.
+    const ts: i64 = 1800001845;
+    const local = libcLocal(ts) orelse return error.TestUnexpectedResult;
+    try testing.expectEqual(Stamp{ .year = 2027, .month = 1, .day = 15, .hour = 3, .minute = 30, .second = 45 }, local);
+    const utc = utcStamp(ts);
+    try testing.expectEqual(@as(u8, 8), utc.hour);
+
+    // And the clock the store names backups with is that local one.
+    const now = localNow();
+    const now_utc = utcStamp(std.time.timestamp());
+    const diff = (@as(i32, now_utc.hour) - @as(i32, now.hour) + 24) % 24;
+    try testing.expectEqual(@as(i32, 5), diff);
 }

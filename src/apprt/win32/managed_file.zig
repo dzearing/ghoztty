@@ -143,6 +143,15 @@ pub fn writeAtomicNoFollow(
 
     var filled = false;
     fill: {
+        // A rename publishes the temp file's mode, which the umask chose, so
+        // carry the replaced file's own permission bits across (Mac's "writes
+        // keep the file's permissions": a 0600 config stays 0600, T3634).
+        // Windows has no mode bits; the file takes the folder's ACL there.
+        if (builtin.os.tag != .windows) {
+            if (dir.statFile(sub_path)) |st| {
+                file.chmod(st.mode & 0o7777) catch break :fill;
+            } else |_| {}
+        }
         file.writeAll(contents) catch break :fill;
         // Flush before the swap so the rename publishes complete bytes (the
         // durability MOVEFILE_WRITE_THROUGH bought on the MoveFileExW path).
@@ -513,6 +522,28 @@ test "writeAtomicNoFollow: refuses a file symlink destination where privilege al
     const got = try tmp.dir.readFileAlloc(alloc, "real.txt", max_managed_bytes);
     defer alloc.free(got);
     try testing.expectEqualStrings("target\n", got);
+}
+
+test "writeAtomicNoFollow: the replaced file keeps its permission bits (posix)" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    const alloc = testing.allocator;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.writeFile(.{ .sub_path = "config", .data = "old\n" });
+    for ([_]std.fs.File.Mode{ 0o600, 0o640, 0o755 }) |mode| {
+        {
+            const f = try tmp.dir.openFile("config", .{});
+            defer f.close();
+            try f.chmod(mode);
+        }
+        try writeAtomicNoFollow(alloc, tmp.dir, "config", "new\n");
+        const st = try tmp.dir.statFile("config");
+        try testing.expectEqual(mode, st.mode & 0o7777);
+    }
+    const got = try tmp.dir.readFileAlloc(alloc, "config", max_managed_bytes);
+    defer alloc.free(got);
+    try testing.expectEqualStrings("new\n", got);
 }
 
 test "writeAtomicNoFollow: refuses a symlink destination (posix)" {
