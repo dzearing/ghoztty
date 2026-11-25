@@ -9,6 +9,9 @@
 # dragging back. Geometry from the debug-only `pane-stack` seam (the stage as
 # laid out; its press/drag/release run the real gesture's code - the headless
 # harness has no seat) and the window's own render (`capture-pane`).
+# T3629 adds: a strip relabels live (+set-banner, OSC 2), a strip drag has a
+# strip's own targets (`pane-drag --blade`: a slot, a window edge, nothing
+# over a card), and a column stacks with strips lying across it.
 #
 # Run it ONLY through the wrapper, from this box:
 #
@@ -38,9 +41,11 @@ cli() { env -u GHOZTTY_IPC_SOCKET -u GHOZTTY_PANE_ID "$app" "$@"; }
 # A 400px minimum makes a four-pane row stack in any window this harness
 # opens (it cannot fit 4 x 400 + gutters), and two panes fit side by side.
 MIN=400
+# A 200px minimum HEIGHT makes a five-pane column stack (T3629, section 10).
+MINH=200
 cfg_dir="$XDG_CONFIG_HOME/ghostty"
 mkdir -p "$cfg_dir"
-printf 'macos-pane-min-width = %s\nmacos-window-gradient = ocean\nwindow-width = 150\nwindow-height = 30\n' "$MIN" > "$cfg_dir/config.ghostty"
+printf 'macos-pane-min-width = %s\nmacos-pane-min-height = %s\nmacos-window-gradient = ocean\nwindow-width = 150\nwindow-height = 30\n' "$MIN" "$MINH" > "$cfg_dir/config.ghostty"
 
 export SHELL=/bin/sh
 hl_launch APP "$app" --gtk-single-instance=false -e /bin/sh -c 'exec sleep 600'
@@ -256,6 +261,118 @@ hl_check "S30 the minimized pane it was split off stays minimized" $? "target=$m
 [ -n "$p8" ] && [ "$(sq "$r" 'all(P[i]["minimized"] for i in "'"$mini_before"'".split() if i in P and i != "'"$caret"'")')" = True ]
 hl_check "S31 no strip is pulled back out with it" $? "before=[$mini_before] $r"
 
+
+# ---- 8. a strip's label is live (T3629) --------------------------------------
+# docs/reference/stacked-panes.md "Strip labels": +set-banner, OSC 7778 and a
+# retitle rename a showing strip at once - read straight after the verb, with
+# no layout in between to do it.
+r=$(st)
+lm=$(sq "$r" '[p["pane"] for p in mini if p["label"] is not None and p["pane"] != "'"$first"'"][0]')
+label0=$(sq "$r" 'P["'"$lm"'"]["label"]')
+cli +set-banner --target="$lm" '## Fix strip labels' > /dev/null 2>&1
+r=$(st)
+[ -n "$lm" ] && [ "$(sq "$r" 'P["'"$lm"'"]["label"]')" = "Fix strip labels" ]
+hl_check "S32 +set-banner renames the strip at once, by the banner's title" $? "pane=$lm before=[$label0] $r"
+cli +set-banner --target="$lm" --clear > /dev/null 2>&1
+r=$(st)
+[ -n "$lm" ] && [ "$(sq "$r" 'P["'"$lm"'"]["label"]')" = "$label0" ]
+hl_check "S33 clearing the banner brings the pane's own name back" $? "pane=$lm want=[$label0] $r"
+cli +send-keys --target="$lm" "printf '\033]2;retitled-strip\007'" Enter > /dev/null 2>&1
+ok=1
+for _ in $(seq 1 25); do
+    [ "$(sq "$(st)" 'P["'"$lm"'"]["label"]')" = retitled-strip ] && { ok=0; break; }
+    sleep 0.2
+done
+hl_check "S34 an OSC 2 retitle renames the strip while the pane stays minimized" $ok "pane=$lm $(st)"
+
+# ---- 9. dragging a strip has a strip's own targets (T3629) -------------------
+# The drop half of a strip drag, through the seam (`pane-drag --blade`, the
+# headless harness has no seat): `SplitTree.dropPaneAt` with the strip's
+# targets, as the face's drag source's drop does.
+pd() { hl_ipc pane-drag "$@"; }
+dq() {
+    printf '%s' "$1" | python3 -I -c '
+import json, sys
+r = json.loads(sys.stdin.read()); d = r.get("drop") or {}
+print(eval(sys.argv[1]))' "$2" 2>/dev/null
+}
+# order: the tab's leaves in tree order, by id.
+order() {
+    cli +list --json 2>/dev/null | python3 -I -c '
+import json, sys
+d = json.load(sys.stdin)["data"]
+def walk(n):
+    if n["type"] == "split":
+        yield from walk(n["left"]); yield from walk(n["right"])
+    else:
+        yield n["terminal"]
+for w in d["windows"]:
+    for t in w["tabs"]:
+        ids = [l["id"] for l in walk(t["splits"])]
+        if sys.argv[1] in ids: print(" ".join(ids)); sys.exit(0)
+' "$1" 2>/dev/null
+}
+r=$(st)
+bm=$(sq "$r" 'mini[0]["pane"]')
+# A wide card on show, not the strip's neighbour in the tree.
+card=$(sq "$r" 'max(shown, key=lambda p: p["frame"][2])["pane"]')
+mx=$(sq "$r" 'P["'"$card"'"]["frame"][0] + P["'"$card"'"]["frame"][2] // 2')
+my=$(sq "$r" 'P["'"$card"'"]["frame"][1] + P["'"$card"'"]["frame"][3] // 2')
+d=$(pd "--target=$bm" --blade "--drop-at=$mx,$my")
+[ "$(dq "$d" 'd.get("target"), d.get("outcome")')" = "('none', 'none')" ]
+hl_check "S35 a strip let go over the middle of a card is no drop (no split quadrants, no swap)" $? "strip=$bm card=$card $d"
+d=$(pd "--target=$card" "--drop-at=$mx,$my")
+[ "$(dq "$d" 'd.get("target")')" != none ]
+hl_check "S36 the same point is a target for an ordinary pane drag (the control)" $? "$d"
+# The leading edge of the SECOND card on show is the slot between two cards
+# (the only one when one card shows): the strip moves there. A strip is never
+# between two cards on show, so this is never the strip's own place.
+r=$(st)
+card=$(sq "$r" 'sorted(shown, key=lambda p: p["frame"][0])[min(1, len(shown) - 1)]["pane"]')
+caret0=$(sq "$r" '[p["pane"] for p in s["panes"] if p["focused"]][0]')
+lx=$(sq "$r" 'P["'"$card"'"]["frame"][0] + 2')
+order0=$(order "$bm")
+d=$(pd "--target=$bm" --blade "--drop-at=$lx,$my")
+order1=$(order "$bm")
+[ "$(dq "$d" 'd.get("target"), d.get("outcome")')" = "('reorder', 'moved')" ]
+hl_check "S37 a strip let go in the slot before a card reorders it beside that card" $? "strip=$bm card=$card $d"
+[ -n "$order1" ] && [ "$(printf '%s' "$order1" | python3 -I -c 'import sys; o = sys.stdin.read().split(); print(o.index(sys.argv[2]) + 1 == o.index(sys.argv[1]))' "$card" "$bm")" = True ] && [ "$order0" != "$order1" ]
+hl_check "S38 the tree now has the strip's pane just before that card" $? "before=[$order0] after=[$order1]"
+# Mac `PaneMoveCoordinator.reorder`: a pane that lands among the cards on
+# show is focused; one that lands among the strips stays one and the caret
+# stays where it was. Either way, never a focused strip.
+ok=1
+for _ in $(seq 1 25); do
+    [ "$(sq "$(st)" '(not P["'"$bm"'"]["minimized"] and P["'"$bm"'"]["focused"]) or (P["'"$bm"'"]["minimized"] and P["'"$caret0"'"]["focused"])')" = True ] && { ok=0; break; }
+    sleep 0.2
+done
+hl_check "S39 the dropped pane is focused on show, or stays a strip with the caret unmoved" $ok "caret0=$caret0 $(st)"
+# A window's edge band, away from every slot: a top-level insert.
+r=$(st)
+bm2=$(sq "$r" 'mini[0]["pane"]')
+card2=$(sq "$r" 'max(shown, key=lambda p: p["frame"][2])["pane"]')
+tx=$(sq "$r" 'P["'"$card2"'"]["frame"][0] + P["'"$card2"'"]["frame"][2] // 2')
+d=$(pd "--target=$bm2" --blade "--drop-at=$tx,3")
+[ "$(dq "$d" 'd.get("target"), d.get("side"), d.get("outcome")')" = "('top_level', 'up', 'moved')" ]
+hl_check "S40 a strip let go at the window's top edge spans the window above the row" $? "strip=$bm2 $d"
+
+# ---- 10. a column stacks with horizontal strips (T3629) ----------------------
+cli +new-window --target=wcol --name=c1 --command="sleep 600" > /dev/null 2>&1
+for _ in $(seq 1 50); do [ -n "$(id_of c1)" ] && break; sleep 0.2; done
+for n in 2 3 4 5; do
+    cli +split --target=c$((n - 1)) --direction=down --name=c$n --command="sleep 600" > /dev/null 2>&1
+done
+sleep 1
+cs() { hl_ipc pane-stack "--target=$(id_of c1)" "$@"; }
+r=$(cs)
+[ "$(sq "$r" 'len(s.get("panes", [])) == 5 and len(mini) >= 1 and len(shown) >= 1')" = True ]
+hl_check "S41 five panes in a column that cannot fit at the minimum height stack" $? "$r"
+[ "$(sq "$r" 'all(p["frame"][3] >= '$MINH' for p in shown)')" = True ]
+hl_check "S42 no card on show in the column is under the minimum height" $? "$r"
+[ "$(sq "$r" 'all(p["strip"] and p["strip"][2] > p["strip"][3] and 0 < p["strip"][3] <= 60 for p in mini)')" = True ]
+hl_check "S43 a column's strips lie across it (wider than tall)" $? "$r"
+[ "$(sq "$r" 'any(g["direction"] == "vertical" for g in s["gutters"])')" = True ]
+hl_check "S44 the column's gutters run vertically (rows of cards stacked down)" $? "$r"
 ! grep -E "without calling gtk_widget_measure|Allocation (width|height) too small|Gtk-CRITICAL" "$APP_LOG" > /dev/null
 hl_check "S25 the app logged no GTK allocation warnings or criticals" $? "$(grep -m3 -E 'gtk_widget_measure|too small|Gtk-CRITICAL' "$APP_LOG")"
 

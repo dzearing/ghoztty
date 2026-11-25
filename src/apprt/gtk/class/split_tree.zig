@@ -40,7 +40,6 @@ const PaneSidebar = @import("../PaneSidebar.zig");
 const pane_sidebar_rows = @import("../pane_sidebar_rows.zig");
 const homedir = @import("../../../os/homedir.zig");
 const wk = @import("../webkit.zig");
-const pane_id = @import("../../ipc/pane_id.zig");
 const PaneDragGhost = @import("../PaneDragGhost.zig");
 
 const log = std.log.scoped(.gtk_ghostty_split_tree);
@@ -422,29 +421,6 @@ pub const SplitTree = extern struct {
         return .{ .window = @intFromPtr(self), .slots = slots, .screens = &.{}, .dragged = surface.paneId() };
     }
 
-    /// Whether the row item made of exactly `beside` is in the run on show
-    /// of the row `surface` is folded into: a strip dropped beside it lands
-    /// among the cards.
-    fn besideOnShow(self: *Self, surface: *Surface, beside: []const []const u8) bool {
-        const stack = self.stackState().stackMinimizing(paneKey(surface)) orelse return false;
-        for (stack.items, 0..) |item, i| {
-            if (!stack.run.contains(i)) continue;
-            var n: usize = 0;
-            for (item) |id| {
-                if (id == paneKey(surface)) continue;
-                const s = self.surfaceByKey(id) orelse continue;
-                for (beside) |b| {
-                    if (pane_id.eql(s.paneId(), b)) {
-                        n += 1;
-                        break;
-                    }
-                }
-            }
-            if (n == beside.len) return true;
-        }
-        return false;
-    }
-
     /// Drop the pane `dragged_id` at (x, y) in the split area's coordinates:
     /// resolve the point against this tab's panes and dividers, then make the
     /// move. A drag's release and the `pane-drag` seam both come here.
@@ -523,13 +499,6 @@ pub const SplitTree = extern struct {
             },
             else => {},
         }
-        // A strip dropped among the cards on show takes focus; one dropped
-        // among the strips stays one and the caret stays where it was (Mac
-        // `PaneMoveCoordinator.reorder`, win32 `commitReorderDrop`).
-        const takes_focus = switch (target) {
-            .reorder => |s| if (home_surface) |hs| self.besideOnShow(hs, s.beside) else false,
-            else => true,
-        };
 
         // A pane from another tab of this window - the tab a 500ms dwell
         // on the tab bar switched away from (T3615).
@@ -555,7 +524,16 @@ pub const SplitTree = extern struct {
                     break :dragged t.nodes[h.idx()].leaf;
                 };
                 self.rearrange(&t);
-                if (dragged_surface) |s| if (takes_focus) {
+                const lands_on_show = if (target == .reorder) shown: {
+                    // A strip dropped among the cards on show takes focus; one
+                    // dropped among the strips stays one and the caret stays
+                    // where it was (Mac `PaneMoveCoordinator.reorder`, win32
+                    // `commitReorderDrop`): lay the new tree out to see which.
+                    self.layoutNow();
+                    const s = dragged_surface orelse break :shown false;
+                    break :shown !self.isMinimized(s);
+                } else true;
+                if (dragged_surface) |s| if (lands_on_show) {
                     priv.last_focused.set(s);
                     self.as(gobject.Object).notifyByPspec(properties.@"active-surface".impl.param_spec);
                 };
