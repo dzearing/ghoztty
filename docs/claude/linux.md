@@ -1846,18 +1846,18 @@ Traps found here:
 powershell -NoProfile -File scripts\linux\wsl-run.ps1 -CommandFile test\linux\settings-window.sh
 ```
 
-Ends `SETTINGS WINDOW: ALL PASS` (53 checks: W1-W20 for the window and
-All Settings, P1-P23 for the pages, L1-L10 for list keys). Left off the pages
-for their own cards: the preview and themes T3636, the agent status and
-Remote Machines T3635, color wells and the folder picker T3759, search across
-the pages T3760, Mac's installed-font picker on the Font row T3765. Also
+Ends `SETTINGS WINDOW: ALL PASS` (60 checks: W1-W20 for the window and
+All Settings, P1-P23 for the pages, L1-L10 less L5 for list keys, F1-F8 for
+the Font picker). Left off the pages for their own cards: the preview and
+themes T3636, the agent status and Remote Machines T3635, color wells and the
+folder picker T3759, search across the pages T3760. Also
 still to port: Config file/backups/undo T3633, the file-mode and local-time
 fix T3634.
 
 ### List keys (T3632)
 
-A repeatable key is Mac's `ListControl`: Font features and the Font row
-(font-family) on their page, and every list key under All Settings, show the
+A repeatable key is Mac's `ListControl`: Font features on its page (the
+Font row is the picker below), and every list key under All Settings, show the
 user's FILE's values as chips (each with an x) and an "add a value" field.
 Both write through `SettingsModel.setList` (the kept run of lines and its
 comments stay put), so `keybind`, `palette` and `env` take an entry exactly
@@ -1868,6 +1868,28 @@ the row shows why, and the typed text stays in the field (`draft_key`/
 `draft_text`, re-applied when All Settings rebuilds). All Settings adds Mac's
 `In effect:` line (first four effective values, then the count). A key a
 later file owns gets inert chips and field.
+
+### The Font row (T3765)
+
+Mac's `FontControl`: an `AdwComboRow` whose items are Default (JetBrains
+Mono), then the monospaced families fontconfig knows
+(`src/apprt/gtk/font_families.zig`: `FcFontList` over family + spacing; a
+face counts at `FC_SPACING` mono or charcell, the spacing Ghostty's own
+discovery asks for; only its first family name, the rest are localized
+aliases). The rules are win32's `settings_controls.zig` (`fontFamilies`,
+`fontChoices`, `fontPick`, `fontFallbackLabel`, `fontNotInstalledText`),
+shared so Windows (T3766) draws the same row. A pick replaces the FIRST value
+of the user's file and keeps the fallbacks; Default removes the key,
+fallbacks included. "+N fallback" sits beside the picker with the rest as its
+tooltip, and a "Fallback fonts" row below holds them as chips (seam index 0 =
+the file's second value) once the file names a font - with none, an add
+would become the font. A primary no installed family matches is listed
+"X (not installed)" with Mac's "X isn't installed - Ghoztty uses the next
+font." as the subtitle; an installed but proportional font is listed by its
+plain name with no warning. The items are rebuilt only when that extra entry
+changes (`font_arena`). F1 holds the items to `fc-list :spacing=mono` (plus
+charcell) exactly; the distro had three such families on 2026-11-25, DejaVu
+Sans Mono and Ubuntu Mono among them, and F4 needs at least two.
 
 ## The keyboard shortcut guide (T3570)
 
