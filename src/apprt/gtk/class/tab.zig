@@ -236,6 +236,19 @@ pub const Tab = extern struct {
         return tab;
     }
 
+    /// A tab whose only pane is `surface`, an existing pane moved here from
+    /// another tab - a pane dropped on the tab bar (T3615). No new terminal
+    /// is started: the pane keeps its shell, scrollback and pane id.
+    pub fn newAdopting(config: ?*Config, surface: *Surface) std.mem.Allocator.Error!*Self {
+        const tab = gobject.ext.newInstance(Tab, .{});
+        const priv: *Private = tab.private();
+        if (config) |c| priv.config = c.ref();
+        if (priv.config == null) priv.config = Application.default().getConfig();
+        tab.as(gobject.Object).notifyByPspec(properties.config.impl.param_spec);
+        try priv.split_tree.adoptSurface(surface);
+        return tab;
+    }
+
     fn init(self: *Self, _: *Class) callconv(.c) void {
         gtk.Widget.initTemplate(self.as(gtk.Widget));
 

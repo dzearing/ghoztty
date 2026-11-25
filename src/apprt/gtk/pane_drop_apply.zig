@@ -25,6 +25,7 @@ const pane_drop = @import("../win32/pane_drop.zig");
 const pane_gap = @import("../win32/pane_gap.zig");
 const pane_layout = @import("../win32/pane_layout.zig");
 const pane_id = @import("../ipc/pane_id.zig");
+const pane_relocate = @import("../win32/pane_relocate.zig");
 
 /// The ratio a split or top-level drop gives the two sides: halves, as
 /// win32's `drop_highlight.insert_ratio` and the Mac's drop do.
@@ -112,6 +113,105 @@ pub fn apply(
         },
         .new_tab, .new_window, .stash, .sidebar_order, .join_window, .reorder, .tile => return .not_here,
     }
+}
+
+/// The two trees a drop from ANOTHER tree changes (T3615): the one the pane
+/// left and the one it arrived in. `source` is `.empty` when the pane was its
+/// tab's last one - that tab then closes, which is how a dwell-switched drop
+/// empties a tab.
+pub fn Arrival(comptime Tree: type) type {
+    return union(enum) {
+        moved: struct { source: Tree, dest: Tree },
+        /// Not a drop into `dest`, or its pane or divider is gone.
+        not_here,
+    };
+}
+
+/// Make `target` happen to `dest` for the pane `dragged` of ANOTHER tree,
+/// `source` (T3615): the drop a 500ms tab dwell makes possible, into a tab
+/// the pane was not in. The same targets as `apply`, built from the shared
+/// cross-tree moves (`SplitTree.moveTo`/`swapWith`, the Mac's) so the pane
+/// that lands is the very pane that left. A move into another tree is never
+/// "in place", so there is no `.in_place` answer.
+pub fn applyArriving(
+    comptime Tree: type,
+    alloc: Allocator,
+    source: *const Tree,
+    dest: *const Tree,
+    comptime idOf: fn (*Tree.View) []const u8,
+    dragged: []const u8,
+    target: pane_drop.Target,
+) Allocator.Error!Arrival(Tree) {
+    const at = handleOf(Tree, source, idOf, dragged) orelse return .not_here;
+    // A pane already in `dest` is `apply`'s business, not an arrival.
+    if (handleOf(Tree, dest, idOf, dragged) != null) return .not_here;
+    switch (target) {
+        .split => |s| {
+            const other = handleOf(Tree, dest, idOf, s.pane) orelse return .not_here;
+            const r = try source.moveTo(alloc, at, dest, other, direction(Tree, s.side), split_ratio);
+            return .{ .moved = .{ .source = r.source, .dest = r.dest } };
+        },
+        .swap => |s| {
+            const other = handleOf(Tree, dest, idOf, s.pane) orelse return .not_here;
+            const r = try source.swapWith(alloc, at, dest, other);
+            return .{ .moved = .{ .source = r.a, .dest = r.b } };
+        },
+        .top_level => |s| {
+            var leaf = try Tree.init(alloc, source.nodes[at.idx()].leaf);
+            defer leaf.deinit();
+            // The destination first, while the source still holds the view
+            // (the `moveTo` order): its count never reaches zero between.
+            var new_dest = try dest.insertAtTopLevel(alloc, direction(Tree, s.side), split_ratio, &leaf);
+            errdefer new_dest.deinit();
+            return .{ .moved = .{ .source = try @constCast(source).remove(alloc, at), .dest = new_dest } };
+        },
+        .insert => |s| {
+            var ids: [max_leaves][]const u8 = undefined;
+            if (dest.nodes.len > ids.len) return .not_here;
+            // The pane is not in `dest`, so its gap is read off `dest` as is.
+            const gap = pane_gap.findGap(
+                Tree,
+                dest,
+                idOf,
+                never(Tree.View),
+                s.layout,
+                s.before,
+                s.after,
+                dragged,
+                &ids,
+            ) orelse return .not_here;
+            var leaf = try Tree.init(alloc, source.nodes[at.idx()].leaf);
+            defer leaf.deinit();
+            var new_dest = try dest.insertInGap(alloc, gap, @floatCast(pane_drop.insert_share), &leaf);
+            errdefer new_dest.deinit();
+            return .{ .moved = .{ .source = try @constCast(source).remove(alloc, at), .dest = new_dest } };
+        },
+        .new_tab, .new_window, .stash, .sidebar_order, .join_window, .reorder, .tile => return .not_here,
+    }
+}
+
+/// What a release on the tab bar does (T3615, win32 `canNewTabDrop`, Mac
+/// `.newTab`): `seam` is the resolver's insertion index (0 = before the
+/// first tab, `tab_count` = after the last).
+pub const TabDrop = union(enum) {
+    /// Take the pane out of its tab into a new tab of its own, inserted at
+    /// this position.
+    new_tab: usize,
+    /// The pane is its tab's only one - already a tab of its own - so the
+    /// gesture means "put the tab there": move the tab to this position.
+    reorder: usize,
+    /// The pane's own tab, dropped right where it is: nothing happens.
+    in_place,
+};
+
+/// The tab-bar drop for the pane being dragged: `leaves` is how many panes
+/// its tab (`source_tab`) holds. A window's only tab with its only pane is
+/// always `.in_place`, so a drag never closes a window this way.
+pub fn tabDrop(leaves: usize, source_tab: usize, seam: usize, tab_count: usize) TabDrop {
+    if (source_tab >= tab_count) return .in_place;
+    if (leaves > 1) return .{ .new_tab = @min(seam, tab_count) };
+    if (pane_relocate.tabReorderIndex(source_tab, seam, tab_count)) |to| return .{ .reorder = to };
+    return .in_place;
 }
 
 /// The handle of the leaf whose pane id is `id`, or null.
@@ -363,4 +463,151 @@ test "the resolver and apply agree end to end on a laid-out window" {
         },
         else => return error.TestUnexpectedResult,
     }
+}
+
+// -- T3615: arrivals from another tab, and the tab bar ------------------------
+
+/// x | y as H(x, y): another tab's tree.
+fn twoAcross(views: *[2]TestView) !TestTree {
+    const alloc = testing.allocator;
+    var x = try TestTree.init(alloc, &views[0]);
+    defer x.deinit();
+    var y = try TestTree.init(alloc, &views[1]);
+    defer y.deinit();
+    return try x.split(alloc, .root, .right, 0.5, &y);
+}
+
+test "a pane arriving from another tab splits a pane there and leaves its old tab" {
+    var src_views = [_]TestView{ .{ .id = "a" }, .{ .id = "b" }, .{ .id = "c" } };
+    var dst_views = [_]TestView{ .{ .id = "x" }, .{ .id = "y" } };
+    var src = try threeAcross(&src_views);
+    defer src.deinit();
+    var dst = try twoAcross(&dst_views);
+    defer dst.deinit();
+    var out = try applyArriving(TestTree, testing.allocator, &src, &dst, testId, "a", .{ .split = .{ .window = 1, .pane = "y", .side = .down } });
+    switch (out) {
+        .moved => |*m| {
+            defer m.source.deinit();
+            defer m.dest.deinit();
+            try expectShape(&m.source, "H(b,c)");
+            try expectShape(&m.dest, "H(x,V(y,a))");
+            // The very same view: the shell that left is the one that lands.
+            const h = handleOf(TestTree, &m.dest, testId, "a").?;
+            try testing.expect(m.dest.nodes[h.idx()].leaf == &src_views[0]);
+        },
+        else => return error.TestUnexpectedResult,
+    }
+}
+
+test "a swap across tabs puts each pane in the other's place" {
+    var src_views = [_]TestView{ .{ .id = "a" }, .{ .id = "b" }, .{ .id = "c" } };
+    var dst_views = [_]TestView{ .{ .id = "x" }, .{ .id = "y" } };
+    var src = try threeAcross(&src_views);
+    defer src.deinit();
+    var dst = try twoAcross(&dst_views);
+    defer dst.deinit();
+    var out = try applyArriving(TestTree, testing.allocator, &src, &dst, testId, "b", .{ .swap = .{ .window = 1, .pane = "x" } });
+    switch (out) {
+        .moved => |*m| {
+            defer m.source.deinit();
+            defer m.dest.deinit();
+            try expectShape(&m.source, "H(a,H(x,c))");
+            try expectShape(&m.dest, "H(b,y)");
+        },
+        else => return error.TestUnexpectedResult,
+    }
+}
+
+test "a tab's last pane arriving elsewhere leaves its tab empty" {
+    const alloc = testing.allocator;
+    var only = [_]TestView{.{ .id = "a" }};
+    var dst_views = [_]TestView{ .{ .id = "x" }, .{ .id = "y" } };
+    var src = try TestTree.init(alloc, &only[0]);
+    defer src.deinit();
+    var dst = try twoAcross(&dst_views);
+    defer dst.deinit();
+    var top = try applyArriving(TestTree, alloc, &src, &dst, testId, "a", .{ .top_level = .{ .window = 1, .side = .up } });
+    switch (top) {
+        .moved => |*m| {
+            defer m.source.deinit();
+            defer m.dest.deinit();
+            try testing.expect(m.source.isEmpty());
+            try expectShape(&m.dest, "V(a,H(x,y))");
+        },
+        else => return error.TestUnexpectedResult,
+    }
+    const before = [_][]const u8{"x"};
+    const after = [_][]const u8{"y"};
+    var gap = try applyArriving(TestTree, alloc, &src, &dst, testId, "a", .{ .insert = .{
+        .window = 1,
+        .before = &before,
+        .after = &after,
+        .layout = .horizontal,
+        .landing = .{ .left = 0, .top = 0, .right = 1, .bottom = 1 },
+    } });
+    switch (gap) {
+        .moved => |*m| {
+            defer m.source.deinit();
+            defer m.dest.deinit();
+            try testing.expect(m.source.isEmpty());
+            try expectShape(&m.dest, "H(x,H(a,y))");
+        },
+        else => return error.TestUnexpectedResult,
+    }
+}
+
+test "an arrival names a pane of the destination, never one it is already in" {
+    var src_views = [_]TestView{ .{ .id = "a" }, .{ .id = "b" }, .{ .id = "c" } };
+    var dst_views = [_]TestView{ .{ .id = "x" }, .{ .id = "y" } };
+    var src = try threeAcross(&src_views);
+    defer src.deinit();
+    var dst = try twoAcross(&dst_views);
+    defer dst.deinit();
+    const alloc = testing.allocator;
+    // b is in the source, not the destination: no pane to split there.
+    try testing.expect(try applyArriving(TestTree, alloc, &src, &dst, testId, "a", .{ .split = .{ .window = 1, .pane = "b", .side = .left } }) == .not_here);
+    // The pane is not in the source at all.
+    try testing.expect(try applyArriving(TestTree, alloc, &src, &dst, testId, "zz", .{ .swap = .{ .window = 1, .pane = "x" } }) == .not_here);
+    // Already in the destination: that is `apply`'s, not an arrival.
+    try testing.expect(try applyArriving(TestTree, alloc, &dst, &dst, testId, "x", .{ .swap = .{ .window = 1, .pane = "y" } }) == .not_here);
+    try testing.expect(try applyArriving(TestTree, alloc, &src, &dst, testId, "a", .{ .new_tab = .{ .window = 1, .index = 0 } }) == .not_here);
+}
+
+test "a tab-bar drop makes a new tab, or moves a lone pane's tab, or nothing" {
+    // A tab of several panes: a new tab at the seam, clamped to the end.
+    try testing.expectEqual(TabDrop{ .new_tab = 0 }, tabDrop(3, 0, 0, 2));
+    try testing.expectEqual(TabDrop{ .new_tab = 2 }, tabDrop(3, 0, 5, 2));
+    // A lone pane is already a tab: the drop moves its tab to the seam...
+    try testing.expectEqual(TabDrop{ .reorder = 2 }, tabDrop(1, 0, 3, 3));
+    try testing.expectEqual(TabDrop{ .reorder = 0 }, tabDrop(1, 2, 0, 3));
+    // ...and the seams either side of it are where it already is.
+    try testing.expectEqual(TabDrop.in_place, tabDrop(1, 1, 1, 3));
+    try testing.expectEqual(TabDrop.in_place, tabDrop(1, 1, 2, 3));
+    // A window's only tab holding its only pane: never closes the window.
+    try testing.expectEqual(TabDrop.in_place, tabDrop(1, 0, 0, 1));
+    try testing.expectEqual(TabDrop.in_place, tabDrop(1, 0, 1, 1));
+}
+
+test "the resolver's tab bar answer drives tabDrop end to end" {
+    // Two tab buttons across a 400px bar: over the second means seam 1.
+    const tabs = [_]pane_drop.Rect{
+        .{ .left = 0, .top = 0, .right = 200, .bottom = 34 },
+        .{ .left = 200, .top = 0, .right = 400, .bottom = 34 },
+    };
+    const bar: pane_drop.Candidate = .{
+        .window = 1,
+        .z_order = 0,
+        .content_rect = .{ .left = 0, .top = 0, .right = 0, .bottom = 0 },
+        .pane_rects = &.{},
+        .tab_bar_rect = .{ .left = 0, .top = 0, .right = 400, .bottom = 34 },
+        .tab_button_rects = &tabs,
+    };
+    const metrics = pane_drop.Metrics.forScale(1.0);
+    const t = pane_drop.resolve(.{ .x = 300, .y = 17 }, &.{bar}, "a", metrics) orelse
+        return error.TestUnexpectedResult;
+    try testing.expect(t == .new_tab);
+    try testing.expectEqual(@as(usize, 1), t.new_tab.index);
+    try testing.expectEqual(TabDrop{ .new_tab = 1 }, tabDrop(2, 0, t.new_tab.index, 2));
+    // And the same point is a dwell on tab 1.
+    try testing.expectEqual(@as(usize, 1), pane_drop.hoveredTab(.{ .x = 300, .y = 17 }, &.{bar}).?.index);
 }

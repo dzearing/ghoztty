@@ -33,6 +33,9 @@ const WeakRef = @import("../weak_ref.zig").WeakRef;
 const CloseUndo = @import("../CloseUndo.zig");
 const RelayWindows = @import("../RelayWindows.zig");
 const PaneSidebar = @import("../PaneSidebar.zig");
+const PaneDrag = @import("../PaneDrag.zig");
+const pane_drop = @import("../../win32/pane_drop.zig");
+const pane_drop_apply = @import("../pane_drop_apply.zig");
 const wk = @import("../webkit.zig");
 const window_activity = @import("../window_activity.zig");
 const window_seen = @import("../window_seen.zig");
@@ -270,6 +273,11 @@ pub const Window = extern struct {
         /// and the tab bar is forced visible. Per window, like the Mac's.
         rearrange_mode: bool = false,
 
+        /// The tab-bar dwell of a pane drag (T3615): the tab a drag is
+        /// resting on and the 500ms clock that selects it.
+        dwell_tab: ?usize = null,
+        dwell_timer: ?c_uint = null,
+
         /// The window's own gradient desk in the elevated pane style
         /// (T3566; Mac `PaneDeskVariant`): null is the shared ocean.
         /// Decided on first use - a hand-opened window follows
@@ -406,6 +414,13 @@ pub const Window = extern struct {
             _ = wk.g_signal_connect_data(keys, "key-pressed", @ptrCast(&rearrangeKeyPressed), self, null, 0);
             wk.gtk_widget_add_controller(@ptrCast(self), keys);
         }
+
+        // The tab bar takes pane drops: a new tab at the index under the
+        // pointer, and a 500ms rest on another tab opens it (T3615).
+        PaneDrag.installDropTargetHover(@ptrCast(priv.tab_bar), self, &tabBarDrop, .{
+            .motion = &tabBarMotion,
+            .leave = &tabBarLeave,
+        });
 
         // We always sync our appearance at the end because loading our
         // config and such can affect our bindings which are setup initially
@@ -1336,6 +1351,232 @@ pub const Window = extern struct {
         return @intFromBool(self.rearrangeKey(keyval, state));
     }
 
+    // ---- Pane drops on the tab bar, and the tab dwell (T3615) -----------------
+
+    /// Most tab buttons the drop geometry reads; tabs past it are not targets.
+    pub const max_tab_buttons: usize = 64;
+
+    /// The split tree of this window's tab that holds the pane `id`.
+    pub fn splitTreeHolding(self: *Self, id: []const u8) ?*SplitTree {
+        const tab_view = self.private().tab_view;
+        const n = tab_view.getNPages();
+        for (0..@intCast(n)) |i| {
+            const tab = gobject.ext.cast(Tab, tab_view.getNthPage(@intCast(i)).getChild()) orelse continue;
+            if (tab.getSplitTree().holds(id)) return tab.getSplitTree();
+        }
+        return null;
+    }
+
+    /// The selected tab's position, or null with none.
+    pub fn selectedTabIndex(self: *Self) ?usize {
+        const tab_view = self.private().tab_view;
+        const page = tab_view.getSelectedPage() orelse return null;
+        return @intCast(tab_view.getPagePosition(page));
+    }
+
+    /// The tab-bar dwell's armed tab, or null (the `pane-drag` seam).
+    pub fn tabDwell(self: *Self) ?usize {
+        return self.private().dwell_tab;
+    }
+
+    pub fn tabBarWidget(self: *Self) *wk.GtkWidget {
+        return @ptrCast(self.private().tab_bar);
+    }
+
+    /// The tab bar as the resolver's candidate, in the bar's own
+    /// coordinates: the strip and each tab's button, in tab order. Null
+    /// while the bar is not on screen - a hidden bar is not a target
+    /// (pane-rearrange.md: with the mode off that means one tab).
+    pub fn tabBarCandidate(self: *Self, buf: *[max_tab_buttons]pane_drop.Rect) ?pane_drop.Candidate {
+        const bar = self.tabBarWidget();
+        if (wk.gtk_widget_get_mapped(bar) == 0) return null;
+        const strip = PaneDrag.rectOf(bar, bar) orelse return null;
+        const n = self.tabButtonRects(buf);
+        return .{
+            .window = @intFromPtr(self),
+            .z_order = 0,
+            .content_rect = .{ .left = 0, .top = 0, .right = 0, .bottom = 0 },
+            .pane_rects = &.{},
+            .tab_bar_rect = strip,
+            .tab_button_rects = buf[0..n],
+        };
+    }
+
+    /// Each tab's button on the bar, in tab order, in the bar's coordinates.
+    /// libadwaita draws a tab as an internal `AdwTab` widget, so they are
+    /// found by type name and put in order left to right - the order the
+    /// bar lays the pages out in. A tab the bar is still animating away
+    /// (one more button than pages) cannot shift the ones after it past the
+    /// page count: the count is the pages', and the extra is dropped.
+    fn tabButtonRects(self: *Self, out: *[max_tab_buttons]pane_drop.Rect) usize {
+        const bar = self.tabBarWidget();
+        var n: usize = 0;
+        collectTabButtons(self.private().tab_bar.as(gtk.Widget), bar, out, &n);
+        std.mem.sort(pane_drop.Rect, out[0..n], {}, struct {
+            fn lt(_: void, a: pane_drop.Rect, b: pane_drop.Rect) bool {
+                return a.left < b.left;
+            }
+        }.lt);
+        const pages: usize = @intCast(self.private().tab_view.getNPages());
+        return @min(n, pages);
+    }
+
+    fn collectTabButtons(widget: *gtk.Widget, bar: *wk.GtkWidget, out: *[max_tab_buttons]pane_drop.Rect, n: *usize) void {
+        var child = widget.getFirstChild();
+        while (child) |c| : (child = c.getNextSibling()) {
+            if (n.* == out.len) return;
+            const class = c.as(gobject.Object).f_g_type_instance.f_g_class orelse continue;
+            const name = std.mem.span(gobject.typeName(class.f_g_type) orelse "");
+            if (std.mem.eql(u8, name, "AdwTab")) {
+                if (c.getMapped() != 0) if (PaneDrag.rectOf(@ptrCast(c), bar)) |r| {
+                    out[n.*] = r;
+                    n.* += 1;
+                };
+                continue;
+            }
+            collectTabButtons(c, bar, out, n);
+        }
+    }
+
+    fn tabBarDrop(owner: *anyopaque, dragged_id: []const u8, x: f64, y: f64) PaneDrag.DropResult {
+        const self: *Self = @ptrCast(@alignCast(owner));
+        return self.dropOnTabBar(dragged_id, x, y);
+    }
+
+    fn tabBarMotion(owner: *anyopaque, x: f64, y: f64) void {
+        const self: *Self = @ptrCast(@alignCast(owner));
+        self.tabDwellAt(x, y);
+    }
+
+    fn tabBarLeave(owner: *anyopaque) void {
+        const self: *Self = @ptrCast(@alignCast(owner));
+        self.cancelTabDwell();
+    }
+
+    /// A pane released on the tab bar at (x, y), in the bar's coordinates:
+    /// a new tab of its own at the index under the pointer, or - for a
+    /// pane that is its tab's only one - that tab moved there (win32
+    /// `canNewTabDrop`, Mac `.newTab`). A window's only pane stays put, so
+    /// a drag never closes a window. The release and the `pane-drag` seam
+    /// both come here.
+    pub fn dropOnTabBar(self: *Self, dragged_id: []const u8, x: f64, y: f64) PaneDrag.DropResult {
+        var buf: [max_tab_buttons]pane_drop.Rect = undefined;
+        const cand = self.tabBarCandidate(&buf) orelse return .{};
+        const point: pane_drop.Point = .{ .x = @intFromFloat(@round(x)), .y = @intFromFloat(@round(y)) };
+        const target = pane_drop.resolve(point, &.{cand}, dragged_id, pane_drop.Metrics.forScale(1.0)) orelse return .{};
+        if (target != .new_tab) return .{ .target = @tagName(target), .outcome = "not_here" };
+        var result: PaneDrag.DropResult = .{ .target = "new_tab", .index = target.new_tab.index };
+
+        // A pane of another window is a cross-window drop (T3616).
+        const source = self.splitTreeHolding(dragged_id) orelse {
+            result.outcome = "not_here";
+            return result;
+        };
+        const surface = source.surfaceById(dragged_id) orelse {
+            result.outcome = "not_here";
+            return result;
+        };
+        const tab_view = self.private().tab_view;
+        const source_tab = ext.getAncestor(Tab, source.as(gtk.Widget)) orelse {
+            result.outcome = "not_here";
+            return result;
+        };
+        const page = tab_view.getPage(source_tab.as(gtk.Widget));
+        const leaves: usize = leaves: {
+            const tree = source.getTree() orelse break :leaves 0;
+            var count: usize = 0;
+            var it = tree.iterator();
+            while (it.next()) |_| count += 1;
+            break :leaves count;
+        };
+        const plan = pane_drop_apply.tabDrop(
+            leaves,
+            @intCast(tab_view.getPagePosition(page)),
+            target.new_tab.index,
+            @intCast(tab_view.getNPages()),
+        );
+        switch (plan) {
+            .in_place => result.outcome = "in_place",
+            .reorder => |to| {
+                _ = tab_view.reorderPage(page, @intCast(to));
+                tab_view.setSelectedPage(page);
+                result.outcome = "moved";
+            },
+            .new_tab => |at| {
+                result.outcome = if (self.movePaneToNewTab(source, surface, at)) "moved" else "not_here";
+            },
+        }
+        log.info("tab bar drop pane={s} index={d} outcome={s}", .{ dragged_id, target.new_tab.index, result.outcome });
+        return result;
+    }
+
+    /// Move `surface` out of `source` into a new tab of its own at
+    /// `position`, selected and focused. The very same pane: its shell,
+    /// scrollback and pane id go with it.
+    fn movePaneToNewTab(self: *Self, source: *SplitTree, surface: *Surface, position: usize) bool {
+        _ = surface.ref();
+        defer surface.unref();
+        const released = source.releaseSurface(surface) catch false;
+        if (!released) return false;
+        const tab = Tab.newAdopting(self.private().config, surface) catch |err| {
+            // Out of memory with the pane already out of its tab: it closes,
+            // as a pane does when its tab cannot be built (`Tab.new`).
+            log.warn("new tab for a dropped pane failed err={}", .{err});
+            return false;
+        };
+        const n = self.private().tab_view.getNPages();
+        _ = self.attachTabPage(tab, @intCast(@min(@as(c_int, @intCast(position)), n)));
+        tab.getSplitTree().focusSurface(surface);
+        return true;
+    }
+
+    /// A pane drag over the tab bar at (x, y), in the bar's coordinates:
+    /// resting on another tab's button for 500ms selects that tab, so the
+    /// drag can go on into its layout (Mac `PaneDropResolver.hoveredTab`,
+    /// win32 T1537). The clock is re-armed only when the tab under the
+    /// pointer CHANGES - one restarted by every move would never fire while
+    /// the hand is moving. The tab already on show arms nothing.
+    pub fn tabDwellAt(self: *Self, x: f64, y: f64) void {
+        const priv = self.private();
+        var buf: [max_tab_buttons]pane_drop.Rect = undefined;
+        const want: ?usize = want: {
+            const cand = self.tabBarCandidate(&buf) orelse break :want null;
+            const point: pane_drop.Point = .{ .x = @intFromFloat(@round(x)), .y = @intFromFloat(@round(y)) };
+            const hit = pane_drop.hoveredTab(point, &.{cand}) orelse break :want null;
+            if (self.selectedTabIndex()) |sel| if (sel == hit.index) break :want null;
+            break :want hit.index;
+        };
+        if (want) |w| if (priv.dwell_tab) |cur| if (cur == w) return;
+        self.cancelTabDwell();
+        const w = want orelse return;
+        priv.dwell_tab = w;
+        priv.dwell_timer = glib.timeoutAdd(tab_dwell_ms, onTabDwell, self);
+    }
+
+    /// The Mac's and win32's dwell: half a second.
+    pub const tab_dwell_ms: c_uint = 500;
+
+    /// Stop the dwell clock: the drag left the bar, dropped, or ended.
+    pub fn cancelTabDwell(self: *Self) void {
+        const priv = self.private();
+        if (priv.dwell_timer) |t| _ = glib.Source.remove(t);
+        priv.dwell_timer = null;
+        priv.dwell_tab = null;
+    }
+
+    fn onTabDwell(ud: ?*anyopaque) callconv(.c) c_int {
+        const self: *Self = @ptrCast(@alignCast(ud orelse return 0));
+        const priv = self.private();
+        priv.dwell_timer = null;
+        const i = priv.dwell_tab orelse return 0;
+        priv.dwell_tab = null;
+        const tab_view = priv.tab_view;
+        if (i >= @as(usize, @intCast(tab_view.getNPages()))) return 0;
+        tab_view.setSelectedPage(tab_view.getNthPage(@intCast(i)));
+        log.info("pane drag dwell opened tab {d}", .{i});
+        return 0;
+    }
+
     /// Returns true if this window needs confirmation before quitting.
     fn getNeedsConfirmQuit(self: *Self) bool {
         const priv = self.private();
@@ -1648,6 +1889,9 @@ pub const Window = extern struct {
         RelayWindows.windowDisposed(self, Application.default().isQuitting());
 
         priv.command_palette.set(null);
+
+        // T3615: nor a drag's tab dwell.
+        self.cancelTabDwell();
 
         // T3571: a held title's timer must not fire into a disposed window.
         if (priv.held_title_timer != 0) {

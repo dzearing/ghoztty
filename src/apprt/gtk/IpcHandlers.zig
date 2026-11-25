@@ -64,6 +64,7 @@ const pane_style = @import("pane_style.zig");
 
 const Application = @import("class/application.zig").Application;
 const Window = @import("class/window.zig").Window;
+const pane_drop = @import("../win32/pane_drop.zig");
 const PaneSidebar = @import("PaneSidebar.zig");
 const BannerEditor = @import("BannerEditor.zig");
 const pane_banner_rules = @import("pane_banner_rules.zig");
@@ -569,22 +570,31 @@ fn paneStack(app: Context, request: Request) Allocator.Error![]u8 {
 }
 
 /// `pane-drag --target=<pane> [--key=escape]
-/// [--drop-on=<pane> --fx=<0..1> --fy=<0..1> | --drop-at=<x>,<y>]` (T3564):
+/// [--drop-on=<pane> --fx=<0..1> --fy=<0..1> | --drop-at=<x>,<y> |
+/// --drop-tab=<n>] [--hover-tab=<n> | --hover-leave]` (T3564, T3615):
 /// the target window's rearrange mode as drawn - the mode, the tab bar's
 /// visible/autohide, and every pane's header (shown, laid-out height, title,
 /// and the pane's content height under it) - after an optional Escape through
 /// the window's own key handler and an optional drop of the TARGET pane,
-/// through the same `SplitTree.dropPaneAt` a real release calls. The headless
-/// harness has no seat, so no pointer drag can start; this is the drop half
-/// of one. `--drop-on` names a point as a fraction of a pane's drawn rect,
-/// `--drop-at` one in the split area's coordinates. Reply `drop`: the
-/// resolved `target` kind, its `side`/`pane`, and `outcome`
-/// (`moved|in_place|not_here|none`).
+/// through the same `SplitTree.dropPaneAt` / `Window.dropOnTabBar` a real
+/// release calls. The headless harness has no seat, so no pointer drag can
+/// start; this is the drop half of one. `--drop-on` names a point as a
+/// fraction of a pane's drawn rect, in THAT pane's tab (so a drop can land in
+/// a tab the dwell switched to), `--drop-at` one in the selected tab's split
+/// area, `--drop-tab` the middle of the n-th tab's button on the bar.
+/// `--hover-tab` moves the drag onto the n-th tab's button (the dwell clock,
+/// `Window.tabDwellAt`); `--hover-leave` takes it off the bar. Reply `drop`:
+/// the resolved `target` kind, its `side`/`pane`/`index`, and `outcome`
+/// (`moved|in_place|not_here|none`); `tab_count`, `selected_tab`,
+/// `dwell_tab` and `tab_buttons` (the bar's buttons the resolver reads).
 fn paneDrag(app: Context, request: Request) Allocator.Error![]u8 {
     var target_arg: ?[]const u8 = null;
     var key_arg: ?[]const u8 = null;
     var on_arg: ?[]const u8 = null;
     var at_arg: ?[]const u8 = null;
+    var tab_arg: ?[]const u8 = null;
+    var hover_arg: ?[]const u8 = null;
+    var hover_leave = false;
     var fx: f64 = 0.5;
     var fy: f64 = 0.5;
     for (request.arguments orelse &.{}) |arg| {
@@ -592,6 +602,9 @@ fn paneDrag(app: Context, request: Request) Allocator.Error![]u8 {
         if (std.mem.startsWith(u8, arg, "--key=")) key_arg = arg["--key=".len..];
         if (std.mem.startsWith(u8, arg, "--drop-on=")) on_arg = arg["--drop-on=".len..];
         if (std.mem.startsWith(u8, arg, "--drop-at=")) at_arg = arg["--drop-at=".len..];
+        if (std.mem.startsWith(u8, arg, "--drop-tab=")) tab_arg = arg["--drop-tab=".len..];
+        if (std.mem.startsWith(u8, arg, "--hover-tab=")) hover_arg = arg["--hover-tab=".len..];
+        if (std.mem.eql(u8, arg, "--hover-leave")) hover_leave = true;
         if (std.mem.startsWith(u8, arg, "--fx=")) fx = std.fmt.parseFloat(f64, arg["--fx=".len..]) catch fx;
         if (std.mem.startsWith(u8, arg, "--fy=")) fy = std.fmt.parseFloat(f64, arg["--fy=".len..]) catch fy;
     }
@@ -617,11 +630,44 @@ fn paneDrag(app: Context, request: Request) Allocator.Error![]u8 {
         key_effect = if (window.rearrangeKey(0xff1b, 0)) "consumed" else "passed";
     }
 
-    const Drop = struct { target: []const u8, outcome: []const u8, side: ?[]const u8, pane: ?[]const u8, x: f64, y: f64 };
+    // The middle of the n-th tab's button, in the bar's coordinates.
+    const buttonPoint = struct {
+        fn f(w: *Window, arg: []const u8) ?struct { x: f64, y: f64 } {
+            const n = std.fmt.parseInt(usize, arg, 10) catch return null;
+            var buf: [Window.max_tab_buttons]pane_drop.Rect = undefined;
+            const cand = w.tabBarCandidate(&buf) orelse return null;
+            if (n >= cand.tab_button_rects.len) return null;
+            const r = cand.tab_button_rects[n];
+            return .{
+                .x = @as(f64, @floatFromInt(r.left + @divTrunc(r.width(), 2))),
+                .y = @as(f64, @floatFromInt(r.top + @divTrunc(r.height(), 2))),
+            };
+        }
+    }.f;
+
+    if (hover_leave) window.cancelTabDwell();
+    if (hover_arg) |h| {
+        const p = buttonPoint(window, h) orelse
+            return server.errorResponse(c_alloc, "--hover-tab: no tab button {s} on a visible tab bar", .{h});
+        window.tabDwellAt(p.x, p.y);
+    }
+
+    const Drop = struct { target: []const u8, outcome: []const u8, side: ?[]const u8, pane: ?[]const u8, index: ?usize, x: f64, y: f64 };
     var drop: ?Drop = null;
+    if (tab_arg) |t| {
+        const p = buttonPoint(window, t) orelse
+            return server.errorResponse(c_alloc, "--drop-tab: no tab button {s} on a visible tab bar", .{t});
+        const id = try arena.dupe(u8, surface.paneId());
+        const r = window.dropOnTabBar(id, p.x, p.y);
+        drop = .{ .target = r.target, .outcome = r.outcome, .side = null, .pane = null, .index = r.index, .x = p.x, .y = p.y };
+    }
     if (on_arg != null or at_arg != null) {
-        const tree = ext.getAncestor(SplitTree, surface.as(gtk.Widget)) orelse
-            return server.errorResponse(c_alloc, "pane '{s}' is not in a split tree", .{target_name});
+        // The tab under the drop: the named pane's, else the one on show.
+        var tree: *SplitTree = tree: {
+            const sel = window.getSelectedTab() orelse
+                return server.errorResponse(c_alloc, "the window has no tab on show", .{});
+            break :tree sel.getSplitTree();
+        };
         var x: f64 = 0;
         var y: f64 = 0;
         if (on_arg) |on| {
@@ -629,8 +675,10 @@ fn paneDrag(app: Context, request: Request) Allocator.Error![]u8 {
                 .found => |t| t.surface() orelse return server.errorResponse(c_alloc, "pane '{s}' is no longer alive", .{on}),
                 else => return server.errorResponse(c_alloc, "--drop-on: pane '{s}' not found", .{on}),
             };
+            tree = ext.getAncestor(SplitTree, other.as(gtk.Widget)) orelse
+                return server.errorResponse(c_alloc, "--drop-on: pane '{s}' is not in a split tree", .{on});
             const r = tree.paneRect(other) orelse
-                return server.errorResponse(c_alloc, "--drop-on: pane '{s}' is not on screen in this tab", .{on});
+                return server.errorResponse(c_alloc, "--drop-on: pane '{s}' is not on screen in its tab", .{on});
             x = @as(f64, @floatFromInt(r.left)) + fx * @as(f64, @floatFromInt(r.width()));
             y = @as(f64, @floatFromInt(r.top)) + fy * @as(f64, @floatFromInt(r.height()));
         } else if (at_arg) |at| {
@@ -648,10 +696,13 @@ fn paneDrag(app: Context, request: Request) Allocator.Error![]u8 {
             .outcome = r.outcome,
             .side = r.side,
             .pane = if (r.pane) |p| try arena.dupe(u8, p) else null,
+            .index = r.index,
             .x = x,
             .y = y,
         };
     }
+    var bar_buf: [Window.max_tab_buttons]pane_drop.Rect = undefined;
+    const bar = window.tabBarCandidate(&bar_buf);
 
     const HeaderRep = struct { pane: []const u8, shown: bool, height: c_int, title: []const u8, content_height: c_int };
     var headers: std.ArrayList(HeaderRep) = .empty;
@@ -675,6 +726,10 @@ fn paneDrag(app: Context, request: Request) Allocator.Error![]u8 {
         key_effect: ?[]const u8,
         headers: []const HeaderRep,
         drop: ?Drop,
+        tab_count: c_int,
+        selected_tab: ?usize,
+        dwell_tab: ?usize,
+        tab_buttons: usize,
     };
     const rep: Rep = .{
         .mode = window.rearrangeMode(),
@@ -683,6 +738,10 @@ fn paneDrag(app: Context, request: Request) Allocator.Error![]u8 {
         .key_effect = key_effect,
         .headers = headers.items,
         .drop = drop,
+        .tab_count = window.getTabView().getNPages(),
+        .selected_tab = window.selectedTabIndex(),
+        .dwell_tab = window.tabDwell(),
+        .tab_buttons = if (bar) |b| b.tab_button_rects.len else 0,
     };
     var out: std.Io.Writer.Allocating = .init(c_alloc);
     defer out.deinit();

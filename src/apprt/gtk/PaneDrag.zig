@@ -16,8 +16,14 @@
 //! module state set at `drag-begin` - the drop never needs to read the bytes,
 //! the Mac's `PaneDragSession` shape. The pointer is an open hand over the
 //! header and GTK shows its own drag icon; the ghost card, the hover handle
-//! with the mode off, the tab bar, a new window and cross-window drops are
-//! follow-up cards filed from T3564.
+//! with the mode off, a new window and cross-window drops are follow-up cards
+//! filed from T3564.
+//!
+//! **The tab bar (T3615).** The window's `AdwTabBar` takes pane drops too: a
+//! release there moves the pane into a new tab of its own at the index under
+//! the pointer, and resting 500ms on another tab's button selects it so the
+//! drag can go on into that tab's layout (`Window.dropOnTabBar`,
+//! `Window.tabDwellAt`).
 //!
 //! **The drop.** Resolved by win32's pure resolver (`win32/pane_drop.zig`,
 //! Mac's `PaneDropResolver`) against the split tree's own geometry, and made
@@ -158,29 +164,49 @@ pub const DropResult = struct {
     /// For a split: the side; for a split or swap: the other pane.
     side: ?[]const u8 = null,
     pane: ?[]const u8 = null,
+    /// For a tab-bar drop (T3615): the insertion index the resolver named.
+    index: ?usize = null,
 };
 
 /// The split tree's half of a drop: resolve and apply at a point in the
 /// widget's own coordinates.
 pub const DropFn = *const fn (owner: *anyopaque, dragged_id: []const u8, x: f64, y: f64) DropResult;
 
+/// A pane drag moving over the widget, in its own coordinates (T3615: the
+/// tab bar's dwell clock), and leaving it or ending over it.
+pub const MotionFn = *const fn (owner: *anyopaque, x: f64, y: f64) void;
+pub const LeaveFn = *const fn (owner: *anyopaque) void;
+
+pub const Hover = struct {
+    motion: MotionFn,
+    leave: LeaveFn,
+};
+
 const DropTarget = struct {
     owner: *anyopaque,
     drop: DropFn,
+    hover: ?Hover = null,
 };
 
 /// Make `widget` take pane drops, answered by `drop(owner, ...)`. The
 /// target lives as long as the widget (it is never freed: one per split
-/// tree, a few bytes).
+/// tree or tab bar, a few bytes).
 pub fn installDropTarget(widget: *wk.GtkWidget, owner: *anyopaque, drop: DropFn) void {
+    installDropTargetHover(widget, owner, drop, null);
+}
+
+/// `installDropTarget`, with `hover` told where a pane drag is over the
+/// widget and when it leaves or ends there.
+pub fn installDropTargetHover(widget: *wk.GtkWidget, owner: *anyopaque, drop: DropFn, hover: ?Hover) void {
     const t = std.heap.c_allocator.create(DropTarget) catch return;
-    t.* = .{ .owner = owner, .drop = drop };
+    t.* = .{ .owner = owner, .drop = drop, .hover = hover };
     const types = [_][*:0]const u8{mime.ptr};
     const formats = wk.gdk_content_formats_new(&types, types.len);
     const target = wk.gtk_drop_target_async_new(formats, wk.gdk_action_move);
     _ = wk.g_signal_connect_data(target, "accept", @ptrCast(&onAccept), t, null, 0);
     _ = wk.g_signal_connect_data(target, "drag-enter", @ptrCast(&onMotion), t, null, 0);
     _ = wk.g_signal_connect_data(target, "drag-motion", @ptrCast(&onMotion), t, null, 0);
+    _ = wk.g_signal_connect_data(target, "drag-leave", @ptrCast(&onLeave), t, null, 0);
     _ = wk.g_signal_connect_data(target, "drop", @ptrCast(&onDrop), t, null, 0);
     wk.gtk_widget_add_controller(widget, target);
 }
@@ -191,8 +217,14 @@ fn onAccept(_: *wk.GtkEventController, _: *wk.GdkDrop, _: *DropTarget) callconv(
     return @intFromBool(dragged() != null);
 }
 
-fn onMotion(_: *wk.GtkEventController, _: *wk.GdkDrop, _: f64, _: f64, _: *DropTarget) callconv(.c) c_int {
-    return if (dragged() != null) wk.gdk_action_move else 0;
+fn onMotion(_: *wk.GtkEventController, _: *wk.GdkDrop, x: f64, y: f64, t: *DropTarget) callconv(.c) c_int {
+    if (dragged() == null) return 0;
+    if (t.hover) |h| h.motion(t.owner, x, y);
+    return wk.gdk_action_move;
+}
+
+fn onLeave(_: *wk.GtkEventController, _: *wk.GdkDrop, t: *DropTarget) callconv(.c) void {
+    if (t.hover) |h| h.leave(t.owner);
 }
 
 fn onDrop(_: *wk.GtkEventController, drop: *wk.GdkDrop, x: f64, y: f64, t: *DropTarget) callconv(.c) c_int {
@@ -205,6 +237,7 @@ fn onDrop(_: *wk.GtkEventController, drop: *wk.GdkDrop, x: f64, y: f64, t: *Drop
     var buf: [64]u8 = undefined;
     const own = buf[0..id.len];
     @memcpy(own, id);
+    if (t.hover) |h| h.leave(t.owner);
     const r = t.drop(t.owner, own, x, y);
     log.info("drop pane={s} at={d:.0},{d:.0} target={s} outcome={s}", .{ own, x, y, r.target, r.outcome });
     const moved = std.mem.eql(u8, r.outcome, "moved");

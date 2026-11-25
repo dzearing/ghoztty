@@ -382,6 +382,13 @@ pub const SplitTree = extern struct {
             else => {},
         }
 
+        // A pane from another tab of this window - the tab a 500ms dwell
+        // on the tab bar switched away from (T3615).
+        if (pane_drop_apply.handleOf(Surface.Tree, tree, surfaceId, dragged_id) == null) {
+            result.outcome = self.dropArriving(dragged_id, target);
+            return result;
+        }
+
         const alloc = Application.default().allocator();
         const outcome = pane_drop_apply.apply(Surface.Tree, alloc, tree, surfaceId, dragged_id, target) catch |err| {
             log.warn("pane drop failed err={}", .{err});
@@ -409,6 +416,91 @@ pub const SplitTree = extern struct {
             .not_here => result.outcome = "not_here",
         }
         return result;
+    }
+
+    /// The drop of a pane that is in ANOTHER tab of this window into this
+    /// tree (T3615): both trees change, the pane that lands is the very one
+    /// that left, and a tab it was the last pane of closes. A pane of another
+    /// window is not here yet (cross-window drops are T3616).
+    fn dropArriving(self: *Self, dragged_id: []const u8, target: pane_drop.Target) []const u8 {
+        const window = ext.getAncestor(Window, self.as(gtk.Widget)) orelse return "not_here";
+        const source = window.splitTreeHolding(dragged_id) orelse return "not_here";
+        if (source == self) return "not_here";
+        const src_tree = source.private().tree orelse return "not_here";
+        const dest_tree = self.private().tree orelse return "not_here";
+        const alloc = Application.default().allocator();
+        const out = pane_drop_apply.applyArriving(Surface.Tree, alloc, src_tree, dest_tree, surfaceId, dragged_id, target) catch |err| {
+            log.warn("pane drop from another tab failed err={}", .{err});
+            return "not_here";
+        };
+        switch (out) {
+            .not_here => return "not_here",
+            .moved => |moved| {
+                var m = moved;
+                defer m.source.deinit();
+                defer m.dest.deinit();
+                const dragged_surface: *Surface = dragged: {
+                    const h = pane_drop_apply.handleOf(Surface.Tree, &m.dest, surfaceId, dragged_id) orelse return "not_here";
+                    break :dragged m.dest.nodes[h.idx()].leaf;
+                };
+                // The source first: it may empty, and its tab then closes;
+                // the pane lives on in `m.dest` meanwhile.
+                source.rearrange(&m.source);
+                self.rearrange(&m.dest);
+                self.private().last_focused.set(dragged_surface);
+                self.as(gobject.Object).notifyByPspec(properties.@"active-surface".impl.param_spec);
+                log.info("pane {s} arrived from another tab", .{dragged_id});
+                return "moved";
+            },
+        }
+    }
+
+    /// Show `surface`, a pane moved here from another tab, as this tree's
+    /// only pane and focus it (`Tab.newAdopting`, T3615).
+    pub fn adoptSurface(self: *Self, surface: *Surface) Allocator.Error!void {
+        const alloc = Application.default().allocator();
+        var single = try Surface.Tree.init(alloc, surface);
+        defer single.deinit();
+        self.private().last_focused.set(surface);
+        self.setTree(&single);
+    }
+
+    /// Take `surface` out of this tree without closing it, for a move to a
+    /// new tab (T3615). The caller holds a reference across the move. False
+    /// when it is not here or is the tree's only pane (that tab IS the
+    /// pane's own tab already).
+    pub fn releaseSurface(self: *Self, surface: *Surface) Allocator.Error!bool {
+        const tree = self.private().tree orelse return false;
+        if (!tree.isSplit()) return false;
+        const h = pane_drop_apply.handleOf(Surface.Tree, tree, surfaceId, surface.paneId()) orelse return false;
+        const alloc = Application.default().allocator();
+        var rest = try tree.remove(alloc, h);
+        defer rest.deinit();
+        self.rearrange(&rest);
+        return true;
+    }
+
+    /// Whether the pane `id` is in this tree.
+    pub fn holds(self: *Self, id: []const u8) bool {
+        const tree = self.private().tree orelse return false;
+        return pane_drop_apply.handleOf(Surface.Tree, tree, surfaceId, id) != null;
+    }
+
+    /// The surface of the pane `id` in this tree, or null.
+    pub fn surfaceById(self: *Self, id: []const u8) ?*Surface {
+        const tree = self.private().tree orelse return null;
+        const h = pane_drop_apply.handleOf(Surface.Tree, tree, surfaceId, id) orelse return null;
+        return tree.nodes[h.idx()].leaf;
+    }
+
+    /// Push this tree's is-split to each of its panes (T3615). It was a
+    /// property binding from the tree that made the pane, which went on
+    /// driving a pane after it moved to another tab.
+    fn syncIsSplit(self: *Self) void {
+        const tree = self.private().tree orelse return;
+        const split = self.getIsSplit();
+        var it = tree.iterator();
+        while (it.next()) |entry| entry.view.setIsSplit(split);
     }
 
     fn surfaceId(s: *Surface) []const u8 {
@@ -1001,13 +1093,7 @@ pub const SplitTree = extern struct {
             };
         }
 
-        // Bind is-split property for new surface
-        _ = self.as(gobject.Object).bindProperty(
-            "is-split",
-            surface.as(gobject.Object),
-            "is-split",
-            .{ .sync_create = true },
-        );
+        // Its is-split is pushed by every rebuild (`syncIsSplit`, T3615).
 
         // Create our tree
         var single_tree = try Surface.Tree.init(alloc, surface);
@@ -1447,12 +1533,6 @@ pub const SplitTree = extern struct {
             if (entry.view == old) break entry.handle;
         } else return false;
 
-        _ = self.as(gobject.Object).bindProperty(
-            "is-split",
-            replacement.as(gobject.Object),
-            "is-split",
-            .{ .sync_create = true },
-        );
         if (old.backgroundTint()) |tint| replacement.applyBackgroundTint(tint);
 
         const was_focused = focused: {
@@ -1990,6 +2070,7 @@ pub const SplitTree = extern struct {
 
         // Our split status may have changed
         self.as(gobject.Object).notifyByPspec(properties.@"is-split".impl.param_spec);
+        self.syncIsSplit();
 
         // Our active surface may have changed
         self.as(gobject.Object).notifyByPspec(properties.@"active-surface".impl.param_spec);

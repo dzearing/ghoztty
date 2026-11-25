@@ -3754,6 +3754,17 @@ pub const Surface = extern struct {
     /// pane without taking the focus (a CLI `+split` without `--focus`).
     /// A surface otherwise starts "focused" and relies on a focus-leave to
     /// clear it, which a pane that never had focus never gets (T3367).
+    /// Whether the tree this pane is in is split (dims it while unfocused).
+    /// Pushed by the tree on every rebuild rather than bound to it (T3615):
+    /// a pane can move to another tab's tree, and a binding to the old tree
+    /// would go on driving it from there.
+    pub fn setIsSplit(self: *Self, v: bool) void {
+        const priv = self.private();
+        if (priv.is_split == v) return;
+        priv.is_split = v;
+        self.as(gobject.Object).notifyByPspec(properties.@"is-split".impl.param_spec);
+    }
+
     pub fn startUnfocused(self: *Self) void {
         const priv = self.private();
         if (!priv.focused) return;
