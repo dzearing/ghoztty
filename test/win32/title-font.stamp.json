@@ -1,16 +1,16 @@
 {
     "guard":  "title-font",
     "script":  "test/win32/title-font.ps1",
-    "generated":  "2026-11-22T13:06:33-08:00",
-    "commit":  "412ba5a0c",
+    "generated":  "2026-11-24T23:27:41-08:00",
+    "commit":  "dcaf4ac77",
     "uncommitted":  [
                         "test/win32/title-font.ps1"
                     ],
     "files":  {
                   "src/apprt/win32/title_font.zig":  "667b752eff243abd0730eb33a74feb4d24aa6938d0b40e4e49e9aaf03476e15d",
-                  "test/win32/title-font.ps1":  "6b1af744219f3df19f66c1fcc48fc12b20cddbe5392eec83dea6b63fda494192"
+                  "test/win32/title-font.ps1":  "249e4c5ae53e5ceae8754000c325f9edc24d6291aa85ac2ff4a278fa4f71ded1"
               },
     "code":  {
-                 "test/win32/title-font.ps1":  "code1:ff255f838fb9270d768a1141f396bcc8e417580790e706689b5a689dd8b6b94f"
+                 "test/win32/title-font.ps1":  "code1:112a4c7e19a17f6e68588c6ea399cf68c03a2e5991ecac85c43f2cc25e75a8cb"
              }
 }

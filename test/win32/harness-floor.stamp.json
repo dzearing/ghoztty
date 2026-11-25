@@ -1,10 +1,10 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-11-24T23:22:40-08:00",
-    "commit":  "bd4189d54",
+    "generated":  "2026-11-24T23:28:14-08:00",
+    "commit":  "dcaf4ac77",
     "uncommitted":  [
-                        "test/win32/hero-mode.ps1"
+                        "test/win32/title-font.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "cfa23792d110d499fa4086697daa516d218d0d110e594a7452167a81220ee15e",
@@ -215,7 +215,7 @@
                   "test/win32/harness-process-leak.ps1":  "ad32ee47966c8b6e7467d6ca16442c6927b3f59b9c64a3ecd95115b6ec999bb9",
                   "test/win32/harness-scope.ps1":  "47e7a59a24119049c22c6b222d7d609242a710e8142ba8053123694b378ebf24",
                   "test/win32/hero-carousel-ratio.ps1":  "518320e6011f5e4afa18118d9b72ad889ad9f0338447e02221418dde0ee29c9b",
-                  "test/win32/hero-mode.ps1":  "d2f55fa8543d212d5f870198dff6bda513bc36e8f1b2fd725ef3dd627cf47857",
+                  "test/win32/hero-mode.ps1":  "432c9aae1b7b318598f54ecb4ca444a22831eb0f6d863a1c18e896b7f3f3bb6c",
                   "test/win32/hero-nav.ps1":  "339030f72107a485bb293bbf6ab48916eea1de709d8fc9cb83f71454c5b76d63",
                   "test/win32/hero-viewer-tile.ps1":  "6bef1acf28d0e1c9645deab7ffc6935a35ebdd1b867eee00a9f5f6d14898332a",
                   "test/win32/hidden-new-pane.ps1":  "5f12c8912a7fded420286713a1349614717b14fd5a56bd4517f10bafe3294ae1",
@@ -601,7 +601,7 @@
                   "test/win32/thread-join-audit.ps1":  "e46a6d22e67ac938984fa9ebcf60bb9dcdecb96efeedd55a553bc7f3b18c945b",
                   "test/win32/title-churn-redraw.ps1":  "e76dd03723ce484c7b6fa8cfa96272bac7cdf8048bc900b9360624cc87855369",
                   "test/win32/title-flood.ps1":  "eaf112fc93d1a24927339dbd75e75e4fd38a67e5b1bacdef0c546afb555999f0",
-                  "test/win32/title-font.ps1":  "6b1af744219f3df19f66c1fcc48fc12b20cddbe5392eec83dea6b63fda494192",
+                  "test/win32/title-font.ps1":  "249e4c5ae53e5ceae8754000c325f9edc24d6291aa85ac2ff4a278fa4f71ded1",
                   "test/win32/title-jitter.ps1":  "259a8776c72c3cf69991893f7f012c830114ba0728c6812ca56e3047044c56ee",
                   "test/win32/translucent-window.ps1":  "eba06c72df9125b51d640a2be2beb4000ab627b5fed0b935bf5f65ac28af5406",
                   "test/win32/tree-swap-audit.ps1":  "c03ecc3fc2003732cc2ff532cd53d211f53c9d9545bd760c33092ab833f6a3ab",

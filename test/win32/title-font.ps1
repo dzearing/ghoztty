@@ -11,7 +11,10 @@
 # and deterministic).
 #
 #   1. Launch A (default font, --window-show-tab-bar=always so a single tab
-#      shows the bar) -> bar visible (positive control), signature non-empty.
+#      shows the bar) -> bar visible (positive control), the "+" box lights
+#      (probe control), the tab's title box lights. (T2209) Launch A0 with a
+#      blank title -> title box dark while the "+" still lights, so the "+"
+#      can never carry "draws text"; -BlankTitle '<visible>' turns it red.
 #   2. Launch B (--window-title-font-family="Times New Roman") -> signature
 #      differs from A (the config changes the tab bar raster).
 #   3. Launch C (same family, but via --config-file) -> signature matches B
@@ -46,7 +49,10 @@
 # discriminates fonts rather than reading noise.
 #
 # Only touches ghoztty processes from this repo's zig-out.
-param([string]$ExePath, [switch]$NegativeControl, [switch]$Interactive)
+param([string]$ExePath, [switch]$NegativeControl, [switch]$Interactive,
+    # T2209: the title launch A0 uses for its dark title box. A parameter so a
+    # run can hand it a visible title and watch the dark-box assertion go red.
+    [string]$BlankTitle = " ")
 
 # T351: the shared reset/kill helpers (Stop-RepoGhoztty). Dot-sourced HERE, ahead
 # of any isolation setup, because it drops an inherited $GHOZTTY_IPC_SOCKET - a
@@ -102,9 +108,17 @@ function Launch-Gui([string[]]$extraArgs, [string]$errPath) {
     if ($pane -eq [IntPtr]::Zero) { Stop-Process -Id $app.Pid -Force -ErrorAction SilentlyContinue; return $null }
     $pr = Get-TestWindowRect -Window $pane
     $cr = Get-TestWindowRect -Window $top -Client
+    # T2209: the app's own tab and "+" rects (client px, T231), so the title
+    # sample is bounded by where the label actually is. A tab is as wide as its
+    # measured title since T235, so the old fixed 200 DIP span reached into
+    # the "+" glyph, which alone lit enough pixels to pass "draws text".
+    $regions = Get-TestStripRegions -Window $top -Exe $exe
+    $tab = $null
+    if ($regions) { $tab = @($regions.Tabs | Where-Object { $null -ne $_ }) | Select-Object -First 1 }
     [pscustomobject]@{
         App = $app; Top = $top; Surface = $pane
         ClientLeft = $cr.Left; ClientTop = $cr.Top; BarH = ($pr.Top - $cr.Top)
+        Tab = $tab; NewTab = $(if ($regions) { $regions.NewTab } else { $null })
     }
 }
 
@@ -129,9 +143,18 @@ function Get-ColSig($shot, [int]$x0, [int]$x1, [int]$y0, [int]$y1, [int]$step) {
     return $cols.ToArray()
 }
 
-# Signature across the single tab (title text region) + the "+" button.
-# 1 tab: tabW = clamp(clientW-..., 60s, 200s) = 200s on any normal window.
-# barH is 40 DIP since T232 (4 + 4 + 28 + 4), and the strip's text pad is 8.
+# Two signatures, from one capture (T2209):
+#   Label - the single tab's TITLE box only, `Metrics.titleRect` in
+#           tab_strip_layout.zig: past the 8 DIP text pad, stopping 4 DIP
+#           before the close button's 28 DIP painted square, which sits 4 DIP
+#           inside the tab's right edge. This is what "draws title text" and
+#           every font diff score.
+#   Plus  - the "+" hit box, scored apart as the positive control: it proves
+#           the lit-pixel metric reads glyphs at all in this capture, so a dark
+#           Label means "no title drawn" rather than "the probe is blind".
+# Before T2209 one span ran from a fixed 200 DIP tab width through the "+", and
+# the "+" glyph alone lit enough columns to pass "draws text" with no title.
+# barH is 40 DIP since T232 (4 + 4 + 28 + 4).
 #
 # The capture is retried until it holds real content: an empty capture scores a
 # perfectly stable all-zero signature that would make every "same raster"
@@ -139,28 +162,45 @@ function Get-ColSig($shot, [int]$x0, [int]$x1, [int]$y0, [int]$y1, [int]$step) {
 # window paints on demand, so what the retry covers is a window whose chrome is
 # not built yet rather than a frame photographed mid-paint.
 function Get-Signature($g) {
+    $empty = [pscustomobject]@{ Label = [int[]]@(); Plus = [int[]]@() }
+    # Re-read every time: a font reload re-measures the tab to its new title
+    # width, so a rect cached at launch would score the reloaded label over
+    # the OLD font's span (measured: a 70 diff between two Segoe UI rasters).
+    $regions = Get-TestStripRegions -Window $g.Top -Exe $exe
+    if ($regions) {
+        $g.Tab = @($regions.Tabs | Where-Object { $null -ne $_ }) | Select-Object -First 1
+        $g.NewTab = $regions.NewTab
+    }
+    if ($null -eq $g.Tab -or $null -eq $g.NewTab) { return $empty }
     $scale = $g.BarH / 40.0
-    $tabW = Get-TestChromeDip -Dip 200 -Scale $scale
-    $plusW = (Get-TestChromeDip -Dip 8 -Scale $scale) + (Get-TestChromeDip -Dip 28 -Scale $scale)
-    # T1591: the sample starts at the tab, past the strip's leading slot
-    # (~54 DIP, measured 2026-11-20). That slot sometimes draws a light panel
-    # with an icon and title text (T3293) and sometimes does
-    # not, which scored a ~1000-column diff between two launches of one font.
-    $lead = Get-TestChromeDip -Dip 56 -Scale $scale
-    $x0 = $g.ClientLeft + $lead + (Get-TestChromeDip -Dip 8 -Scale $scale)    # text pad
-    $x1 = $g.ClientLeft + $lead + $tabW + $plusW - 2           # through the + glyph
+    $pad = Get-TestChromeDip -Dip 4 -Scale $scale
+    $closeSq = Get-TestChromeDip -Dip 28 -Scale $scale
+    # T1591's leading-slot skip is subsumed: the tab rect is the app's own, so
+    # the strip's leading slot (T3293) is never inside it.
+    $lx0 = $g.ClientLeft + $g.Tab.Left + (Get-TestChromeDip -Dip 8 -Scale $scale)   # text pad
+    $lx1 = $g.ClientLeft + $g.Tab.Right - $pad - $closeSq - $pad - 1                # before the close square
+    $px0 = $g.ClientLeft + $g.NewTab.Left
+    $px1 = $g.ClientLeft + $g.NewTab.Right - 1
     $y0 = $g.ClientTop + 4
     $y1 = $g.ClientTop + $g.BarH - 5                   # skip accent-stripe rows
     for ($t = 0; $t -lt 20; $t++) {
         $shot = Get-TestWindowPixels -Window $g.Top -Sync
         try {
             if ((Get-TestDistinctColors -Shot $shot) -ge 8) {
-                return (Get-ColSig $shot ([int]$x0) ([int]$x1) ([int]$y0) ([int]$y1) 2)
+                return [pscustomobject]@{
+                    Label = [int[]](Get-ColSig $shot ([int]$lx0) ([int]$lx1) ([int]$y0) ([int]$y1) 2)
+                    Plus = [int[]](Get-ColSig $shot ([int]$px0) ([int]$px1) ([int]$y0) ([int]$y1) 2)
+                }
             }
         } finally { Close-TestWindowPixels $shot }
         Start-Sleep -Milliseconds 150
     }
-    return @()
+    return $empty
+}
+
+function Get-LitSum([int[]]$sig) {
+    $s = ($sig | Measure-Object -Sum).Sum
+    if ($null -eq $s) { 0 } else { [int]$s }
 }
 
 function Sig-Diff([int[]]$a, [int[]]$b) {
@@ -190,11 +230,30 @@ try {
     Assert (-not (Test-TestDesktopLeak -ProcessId $a.App.Pid)) `
         'launch A is NOT enumerable on the interactive desktop'
     Assert ($a.BarH -ge 20 -and $a.BarH -le 80) "positive control: tab bar visible with 1 tab + always (barH=$($a.BarH))"
+    Assert ($null -ne $a.Tab -and $null -ne $a.NewTab) `
+        "the app reports its tab and + rects (+list --json chrome.tab_strip)"
     $sigA = Get-Signature $a
-    $litA = ($sigA | Measure-Object -Sum).Sum
-    Assert ($litA -gt 20) "default font: tab bar draws text (lit=$litA)"
+    $litA = Get-LitSum $sigA.Label
+    $plusA = Get-LitSum $sigA.Plus
+    Assert ($plusA -gt 20) "positive control: the + glyph lights the probe (lit=$plusA)"
+    Assert ($litA -gt 20) "default font: the tab's title box draws text (lit=$litA)"
     Stop-Process -Id $a.App.Pid -Force -ErrorAction SilentlyContinue
     Start-Sleep -Milliseconds 500
+
+    # -----------------------------------------------------------------------
+    # Launch A0 (T2209): a blank title. The title box must read dark while the
+    # "+" control still lights - the run's own proof that "draws text" is
+    # scored on the label and cannot be passed by the "+" glyph.
+    # -----------------------------------------------------------------------
+    $a0 = Launch-Gui @("--title=$BlankTitle")
+    if ($null -eq $a0) { Write-Host 'SETUP FAIL: launch A0 died'; exit 1 }
+    $sigA0 = Get-Signature $a0
+    $litA0 = Get-LitSum $sigA0.Label
+    $plusA0 = Get-LitSum $sigA0.Plus
+    Assert ($plusA0 -gt 20) "blank title: the + control still lights (lit=$plusA0)"
+    Assert ($litA0 -le 5) "blank title: the title box reads dark, so the + cannot carry 'draws text' (lit=$litA0)"
+    Stop-Process -Id $a0.App.Pid -Force -ErrorAction SilentlyContinue
+    Wait-Process -Id $a0.App.Pid -Timeout 5 -ErrorAction SilentlyContinue
 
     # -----------------------------------------------------------------------
     # Launch B: Times New Roman via CLI
@@ -203,7 +262,7 @@ try {
     if ($null -eq $b) { Write-Host 'SETUP FAIL: launch B died'; exit 1 }
     Assert ($b.BarH -eq $a.BarH) "bar height unchanged by font family (barH=$($b.BarH))"
     $sigB = Get-Signature $b
-    $dAB = Sig-Diff $sigA $sigB
+    $dAB = Sig-Diff $sigA.Label $sigB.Label
     if ($NegativeControl) {
         Assert ($dAB -le 15) "NEGATIVE CONTROL: font family leaves the raster alone (diff A-vs-B=$dAB)"
     } else {
@@ -220,7 +279,7 @@ try {
     $c = Launch-Gui @("--config-file=$conf") $errC
     if ($null -eq $c) { Write-Host 'SETUP FAIL: launch C died'; exit 1 }
     $sigC = Get-Signature $c
-    $dBC = Sig-Diff $sigB $sigC
+    $dBC = Sig-Diff $sigB.Label $sigC.Label
     Assert ($dBC -le 15) "same family reproduces the raster / config-file path works (diff B-vs-C=$dBC)"
 
     Set-Content -Path $conf -Value 'window-title-font-family = Segoe UI' -Encoding ascii
@@ -238,7 +297,7 @@ try {
     for ($t = 0; $t -lt 15; $t++) {
         Start-Sleep -Milliseconds 300
         $sigD = Get-Signature $c
-        $dCD = Sig-Diff $sigC $sigD
+        $dCD = Sig-Diff $sigC.Label $sigD.Label
         if ($dCD -ge 25) { $reloaded = $true; break }
     }
     Assert $reloaded "config reload re-fonts the tab bar live (diff C-vs-D=$dCD)"
@@ -279,7 +338,7 @@ try {
     }
 
     if ($reloaded) {
-        $dAD = Sig-Diff $sigA $sigD
+        $dAD = Sig-Diff $sigA.Label $sigD.Label
         Assert ($dAD -le 15) "reloaded Segoe UI matches the default raster (diff A-vs-D=$dAD)"
     }
 
