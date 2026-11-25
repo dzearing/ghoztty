@@ -1,0 +1,21 @@
+{
+  "version": "1.56.24",
+  "sections": [
+    { "title": "New",
+      "items": [
+        { "text": "Launching a different Ghoztty build on Linux asks Switch / Open Window / Cancel, as on Windows." },
+        { "text": "The Linux launch's build identity read is registered with the self-spawn audit." },
+        { "text": "Linux refreshes an older background agent when nothing is running in it, and asks before restarting one it cannot talk to." },
+        { "text": "A small Ghoztty-Setup.exe now runs the installer and says in Ghoztty's own dialog when another installation is in the way." },
+        { "text": "The Linux pane sidebar shows stash, restore, close and + buttons on the row under the pointer." },
+        { "text": "The Linux pane sidebar's rows drag up and down to reorder their window's list." },
+        { "text": "The Linux pane sidebar edits groups: a window row menu and the Ungrouped header pencil." }
+      ] },
+    { "title": "Fixes",
+      "items": [
+        { "text": "The update-applier test harnesses no longer leave the dev ghoztty-debug:// link handler pointing at a deleted temp folder." },
+        { "text": "Linux image panes copy a phone photo upright, and show an oriented TIFF upright." },
+        { "text": "A sized popup on Linux now gives its page the size the page asked for." }
+      ] }
+  ]
+}
