@@ -1,10 +1,10 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-11-24T23:28:14-08:00",
-    "commit":  "dcaf4ac77",
+    "generated":  "2026-11-24T23:44:34-08:00",
+    "commit":  "8575e4bd2",
     "uncommitted":  [
-                        "test/win32/title-font.ps1"
+
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "cfa23792d110d499fa4086697daa516d218d0d110e594a7452167a81220ee15e",
@@ -215,7 +215,7 @@
                   "test/win32/harness-process-leak.ps1":  "ad32ee47966c8b6e7467d6ca16442c6927b3f59b9c64a3ecd95115b6ec999bb9",
                   "test/win32/harness-scope.ps1":  "47e7a59a24119049c22c6b222d7d609242a710e8142ba8053123694b378ebf24",
                   "test/win32/hero-carousel-ratio.ps1":  "518320e6011f5e4afa18118d9b72ad889ad9f0338447e02221418dde0ee29c9b",
-                  "test/win32/hero-mode.ps1":  "432c9aae1b7b318598f54ecb4ca444a22831eb0f6d863a1c18e896b7f3f3bb6c",
+                  "test/win32/hero-mode.ps1":  "d2f55fa8543d212d5f870198dff6bda513bc36e8f1b2fd725ef3dd627cf47857",
                   "test/win32/hero-nav.ps1":  "339030f72107a485bb293bbf6ab48916eea1de709d8fc9cb83f71454c5b76d63",
                   "test/win32/hero-viewer-tile.ps1":  "6bef1acf28d0e1c9645deab7ffc6935a35ebdd1b867eee00a9f5f6d14898332a",
                   "test/win32/hidden-new-pane.ps1":  "5f12c8912a7fded420286713a1349614717b14fd5a56bd4517f10bafe3294ae1",
