@@ -264,6 +264,79 @@ fn isAbsolute(p: []const u8) bool {
 }
 
 // ---------------------------------------------------------------------
+// Shell on Linux (T3631): the GTK seat's half of Mac `ShellControl`. The
+// shell list, the default line and the PATH walk are POSIX ones: `:`-split
+// PATH, `/`-rooted paths, no PATHEXT, and Mac's `isExecutableFile` test.
+// ---------------------------------------------------------------------
+
+/// The shells offered when found on PATH, in Mac's order (zsh, bash, fish,
+/// nu). The row writes the absolute path the PATH walk found.
+pub const posix_shells = [_][]const u8{ "zsh", "bash", "fish", "nu" };
+
+/// The "unset" entry on Linux: `command` falls back to the login shell
+/// (`$SHELL`, then the passwd entry), and `command-shell` runs a scripted
+/// window's command as `$SHELL -lic`, like the Mac.
+pub fn shellDefaultLabelPosix(scripted: bool) []const u8 {
+    return if (scripted) "Your login shell, as -lic" else "Your login shell";
+}
+
+/// `programOf` for a POSIX `command` value: the parser's `direct:` and
+/// `shell:` prefixes are not part of the program.
+pub fn programOfPosix(command: []const u8) []const u8 {
+    var t = std.mem.trim(u8, command, " \t");
+    for ([_][]const u8{ "direct:", "shell:" }) |prefix| {
+        if (std.mem.startsWith(u8, t, prefix)) t = t[prefix.len..];
+    }
+    return programOf(t);
+}
+
+/// The absolute path `program` resolves to: itself when it has a `/`, else
+/// the first `path_env` (`:`-separated) dir that holds it. Null when no
+/// such executable exists. `exists` answers "is this an executable file".
+pub fn resolvePosix(
+    buf: []u8,
+    program: []const u8,
+    path_env: []const u8,
+    ctx: anytype,
+    comptime exists: fn (@TypeOf(ctx), []const u8) bool,
+) ?[]const u8 {
+    if (program.len == 0) return null;
+    if (std.mem.indexOfScalar(u8, program, '/') != null) {
+        return if (exists(ctx, program)) program else null;
+    }
+    var dirs = std.mem.splitScalar(u8, path_env, ':');
+    while (dirs.next()) |raw| {
+        // An empty PATH entry is the current directory, which a shell row
+        // must not depend on.
+        const dir = std.mem.trim(u8, raw, " ");
+        if (dir.len == 0) continue;
+        const sep: []const u8 = if (dir[dir.len - 1] == '/') "" else "/";
+        const full = std.fmt.bufPrint(buf, "{s}{s}{s}", .{ dir, sep, program }) catch continue;
+        if (exists(ctx, full)) return full;
+    }
+    return null;
+}
+
+/// Mac `ShellControl.problem`, for Linux: null when the command's program
+/// is an executable file - a path, or a name found on `path_env`.
+pub fn shellProblemPosix(
+    buf: []u8,
+    command: []const u8,
+    path_env: []const u8,
+    ctx: anytype,
+    comptime exists: fn (@TypeOf(ctx), []const u8) bool,
+) ?[]const u8 {
+    const program = programOfPosix(command);
+    if (program.len == 0) return "Enter a shell.";
+    var join: [std.fs.max_path_bytes]u8 = undefined;
+    if (resolvePosix(&join, program, path_env, ctx, exists) != null) return null;
+    if (std.mem.indexOfScalar(u8, program, '/') != null) {
+        return std.fmt.bufPrint(buf, "{s} isn't an executable file.", .{program}) catch "That isn't an executable file.";
+    }
+    return std.fmt.bufPrint(buf, "{s} isn't on your PATH.", .{program}) catch "That isn't on your PATH.";
+}
+
+// ---------------------------------------------------------------------
 // Folder (Mac `FolderControl`)
 // ---------------------------------------------------------------------
 
@@ -391,6 +464,28 @@ test "settings_controls: shell check finds absolute paths and PATH programs" {
     try testing.expectEqualStrings("pwsh.exe", programOf("pwsh.exe -NoLogo"));
     try testing.expectEqualStrings("C:\\a b\\x.exe", programOf("\"C:\\a b\\x.exe\" -y"));
     try testing.expectEqualStrings("Default shell (cmd.exe)", shellDefaultLabel(false));
+}
+
+test "settings_controls: the Linux shell check walks a POSIX PATH" {
+    const fs: FakeFs = .{ .files = &.{ "/usr/bin/bash", "/usr/local/bin/fish" } };
+    const path = "/usr/local/sbin::/usr/bin/:/usr/local/bin";
+    var b: [256]u8 = undefined;
+    try testing.expect(shellProblemPosix(&b, "bash -l", path, fs, FakeFs.exists) == null);
+    try testing.expect(shellProblemPosix(&b, "/usr/bin/bash", path, fs, FakeFs.exists) == null);
+    try testing.expect(shellProblemPosix(&b, "direct:/usr/local/bin/fish -l", path, fs, FakeFs.exists) == null);
+    try testing.expect(shellProblemPosix(&b, "shell:fish", path, fs, FakeFs.exists) == null);
+    try testing.expectEqualStrings("Enter a shell.", shellProblemPosix(&b, " ", path, fs, FakeFs.exists).?);
+    try testing.expectEqualStrings("zsh isn't on your PATH.", shellProblemPosix(&b, "zsh", path, fs, FakeFs.exists).?);
+    try testing.expectEqualStrings("/bin/nope isn't an executable file.", shellProblemPosix(&b, "/bin/nope -x", path, fs, FakeFs.exists).?);
+    // A Windows-style path list is not walked: `;` is not a separator here.
+    try testing.expect(shellProblemPosix(&b, "bash", "/usr/bin;/bin", fs, FakeFs.exists) != null);
+    var j: [256]u8 = undefined;
+    try testing.expectEqualStrings("/usr/bin/bash", resolvePosix(&j, "bash", path, fs, FakeFs.exists).?);
+    try testing.expectEqualStrings("/usr/local/bin/fish", resolvePosix(&j, "fish", path, fs, FakeFs.exists).?);
+    try testing.expect(resolvePosix(&j, "nu", path, fs, FakeFs.exists) == null);
+    try testing.expectEqualStrings("/usr/bin/zsh", programOfPosix("direct:/usr/bin/zsh -l"));
+    try testing.expectEqualStrings("Your login shell", shellDefaultLabelPosix(false));
+    try testing.expectEqualStrings("zsh", posix_shells[0]);
 }
 
 test "settings_controls: folder labels" {

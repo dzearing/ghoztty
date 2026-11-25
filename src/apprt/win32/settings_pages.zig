@@ -33,7 +33,23 @@
 //!   a non-bool key).
 //! - The Font row edits `font-family` as its list of names (Mac draws a font
 //!   picker); the key, label and placement are Mac's.
+//!
+//! The GTK (Linux) Settings window shows these same pages (T3631), so a
+//! curation fix is made once for both seats. Where Linux words differ it is
+//! a comptime `linux` branch here, never a second table:
+//!
+//! - Copy & paste labels `copy-on-select = true` with Mac's "To the selection
+//!   clipboard": Linux has a primary selection, as the Mac's wording assumes.
+//! - "Shell for scripted windows" says `-lic` (Mac's hint), not the Windows
+//!   shell flavors, and Open windows' hint drops "On Windows".
+//! - Updates drops `auto-update`: nothing on Linux reads it (the GTK app has
+//!   no updater; a Linux install updates through its package), so the page
+//!   is the version alone.
 const std = @import("std");
+const builtin = @import("builtin");
+
+/// The Linux seat's wording (see the file comment).
+const linux = builtin.os.tag == .linux;
 
 pub const PageId = enum { appearance, panes, terminal, keyboard, session, remote, updates, advanced };
 
@@ -266,7 +282,7 @@ pub const panes: Page = .{
             .{ .key = "macos-window-mode", .label = "Open windows", .control = .{ .segmented = &.{
                 .{ .value = "separate", .label = "Each in its own window" },
                 .{ .value = "single", .label = "All in one window" },
-            } }, .hint = "On Windows it also applies once you have closed every window." },
+            } }, .hint = if (linux) "It also applies once you have closed every window." else "On Windows it also applies once you have closed every window." },
         } },
         .{ .title = "Stacked panes", .rows = &.{
             .{ .key = "macos-pane-min-width", .label = "Stack panes narrower than", .control = .{ .stepper = .{ .min = 120, .max = 800, .step = 5, .unit = "px" } } },
@@ -309,7 +325,10 @@ pub const terminal: Page = .{
             .{ .key = "window-inherit-working-directory", .label = "New windows open in the current folder", .control = .toggle },
             .{ .key = "split-inherit-working-directory", .label = "New panes open in the current folder", .control = .toggle },
             .{ .key = "tab-inherit-working-directory", .label = "New tabs open in the current folder", .control = .toggle },
-            .{ .key = "command-shell", .label = "Shell for scripted windows", .control = .{ .shell = .{ .scripted = true } }, .hint = "Runs the command of ghoztty +new-window --command=\u{2026} through this shell (pwsh -NoExit -Command, cmd /K or wsl --)." },
+            .{ .key = "command-shell", .label = "Shell for scripted windows", .control = .{ .shell = .{ .scripted = true } }, .hint = if (linux)
+                "Runs the command of ghoztty +new-window --command=\u{2026} through this shell, as -lic."
+            else
+                "Runs the command of ghoztty +new-window --command=\u{2026} through this shell (pwsh -NoExit -Command, cmd /K or wsl --)." },
         } },
         .{ .title = "Scrollback", .rows = &.{
             .{ .key = "scrollback-limit", .label = "Scrollback size", .control = .{ .megabytes = .{ .max = 4096 } } },
@@ -332,7 +351,7 @@ pub const terminal: Page = .{
         } },
         .{ .title = "Copy & paste", .rows = &.{
             .{ .key = "copy-on-select", .label = "Copy on select", .control = .{ .picker = &.{
-                .{ .value = "true", .label = "On" },
+                .{ .value = "true", .label = if (linux) "To the selection clipboard" else "On" },
                 .{ .value = "clipboard", .label = "To the system clipboard" },
                 .{ .value = "false", .label = "Off" },
             } } },
@@ -409,7 +428,9 @@ pub const updates: Page = .{
     .title = "Updates",
     .glyph = "\u{2193}",
     .tint = 0x007AFF,
-    .sections = &.{
+    .sections = if (linux) &.{
+        .{ .custom = .version },
+    } else &.{
         .{ .rows = &.{
             .{ .key = "auto-update", .label = "Automatic updates", .control = .{ .picker = &.{
                 .{ .value = "", .label = "System default" },
@@ -556,6 +577,25 @@ test "settings_pages: Mac-only keys stay off the Windows pages" {
     for ([_][]const u8{ "macos-option-as-alt", "macos-shortcuts", "macos-auto-secure-input", "auto-update-channel", "macos-titlebar-style", "background-blur" }) |k| {
         try testing.expect(!isCurated(k));
     }
+}
+
+test "settings_pages: the Linux seat's wording (T3631)" {
+    const cos = rowFor("copy-on-select").?;
+    const wm = rowFor("macos-window-mode").?;
+    const cs = rowFor("command-shell").?;
+    if (linux) {
+        // No updater reads auto-update on Linux, so no page offers it.
+        try testing.expect(!isCurated("auto-update"));
+        try testing.expectEqualStrings("To the selection clipboard", cos.labelFor("true"));
+        try testing.expect(!rowMatchesText(wm, "Windows"));
+        try testing.expect(rowMatchesText(cs, "-lic"));
+        try testing.expect(!rowMatchesText(cs, "pwsh"));
+    } else {
+        try testing.expectEqual(PageId.updates, pageFor("auto-update").?);
+        try testing.expectEqualStrings("On", cos.labelFor("true"));
+        try testing.expect(rowMatchesText(cs, "pwsh"));
+    }
+    try testing.expect(rowMatchesText(wm, "closed every window"));
 }
 
 test "settings_pages: lookups, labels and conditions" {

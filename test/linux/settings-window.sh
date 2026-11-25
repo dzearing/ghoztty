@@ -4,7 +4,8 @@
 # config with ONE surgical edit per change, the Mac rules of
 # docs/reference/settings.md, through win32's shared model. Driven by the
 # debug-only `settings` seam (IpcHandlers.settingsSeam), whose ops call what
-# the window's own signal handlers call.
+# the window's own signal handlers call. P1-P23 (T3631) cover the curated
+# pages: each op moves the row's real libadwaita widget and reads it back.
 #
 # Run it ONLY through the wrapper, from this box:
 #
@@ -131,6 +132,124 @@ grep -q '^font-size = 12$' "$GHOZTTY_SETTINGS_BACKUP_DIR"/config-debug.ghostty.*
 r=$?
 [ "$nb" = 1 ] && [ $r = 0 ]
 hl_check "W19 one backup of the file as it was before the first change" $? "backups=$nb"
+
+# ---- the curated pages (T3631) ----------------------------------------------
+# Every op below moves the row's real widget (a switch, a combo row, a spin
+# row, a scale, a flag switch, a field) and the widget's own signal writes;
+# the reply reads the widget back ("display") beside the model's answer
+# ("expected").
+st --op=search --value= > /dev/null
+cur() { jget "$(st --op=state --key="$1")" "d['key']['curated']['$2']"; }
+line_of() { grep "^$1 = " "$dev" | tail -1 | sed "s/^$1 = //"; }
+
+o=$(st --op=state)
+pg=$(jget "$o" '",".join(p["id"] for p in d["pages"])')
+[ "$pg" = "appearance,panes,terminal,keyboard,session,updates,advanced" ]
+hl_check "P1 the sidebar lists the curated pages in Mac's order, then Advanced (no empty Remote page)" $? "pages=$pg"
+n=$(jget "$o" 'd["curated"]')
+[ -n "$n" ] && [ "$n" -gt 40 ]
+hl_check "P2 the pages carry the shared catalog's rows (>40 curated rows)" $? "curated=$n"
+o=$(st --op=state --page=terminal)
+[ "$(jget "$o" 'd["page"]')" = terminal ] && [ "$(jget "$o" 'd["visible_page"]')" = terminal ]
+hl_check "P3 a sidebar pick shows that page" $? "page=$(jget "$o" 'd["page"]') visible=$(jget "$o" 'd["visible_page"]')"
+dr=$(jget "$o" '[g["drawn"] for g in d["groups"] if g["title"]=="Copy & paste"][0]')
+[ "$dr" = "Copy & paste" ]
+hl_check "P4 a section title with & draws as Mac's words (markup escaped once)" $? "drawn=$dr"
+
+# A switch.
+o=$(st --op=toggle --key=font-thicken)
+[ "$(line_of font-thicken)" = true ] && [ "$(cur font-thicken display)" = On ] && [ "$(cur font-thicken dot)" = true ] && [ "$(cur font-thicken reset)" = true ]
+hl_check "P5 flipping a switch writes key = true; the switch, dot and reset follow" $? "line=$(line_of font-thicken) display=$(cur font-thicken display) dot=$(cur font-thicken dot)"
+st --op=curated-reset --key=font-thicken > /dev/null
+! grep -q '^font-thicken' "$dev" && [ "$(cur font-thicken display)" = Off ] && [ "$(cur font-thicken dot)" = false ] && [ "$(cur font-thicken reset)" = false ]
+hl_check "P6 the row's reset removes the line; the switch goes back and the dot clears" $? "file=$(grep -c '^font-thicken' "$dev") display=$(cur font-thicken display) dot=$(cur font-thicken dot)"
+
+# A popup, with every schema value listed.
+o=$(st --op=choose --key=right-click-action --value=ignore)
+[ "$(line_of right-click-action)" = ignore ] && [ "$(cur right-click-action display)" = Nothing ] && [ "$(cur right-click-action expected)" = Nothing ]
+hl_check "P7 a popup pick writes the value; the row shows its curated label" $? "line=$(line_of right-click-action) display=$(cur right-click-action display)"
+lbl=$(jget "$(st --op=state --key=copy-on-select)" '[c["label"] for c in d["key"]["curated"]["choices"] if c["value"]=="true"][0]')
+[ "$lbl" = "To the selection clipboard" ]
+hl_check "P8 Linux words: copy-on-select = true reads 'To the selection clipboard'" $? "label=$lbl"
+st --op=choose --key=cursor-style-blink --value=false > /dev/null
+a=$(line_of cursor-style-blink)
+st --op=choose --key=cursor-style-blink --value= > /dev/null
+! grep -q '^cursor-style-blink' "$dev" && [ "$a" = false ] && [ "$(cur cursor-style-blink display)" = "App decides" ]
+hl_check "P9 an optional popup's unset item removes the key" $? "after-false=$a display=$(cur cursor-style-blink display)"
+
+# A key a later file owns is dimmed with the file named.
+sub=$(cur cursor-style subtitle)
+[ "$(cur cursor-style sensitive)" = false ] && printf '%s' "$sub" | grep -q later.ghostty
+hl_check "P10 a curated key later.ghostty overrides is dimmed and says so" $? "sensitive=$(cur cursor-style sensitive) subtitle=$sub"
+
+# Number fields: a stepper and a size in MB.
+b=$(cur macos-pane-min-width expected)
+st --op=step --key=macos-pane-min-width --value=up > /dev/null
+[ "$(line_of macos-pane-min-width)" = $((b + 5)) ] && [ "$(cur macos-pane-min-width display)" = $((b + 5)) ]
+hl_check "P11 one spin-row arrow writes the next step" $? "before=$b line=$(line_of macos-pane-min-width) display=$(cur macos-pane-min-width display)"
+mb=$(cur scrollback-limit display)
+st --op=step --key=scrollback-limit --value=up > /dev/null
+[ "$(line_of scrollback-limit)" = $(( (mb + 1) * 1000000 )) ] && [ "$(cur scrollback-limit display)" = $((mb + 1)) ]
+hl_check "P12 the scrollback size is edited in MB and written in bytes" $? "mb=$mb line=$(line_of scrollback-limit)"
+
+# A slider (Dim unfocused panes keeps the opacity a pane KEEPS).
+st --op=slide --key=unfocused-split-opacity --value=0.6 > /dev/null
+[ "$(line_of unfocused-split-opacity)" = 0.6 ] && [ "$(cur unfocused-split-opacity display)" = "40%" ]
+hl_check "P13 a slider writes its snapped value once it settles; it reads 40% dimmed" $? "line=$(line_of unfocused-split-opacity) display=$(cur unfocused-split-opacity display)"
+
+# A row's condition.
+st --op=choose --key=macos-pane-style --value=flat > /dev/null
+g1=$(cur macos-pane-glass sensitive); s1=$(cur macos-pane-glass subtitle); d1=$(cur split-divider-color sensitive)
+st --op=choose --key=macos-pane-style --value=elevated > /dev/null
+g2=$(cur macos-pane-glass sensitive)
+[ "$g1" = false ] && [ "$s1" = "Elevated style only" ] && [ "$d1" = true ] && [ "$g2" = true ]
+hl_check "P14 Glass panes dims off the Elevated style and says why" $? "flat: glass=$g1 '$s1' divider=$d1; elevated: glass=$g2"
+
+# Packed flags: every schema flag written explicitly.
+st --op=flag --key=shell-integration-features --value=sudo:true > /dev/null
+fl=$(line_of shell-integration-features)
+printf '%s' "$fl" | tr ',' '\n' | grep -qx sudo && printf '%s' "$fl" | grep -q 'no-' && [ "$(cur shell-integration-features display)" = "$fl" ]
+hl_check "P15 a flag's switch writes every flag explicitly; the switches match the line" $? "line=$fl display=$(cur shell-integration-features display)"
+
+# The shell picker only accepts an executable that exists.
+before=$(cat "$dev")
+o=$(st --op=choose --key=command --value=/bin/nope-shell)
+sub=$(cur command subtitle)
+[ "$(jget "$o" 'd["ok"]')" = false ] && [ "$(cat "$dev")" = "$before" ] && printf '%s' "$sub" | grep -q "isn't an executable file" && [ "$(cur command other_visible)" = true ]
+hl_check "P16 a shell that does not exist is refused, the file untouched, the row says why" $? "ok=$(jget "$o" 'd.get("ok")') subtitle=$sub"
+st --op=choose --key=command --value='sh -c true' > /dev/null
+[ "$(line_of command)" = 'sh -c true' ] && [ "$(cur command display)" = 'sh -c true' ]
+hl_check "P17 Other... takes a shell found on PATH" $? "line=$(line_of command) display=$(cur command display)"
+st --op=choose --key=command --value= > /dev/null
+! grep -q '^command' "$dev" && [ "$(cur command display)" = "Your login shell" ]
+hl_check "P18 the default item removes command and reads 'Your login shell'" $? "display=$(cur command display)"
+
+# A text row is validated like All Settings.
+st --op=text --key=notify-on-command-finish-after --value=10s > /dev/null
+ok1=$(line_of notify-on-command-finish-after)
+before=$(cat "$dev")
+st --op=text --key=notify-on-command-finish-after --value=not-a-duration > /dev/null
+sub=$(cur notify-on-command-finish-after subtitle)
+p=$(jget "$(st --op=state --key=notify-on-command-finish-after)" 'd["key"]["problem"]')
+[ "$ok1" = 10s ] && [ "$(cat "$dev")" = "$before" ] && [ -n "$p" ] && [ "$p" != null ] && [ "$sub" = "$p" ]
+hl_check "P19 a curated text row writes a valid value and refuses a bad one in its subtitle" $? "first=$ok1 problem=$p subtitle=$sub"
+
+# The sidebar counts, the filter and the link to a page.
+o=$(st --op=state)
+tc=$(jget "$o" '[p for p in d["pages"] if p["id"]=="terminal"][0]')
+[ "$(jget "$o" '[p["count"] for p in d["pages"] if p["id"]=="terminal"][0]')" -ge 3 ] && [ "$(jget "$o" 'all((str(p["count"]) if p["count"] else "") == p["drawn"] for p in d["pages"])')" = true ]
+hl_check "P20 each sidebar count is the page's keys the file sets, as drawn" $? "terminal=$tc"
+m1=$(jget "$(st --op=search --value=right-click-action --filter=uncovered)" 'd["matched"]')
+m2=$(jget "$(st --op=state --filter=all)" 'd["matched"]')
+[ "$m1" = 0 ] && [ "$m2" = 1 ]
+hl_check "P21 'Not on other pages' hides a curated key that All shows" $? "uncovered=$m1 all=$m2"
+st --op=search --value= --filter=all > /dev/null
+o=$(st --op=reveal --key=scrollbar)
+[ "$(jget "$o" 'd["visible_page"]')" = terminal ]
+hl_check "P22 All Settings' page link opens the key's page" $? "visible=$(jget "$o" 'd["visible_page"]')"
+o=$(st --op=state --key=auto-update)
+[ "$(jget "$o" 'd["key"]["curated"]')" = null ] && [ "$(jget "$(st --op=state --page=keyboard)" 'd["visible_page"]')" = keyboard ]
+hl_check "P23 Updates offers no auto-update on Linux; the Keyboard page is there" $? "auto-update curated=$(jget "$o" 'd["key"]["curated"]')"
 
 # ---- close ------------------------------------------------------------------
 st --op=close > /dev/null

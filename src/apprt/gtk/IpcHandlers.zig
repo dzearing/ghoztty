@@ -55,6 +55,7 @@ const viewer_scheme = @import("viewer_scheme.zig");
 const capture_seam = @import("capture_seam.zig");
 const pane_snapshot = @import("pane_snapshot.zig");
 const wk = @import("webkit.zig");
+const settings_pages = @import("../win32/settings_pages.zig");
 const PaneDrag = @import("PaneDrag.zig");
 const url_scheme = @import("../ipc/url_scheme.zig");
 const url_activation = @import("url_activation.zig");
@@ -1248,23 +1249,88 @@ fn readClipboard(app: Context, request: Request) Allocator.Error![]u8 {
 ///   --op=set --key=<k> --value=<v>   typing in the row + Return
 ///   --op=reset --key=<k>         the row's Reset button
 ///   --op=close                   the window's close button
+///
+/// The curated pages (T3631). Each op moves the row's WIDGET, and the
+/// widget's own signal writes - so a test proves the wiring, not a shortcut
+/// around it; the reply then reads the widgets back:
+///
+///   --page=<id> / --filter=all|changed|uncovered   on any op: a sidebar
+///                                click / the All Settings filter dropdown
+///   --op=toggle --key=<k>        flip the switch
+///   --op=choose --key=<k> --value=<v>   pick the popup item ("" = unset;
+///                                a shell row types anything else into Other...)
+///   --op=step --key=<k> --value=up|down  one spin-row arrow
+///   --op=slide --key=<k> --value=<n>     drag the slider (written on settle)
+///   --op=flag --key=<k> --value=<flag>:true|false   one flag's switch
+///   --op=text --key=<k> --value=<v>      type into a curated text row + Return
+///   --op=curated-reset --key=<k> the row's reset button
+///   --op=reveal --key=<k>        All Settings' "<Page> >" link
+///   state adds "page", "visible_page", "filter", "pages":[{id,title,count}],
+///   "groups":[{page,title,drawn}] and, with --key, "key.curated":
+///   {page,label,kind,display,expected,dot,reset,sensitive,enabled,subtitle,
+///    choices[],other_visible}
 fn settingsSeam(app: Context, request: Request) Allocator.Error![]u8 {
     const SettingsWindow = @import("SettingsWindow.zig");
     var op: []const u8 = "state";
     var key: ?[]const u8 = null;
     var val: ?[]const u8 = null;
+    var page_arg: ?[]const u8 = null;
+    var filter_arg: ?[]const u8 = null;
     for (request.arguments orelse &.{}) |arg| {
         if (std.mem.startsWith(u8, arg, "--op=")) op = arg["--op=".len..];
         if (std.mem.startsWith(u8, arg, "--key=")) key = arg["--key=".len..];
         if (std.mem.startsWith(u8, arg, "--value=")) val = arg["--value=".len..];
+        if (std.mem.startsWith(u8, arg, "--page=")) page_arg = arg["--page=".len..];
+        if (std.mem.startsWith(u8, arg, "--filter=")) filter_arg = arg["--filter=".len..];
     }
 
     var ok: ?bool = null;
+    if (SettingsWindow.current()) |w| {
+        if (page_arg) |p| {
+            const id = std.meta.stringToEnum(SettingsWindow.PageId, p) orelse
+                return server.errorResponse(c_alloc, "no page named '{s}'", .{p});
+            if (!w.setPage(id)) return server.errorResponse(c_alloc, "the window does not show page '{s}'", .{p});
+        }
+        if (filter_arg) |f| w.setFilter(std.meta.stringToEnum(SettingsWindow.Filter, f) orelse
+            return server.errorResponse(c_alloc, "--filter must be all, changed or uncovered", .{}));
+    }
+    const gestures = [_][]const u8{ "toggle", "choose", "step", "slide", "flag", "text", "curated-reset", "reveal" };
+    var is_gesture = false;
+    for (gestures) |g| is_gesture = is_gesture or std.mem.eql(u8, op, g);
     if (std.mem.eql(u8, op, "action")) {
         _ = app.performAction(.app, .open_config, {}) catch |err|
             return server.errorResponse(c_alloc, "open_config failed: {}", .{err});
     } else if (std.mem.eql(u8, op, "close")) {
         if (SettingsWindow.current()) |w| w.close();
+    } else if (is_gesture) {
+        const w = SettingsWindow.current() orelse
+            return server.errorResponse(c_alloc, "the Settings window is not open", .{});
+        const k = key orelse return server.errorResponse(c_alloc, "--key is required for --op={s}", .{op});
+        const v = val orelse "";
+        const result: SettingsWindow.GestureError!void = if (std.mem.eql(u8, op, "toggle"))
+            w.gestureToggle(k)
+        else if (std.mem.eql(u8, op, "choose"))
+            w.gestureChoose(k, v)
+        else if (std.mem.eql(u8, op, "step"))
+            w.gestureStep(k, if (std.mem.eql(u8, v, "down")) -1 else 1)
+        else if (std.mem.eql(u8, op, "slide"))
+            w.gestureSlide(k, std.fmt.parseFloat(f64, v) catch return server.errorResponse(c_alloc, "--value=<number> is required for --op=slide", .{}))
+        else if (std.mem.eql(u8, op, "flag")) blk: {
+            const colon = std.mem.indexOfScalar(u8, v, ':') orelse return server.errorResponse(c_alloc, "--value must be <flag>:true|false", .{});
+            break :blk w.gestureFlag(k, v[0..colon], std.mem.eql(u8, v[colon + 1 ..], "true"));
+        } else if (std.mem.eql(u8, op, "text"))
+            w.gestureText(k, v)
+        else if (std.mem.eql(u8, op, "curated-reset"))
+            w.gestureReset(k)
+        else if (w.reveal(k)) {} else error.NotCurated;
+        result catch |err| return server.errorResponse(c_alloc, "--op={s} on '{s}': {s}", .{ op, k, switch (err) {
+            error.NotCurated => "no curated row has that key on a page this window shows",
+            error.WrongControl => "that row is not drawn with this control",
+            error.BadValue => "that row has no such value",
+        } });
+        // The write (and its redraw) run now, so the reply reads the result.
+        w.flush();
+        ok = w.problem(k) == null;
     } else if (!std.mem.eql(u8, op, "state")) {
         const w = SettingsWindow.current() orelse
             return server.errorResponse(c_alloc, "the Settings window is not open", .{});
@@ -1284,6 +1350,7 @@ fn settingsSeam(app: Context, request: Request) Allocator.Error![]u8 {
             };
         } else return server.errorResponse(c_alloc, "unknown --op '{s}'", .{op});
     }
+    if (SettingsWindow.current()) |w| w.flush();
 
     var arena_state = std.heap.ArenaAllocator.init(c_alloc);
     defer arena_state.deinit();
@@ -1315,6 +1382,44 @@ fn writeSettingsState(jws: *std.json.Stringify, arena: Allocator, w_opt: anytype
         try jws.write(keys.len);
         try jws.objectField("rows");
         try jws.write(w.rows.items.len);
+        try jws.objectField("page");
+        try jws.write(@tagName(w.page));
+        try jws.objectField("visible_page");
+        try jws.write(w.visiblePageName());
+        try jws.objectField("filter");
+        try jws.write(@tagName(w.filter));
+        // The sidebar, in order, with each page's changed count as drawn.
+        try jws.objectField("pages");
+        try jws.beginArray();
+        for (w.shown_pages.items, w.counts.items) |id, label| {
+            try jws.beginObject();
+            try jws.objectField("id");
+            try jws.write(@tagName(id));
+            try jws.objectField("title");
+            try jws.write(settings_pages.page(id).title);
+            try jws.objectField("count");
+            try jws.write(w.changedOn(id));
+            try jws.objectField("drawn");
+            try jws.write(std.mem.span(wk.gtk_label_get_text(label)));
+            try jws.endObject();
+        }
+        try jws.endArray();
+        // Each section group: its title, and the words the group draws.
+        try jws.objectField("groups");
+        try jws.beginArray();
+        for (w.groups.items) |g| {
+            try jws.beginObject();
+            try jws.objectField("page");
+            try jws.write(@tagName(g.page));
+            try jws.objectField("title");
+            try jws.write(g.title);
+            try jws.objectField("drawn");
+            try jws.write(if (g.title != null) @TypeOf(w.*).firstLabelText(g.widget) else null);
+            try jws.endObject();
+        }
+        try jws.endArray();
+        try jws.objectField("curated");
+        try jws.write(w.curated.items.len);
         if (key) |k| {
             try jws.objectField("key");
             try jws.beginObject();
@@ -1332,6 +1437,49 @@ fn writeSettingsState(jws: *std.json.Stringify, arena: Allocator, w_opt: anytype
             try jws.write(w.problem(k));
             try jws.objectField("override");
             try jws.write(try w.overrideFor(arena, k));
+            try jws.objectField("curated");
+            if (w.curatedFor(k)) |c| {
+                const W = @TypeOf(w.*);
+                var b1: [4096]u8 = undefined;
+                var b2: [4096]u8 = undefined;
+                try jws.beginObject();
+                try jws.objectField("page");
+                try jws.write(if (settings_pages.pageFor(k)) |id| @tagName(id) else null);
+                try jws.objectField("label");
+                try jws.write(c.def.label);
+                try jws.objectField("kind");
+                try jws.write(@tagName(c.kind));
+                // What the widget shows, read back from it, and what the
+                // model says it should show.
+                try jws.objectField("display");
+                try jws.write(w.widgetDisplay(&b1, c));
+                try jws.objectField("expected");
+                try jws.write(w.expectedDisplay(&b2, c));
+                try jws.objectField("dot");
+                try jws.write(wk.gtk_widget_get_visible(c.dot) != 0);
+                try jws.objectField("reset");
+                try jws.write(wk.gtk_widget_get_visible(c.reset) != 0);
+                try jws.objectField("sensitive");
+                try jws.write(W.widgetSensitive(c));
+                try jws.objectField("enabled");
+                try jws.write(w.rowEnabled(c.def));
+                try jws.objectField("subtitle");
+                try jws.write(c.subtitle);
+                try jws.objectField("choices");
+                try jws.beginArray();
+                for (c.choices) |o| {
+                    try jws.beginObject();
+                    try jws.objectField("value");
+                    try jws.write(o.value);
+                    try jws.objectField("label");
+                    try jws.write(o.label);
+                    try jws.endObject();
+                }
+                try jws.endArray();
+                try jws.objectField("other_visible");
+                try jws.write(if (c.other_row) |o| wk.gtk_widget_get_visible(o) != 0 else null);
+                try jws.endObject();
+            } else try jws.write(null);
             try jws.endObject();
         }
     }

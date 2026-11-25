@@ -22,10 +22,25 @@
 //!   `config-debug.ghostty`, never the installed release's (`file_load`).
 //!   Backups: `$XDG_STATE_HOME/ghoztty/config-backups`.
 //!
-//! This first slice is the window and Advanced -> All Settings: every key in
-//! the generated catalog, searchable, a plain key edited in place (Return
-//! saves) with a Reset button. The curated pages, list editing, the theme
-//! grid and the backup/undo UI are their own cards (filed from T3569).
+//! **The curated pages (T3631)** are win32's presentation catalog
+//! (`settings_pages.zig`), not a GTK table: a sidebar of pages, each key on
+//! its page with its label and control, drawn with libadwaita rows -
+//! `AdwSwitchRow` for a bool, `AdwComboRow` for an enum (listing any schema
+//! option nobody curated, under its raw name), `AdwSpinRow` for a bounded
+//! number or a size in MB, a `GtkScale` for a 0-1 slider (written once the
+//! drag settles), an `AdwExpanderRow` of switches for packed flags, and a
+//! shell picker that only accepts an executable that exists. A row carries
+//! the changed-from-default dot and a reset button; a key a later file
+//! overrides, or whose condition does not hold (Glass panes off the Elevated
+//! style), is dimmed with the reason as its subtitle. Advanced holds the
+//! config file and All Settings with Mac's All / Changed / Not on other
+//! pages filter; a curated key's row there links to its page.
+//!
+//! Rows are built once and refreshed in place after every write (a rebuild
+//! would lose the page's scroll), from the same reader the seam reports.
+//! Sections with their own UI that are their own cards are left off for
+//! now: the preview and themes (T3636), the agent status and Remote Machines
+//! (T3635); list keys are shown, edited under T3632.
 const SettingsWindow = @This();
 
 const std = @import("std");
@@ -39,10 +54,16 @@ const ConfigFileText = @import("../win32/ConfigFileText.zig");
 const SettingsCatalog = @import("../win32/SettingsCatalog.zig");
 const SettingsModel = @import("../win32/SettingsModel.zig");
 const SettingsSources = @import("../win32/SettingsSources.zig");
+const pages = @import("../win32/settings_pages.zig");
+const controls = @import("../win32/settings_controls.zig");
 
 const Application = @import("class/application.zig").Application;
+const ShortcutGuideWindow = @import("ShortcutGuideWindow.zig");
 
 const log = std.log.scoped(.gtk_settings);
+
+pub const PageId = pages.PageId;
+pub const Filter = SettingsSources.Reader.Filter;
 
 /// One All Settings row as built: the key (borrowed from the catalog) and
 /// the widgets a change touches.
@@ -52,11 +73,45 @@ const Row = struct {
     note: *wk.GtkWidget,
 };
 
+/// How a curated row is drawn.
+pub const Kind = enum { toggle, choice, shell, spin, slider, flags, text };
+
+/// One curated row as built. Widgets live as long as the window; strings and
+/// slices are in `build_arena`.
+pub const Curated = struct {
+    def: *const pages.Row,
+    /// The catalog's copy of the key.
+    key: []const u8,
+    kind: Kind,
+    row: *wk.GtkWidget,
+    dot: *wk.GtkWidget,
+    reset: *wk.GtkWidget,
+    /// A text row's field, or a shell row's Other... field.
+    entry: ?*wk.GtkWidget = null,
+    /// The row holding a shell row's Other... field.
+    other_row: ?*wk.GtkWidget = null,
+    scale: ?*wk.GtkWidget = null,
+    /// A choice or shell row's items, in the popup's order (a shell row's
+    /// list ends with Other..., which is not in here).
+    choices: []const pages.Option = &.{},
+    /// A flags row's switch per schema flag, in schema order.
+    flag_rows: []*wk.GtkWidget = &.{},
+    flag_names: []const []const u8 = &.{},
+    /// The subtitle when nothing else needs saying: the hint, else the
+    /// doc summary.
+    base: [:0]const u8 = "",
+    /// The subtitle as last set (what the row shows).
+    subtitle: []const u8 = "",
+};
+
 gpa: Allocator,
 app: *Application,
 window: *wk.GtkWidget,
 search: *wk.GtkWidget,
 list: *wk.GtkWidget,
+sidebar: *wk.GtkWidget,
+stack: *wk.GtkWidget,
+filter_dd: *wk.GtkWidget,
 
 main_path: []u8,
 default_paths: [][]u8,
@@ -72,7 +127,32 @@ file: ConfigFileText,
 query: std.ArrayListUnmanaged(u8) = .empty,
 rows: std.ArrayListUnmanaged(Row) = .empty,
 
+/// Strings and slices the curated rows keep (labels, choices, subtitles).
+build_arena: std.heap.ArenaAllocator,
+curated: std.ArrayListUnmanaged(Curated) = .empty,
+/// The section groups, with their title, for the seam.
+groups: std.ArrayListUnmanaged(Group) = .empty,
+/// The sidebar's pages in order, and each one's count label.
+shown_pages: std.ArrayListUnmanaged(PageId) = .empty,
+counts: std.ArrayListUnmanaged(*wk.GtkWidget) = .empty,
+page: PageId = .appearance,
+filter: Filter = .all,
+/// Set while the window itself moves a control, so its signal is not a
+/// user's gesture.
+syncing: bool = false,
+/// The pending redraw (idle) and slider write (timeout), 0 when none.
+refresh_source: c_uint = 0,
+slide_source: c_uint = 0,
+slide_index: usize = 0,
+slide_value: f64 = 0,
+
+const Group = struct { page: PageId, title: ?[]const u8, widget: *wk.GtkWidget };
+
 var open_window: ?*SettingsWindow = null;
+
+/// A slider's value is written this long after the last movement - the drag
+/// settling stands in for Mac's release.
+const slide_settle_ms: c_uint = 250;
 
 /// The open window, for the test seam.
 pub fn current() ?*SettingsWindow {
@@ -92,8 +172,10 @@ pub fn open(app: *Application) void {
     };
     open_window = self;
     self.rebuild();
+    self.refreshCurated();
+    self.refreshCounts();
     wk.gtk_window_present(self.window);
-    log.info("settings: opened keys={d} file={s}", .{ self.catalog.entries.len, self.main_path });
+    log.info("settings: opened keys={d} curated={d} file={s}", .{ self.catalog.entries.len, self.curated.items.len, self.main_path });
 }
 
 fn create(app: *Application) !*SettingsWindow {
@@ -118,16 +200,20 @@ fn create(app: *Application) !*SettingsWindow {
         .window = wk.gtk_window_new(),
         .search = wk.gtk_search_entry_new(),
         .list = wk.gtk_list_box_new(),
+        .sidebar = wk.gtk_list_box_new(),
+        .stack = wk.gtk_stack_new(),
+        .filter_dd = undefined,
         .main_path = @constCast(main_path),
         .default_paths = default_paths,
         .store = store,
         .model = undefined,
         .catalog = catalog,
         .file = file,
+        .build_arena = std.heap.ArenaAllocator.init(gpa),
     };
     self.model = SettingsModel.init(gpa, &self.store, .{ .ctx = self, .func = reloadHook });
     self.reloadData();
-    self.buildChrome();
+    try self.buildChrome();
     return self;
 }
 
@@ -148,44 +234,209 @@ fn freePaths(gpa: Allocator, paths: [][]u8) void {
     gpa.free(paths);
 }
 
-fn buildChrome(self: *SettingsWindow) void {
+fn connect(self: *SettingsWindow, obj: *wk.GtkWidget, signal: [*:0]const u8, handler: *const anyopaque) void {
+    _ = wk.g_signal_connect_data(obj, signal, handler, self, null, 0);
+}
+
+fn tag(widget: *wk.GtkWidget, name: [*:0]const u8, index: usize) void {
+    wk.g_object_set_data(@ptrCast(widget), name, @ptrFromInt(index + 1));
+}
+
+fn tagOf(widget: *wk.GtkWidget, name: [*:0]const u8) ?usize {
+    const t = @intFromPtr(wk.g_object_get_data(@ptrCast(widget), name));
+    return if (t == 0) null else t - 1;
+}
+
+// ---------------------------------------------------------------------
+// Building
+// ---------------------------------------------------------------------
+
+/// Sections with their own UI that this window draws (the others are
+/// their own cards; see the file comment).
+fn customBuilt(c: pages.Custom) bool {
+    return switch (c) {
+        .shortcut_guide, .version, .config_file, .all_settings => true,
+        .preview, .theme, .agent_status, .remote_machines => false,
+    };
+}
+
+/// Whether the sidebar lists `p`: it has a row or a section drawn here.
+pub fn pageShown(p: *const pages.Page) bool {
+    for (p.sections) |s| {
+        if (s.rows.len > 0) return true;
+        if (s.custom) |c| if (customBuilt(c)) return true;
+    }
+    return false;
+}
+
+fn buildChrome(self: *SettingsWindow) !void {
     const w = self.window;
     wk.gtk_window_set_title(w, "Settings");
-    wk.gtk_window_set_default_size(w, 760, 640);
-    _ = wk.g_signal_connect_data(w, "close-request", @ptrCast(&onCloseRequest), self, null, 0);
+    wk.gtk_window_set_default_size(w, 920, 680);
+    self.connect(w, "close-request", @ptrCast(&onCloseRequest));
 
+    const outer = wk.gtk_box_new(0, 0);
+
+    // The sidebar: search over every setting, then the pages.
+    const side = wk.gtk_box_new(1, 6);
+    wk.gtk_widget_set_size_request(side, 230, -1);
+    wk.gtk_widget_set_margin_start(side, 8);
+    wk.gtk_widget_set_margin_end(side, 8);
+    wk.gtk_widget_set_margin_top(side, 10);
+    wk.gtk_widget_set_margin_bottom(side, 10);
+    wk.gtk_search_entry_set_placeholder_text(self.search, "Search settings");
+    self.connect(self.search, "search-changed", @ptrCast(&onSearchChanged));
+    wk.gtk_box_append(side, self.search);
+    wk.gtk_list_box_set_selection_mode(self.sidebar, 1); // single
+    wk.gtk_widget_add_css_class(self.sidebar, "navigation-sidebar");
+    wk.gtk_widget_set_vexpand(self.sidebar, 1);
+    wk.gtk_box_append(side, self.sidebar);
+    wk.gtk_box_append(outer, side);
+    wk.gtk_box_append(outer, wk.gtk_separator_new(1));
+
+    wk.gtk_widget_set_hexpand(self.stack, 1);
+    wk.gtk_widget_set_vexpand(self.stack, 1);
+    wk.gtk_box_append(outer, self.stack);
+
+    for (pages.all) |p| {
+        if (!pageShown(p)) continue;
+        const content = if (p.id == .advanced) try self.buildAdvanced() else try self.buildPage(p);
+        _ = wk.gtk_stack_add_named(self.stack, content, @tagName(p.id).ptr);
+        try self.addSidebarRow(p);
+    }
+    self.connect(self.sidebar, "row-selected", @ptrCast(&onSidebarSelected));
+    _ = self.setPage(self.shown_pages.items[0]);
+
+    wk.gtk_window_set_child(w, outer);
+}
+
+fn addSidebarRow(self: *SettingsWindow, p: *const pages.Page) !void {
+    const line = wk.gtk_box_new(0, 8);
+    wk.gtk_widget_set_margin_start(line, 6);
+    wk.gtk_widget_set_margin_end(line, 6);
+    wk.gtk_widget_set_margin_top(line, 4);
+    wk.gtk_widget_set_margin_bottom(line, 4);
+    const title = wk.gtk_label_new((try self.build_arena.allocator().dupeZ(u8, p.title)).ptr);
+    wk.gtk_label_set_xalign(title, 0.0);
+    wk.gtk_widget_set_hexpand(title, 1);
+    wk.gtk_box_append(line, title);
+    const count = wk.gtk_label_new(null);
+    wk.gtk_widget_add_css_class(count, "dim-label");
+    wk.gtk_widget_add_css_class(count, "caption");
+    wk.gtk_box_append(line, count);
+    const row = wk.gtk_list_box_row_new();
+    wk.gtk_list_box_row_set_child(row, line);
+    wk.gtk_list_box_append(self.sidebar, row);
+    try self.shown_pages.append(self.gpa, p.id);
+    try self.counts.append(self.gpa, count);
+}
+
+fn buildPage(self: *SettingsWindow, p: *const pages.Page) !*wk.GtkWidget {
+    const arena = self.build_arena.allocator();
+    const page = wk.adw_preferences_page_new();
+    for (p.sections) |*sec| {
+        if (sec.custom) |c| if (!customBuilt(c)) continue;
+        if (sec.custom == null and sec.rows.len == 0) continue;
+        const group = wk.adw_preferences_group_new();
+        // A group's title and description are markup in libadwaita, and
+        // Mac's titles carry "&" (Copy & paste).
+        if (sec.title) |t| wk.adw_preferences_group_set_title(group, (try markup(arena, t)).ptr);
+        if (sec.footer) |f| wk.adw_preferences_group_set_description(group, (try markup(arena, f)).ptr);
+        try self.groups.append(self.gpa, .{ .page = p.id, .title = sec.title, .widget = group });
+        if (sec.custom) |c| try self.addCustom(group, c);
+        for (sec.rows) |*row| self.addCurated(group, row) catch |err| {
+            log.warn("settings: curated row {s} failed err={}", .{ row.key, err });
+        };
+        wk.adw_preferences_page_add(page, group);
+    }
+    return page;
+}
+
+fn markup(arena: Allocator, text: []const u8) ![:0]const u8 {
+    var out: std.ArrayListUnmanaged(u8) = .empty;
+    for (text) |ch| switch (ch) {
+        '&' => try out.appendSlice(arena, "&amp;"),
+        '<' => try out.appendSlice(arena, "&lt;"),
+        '>' => try out.appendSlice(arena, "&gt;"),
+        else => try out.append(arena, ch),
+    };
+    return out.toOwnedSliceSentinel(arena, 0);
+}
+
+/// A row titled `title` with markup off (Mac's labels are plain text).
+fn plainTitle(row: *wk.GtkWidget, title: [:0]const u8) void {
+    wk.adw_preferences_row_set_use_markup(row, 0);
+    wk.adw_preferences_row_set_title(row, title.ptr);
+}
+
+fn addCustom(self: *SettingsWindow, group: *wk.GtkWidget, c: pages.Custom) !void {
+    const arena = self.build_arena.allocator();
+    switch (c) {
+        // Mac's Keyboard page shows the shortcut guide first; the guide is
+        // its own window here (T3570), so the page opens it.
+        .shortcut_guide => {
+            const row = wk.adw_action_row_new();
+            plainTitle(row, "Keyboard shortcuts");
+            wk.adw_action_row_set_subtitle(row, "Every shortcut, searchable, with the action it runs. Rebind one with keybind under Advanced.");
+            const button = wk.gtk_button_new_with_label("Open Shortcut Guide\u{2026}");
+            wk.gtk_widget_set_valign(button, 3); // center
+            self.connect(button, "clicked", @ptrCast(&onShortcutGuideClicked));
+            wk.adw_action_row_add_suffix(row, button);
+            wk.adw_preferences_group_add(group, row);
+        },
+        .version => {
+            const row = wk.adw_action_row_new();
+            plainTitle(row, "Version");
+            wk.adw_action_row_set_subtitle(row, (try arena.dupeZ(u8, build_config.version_string)).ptr);
+            wk.adw_preferences_group_add(group, row);
+        },
+        .config_file => {
+            const row = wk.adw_action_row_new();
+            plainTitle(row, "Config file");
+            wk.adw_action_row_set_subtitle(row, (try arena.dupeZ(u8, self.main_path)).ptr);
+            const button = wk.gtk_button_new_with_label("Open File");
+            wk.gtk_widget_set_valign(button, 3);
+            wk.gtk_widget_set_tooltip_text(button, "Open the config file in your text editor");
+            self.connect(button, "clicked", @ptrCast(&onOpenFileClicked));
+            wk.adw_action_row_add_suffix(row, button);
+            wk.adw_preferences_group_add(group, row);
+        },
+        .all_settings, .preview, .theme, .agent_status, .remote_machines => {},
+    }
+}
+
+/// Advanced: the config file, then All Settings - its filter and the
+/// generated list.
+fn buildAdvanced(self: *SettingsWindow) !*wk.GtkWidget {
     const column = wk.gtk_box_new(1, 8);
     wk.gtk_widget_set_margin_start(column, 16);
     wk.gtk_widget_set_margin_end(column, 16);
     wk.gtk_widget_set_margin_top(column, 12);
     wk.gtk_widget_set_margin_bottom(column, 12);
 
+    const file_group = wk.adw_preferences_group_new();
+    wk.adw_preferences_group_set_title(file_group, "Config file");
+    try self.groups.append(self.gpa, .{ .page = .advanced, .title = "Config file", .widget = file_group });
+    try self.addCustom(file_group, .config_file);
+    wk.gtk_box_append(column, file_group);
+
+    const head = wk.gtk_box_new(0, 8);
     const heading = wk.gtk_label_new("All Settings");
-    wk.gtk_widget_add_css_class(heading, "title-2");
+    wk.gtk_widget_add_css_class(heading, "heading");
     wk.gtk_label_set_xalign(heading, 0.0);
-    wk.gtk_box_append(column, heading);
+    wk.gtk_widget_set_hexpand(heading, 1);
+    wk.gtk_box_append(head, heading);
+    const filters = [_:null]?[*:0]const u8{ "All", "Changed", "Not on other pages" };
+    self.filter_dd = wk.gtk_drop_down_new_from_strings(&filters);
+    self.connect(self.filter_dd, "notify::selected", @ptrCast(&onFilterSelected));
+    wk.gtk_box_append(head, self.filter_dd);
+    wk.gtk_box_append(column, head);
 
-    // Which file the window writes, so a debug build visibly is not the
-    // release's config.
-    const path_z = self.gpa.dupeZ(u8, self.main_path) catch null;
-    defer if (path_z) |p| self.gpa.free(p);
-    const file_label = wk.gtk_label_new(if (path_z) |p| p.ptr else null);
-    wk.gtk_widget_add_css_class(file_label, "dim-label");
-    wk.gtk_widget_add_css_class(file_label, "caption");
-    wk.gtk_label_set_xalign(file_label, 0.0);
-    wk.gtk_label_set_ellipsize(file_label, 1); // start
-    wk.gtk_widget_set_hexpand(file_label, 1);
-    const file_line = wk.gtk_box_new(0, 8);
-    wk.gtk_box_append(file_line, file_label);
-    const open_file = wk.gtk_button_new_with_label("Open File");
-    wk.gtk_widget_set_tooltip_text(open_file, "Open the config file in your text editor");
-    _ = wk.g_signal_connect_data(open_file, "clicked", @ptrCast(&onOpenFileClicked), self, null, 0);
-    wk.gtk_box_append(file_line, open_file);
-    wk.gtk_box_append(column, file_line);
-
-    wk.gtk_search_entry_set_placeholder_text(self.search, "Search settings");
-    _ = wk.g_signal_connect_data(self.search, "search-changed", @ptrCast(&onSearchChanged), self, null, 0);
-    wk.gtk_box_append(column, self.search);
+    const footer = wk.gtk_label_new("Every option, straight from the config schema.");
+    wk.gtk_widget_add_css_class(footer, "dim-label");
+    wk.gtk_widget_add_css_class(footer, "caption");
+    wk.gtk_label_set_xalign(footer, 0.0);
+    wk.gtk_box_append(column, footer);
 
     wk.gtk_list_box_set_selection_mode(self.list, 0); // none
     wk.gtk_widget_add_css_class(self.list, "boxed-list");
@@ -194,9 +445,186 @@ fn buildChrome(self: *SettingsWindow) void {
     wk.gtk_widget_set_vexpand(scroller, 1);
     wk.gtk_scrolled_window_set_child(scroller, self.list);
     wk.gtk_box_append(column, scroller);
-
-    wk.gtk_window_set_child(w, column);
+    return column;
 }
+
+/// One curated row: its control, dot and reset button, tagged with its
+/// index so a signal finds it.
+fn addCurated(self: *SettingsWindow, group: *wk.GtkWidget, def: *const pages.Row) !void {
+    const arena = self.build_arena.allocator();
+    const entry_def = self.catalog.get(def.key) orelse {
+        log.warn("settings: curated key {s} is not in the schema", .{def.key});
+        return;
+    };
+    const index = self.curated.items.len;
+    var c: Curated = .{
+        .def = def,
+        .key = entry_def.key,
+        .kind = undefined,
+        .row = undefined,
+        .dot = wk.gtk_label_new("\u{25CF}"),
+        .reset = wk.gtk_button_new_from_icon_name("edit-undo-symbolic"),
+    };
+    c.base = if (def.hint) |h|
+        try arena.dupeZ(u8, h)
+    else if (entry_def.doc) |doc|
+        try arena.dupeZ(u8, try SettingsCatalog.summary(arena, doc))
+    else
+        "";
+    const label = try arena.dupeZ(u8, def.label);
+
+    switch (def.control) {
+        .toggle => {
+            c.kind = .toggle;
+            c.row = wk.adw_switch_row_new();
+            self.connect(c.row, "notify::active", @ptrCast(&onSwitchActive));
+        },
+        .picker, .segmented, .cards => {
+            c.kind = .choice;
+            c.row = wk.adw_combo_row_new();
+            c.choices = try pages.choices(arena, def, entry_def.options);
+            try setComboItems(arena, c.row, c.choices, false);
+        },
+        .shell => |sh| {
+            c.kind = .shell;
+            c.row = wk.adw_combo_row_new();
+            c.choices = try self.shellChoices(arena, sh.scripted);
+            try setComboItems(arena, c.row, c.choices, true);
+            // Other...: a typed command, checked before it is written.
+            const other = wk.adw_action_row_new();
+            plainTitle(other, try std.fmt.allocPrintSentinel(arena, "{s}: other command", .{def.label}, 0));
+            const field = wk.gtk_entry_new();
+            wk.gtk_editable_set_width_chars(field, 24);
+            wk.gtk_widget_set_valign(field, 3);
+            wk.gtk_entry_set_placeholder_text(field, "/usr/bin/zsh -l");
+            wk.adw_action_row_add_suffix(other, field);
+            tag(field, "settings-curated", index);
+            self.connect(field, "activate", @ptrCast(&onShellOtherActivate));
+            c.entry = field;
+            c.other_row = other;
+        },
+        .stepper => |s| {
+            c.kind = .spin;
+            c.row = wk.adw_spin_row_new_with_range(s.min, s.max, s.step);
+            wk.adw_spin_row_set_digits(c.row, if (s.step == @round(s.step)) 0 else 1);
+            self.connect(c.row, "notify::value", @ptrCast(&onSpinValue));
+        },
+        .megabytes => |m| {
+            c.kind = .spin;
+            c.row = wk.adw_spin_row_new_with_range(0, m.max, 1);
+            wk.adw_spin_row_set_digits(c.row, 1);
+            self.connect(c.row, "notify::value", @ptrCast(&onSpinValue));
+        },
+        .slider => |s| {
+            c.kind = .slider;
+            c.row = wk.adw_action_row_new();
+            const scale = wk.gtk_scale_new_with_range(0, s.min, s.max, s.step);
+            wk.gtk_widget_set_size_request(scale, 220, -1);
+            wk.gtk_widget_set_valign(scale, 3);
+            wk.gtk_scale_set_draw_value(scale, 1);
+            tag(scale, "settings-curated", index);
+            wk.gtk_scale_set_format_value_func(scale, &formatScale, self, null);
+            self.connect(scale, "value-changed", @ptrCast(&onScaleChanged));
+            wk.adw_action_row_add_suffix(c.row, scale);
+            c.scale = scale;
+        },
+        .flags => {
+            c.kind = .flags;
+            c.row = wk.adw_expander_row_new();
+            const opts = entry_def.options orelse &.{};
+            c.flag_names = opts;
+            c.flag_rows = try arena.alloc(*wk.GtkWidget, opts.len);
+            for (opts, 0..) |o, i| {
+                const sw = wk.adw_switch_row_new();
+                plainTitle(sw, try arena.dupeZ(u8, o));
+                tag(sw, "settings-curated", index);
+                tag(sw, "settings-flag", i);
+                self.connect(sw, "notify::active", @ptrCast(&onFlagActive));
+                wk.adw_expander_row_add_row(c.row, sw);
+                c.flag_rows[i] = sw;
+            }
+        },
+        // A color, folder, font, list or free text: edited as its value
+        // text, the All Settings way. A list's own editor is T3632.
+        .text, .color, .folder, .font, .list => {
+            c.kind = .text;
+            c.row = wk.adw_action_row_new();
+            const field = wk.gtk_entry_new();
+            wk.gtk_editable_set_width_chars(field, 22);
+            wk.gtk_widget_set_valign(field, 3);
+            switch (def.control) {
+                .text => |t| wk.gtk_entry_set_placeholder_text(field, (try arena.dupeZ(u8, t.placeholder)).ptr),
+                .list => |l| wk.gtk_entry_set_placeholder_text(field, (try arena.dupeZ(u8, l.placeholder)).ptr),
+                .color => |col| wk.gtk_entry_set_placeholder_text(field, (try arena.dupeZ(u8, col.none_label)).ptr),
+                else => {},
+            }
+            tag(field, "settings-curated", index);
+            self.connect(field, "activate", @ptrCast(&onCuratedEntryActivate));
+            wk.adw_action_row_add_suffix(c.row, field);
+            c.entry = field;
+        },
+    }
+    if (c.kind == .choice or c.kind == .shell) self.connect(c.row, "notify::selected", @ptrCast(&onComboSelected));
+    plainTitle(c.row, label);
+    tag(c.row, "settings-curated", index);
+
+    wk.gtk_widget_add_css_class(c.dot, "accent");
+    wk.gtk_widget_set_tooltip_text(c.dot, "Changed from the default");
+    wk.gtk_widget_set_tooltip_text(c.reset, "Reset to default");
+    wk.gtk_widget_add_css_class(c.reset, "flat");
+    wk.gtk_widget_set_valign(c.reset, 3);
+    tag(c.reset, "settings-curated", index);
+    self.connect(c.reset, "clicked", @ptrCast(&onCuratedReset));
+    if (c.kind == .flags) {
+        wk.adw_expander_row_add_prefix(c.row, c.dot);
+        wk.adw_expander_row_add_suffix(c.row, c.reset);
+    } else {
+        wk.adw_action_row_add_prefix(c.row, c.dot);
+        wk.adw_action_row_add_suffix(c.row, c.reset);
+    }
+
+    try self.curated.append(self.gpa, c);
+    wk.adw_preferences_group_add(group, c.row);
+    if (c.other_row) |o| wk.adw_preferences_group_add(group, o);
+}
+
+fn setComboItems(arena: Allocator, row: *wk.GtkWidget, choices: []const pages.Option, other: bool) !void {
+    const strs = try arena.alloc(?[*:0]const u8, choices.len + @intFromBool(other) + 1);
+    for (choices, 0..) |o, i| strs[i] = (try arena.dupeZ(u8, o.label)).ptr;
+    if (other) strs[choices.len] = controls.other_shell_label;
+    strs[strs.len - 1] = null;
+    const model = wk.gtk_string_list_new(strs.ptr);
+    wk.adw_combo_row_set_model(row, model);
+    wk.g_object_unref(model);
+}
+
+/// A shell row's items: the default line (unset), then each common shell
+/// found on PATH, by the absolute path the row writes.
+fn shellChoices(self: *SettingsWindow, arena: Allocator, scripted: bool) ![]const pages.Option {
+    _ = self;
+    var out: std.ArrayListUnmanaged(pages.Option) = .empty;
+    try out.append(arena, .{ .value = "", .label = controls.shellDefaultLabelPosix(scripted) });
+    const path_env = std.posix.getenv("PATH") orelse "";
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    for (controls.posix_shells) |name| {
+        const full = controls.resolvePosix(&buf, name, path_env, {}, isExecutable) orelse continue;
+        const path_copy = try arena.dupe(u8, full);
+        try out.append(arena, .{ .value = path_copy, .label = try std.fmt.allocPrint(arena, "{s} ({s})", .{ name, path_copy }) });
+    }
+    return out.toOwnedSlice(arena);
+}
+
+/// Mac's `isExecutableFile`: a regular file this user may execute.
+fn isExecutable(_: void, path: []const u8) bool {
+    const st = std.fs.cwd().statFile(path) catch return false;
+    if (st.kind != .file) return false;
+    std.posix.access(path, std.posix.X_OK) catch return false;
+    return true;
+}
+
+// ---------------------------------------------------------------------
+// Reading
+// ---------------------------------------------------------------------
 
 /// Read the file, the other config files and the live config again.
 fn reloadData(self: *SettingsWindow) void {
@@ -231,13 +659,241 @@ fn reader(self: *const SettingsWindow) ?SettingsSources.Reader {
     };
 }
 
-/// The keys All Settings lists for the current search. Caller frees.
+/// The keys All Settings lists for the current search and filter. Caller
+/// frees.
 pub fn visibleKeys(self: *const SettingsWindow, alloc: Allocator) Allocator.Error![]const []const u8 {
     const r = self.reader() orelse return alloc.alloc([]const u8, 0);
-    return r.allSettings(alloc, .all, self.query.items);
+    return r.allSettings(alloc, self.filter, self.query.items);
 }
 
-/// Rebuild the rows for the current search.
+/// The sidebar's count for a page (Mac `changedCount`): the page's keys the
+/// user's file sets, or for Advanced every file key no curated page shows.
+pub fn changedOn(self: *const SettingsWindow, id: PageId) usize {
+    const r = self.reader() orelse return 0;
+    var n: usize = 0;
+    if (id == .advanced) {
+        for (self.catalog.entries) |*e| {
+            if (!pages.isCurated(e.key) and r.isSetInFile(e.key)) n += 1;
+        }
+        return n;
+    }
+    for (pages.page(id).sections) |sec| for (sec.rows) |row| {
+        if (r.isSetInFile(row.key)) n += 1;
+    };
+    return n;
+}
+
+/// Whether a curated row's control is live: not dimmed by its condition.
+pub fn rowEnabled(self: *const SettingsWindow, def: *const pages.Row) bool {
+    const cond = def.enabled_when orelse return true;
+    const r = self.reader() orelse return true;
+    return cond.holds(r.value(cond.key));
+}
+
+pub fn curatedFor(self: *SettingsWindow, key: []const u8) ?*Curated {
+    for (self.curated.items) |*c| if (std.mem.eql(u8, c.key, key)) return c;
+    return null;
+}
+
+fn curatedOf(self: *SettingsWindow, widget: *wk.GtkWidget) ?*Curated {
+    const i = tagOf(widget, "settings-curated") orelse return null;
+    if (i >= self.curated.items.len) return null;
+    return &self.curated.items[i];
+}
+
+/// What a curated control should show for its key's value, as text - the
+/// model's answer, which the seam holds the widget's own (`display`) to.
+pub fn expectedDisplay(self: *const SettingsWindow, buf: []u8, c: *const Curated) []const u8 {
+    const r = self.reader() orelse return "";
+    const cur = r.value(c.key);
+    return switch (c.def.control) {
+        .slider => |s| controls.sliderLabel(buf, controls.snap(controls.parseOr(cur, s.min), s.min, s.max, s.step), s.percent, s.inverted),
+        .stepper => |s| controls.formatNumber(buf, std.math.clamp(controls.parseOr(cur, s.min), s.min, s.max)),
+        .megabytes => controls.bytesAsMegabytes(buf, cur),
+        .shell => |sh| blk: {
+            if (!r.isSetInFile(c.key) or cur.len == 0) break :blk controls.shellDefaultLabelPosix(sh.scripted);
+            for (c.choices) |o| if (std.mem.eql(u8, o.value, cur)) break :blk o.label;
+            break :blk cur;
+        },
+        .flags => cur,
+        .text, .color, .folder, .font, .list => self.textShown(buf, c),
+        else => c.def.labelFor(cur),
+    };
+}
+
+/// A text row's value text: a list joined by ", ".
+fn textShown(self: *const SettingsWindow, buf: []u8, c: *const Curated) []const u8 {
+    const r = self.reader() orelse return "";
+    const entry_def = self.catalog.get(c.key) orelse return "";
+    if (!entry_def.repeatable) return r.value(c.key);
+    var fba = std.heap.FixedBufferAllocator.init(buf);
+    const vals = r.values(self.gpa, c.key) catch return "";
+    defer self.gpa.free(vals);
+    return std.mem.join(fba.allocator(), ", ", vals) catch "";
+}
+
+/// What a curated control shows right now, read back from the widget.
+pub fn widgetDisplay(self: *const SettingsWindow, buf: []u8, c: *const Curated) []const u8 {
+    _ = self;
+    switch (c.kind) {
+        .toggle => return if (wk.adw_switch_row_get_active(c.row) != 0) "On" else "Off",
+        .choice, .shell => {
+            const sel = wk.adw_combo_row_get_selected(c.row);
+            if (sel < c.choices.len) return c.choices[sel].label;
+            if (c.kind == .shell and sel == c.choices.len) return std.mem.span(wk.gtk_editable_get_text(c.entry.?));
+            return "";
+        },
+        .spin => return controls.formatNumber(buf, wk.adw_spin_row_get_value(c.row)),
+        .slider => {
+            const s = c.def.control.slider;
+            return controls.sliderLabel(buf, wk.gtk_range_get_value(c.scale.?), s.percent, s.inverted);
+        },
+        .flags => {
+            var n: usize = 0;
+            for (c.flag_names, c.flag_rows, 0..) |name, sw, i| {
+                const part = std.fmt.bufPrint(buf[n..], "{s}{s}{s}", .{
+                    if (i > 0) "," else "",
+                    if (wk.adw_switch_row_get_active(sw) != 0) "" else "no-",
+                    name,
+                }) catch break;
+                n += part.len;
+            }
+            return buf[0..n];
+        },
+        .text => return std.mem.span(wk.gtk_editable_get_text(c.entry.?)),
+    }
+}
+
+/// Whether the row's widget can be used (not dimmed).
+pub fn widgetSensitive(c: *const Curated) bool {
+    return wk.gtk_widget_get_sensitive(c.row) != 0 and
+        (c.entry == null or c.kind != .text or wk.gtk_widget_get_sensitive(c.entry.?) != 0);
+}
+
+/// The first label text under `widget`, depth first (a group's title as
+/// drawn - the seam's proof the markup reads as Mac's words).
+pub fn firstLabelText(widget: *wk.GtkWidget) ?[]const u8 {
+    if (wk.g_type_check_instance_is_a(@ptrCast(widget), wk.gtk_label_get_type()) != 0) {
+        return std.mem.span(wk.gtk_label_get_text(widget));
+    }
+    var child = wk.gtk_widget_get_first_child(widget);
+    while (child) |ch| : (child = wk.gtk_widget_get_next_sibling(ch)) {
+        if (firstLabelText(ch)) |t| if (t.len > 0) return t;
+    }
+    return null;
+}
+
+// ---------------------------------------------------------------------
+// Refreshing
+// ---------------------------------------------------------------------
+
+/// Move every curated control to its key's value, and its dot, reset,
+/// dimming and subtitle to the key's state - in place.
+fn refreshCurated(self: *SettingsWindow) void {
+    const r = self.reader() orelse return;
+    self.syncing = true;
+    defer self.syncing = false;
+    var arena_state = std.heap.ArenaAllocator.init(self.gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    for (self.curated.items) |*c| self.refreshOne(r, arena, c) catch |err| {
+        log.warn("settings: refreshing {s} failed err={}", .{ c.key, err });
+    };
+}
+
+fn refreshOne(self: *SettingsWindow, r: SettingsSources.Reader, arena: Allocator, c: *Curated) !void {
+    const cur = r.value(c.key);
+    switch (c.kind) {
+        .toggle => wk.adw_switch_row_set_active(c.row, @intFromBool(std.mem.eql(u8, cur, "true"))),
+        .choice => {
+            var sel: c_uint = wk.invalid_list_position;
+            for (c.choices, 0..) |o, i| if (std.mem.eql(u8, o.value, cur)) {
+                sel = @intCast(i);
+            };
+            // An optional key the file does not set reads as its "unset"
+            // item (App decides, System default).
+            if (sel == wk.invalid_list_position and !r.isSetInFile(c.key)) {
+                for (c.choices, 0..) |o, i| if (o.value.len == 0) {
+                    sel = @intCast(i);
+                };
+            }
+            wk.adw_combo_row_set_selected(c.row, sel);
+        },
+        .shell => {
+            var sel: c_uint = 0;
+            const other: c_uint = @intCast(c.choices.len);
+            if (r.isSetInFile(c.key) and cur.len > 0) {
+                sel = other;
+                for (c.choices, 0..) |o, i| if (o.value.len > 0 and std.mem.eql(u8, o.value, cur)) {
+                    sel = @intCast(i);
+                };
+            }
+            // Keep Other... up while the user is on it with a refused command.
+            const on_other = wk.adw_combo_row_get_selected(c.row) == other and self.model.problem(c.key) != null;
+            if (!on_other) wk.adw_combo_row_set_selected(c.row, sel);
+            if (sel == other and !on_other) wk.gtk_editable_set_text(c.entry.?, (try arena.dupeZ(u8, cur)).ptr);
+            wk.gtk_widget_set_visible(c.other_row.?, @intFromBool(wk.adw_combo_row_get_selected(c.row) == other));
+        },
+        .spin => switch (c.def.control) {
+            .megabytes => wk.adw_spin_row_set_value(c.row, controls.parseOr(cur, 0) / controls.megabyte),
+            .stepper => |s| wk.adw_spin_row_set_value(c.row, controls.parseOr(cur, s.min)),
+            else => {},
+        },
+        .slider => {
+            // Not while a drag is still settling, or it would jump back.
+            if (!(self.slide_source != 0 and &self.curated.items[self.slide_index] == c)) {
+                wk.gtk_range_set_value(c.scale.?, controls.parseOr(cur, c.def.control.slider.min));
+            }
+        },
+        .flags => for (c.flag_names, c.flag_rows) |name, sw| {
+            wk.adw_switch_row_set_active(sw, @intFromBool(controls.flagState(cur, name) orelse false));
+        },
+        .text => {
+            const field = c.entry.?;
+            var buf: [4096]u8 = undefined;
+            if (wk.gtk_widget_has_focus(field) == 0 or self.model.problem(c.key) == null) {
+                wk.gtk_editable_set_text(field, (try arena.dupeZ(u8, self.textShown(&buf, c))).ptr);
+            }
+        },
+    }
+
+    const entry_def = self.catalog.get(c.key);
+    const repeatable = if (entry_def) |e| e.repeatable else false;
+    const overriding = if (self.sources) |*s| s.overriding(c.key) else null;
+    const enabled = self.rowEnabled(c.def);
+    wk.gtk_widget_set_visible(c.dot, @intFromBool(r.isModified(c.key)));
+    wk.gtk_widget_set_visible(c.reset, @intFromBool(r.isSetInFile(c.key) and overriding == null));
+    wk.gtk_widget_set_sensitive(c.row, @intFromBool(overriding == null and enabled));
+    if (c.kind == .text) wk.gtk_widget_set_sensitive(c.entry.?, @intFromBool(!repeatable));
+
+    // The subtitle says the most pressing thing: the refusal, the file that
+    // owns the key, why it is dimmed, else what the setting does.
+    const subtitle: []const u8 = if (self.model.problem(c.key)) |p|
+        p
+    else if (overriding) |src|
+        try SettingsSources.overrideMessage(arena, src, null)
+    else if (!enabled)
+        c.def.enabled_when.?.reason
+    else
+        c.base;
+    const z = try arena.dupeZ(u8, subtitle);
+    if (c.kind == .flags) wk.adw_expander_row_set_subtitle(c.row, z.ptr) else wk.adw_action_row_set_subtitle(c.row, z.ptr);
+    c.subtitle = if (c.kind == .flags)
+        std.mem.span(wk.adw_expander_row_get_subtitle(c.row) orelse "")
+    else
+        std.mem.span(wk.adw_action_row_get_subtitle(c.row) orelse "");
+}
+
+fn refreshCounts(self: *SettingsWindow) void {
+    var buf: [16]u8 = undefined;
+    for (self.shown_pages.items, self.counts.items) |id, label| {
+        const n = self.changedOn(id);
+        const text = if (n == 0) "" else std.fmt.bufPrintZ(&buf, "{d}", .{n}) catch "";
+        wk.gtk_label_set_text(label, text.ptr);
+    }
+}
+
+/// Rebuild the All Settings rows for the current search and filter.
 fn rebuild(self: *SettingsWindow) void {
     wk.gtk_list_box_remove_all(self.list);
     self.rows.clearRetainingCapacity();
@@ -271,6 +927,17 @@ fn addRow(self: *SettingsWindow, key: []const u8) !void {
         wk.gtk_widget_set_tooltip_text(name, (try arena.dupeZ(u8, summary)).ptr);
     }
     wk.gtk_box_append(line, name);
+
+    // Mac's "<Page> >" link: the key has a curated home this window shows.
+    const index = self.rows.items.len;
+    if (pages.pageFor(key)) |id| if (pageShown(pages.page(id))) {
+        const link = wk.gtk_button_new_with_label((try std.fmt.allocPrintSentinel(arena, "{s} \u{203A}", .{pages.page(id).title}, 0)).ptr);
+        wk.gtk_widget_add_css_class(link, "flat");
+        wk.gtk_widget_set_tooltip_text(link, "Show this setting on its page");
+        tag(link, "settings-row", index);
+        self.connect(link, "clicked", @ptrCast(&onRevealClicked));
+        wk.gtk_box_append(line, link);
+    };
 
     const entry = wk.gtk_entry_new();
     wk.gtk_editable_set_width_chars(entry, 28);
@@ -309,23 +976,22 @@ fn addRow(self: *SettingsWindow, key: []const u8) !void {
     }
     wk.gtk_widget_set_visible(note, @intFromBool(overriding != null or self.model.problem(key) != null));
 
-    const index = self.rows.items.len;
     try self.rows.append(self.gpa, .{ .key = entry_def.key, .entry = entry, .note = note });
-    _ = wk.g_signal_connect_data(entry, "activate", @ptrCast(&onEntryActivate), self, null, 0);
-    _ = wk.g_signal_connect_data(reset, "clicked", @ptrCast(&onResetClicked), self, null, 0);
+    self.connect(entry, "activate", @ptrCast(&onEntryActivate));
+    self.connect(reset, "clicked", @ptrCast(&onResetClicked));
     // The row index rides on the widgets, so a signal finds its key.
-    wk.g_object_set_data(@ptrCast(entry), "settings-row", @ptrFromInt(index + 1));
-    wk.g_object_set_data(@ptrCast(reset), "settings-row", @ptrFromInt(index + 1));
+    tag(entry, "settings-row", index);
+    tag(reset, "settings-row", index);
     wk.gtk_list_box_append(self.list, outer);
 }
 
 fn rowOf(self: *SettingsWindow, widget: *wk.GtkWidget) ?*Row {
-    const tag = @intFromPtr(wk.g_object_get_data(@ptrCast(widget), "settings-row"));
-    if (tag == 0 or tag > self.rows.items.len) return null;
-    return &self.rows.items[tag - 1];
+    const i = tagOf(widget, "settings-row") orelse return null;
+    if (i >= self.rows.items.len) return null;
+    return &self.rows.items[i];
 }
 
-/// What a plain key's row now shows (the test seam's read-back).
+/// What a plain key's All Settings row now shows (the seam's read-back).
 pub fn shownValue(self: *const SettingsWindow, key: []const u8) ?[]const u8 {
     for (self.rows.items) |row| {
         if (std.mem.eql(u8, row.key, key)) return std.mem.span(wk.gtk_editable_get_text(row.entry));
@@ -364,12 +1030,61 @@ pub fn mainPath(self: *const SettingsWindow) []const u8 {
     return self.main_path;
 }
 
-/// What typing in the search field does.
+// ---------------------------------------------------------------------
+// Navigation
+// ---------------------------------------------------------------------
+
+/// Show page `id` (a sidebar click). False when this window does not list it.
+pub fn setPage(self: *SettingsWindow, id: PageId) bool {
+    const i = std.mem.indexOfScalar(PageId, self.shown_pages.items, id) orelse return false;
+    self.page = id;
+    wk.gtk_stack_set_visible_child_name(self.stack, @tagName(id).ptr);
+    const row = wk.gtk_list_box_get_row_at_index(self.sidebar, @intCast(i));
+    if (wk.gtk_list_box_get_selected_row(self.sidebar) != row) {
+        self.syncing = true;
+        defer self.syncing = false;
+        wk.gtk_list_box_select_row(self.sidebar, row);
+    }
+    return true;
+}
+
+/// The page the stack is showing, as GTK reports it.
+pub fn visiblePageName(self: *const SettingsWindow) []const u8 {
+    return std.mem.span(wk.gtk_stack_get_visible_child_name(self.stack) orelse "");
+}
+
+/// The All Settings filter (its dropdown).
+pub fn setFilter(self: *SettingsWindow, f: Filter) void {
+    const pos: c_uint = @intFromEnum(f);
+    if (wk.gtk_drop_down_get_selected(self.filter_dd) != pos) {
+        // The dropdown's own signal applies it.
+        wk.gtk_drop_down_set_selected(self.filter_dd, pos);
+        return;
+    }
+    if (self.filter == f) return;
+    self.filter = f;
+    self.rebuild();
+}
+
+/// What typing in the search field does: All Settings narrows, and shows.
 pub fn setQuery(self: *SettingsWindow, q: []const u8) void {
     self.query.clearRetainingCapacity();
     self.query.appendSlice(self.gpa, q) catch return;
+    if (std.mem.trim(u8, q, " \t").len > 0) _ = self.setPage(.advanced);
     self.rebuild();
 }
+
+/// All Settings' "<Page> >" link: the key's page, its row focused.
+pub fn reveal(self: *SettingsWindow, key: []const u8) bool {
+    const id = pages.pageFor(key) orelse return false;
+    if (!self.setPage(id)) return false;
+    if (self.curatedFor(key)) |c| _ = wk.gtk_widget_grab_focus(c.row);
+    return true;
+}
+
+// ---------------------------------------------------------------------
+// Writing
+// ---------------------------------------------------------------------
 
 pub const EditError = error{ UnknownKey, Overridden, List };
 
@@ -386,7 +1101,7 @@ pub fn setValue(self: *SettingsWindow, key: []const u8, val: []const u8) (EditEr
     return ok;
 }
 
-/// Remove every line for `key` from the file: the row's Reset button.
+/// Remove every line for `key` from the file: a row's Reset button.
 pub fn resetKey(self: *SettingsWindow, key: []const u8) (EditError || Allocator.Error)!bool {
     const def = self.catalog.get(key) orelse return error.UnknownKey;
     if (self.sources) |*s| if (s.overriding(key) != null) return error.Overridden;
@@ -396,17 +1111,99 @@ pub fn resetKey(self: *SettingsWindow, key: []const u8) (EditError || Allocator.
     return ok;
 }
 
-/// A write (or a refusal) changed what the rows show: read everything again
-/// and redraw. Rows are rebuilt from scratch, so the redraw runs on idle -
-/// never under the signal of a widget it is about to destroy.
-fn afterChange(self: *SettingsWindow) void {
-    self.reloadData();
-    _ = wk.g_idle_add(@ptrCast(&onIdleRebuild), self);
+/// A curated control's pick (win32 `chooseValue`). "" is "unset": the key
+/// leaves the user's file. Picking what the file already says writes
+/// nothing.
+pub fn chooseValue(self: *SettingsWindow, key: []const u8, val: []const u8) bool {
+    const def = self.catalog.get(key) orelse return false;
+    if (self.sources) |*s| if (s.overriding(def.key) != null) return false;
+    const r = self.reader() orelse return false;
+    if (val.len == 0) {
+        if (!r.isSetInFile(def.key)) return true;
+        return self.resetKey(def.key) catch false;
+    }
+    if (r.isSetInFile(def.key) and std.mem.eql(u8, r.value(def.key), val)) return true;
+    const ok = self.model.set(def.key, val) catch false;
+    log.info("settings: choose {s}={s} ok={}", .{ def.key, val, ok });
+    self.afterChange();
+    return ok;
 }
 
-fn onIdleRebuild(self: *SettingsWindow) callconv(.c) c_int {
-    if (open_window == self) self.rebuild();
+/// A flag's switch: every schema flag is written explicitly, as Mac's.
+pub fn setFlag(self: *SettingsWindow, key: []const u8, flag: []const u8, on: bool) bool {
+    const entry_def = self.catalog.get(key) orelse return false;
+    const options = entry_def.options orelse return false;
+    const r = self.reader() orelse return false;
+    var known = false;
+    for (options) |o| known = known or std.mem.eql(u8, o, flag);
+    if (!known) return false;
+    const next = controls.composeFlags(self.gpa, options, r.value(key), flag, on) catch return false;
+    defer self.gpa.free(next);
+    return self.chooseValue(key, next);
+}
+
+/// A shell row's write (a menu pick, or Other...'s typed command): refused
+/// with Mac's inline problem when its program is not an executable.
+pub fn chooseShell(self: *SettingsWindow, key: []const u8, command: []const u8) bool {
+    const trimmed = std.mem.trim(u8, command, " \t");
+    if (trimmed.len == 0) return self.chooseValue(key, "");
+    var buf: [std.fs.max_path_bytes + 64]u8 = undefined;
+    const path_env = std.posix.getenv("PATH") orelse "";
+    if (controls.shellProblemPosix(&buf, trimmed, path_env, {}, isExecutable)) |p| {
+        self.model.setProblem(key, p) catch {};
+        log.info("settings: shell {s} refused: {s}", .{ key, p });
+        self.afterChange();
+        return false;
+    }
+    return self.chooseValue(key, trimmed);
+}
+
+/// A write (or a refusal) changed what the rows show: read everything again
+/// and redraw on idle - never under the signal of a widget the All Settings
+/// rebuild is about to destroy.
+fn afterChange(self: *SettingsWindow) void {
+    self.reloadData();
+    if (self.refresh_source == 0) self.refresh_source = wk.g_idle_add(@ptrCast(&onIdleRefresh), self);
+}
+
+/// Run a pending redraw now (the seam reads the widgets right after an op).
+pub fn flush(self: *SettingsWindow) void {
+    if (self.slide_source != 0) {
+        _ = wk.g_source_remove(self.slide_source);
+        self.slide_source = 0;
+        self.writeSlide();
+    }
+    if (self.refresh_source != 0) {
+        _ = wk.g_source_remove(self.refresh_source);
+        self.refresh_source = 0;
+        self.redraw();
+    }
+}
+
+fn redraw(self: *SettingsWindow) void {
+    self.rebuild();
+    self.refreshCurated();
+    self.refreshCounts();
+}
+
+fn onIdleRefresh(self: *SettingsWindow) callconv(.c) c_int {
+    self.refresh_source = 0;
+    if (open_window == self) self.redraw();
     return 0; // G_SOURCE_REMOVE
+}
+
+fn writeSlide(self: *SettingsWindow) void {
+    if (self.slide_index >= self.curated.items.len) return;
+    const c = &self.curated.items[self.slide_index];
+    const s = c.def.control.slider;
+    var buf: [32]u8 = undefined;
+    _ = self.chooseValue(c.key, controls.formatValue(&buf, controls.snap(self.slide_value, s.min, s.max, s.step)));
+}
+
+fn onSlideSettled(self: *SettingsWindow) callconv(.c) c_int {
+    self.slide_source = 0;
+    if (open_window == self) self.writeSlide();
+    return 0;
 }
 
 /// `SettingsModel`'s after-write hook: apply the change live.
@@ -418,6 +1215,82 @@ fn reloadHook(ctx: ?*anyopaque) void {
     };
 }
 
+// ---------------------------------------------------------------------
+// The gestures, as the seam drives them: each moves the WIDGET, and the
+// widget's own signal does the write.
+// ---------------------------------------------------------------------
+
+pub const GestureError = error{ NotCurated, WrongControl, BadValue };
+
+/// Flip a curated switch.
+pub fn gestureToggle(self: *SettingsWindow, key: []const u8) GestureError!void {
+    const c = self.curatedFor(key) orelse return error.NotCurated;
+    if (c.kind != .toggle) return error.WrongControl;
+    wk.adw_switch_row_set_active(c.row, @intFromBool(wk.adw_switch_row_get_active(c.row) == 0));
+}
+
+/// Pick the popup item whose value is `val` ("" picks the unset item; on a
+/// shell row anything not listed goes through Other...).
+pub fn gestureChoose(self: *SettingsWindow, key: []const u8, val: []const u8) GestureError!void {
+    const c = self.curatedFor(key) orelse return error.NotCurated;
+    if (c.kind != .choice and c.kind != .shell) return error.WrongControl;
+    for (c.choices, 0..) |o, i| if (std.mem.eql(u8, o.value, val)) {
+        wk.adw_combo_row_set_selected(c.row, @intCast(i));
+        return;
+    };
+    if (c.kind != .shell) return error.BadValue;
+    wk.adw_combo_row_set_selected(c.row, @intCast(c.choices.len));
+    wk.gtk_editable_set_text(c.entry.?, (self.gpa.dupeZ(u8, val) catch return error.BadValue).ptr);
+    _ = wk.gtk_widget_activate(c.entry.?);
+}
+
+/// One click of a spin row's arrow (`dir` +1 up, -1 down).
+pub fn gestureStep(self: *SettingsWindow, key: []const u8, dir: i32) GestureError!void {
+    const c = self.curatedFor(key) orelse return error.NotCurated;
+    if (c.kind != .spin) return error.WrongControl;
+    const step: f64 = switch (c.def.control) {
+        .stepper => |s| s.step,
+        else => 1,
+    };
+    wk.adw_spin_row_set_value(c.row, wk.adw_spin_row_get_value(c.row) + @as(f64, @floatFromInt(dir)) * step);
+}
+
+/// Drag a slider to `v` (the write follows once it settles; `flush` runs it).
+pub fn gestureSlide(self: *SettingsWindow, key: []const u8, v: f64) GestureError!void {
+    const c = self.curatedFor(key) orelse return error.NotCurated;
+    if (c.kind != .slider) return error.WrongControl;
+    wk.gtk_range_set_value(c.scale.?, v);
+}
+
+/// Set one flag's switch.
+pub fn gestureFlag(self: *SettingsWindow, key: []const u8, flag: []const u8, on: bool) GestureError!void {
+    const c = self.curatedFor(key) orelse return error.NotCurated;
+    if (c.kind != .flags) return error.WrongControl;
+    for (c.flag_names, c.flag_rows) |name, sw| if (std.mem.eql(u8, name, flag)) {
+        wk.adw_switch_row_set_active(sw, @intFromBool(on));
+        return;
+    };
+    return error.BadValue;
+}
+
+/// Type into a curated text row and press Return.
+pub fn gestureText(self: *SettingsWindow, key: []const u8, text: []const u8) GestureError!void {
+    const c = self.curatedFor(key) orelse return error.NotCurated;
+    if (c.kind != .text) return error.WrongControl;
+    wk.gtk_editable_set_text(c.entry.?, (self.gpa.dupeZ(u8, text) catch return error.BadValue).ptr);
+    _ = wk.gtk_widget_activate(c.entry.?);
+}
+
+/// A curated row's reset button.
+pub fn gestureReset(self: *SettingsWindow, key: []const u8) GestureError!void {
+    const c = self.curatedFor(key) orelse return error.NotCurated;
+    _ = wk.gtk_widget_activate(c.reset);
+}
+
+// ---------------------------------------------------------------------
+// Lifetime
+// ---------------------------------------------------------------------
+
 /// Close the window: the button in its title bar, and the seam's `close`.
 pub fn close(self: *SettingsWindow) void {
     wk.gtk_window_destroy(self.window);
@@ -425,9 +1298,17 @@ pub fn close(self: *SettingsWindow) void {
 }
 
 fn destroy(self: *SettingsWindow) void {
-    if (open_window == self) open_window = null;
+    if (open_window != self) return;
+    open_window = null;
+    if (self.refresh_source != 0) _ = wk.g_source_remove(self.refresh_source);
+    if (self.slide_source != 0) _ = wk.g_source_remove(self.slide_source);
     const gpa = self.gpa;
     self.rows.deinit(gpa);
+    self.curated.deinit(gpa);
+    self.groups.deinit(gpa);
+    self.shown_pages.deinit(gpa);
+    self.counts.deinit(gpa);
+    self.build_arena.deinit();
     self.query.deinit(gpa);
     self.model.deinit();
     if (self.sources) |*s| s.deinit();
@@ -441,6 +1322,10 @@ fn destroy(self: *SettingsWindow) void {
     log.info("settings: closed", .{});
 }
 
+// ---------------------------------------------------------------------
+// Signals
+// ---------------------------------------------------------------------
+
 fn onCloseRequest(_: *wk.GtkWidget, self: *SettingsWindow) callconv(.c) c_int {
     self.destroy();
     return 0; // let GTK destroy the window
@@ -450,8 +1335,36 @@ fn onOpenFileClicked(_: *wk.GtkWidget, self: *SettingsWindow) callconv(.c) void 
     self.app.openConfigFile();
 }
 
+fn onShortcutGuideClicked(_: *wk.GtkWidget, self: *SettingsWindow) callconv(.c) void {
+    ShortcutGuideWindow.open(self.app);
+}
+
 fn onSearchChanged(entry: *wk.GtkWidget, self: *SettingsWindow) callconv(.c) void {
-    self.setQuery(std.mem.span(wk.gtk_editable_get_text(entry)));
+    const text = std.mem.span(wk.gtk_editable_get_text(entry));
+    // GtkSearchEntry reports after the fact, even for text set here (T3570).
+    if (std.mem.eql(u8, text, self.query.items)) return;
+    self.setQuery(text);
+}
+
+fn onSidebarSelected(_: *wk.GtkWidget, row: ?*wk.GtkWidget, self: *SettingsWindow) callconv(.c) void {
+    if (self.syncing) return;
+    const r = row orelse return;
+    const idx = wk.gtk_list_box_row_get_index(r);
+    if (idx < 0) return;
+    const i: usize = @intCast(idx);
+    if (i < self.shown_pages.items.len) _ = self.setPage(self.shown_pages.items[i]);
+}
+
+fn onFilterSelected(dd: *wk.GtkWidget, _: ?*anyopaque, self: *SettingsWindow) callconv(.c) void {
+    const pos = wk.gtk_drop_down_get_selected(dd);
+    const f: Filter = switch (pos) {
+        1 => .changed,
+        2 => .uncovered,
+        else => .all,
+    };
+    if (self.filter == f) return;
+    self.filter = f;
+    self.rebuild();
 }
 
 fn onEntryActivate(entry: *wk.GtkWidget, self: *SettingsWindow) callconv(.c) void {
@@ -463,4 +1376,95 @@ fn onEntryActivate(entry: *wk.GtkWidget, self: *SettingsWindow) callconv(.c) voi
 fn onResetClicked(button: *wk.GtkWidget, self: *SettingsWindow) callconv(.c) void {
     const row = self.rowOf(button) orelse return;
     _ = self.resetKey(row.key) catch |err| log.warn("settings: reset {s} err={}", .{ row.key, err });
+}
+
+fn onRevealClicked(button: *wk.GtkWidget, self: *SettingsWindow) callconv(.c) void {
+    const row = self.rowOf(button) orelse return;
+    _ = self.reveal(row.key);
+}
+
+fn onSwitchActive(sw: *wk.GtkWidget, _: ?*anyopaque, self: *SettingsWindow) callconv(.c) void {
+    if (self.syncing) return;
+    const c = self.curatedOf(sw) orelse return;
+    _ = self.chooseValue(c.key, if (wk.adw_switch_row_get_active(sw) != 0) "true" else "false");
+}
+
+fn onComboSelected(row: *wk.GtkWidget, _: ?*anyopaque, self: *SettingsWindow) callconv(.c) void {
+    if (self.syncing) return;
+    const c = self.curatedOf(row) orelse return;
+    const sel = wk.adw_combo_row_get_selected(row);
+    if (c.kind == .shell) {
+        if (sel == c.choices.len) {
+            // Other...: its field opens; nothing is written until Return.
+            wk.gtk_widget_set_visible(c.other_row.?, 1);
+            _ = wk.gtk_widget_grab_focus(c.entry.?);
+            return;
+        }
+        wk.gtk_widget_set_visible(c.other_row.?, 0);
+        if (sel < c.choices.len) _ = self.chooseShell(c.key, c.choices[sel].value);
+        return;
+    }
+    if (sel < c.choices.len) _ = self.chooseValue(c.key, c.choices[sel].value);
+}
+
+fn onShellOtherActivate(field: *wk.GtkWidget, self: *SettingsWindow) callconv(.c) void {
+    const c = self.curatedOf(field) orelse return;
+    _ = self.chooseShell(c.key, std.mem.span(wk.gtk_editable_get_text(field)));
+}
+
+fn onSpinValue(row: *wk.GtkWidget, _: ?*anyopaque, self: *SettingsWindow) callconv(.c) void {
+    if (self.syncing) return;
+    const c = self.curatedOf(row) orelse return;
+    const v = wk.adw_spin_row_get_value(row);
+    switch (c.def.control) {
+        .megabytes => |m| {
+            var mb: [64]u8 = undefined;
+            const bytes = controls.megabytesToBytes(controls.formatNumber(&mb, v), m.max) orelse return;
+            var buf: [32]u8 = undefined;
+            _ = self.chooseValue(c.key, std.fmt.bufPrint(&buf, "{d}", .{bytes}) catch return);
+        },
+        else => {
+            var buf: [64]u8 = undefined;
+            _ = self.chooseValue(c.key, controls.formatNumber(&buf, v));
+        },
+    }
+}
+
+fn onScaleChanged(scale: *wk.GtkWidget, self: *SettingsWindow) callconv(.c) void {
+    if (self.syncing) return;
+    const i = tagOf(scale, "settings-curated") orelse return;
+    self.slide_index = i;
+    self.slide_value = wk.gtk_range_get_value(scale);
+    if (self.slide_source != 0) _ = wk.g_source_remove(self.slide_source);
+    self.slide_source = wk.g_timeout_add(slide_settle_ms, @ptrCast(&onSlideSettled), self);
+}
+
+/// A slider's readout: Mac's percent (inverted for Dim unfocused panes).
+fn formatScale(scale: *wk.GtkWidget, v: f64, data: ?*anyopaque) callconv(.c) [*:0]u8 {
+    const self: *SettingsWindow = @ptrCast(@alignCast(data.?));
+    var buf: [32]u8 = undefined;
+    const c = self.curatedOf(scale) orelse return wk.g_strdup("");
+    const s = c.def.control.slider;
+    const text = controls.sliderLabel(buf[0 .. buf.len - 1], v, s.percent, s.inverted);
+    buf[text.len] = 0;
+    return wk.g_strdup(buf[0..text.len :0].ptr);
+}
+
+fn onFlagActive(sw: *wk.GtkWidget, _: ?*anyopaque, self: *SettingsWindow) callconv(.c) void {
+    if (self.syncing) return;
+    const c = self.curatedOf(sw) orelse return;
+    const i = tagOf(sw, "settings-flag") orelse return;
+    if (i >= c.flag_names.len) return;
+    _ = self.setFlag(c.key, c.flag_names[i], wk.adw_switch_row_get_active(sw) != 0);
+}
+
+fn onCuratedEntryActivate(field: *wk.GtkWidget, self: *SettingsWindow) callconv(.c) void {
+    const c = self.curatedOf(field) orelse return;
+    _ = self.setValue(c.key, std.mem.span(wk.gtk_editable_get_text(field))) catch |err|
+        log.warn("settings: set {s} err={}", .{ c.key, err });
+}
+
+fn onCuratedReset(button: *wk.GtkWidget, self: *SettingsWindow) callconv(.c) void {
+    const c = self.curatedOf(button) orelse return;
+    _ = self.resetKey(c.key) catch |err| log.warn("settings: reset {s} err={}", .{ c.key, err });
 }

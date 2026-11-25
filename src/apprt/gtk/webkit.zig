@@ -717,6 +717,58 @@ pub extern fn gtk_list_box_row_new() *GtkWidget;
 pub extern fn gtk_list_box_row_set_child(row: *GtkWidget, child: ?*GtkWidget) void;
 pub extern fn gtk_list_box_unselect_all(box: *GtkWidget) void;
 pub extern fn gtk_widget_compute_point(widget: *GtkWidget, target: *GtkWidget, point: *const GraphenePoint, out_point: *GraphenePoint) c_int;
+// The Settings window's curated pages (T3631): libadwaita preference rows.
+// AdwSwitchRow and AdwSpinRow are libadwaita 1.4 (Ubuntu 24.04 has 1.5).
+pub const GListModel = opaque {};
+pub extern fn adw_preferences_page_new() *GtkWidget;
+pub extern fn adw_preferences_page_add(page: *GtkWidget, group: *GtkWidget) void;
+pub extern fn adw_preferences_group_new() *GtkWidget;
+pub extern fn adw_preferences_group_set_title(group: *GtkWidget, title: [*:0]const u8) void;
+pub extern fn adw_preferences_group_set_description(group: *GtkWidget, description: ?[*:0]const u8) void;
+pub extern fn adw_preferences_group_add(group: *GtkWidget, child: *GtkWidget) void;
+pub extern fn adw_preferences_row_set_title(row: *GtkWidget, title: [*:0]const u8) void;
+pub extern fn adw_preferences_row_set_use_markup(row: *GtkWidget, use_markup: c_int) void;
+pub extern fn adw_action_row_new() *GtkWidget;
+pub extern fn adw_action_row_set_subtitle(row: *GtkWidget, subtitle: [*:0]const u8) void;
+pub extern fn adw_action_row_get_subtitle(row: *GtkWidget) ?[*:0]const u8;
+pub extern fn adw_action_row_add_prefix(row: *GtkWidget, widget: *GtkWidget) void;
+pub extern fn adw_action_row_add_suffix(row: *GtkWidget, widget: *GtkWidget) void;
+pub extern fn adw_switch_row_new() *GtkWidget;
+pub extern fn adw_switch_row_get_active(row: *GtkWidget) c_int;
+pub extern fn adw_switch_row_set_active(row: *GtkWidget, active: c_int) void;
+pub extern fn adw_combo_row_new() *GtkWidget;
+pub extern fn adw_combo_row_set_model(row: *GtkWidget, model: ?*GListModel) void;
+pub extern fn adw_combo_row_get_selected(row: *GtkWidget) c_uint;
+pub extern fn adw_combo_row_set_selected(row: *GtkWidget, position: c_uint) void;
+pub extern fn adw_spin_row_new_with_range(min: f64, max: f64, step: f64) *GtkWidget;
+pub extern fn adw_spin_row_get_value(row: *GtkWidget) f64;
+pub extern fn adw_spin_row_set_value(row: *GtkWidget, value: f64) void;
+pub extern fn adw_spin_row_set_digits(row: *GtkWidget, digits: c_uint) void;
+pub extern fn adw_expander_row_new() *GtkWidget;
+pub extern fn adw_expander_row_add_row(row: *GtkWidget, child: *GtkWidget) void;
+pub extern fn adw_expander_row_add_prefix(row: *GtkWidget, widget: *GtkWidget) void;
+pub extern fn adw_expander_row_add_suffix(row: *GtkWidget, widget: *GtkWidget) void;
+pub extern fn adw_expander_row_set_subtitle(row: *GtkWidget, subtitle: [*:0]const u8) void;
+pub extern fn adw_expander_row_get_subtitle(row: *GtkWidget) ?[*:0]const u8;
+pub extern fn gtk_string_list_new(strings: ?[*]const ?[*:0]const u8) *GListModel;
+pub extern fn gtk_drop_down_new_from_strings(strings: [*]const ?[*:0]const u8) *GtkWidget;
+pub extern fn gtk_drop_down_get_selected(dropdown: *GtkWidget) c_uint;
+pub extern fn gtk_drop_down_set_selected(dropdown: *GtkWidget, position: c_uint) void;
+pub extern fn gtk_scale_new_with_range(orientation: c_int, min: f64, max: f64, step: f64) *GtkWidget;
+pub extern fn gtk_scale_set_draw_value(scale: *GtkWidget, draw: c_int) void;
+pub const ScaleFormatFn = *const fn (scale: *GtkWidget, value: f64, user_data: ?*anyopaque) callconv(.c) [*:0]u8;
+pub extern fn gtk_scale_set_format_value_func(scale: *GtkWidget, func: ?ScaleFormatFn, user_data: ?*anyopaque, destroy: ?*const anyopaque) void;
+pub extern fn gtk_range_get_value(range: *GtkWidget) f64;
+pub extern fn gtk_range_set_value(range: *GtkWidget, value: f64) void;
+pub extern fn gtk_stack_new() *GtkWidget;
+pub extern fn gtk_stack_add_named(stack: *GtkWidget, child: *GtkWidget, name: [*:0]const u8) ?*anyopaque;
+pub extern fn gtk_stack_set_visible_child_name(stack: *GtkWidget, name: [*:0]const u8) void;
+pub extern fn gtk_stack_get_visible_child_name(stack: *GtkWidget) ?[*:0]const u8;
+pub extern fn g_strdup(str: [*:0]const u8) [*:0]u8;
+pub extern fn g_type_check_instance_is_a(instance: *anyopaque, iface_type: usize) c_int;
+pub extern fn gtk_label_get_type() usize;
+/// `GTK_INVALID_LIST_POSITION`.
+pub const invalid_list_position: c_uint = 0xFFFF_FFFF;
 
 /// `GtkEventSequenceState`.
 pub const sequence_claimed: c_int = 1;
