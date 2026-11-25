@@ -308,6 +308,39 @@ label.resize-overlay {
   outline-offset: -1px;
 }
 
+/*
+ * The desk behind the whole window (T3623; pane-style.md "Titlebar"): the
+ * window paints the gradient under its content (Window.snapshotDesk), so the
+ * header bar and the tab bar go transparent over it, as the Mac's
+ * transparent titlebar does, and the expanded sidebar lets it through.
+ */
+.pane-desk-window toolbarview > .top-bar,
+.pane-desk-window toolbarview > .bottom-bar,
+.pane-desk-window headerbar,
+.pane-desk-window tabbar .box {
+  background: none;
+  background-color: transparent;
+  box-shadow: none;
+}
+
+/*
+ * On glass the sidebar's card IS an unfocused pane's card (Mac
+ * PaneSidebarCard -> PaneCard): the same 11px corners, hairline rim and drop
+ * shadow; its 40% sheet is painted under it by the window, inside those
+ * corners, so there is no wash of its own here.
+ */
+.pane-desk-window-glass .pane-sidebar {
+  border-radius: 11px;
+  background-color: transparent;
+  outline-color: rgba(255, 255, 255, 0.10);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.30), 0 4px 14px rgba(0, 0, 0, 0.22);
+}
+
+.pane-desk-window-glass.pane-desk-window-light .pane-sidebar {
+  outline-color: rgba(0, 0, 0, 0.10);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12), 0 4px 14px rgba(0, 0, 0, 0.10);
+}
+
 .pane-sidebar .pane-sidebar-row {
   min-height: 28px;
   margin: 0 4px 0 4px;

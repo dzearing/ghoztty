@@ -150,6 +150,35 @@ pub fn tintToRestore(leaf: schema.Leaf) ?color_math.Rgb {
     return color_math.parseHex(hex);
 }
 
+/// The window's own gradient as the manifest records it (T3623; win32's
+/// T1832, Mac `deskVariant: {seed}`): its seed, or none for the shared ocean.
+/// Zero is no seed any build draws (`desk_palette.Variant` is 1...max), so it
+/// is never written.
+pub fn deskSeedToRecord(seed: ?u64) ?u64 {
+    const s = seed orelse return null;
+    return if (s == 0) null else s;
+}
+
+/// The gradient a restored window puts back (T3623): its recorded seed, else
+/// the shared ocean - an absent field (an older manifest, or an ocean window)
+/// and a zero alike, exactly as win32's restore reads it. Never a new random
+/// one: a relaunch must not repaint the user's window.
+pub fn deskSeedToRestore(win: schema.Window) ?u64 {
+    return deskSeedToRecord(win.desk_variant);
+}
+
+test "deskSeedToRecord keeps a window's seed and writes none for the ocean or a zero" {
+    try std.testing.expectEqual(@as(?u64, 0xF00D_CAFE_DEAD_BEEF), deskSeedToRecord(0xF00D_CAFE_DEAD_BEEF));
+    try std.testing.expectEqual(@as(?u64, null), deskSeedToRecord(null));
+    try std.testing.expectEqual(@as(?u64, null), deskSeedToRecord(0));
+}
+
+test "deskSeedToRestore gives back the recorded seed, else the ocean (absent, zero)" {
+    try std.testing.expectEqual(@as(?u64, 42), deskSeedToRestore(.{ .id = "w", .desk_variant = 42 }));
+    try std.testing.expectEqual(@as(?u64, null), deskSeedToRestore(.{ .id = "w" }));
+    try std.testing.expectEqual(@as(?u64, null), deskSeedToRestore(.{ .id = "w", .desk_variant = 0 }));
+}
+
 test "tintToRecord writes #rrggbb and records none for an untinted pane" {
     var buf: [7]u8 = undefined;
     const hex = tintToRecord(.{ .r = 0x1a, .g = 0x2b, .b = 0x3c }, &buf).?;

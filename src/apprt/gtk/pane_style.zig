@@ -142,6 +142,30 @@ pub fn hasGlass(style: Style, glass: bool) bool {
     return hasDesk(style) and glass;
 }
 
+// ---- The desk under the whole window (T3623) --------------------------------
+
+/// The window's classes while it paints the desk (Mac: the desk sits behind
+/// the whole content stack, up under the transparent titlebar). `style.css`
+/// turns the header bar and the tab bar transparent over it, and on glass
+/// gives the pane sidebar an unfocused pane's card. Distinct from the tree's
+/// classes, whose `.pane-elevated` padding must not land on the window.
+pub const window_class_desk: [:0]const u8 = "pane-desk-window";
+pub const window_class_light: [:0]const u8 = "pane-desk-window-light";
+pub const window_class_glass: [:0]const u8 = "pane-desk-window-glass";
+
+/// The pane sidebar's card on glass IS an unfocused pane's card (Mac
+/// `PaneSidebarCard` -> `PaneCard`): the same corner radius and the same
+/// sheet - the terminal's background at `glass_tint` - so the gradient reads
+/// through it the way it reads through the panes beside it. Null off glass,
+/// where the card keeps its own light wash over the desk.
+pub fn sidebarSheet(style: Style, glass: bool, bg: color_math.Rgb) ?SheetColor {
+    if (!hasGlass(style, glass)) return null;
+    return sheetColor(bg, false);
+}
+
+/// The sidebar card's corner radius: a pane card's.
+pub const sidebar_radius: f32 = @floatFromInt(card_radius);
+
 /// Upstream's unfocused dimming - a wash of `unfocused-split-fill` over an
 /// unfocused pane of a split - is not drawn on glass: focus changes only the
 /// rim and the glow there, and a background-coloured wash would make the
@@ -320,4 +344,24 @@ test "T3566: a desk key changes with size, theme and variant" {
     try testing.expect(!a.eql(.{ .w = 11, .h = 10, .seed = 7 }));
     try testing.expect(!a.eql(.{ .w = 10, .h = 10, .seed = null }));
     try testing.expect(!a.eql(.{ .w = 10, .h = 10, .seed = 7, .is_light = true }));
+}
+
+test "T3623: on glass the sidebar card is an unfocused pane's 40% sheet; off glass and flat it has none" {
+    const bg: color_math.Rgb = .{ .r = 0x20, .g = 0x30, .b = 0x40 };
+    const s = sidebarSheet(.elevated, true, bg).?;
+    const pane = sheetColor(bg, false);
+    try testing.expectEqual(pane.a, s.a);
+    try testing.expectEqual(pane.r, s.r);
+    try testing.expectEqual(glass_tint, s.a);
+    try testing.expect(sidebarSheet(.elevated, false, bg) == null);
+    try testing.expect(sidebarSheet(.flat, true, bg) == null);
+    try testing.expectEqual(@as(f32, 11), sidebar_radius);
+}
+
+test "T3623: the window's desk classes never reuse the tree's (whose padding would land on the window)" {
+    for ([_][:0]const u8{ window_class_desk, window_class_light, window_class_glass }) |c| {
+        try testing.expect(!std.mem.eql(u8, c, tree_class_elevated));
+        try testing.expect(!std.mem.eql(u8, c, tree_class_light));
+        try testing.expect(!std.mem.eql(u8, c, tree_class_glass));
+    }
 }

@@ -40,6 +40,7 @@ const wk = @import("../webkit.zig");
 const window_activity = @import("../window_activity.zig");
 const window_seen = @import("../window_seen.zig");
 const pane_style = @import("../pane_style.zig");
+const color_math = @import("../../win32/color_math.zig");
 const RemoteLink = @import("../RemoteLink.zig");
 
 const log = std.log.scoped(.gtk_ghostty_window);
@@ -285,6 +286,12 @@ pub const Window = extern struct {
         /// first (`setDeskVariant`).
         desk_variant: ?pane_style.Variant = null,
         desk_variant_decided: bool = false,
+
+        /// The desk, rendered small and stretched over the window's content
+        /// (T3623: the window paints it, so it runs under the header bar and
+        /// the pane sidebar too), cached per size/seed/theme. Owned.
+        desk_texture: ?*wk.GdkTexture = null,
+        desk_key: pane_style.DeskKey = .{},
 
         /// The configuration that this surface is using.
         config: ?*Config = null,
@@ -932,6 +939,10 @@ pub const Window = extern struct {
             tree.syncPaneStyle();
             tree.as(gtk.Widget).queueDraw();
         }
+        // The window paints the desk (T3623), so its classes follow too.
+        const config_obj = Application.default().getConfig();
+        defer config_obj.unref();
+        self.syncDeskClasses(config_obj.get());
     }
 
     /// Sync the state of any actions on this window.
@@ -1296,7 +1307,92 @@ pub const Window = extern struct {
         const priv = self.private();
         priv.desk_variant = variant;
         priv.desk_variant_decided = true;
-        if (self.getSelectedTab()) |tab| tab.getSplitTree().as(gtk.Widget).queueDraw();
+        self.as(gtk.Widget).queueDraw();
+    }
+
+    /// Mark the window for `style.css` while it paints the desk (T3623): the
+    /// header bar and tab bar go transparent over it, and on glass the pane
+    /// sidebar becomes an unfocused pane's card.
+    fn syncDeskClasses(self: *Self, cfg: *const configpkg.Config) void {
+        const style = paneStyleOf(cfg);
+        const desk = pane_style.hasDesk(style);
+        const bg = cfg.background;
+        const light = pane_style.isLight(.{ .r = bg.r, .g = bg.g, .b = bg.b });
+        self.toggleCssClass(pane_style.window_class_desk, desk);
+        self.toggleCssClass(pane_style.window_class_light, desk and light);
+        self.toggleCssClass(pane_style.window_class_glass, pane_style.hasGlass(style, cfg.@"macos-pane-glass"));
+        self.as(gtk.Widget).queueDraw();
+    }
+
+    /// The desk, behind the window's whole content (T3623; Mac: the desk sits
+    /// behind the content stack, up under the transparent titlebar, and the
+    /// expanded sidebar lets it through). Drawn over the toolbar view's
+    /// bounds - header bar, tab bar, sidebar row - before any child, so the
+    /// split tree's cards, the header and the sidebar all sit on it. On
+    /// glass the sidebar card gets its pane sheet here, inside its corners.
+    fn snapshotDesk(self: *Self, snap: *wk.GtkSnapshot) void {
+        const priv = self.private();
+        const config_obj = Application.default().getConfig();
+        defer config_obj.unref();
+        const cfg = config_obj.get();
+        const style = paneStyleOf(cfg);
+        if (!pane_style.hasDesk(style)) return;
+        const widget = self.as(gtk.Widget);
+        var area: wk.GrapheneRect = .{};
+        if (wk.gtk_widget_compute_bounds(@ptrCast(priv.toolbar), @ptrCast(widget), &area) == 0) return;
+        const w: i32 = @intFromFloat(@round(area.w));
+        const h: i32 = @intFromFloat(@round(area.h));
+        if (w <= 0 or h <= 0) return;
+        const bg = cfg.background;
+        const rgb: color_math.Rgb = .{ .r = bg.r, .g = bg.g, .b = bg.b };
+        const is_light = pane_style.isLight(rgb);
+        const variant = self.deskVariant();
+
+        const key: pane_style.DeskKey = .{
+            .w = @intCast(w),
+            .h = @intCast(h),
+            .seed = if (variant) |v| v.seed else null,
+            .is_light = is_light,
+        };
+        if (priv.desk_texture == null or !priv.desk_key.eql(key)) {
+            const size = pane_style.deskSize(key.w, key.h);
+            const alloc = Application.default().allocator();
+            const buf = alloc.alloc(u32, size.w * size.h) catch return;
+            defer alloc.free(buf);
+            pane_style.renderDesk(buf, size, @floatFromInt(w), @floatFromInt(h), pane_style.Palette.forWindow(variant, is_light));
+            const bytes = wk.g_bytes_new(buf.ptr, buf.len * @sizeOf(u32));
+            defer wk.g_bytes_unref(bytes);
+            const tex = wk.gdk_memory_texture_new(
+                @intCast(size.w),
+                @intCast(size.h),
+                wk.GDK_MEMORY_B8G8R8A8_PREMULTIPLIED,
+                bytes,
+                size.w * @sizeOf(u32),
+            ) orelse return;
+            if (priv.desk_texture) |old| wk.g_object_unref(old);
+            priv.desk_texture = tex;
+            priv.desk_key = key;
+        }
+        wk.gtk_snapshot_append_scaled_texture(snap, priv.desk_texture.?, wk.GSK_SCALING_FILTER_LINEAR, &area);
+
+        // The sidebar card's glass sheet, inside its rounded corners.
+        const sheet = pane_style.sidebarSheet(style, cfg.@"macos-pane-glass", rgb) orelse return;
+        const sidebar = priv.pane_sidebar orelse return;
+        if (wk.gtk_widget_get_mapped(sidebar.card) == 0) return;
+        var card: wk.GrapheneRect = .{};
+        if (wk.gtk_widget_compute_bounds(sidebar.card, @ptrCast(widget), &card) == 0) return;
+        if (card.w <= 0 or card.h <= 0) return;
+        var rr: wk.GskRoundedRect = .{};
+        _ = wk.gsk_rounded_rect_init_from_rect(&rr, &card, pane_style.sidebar_radius);
+        wk.gtk_snapshot_push_rounded_clip(snap, &rr);
+        const rgba: wk.GdkRGBA = .{ .red = sheet.r, .green = sheet.g, .blue = sheet.b, .alpha = sheet.a };
+        wk.gtk_snapshot_append_color(snap, &rgba, &card);
+        wk.gtk_snapshot_pop(snap);
+    }
+
+    fn snapshot(self: *Self, snap: *gtk.Snapshot) callconv(.c) void {
+        self.snapshotDesk(@ptrCast(snap));
+        gtk.Widget.virtual_methods.snapshot.call(Class.parent, self.as(Parent), snap);
     }
 
     pub fn paneStyleOf(cfg: *const configpkg.Config) pane_style.Style {
@@ -2078,6 +2174,8 @@ pub const Window = extern struct {
         priv.title_override = null;
         if (priv.held_title) |v| alloc.free(v);
         priv.held_title = null;
+        if (priv.desk_texture) |t| wk.g_object_unref(t);
+        priv.desk_texture = null;
 
         gobject.Object.virtual_methods.finalize.call(
             Class.parent,
@@ -3331,6 +3429,8 @@ pub const Window = extern struct {
             // Virtual methods
             gobject.Object.virtual_methods.dispose.implement(class, &dispose);
             gobject.Object.virtual_methods.finalize.implement(class, &finalize);
+            // The desk behind the whole content (T3623).
+            gtk.Widget.virtual_methods.snapshot.implement(class, &snapshot);
         }
 
         pub const as = C.Class.as;

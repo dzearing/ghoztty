@@ -148,6 +148,38 @@ tint_fill() {
 }
 pc_tinted() { awk -v m="$(tint_fill pc 160 80 16)" 'BEGIN{exit !(m > 0.5)}'; }
 tints_listed() { [ "$(leaf_field pa background_tint)" = None ] && [ "$(leaf_field pb background_tint)" = '#106030' ] && [ "$(leaf_field pc background_tint)" = '#a05010' ]; }
+# T3623: the window's gradient. The launch's own (hand-opened) window draws a
+# random one (macos-window-gradient defaults to random); +new-window wa is on
+# the shared ocean. The manifest records the seed, and the relaunch must put
+# the SAME gradient back, not draw a new random one.
+hand_seed() { manifest_q '[w.get("desk_variant") for w in m["windows"] if w.get("ipc_name") != "wa"]'; }
+seeds_recorded() { [ "$(manifest_q 'sorted((w.get("ipc_name") == "wa", bool(w.get("desk_variant"))) for w in m["windows"])')" = "[(False, True), (True, False)]" ]; }
+hl_wait_for 10 seeds_recorded
+hl_check "RD1 the manifest records the hand-opened window's gradient seed, and none for the ocean window wa" $? "$(manifest_q '[(w.get("ipc_name"), w.get("desk_variant")) for w in m["windows"]]')"
+seed_before=$(hand_seed)
+# hand_pane: the first pane id of the window that is not wa.
+hand_pane() {
+    cli +list --json 2>/dev/null | python3 -c '
+import json, sys
+d = json.load(sys.stdin)["data"]
+def first(n):
+    return first(n["left"]) if n["type"] == "split" else n["terminal"]["id"]
+for w in d["windows"]:
+    if (w.get("target") or "") != "wa":
+        print(first(w["tabs"][0]["splits"])); break
+' 2>/dev/null
+}
+# desk_px <pane-id>: 'r g b' of its window's desk, 3px left of that pane's card.
+desk_shot="$HL_RUNTIME/desk.png"
+desk_px() {
+    local reply x y
+    reply=$(hl_screenshot "$1" "$HL_RUNTIME/desk-pane.png" 2>/dev/null) || { echo off; return; }
+    read -r x y <<< "$(printf '%s' "$reply" | python3 -c 'import json, sys; d = json.loads(sys.stdin.readline())["data"]; print(d["x"], d["y"] + d["height"] // 2)' 2>/dev/null)"
+    hl_screenshot "$1" "$desk_shot" --window > /dev/null 2>&1 || { echo off; return; }
+    hl_png_pixel "$desk_shot" $(( ${x:-3} - 3 )) "${y:-0}"
+}
+desk_before=$(desk_px "$(hand_pane)")
+wa_desk=$(desk_px "$(leaf_field pa id)")
 before=$(shape)
 wins_before=$(printf '%s\n' "$before" | grep -c .)
 listA=$(leaf_field pa pid); listB0=$(leaf_field pb pid); listC=$(leaf_field pc pid)
@@ -180,6 +212,16 @@ hl_wait_for 5 tints_listed
 hl_check "RT2 the relaunch puts pb's and pc's tints back (+list background_tint), and pa stays untinted" $? "pa=$(leaf_field pa background_tint) pb=$(leaf_field pb background_tint) pc=$(leaf_field pc background_tint)"
 hl_wait_for 10 pc_tinted
 hl_check "RT3 the re-attached pc renders its tint (#a05010)" $? "fill=$(tint_fill pc 160 80 16)"
+# T3623: the same gradient, not a new random one. The running app records
+# again every second, so a restore that drew a fresh seed rewrites it.
+sleep 3
+[ -n "$seed_before" ] && [ "$seed_before" != "[None]" ] && [ "$(hand_seed)" = "$seed_before" ]
+hl_check "RD2 after the crash relaunch the hand-opened window keeps its recorded gradient seed" $? "before=$seed_before after=$(hand_seed)"
+desk_after=$(desk_px "$(hand_pane)")
+# same_px <r g b> <r g b>: within 3 per channel.
+same_px() { awk -v a="$1" -v b="$2" -v c="$3" -v x="$4" -v y="$5" -v z="$6" 'function d(p,q){return p>q?p-q:q-p} BEGIN{exit !(d(a,x)<=3 && d(b,y)<=3 && d(c,z)<=3)}'; }
+[ "$desk_before" != off ] && same_px $desk_before $desk_after && ! same_px $desk_before $wa_desk
+hl_check "RD3 its desk renders the same gradient as before the crash (and not the ocean wa sits on)" $? "before=${desk_before// /,} after=${desk_after// /,} ocean=${wa_desk// /,}"
 
 # ---- 3. a real quit detaches and snapshots --------------------------------
 kill -TERM "$APP2" 2>/dev/null

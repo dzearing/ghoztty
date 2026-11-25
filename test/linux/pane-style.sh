@@ -43,7 +43,7 @@ cli() { env -u GHOZTTY_IPC_SOCKET -u GHOZTTY_PANE_ID "$app" "$@"; }
 # (G1-G8, T3622) turns glass on with a reload.
 cfg_dir="$XDG_CONFIG_HOME/ghostty"
 mkdir -p "$cfg_dir"
-base_cfg='background = #203040\nforeground = #e0e0e0\nbackground-opacity = 1\nwindow-padding-color = background\nunfocused-split-opacity = 1\nmacos-window-gradient = ocean\nmacos-pane-glass = false\n'
+base_cfg='background = #203040\nforeground = #e0e0e0\nbackground-opacity = 1\nwindow-padding-color = background\nunfocused-split-opacity = 1\nmacos-window-gradient = ocean\nmacos-pane-glass = false\nmacos-pane-sidebar = expanded\n'
 printf "$base_cfg" > "$cfg_dir/config.ghostty"
 
 export SHELL=/bin/sh
@@ -124,6 +124,20 @@ read -r kr kg kb <<< "$(px "$a" $(( ax + 1 )) $(( ay + 1 )))"
 ! near "$kr" "$kg" "$kb" 32 48 64
 hl_check "S9 a card's corner is rounded: its corner pixel shows the desk, not the terminal" $? "corner=$kr,$kg,$kb"
 
+# ---- the desk under the whole window (T3623; pane-style.md "Titlebar") -----
+# The window paints it, so the ocean (blue leads red) shows in the header
+# bar above the cards and through the expanded pane sidebar to their left.
+# The stock header bar and window background are grey (blue == red), which
+# is what both probes read before T3623 and what the flat style keeps (D4).
+hdr_x=$(( ax + aw / 4 )); hdr_y=4
+read -r hr hg hb <<< "$(px "$a" "$hdr_x" "$hdr_y")"
+[ "$ay" -ge 20 ] && [ $(( hb - hr )) -ge 10 ]
+hl_check "D1 the desk runs up under the header bar (ocean at its top edge, above pane a)" $? "header($hdr_x,$hdr_y)=$hr,$hg,$hb ay=$ay"
+sb_x=$(( ax / 2 )); sb_y=$(( ay + ah - 30 ))
+read -r qr qg qb <<< "$(px "$a" "$sb_x" "$sb_y")"
+[ "$ax" -ge 60 ] && [ $(( qb - qr )) -ge 8 ]
+hl_check "D2 the expanded pane sidebar is translucent over the desk (ocean through it)" $? "sidebar($sb_x,$sb_y)=$qr,$qg,$qb ax=$ax"
+
 # ---- focus: the focused card of several is backlit with a brighter rim -----
 lit_edge=$(sum $lr $lg $lb)
 read -r rr rg rb <<< "$(px "$a" "$ax" $midy)"
@@ -152,6 +166,10 @@ hl_check "S12 macos-pane-style = flat on a reload: the panes sit one 6px flat gu
 read -r fr fg fb <<< "$(px "$a" $(( fx + 1 )) $(( fy + 1 )))"
 near "$fr" "$fg" "$fb" 32 48 64
 hl_check "S13 flat: the pane's corner is square terminal again" $? "corner=$fr,$fg,$fb"
+read -r hr2 hg2 hb2 <<< "$(px "$a" "$hdr_x" "$hdr_y")"
+dh=$(( hb2 - hr2 )); [ "$dh" -lt 0 ] && dh=$(( -dh ))
+[ "$dh" -le 5 ]
+hl_check "D4 control: flat has no desk, so the header bar is the stock grey again (blue == red)" $? "header=$hr2,$hg2,$hb2 (elevated $hr,$hg,$hb)"
 printf "$base_cfg" > "$cfg_dir/config.ghostty"
 cli +reload --config > /dev/null 2>&1
 sleep 1
@@ -210,7 +228,8 @@ pts=("$a $(( ax + aw / 2 )) $(( ay + ah / 2 ))"
      "$b $(( bx + bw / 2 )) $(( by + bh / 2 ))"
      "$c $(( cx + cw / 2 )) $(( cy + ch / 2 ))"
      "$a $(( ax + 10 )) $(( ay + 10 ))"
-     "${v:-x} $(( ${vx:-0} + ${vw:-0} / 2 )) $(( ${vy:-0} + ${vh:-0} - 12 ))")
+     "${v:-x} $(( ${vx:-0} + ${vw:-0} / 2 )) $(( ${vy:-0} + ${vh:-0} - 12 ))"
+     "$a $(( ax / 2 )) $(( ay + ah - 30 ))")
 before=(); for p in "${pts[@]}"; do before+=("$(probe $p)"); done
 printf "${glass_cfg}background = #000000\n" > "$cfg_dir/config.ghostty"
 cli +reload --config > /dev/null 2>&1
@@ -231,6 +250,8 @@ moved ${before[3]} ${after[3]} 8 12 16
 hl_check "G5 under a banner card the sheet thins to 25% glass, and the card adds no wash" $? "banner $(pair 3)"
 [ -n "$v" ] && moved ${before[4]} ${after[4]} 13 19 26
 hl_check "G6 a markdown viewer's page is see-through over the pane's 40% sheet (not white)" $? "v=$v page $(pair 4)"
+moved ${before[5]} ${after[5]} 13 19 26
+hl_check "D3 on glass the pane sidebar is an unfocused pane's card: the same 40% sheet of the terminal's background" $? "sidebar $(pair 5)"
 cli +set-banner --target="$a" '' > /dev/null 2>&1
 cli +close --pane="${v:-x}" > /dev/null 2>&1
 # Negative control for the oracle: with glass off, the same probe is solid

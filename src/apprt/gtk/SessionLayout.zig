@@ -190,6 +190,8 @@ fn captureWindow(
         .maximized = maximized,
         .active_tab = active_tab,
         .tabs = tabs.items,
+        // The window's own gradient (T3623; win32's T1832, Mac deskVariant).
+        .desk_variant = rules.deskSeedToRecord(if (window.deskVariant()) |v| v.seed else null),
     };
 }
 
@@ -433,6 +435,9 @@ fn restoreWindow(app: *Application, ctx: *Ctx, win: schema.Window) bool {
         tabs_built += 1;
     }
     const w = window orelse return false;
+    // Its gradient comes back with it (T3623): the recorded seed, else the
+    // ocean - never the fresh random one a hand-opened window would draw.
+    w.setDeskVariant(if (rules.deskSeedToRestore(win)) |seed| .{ .seed = seed } else null);
     if (win.ipc_name) |n| w.setIpcName(n);
     if (win.title_override) |title| w.setTitleOverride(title);
     if (win.maximized) w.as(gtk.Window).maximize();

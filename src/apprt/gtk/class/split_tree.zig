@@ -181,12 +181,6 @@ pub const SplitTree = extern struct {
         /// close dialog.
         pending_close: ?Surface.Tree.Node.Handle,
 
-        /// The gradient desk under the cards in the elevated pane style
-        /// (T3566): a small texture of the window's gradient, stretched
-        /// over the tree, and what it was rendered for. Owned.
-        desk_texture: ?*wk.GdkTexture = null,
-        desk_key: pane_style.DeskKey = .{},
-
         /// Stacked panes (T3567): a split tab is one stage the shared
         /// layout places (`placeStage`), not nested `GtkPaned`s. Null while
         /// the tab shows one pane (a lone pane, or zoomed).
@@ -266,51 +260,6 @@ pub const SplitTree = extern struct {
             entry.view.as(gtk.Widget).queueDraw();
             entry.view.syncGlass();
         }
-    }
-
-    /// The desk, drawn before the children so every card sits on it.
-    fn snapshotDesk(self: *Self, snap: *wk.GtkSnapshot) void {
-        const look = paneLook();
-        if (!pane_style.hasDesk(look.style)) return;
-        const widget = self.as(gtk.Widget);
-        const w = widget.getWidth();
-        const h = widget.getHeight();
-        if (w <= 0 or h <= 0) return;
-        const variant: ?pane_style.Variant = if (ext.getAncestor(Window, widget)) |win| win.deskVariant() else null;
-
-        const priv = self.private();
-        const key: pane_style.DeskKey = .{
-            .w = @intCast(w),
-            .h = @intCast(h),
-            .seed = if (variant) |v| v.seed else null,
-            .is_light = look.is_light,
-        };
-        if (priv.desk_texture == null or !priv.desk_key.eql(key)) {
-            const size = pane_style.deskSize(key.w, key.h);
-            const alloc = Application.default().allocator();
-            const buf = alloc.alloc(u32, size.w * size.h) catch return;
-            defer alloc.free(buf);
-            pane_style.renderDesk(buf, size, @floatFromInt(w), @floatFromInt(h), pane_style.Palette.forWindow(variant, look.is_light));
-            const bytes = wk.g_bytes_new(buf.ptr, buf.len * @sizeOf(u32));
-            defer wk.g_bytes_unref(bytes);
-            const tex = wk.gdk_memory_texture_new(
-                @intCast(size.w),
-                @intCast(size.h),
-                wk.GDK_MEMORY_B8G8R8A8_PREMULTIPLIED,
-                bytes,
-                size.w * @sizeOf(u32),
-            ) orelse return;
-            if (priv.desk_texture) |old| wk.g_object_unref(old);
-            priv.desk_texture = tex;
-            priv.desk_key = key;
-        }
-        const rect: wk.GrapheneRect = .{ .w = @floatFromInt(w), .h = @floatFromInt(h) };
-        wk.gtk_snapshot_append_scaled_texture(snap, priv.desk_texture.?, wk.GSK_SCALING_FILTER_LINEAR, &rect);
-    }
-
-    fn snapshot(self: *Self, snap: *gtk.Snapshot) callconv(.c) void {
-        self.snapshotDesk(@ptrCast(snap));
-        gtk.Widget.virtual_methods.snapshot.call(Class.parent, self.as(Parent), snap);
     }
 
     fn init(self: *Self, _: *Class) callconv(.c) void {
@@ -1719,8 +1668,6 @@ pub const SplitTree = extern struct {
     fn dispose(self: *Self) callconv(.c) void {
         const priv = self.private();
         priv.last_focused.set(null);
-        if (priv.desk_texture) |t| wk.g_object_unref(t);
-        priv.desk_texture = null;
         // The stacked-panes stage and its state (T3567).
         self.dropStage();
         priv.faces.deinit(Application.default().allocator());
@@ -2309,8 +2256,6 @@ pub const SplitTree = extern struct {
             // Virtual methods
             gobject.Object.virtual_methods.dispose.implement(class, &dispose);
             gobject.Object.virtual_methods.finalize.implement(class, &finalize);
-            // The elevated pane style's gradient desk (T3566).
-            gtk.Widget.virtual_methods.snapshot.implement(class, &snapshot);
         }
 
         pub const as = C.Class.as;
