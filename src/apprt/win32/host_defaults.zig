@@ -46,6 +46,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const Allocator = std.mem.Allocator;
+const xdg = @import("../../os/xdg.zig");
 
 const log = std.log.scoped(.win32);
 
@@ -289,7 +290,9 @@ pub const Resolved = struct {
 
 /// Resolve the store path:
 ///   1. `GHOSTTY_HOST_DEFAULTS` (explicit full-path override; tests use this),
-///   2. `%LOCALAPPDATA%\ghoztty\host_defaults[-debug].json`.
+///   2. `%LOCALAPPDATA%\ghoztty\host_defaults[-debug].json`; on Linux
+///      (T3635) `$XDG_CONFIG_HOME/ghoztty/host_defaults[-debug].json`
+///      (default `~/.config`) - a preference the user set, so config.
 /// Null when neither is available. Caller frees.
 pub fn storePath(alloc: Allocator) ?[]u8 {
     if (std.process.getEnvVarOwned(alloc, "GHOSTTY_HOST_DEFAULTS")) |p| {
@@ -297,12 +300,17 @@ pub fn storePath(alloc: Allocator) ?[]u8 {
         alloc.free(p);
     } else |_| {}
 
-    const dir = std.process.getEnvVarOwned(alloc, "LOCALAPPDATA") catch return null;
-    defer alloc.free(dir);
     const name = if (builtin.mode == .Debug)
         "host_defaults-debug.json"
     else
         "host_defaults.json";
+    if (comptime builtin.os.tag != .windows) {
+        const dir = xdg.config(alloc, .{ .subdir = "ghoztty" }) catch return null;
+        defer alloc.free(dir);
+        return std.fs.path.join(alloc, &.{ dir, name }) catch null;
+    }
+    const dir = std.process.getEnvVarOwned(alloc, "LOCALAPPDATA") catch return null;
+    defer alloc.free(dir);
     return std.fs.path.join(alloc, &.{ dir, "ghoztty", name }) catch null;
 }
 

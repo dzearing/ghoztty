@@ -170,6 +170,42 @@ pub fn liveAgentPid(self: *LocalAgent) ?posix.pid_t {
     return if (pidAlive(pid)) pid else null;
 }
 
+/// What Settings > Sessions & Agent shows (T3635, win32's `liveStatus`),
+/// read WITHOUT dialing or spawning (Mac `AgentStatusModel.refresh`): the
+/// live pid as `liveAgentPid` reads it, and the socket its info file names,
+/// copied into `socket_out`. Null when no live agent holds the file.
+pub fn liveStatus(self: *LocalAgent, socket_out: []u8) ?struct { pid: i64, socket: []const u8 } {
+    const dir = paths.stateDir(self.alloc, build_config.is_debug) catch return null;
+    defer self.alloc.free(dir);
+    const port_path = paths.join(self.alloc, dir, paths.port_file) catch return null;
+    defer self.alloc.free(port_path);
+    const bytes = std.fs.cwd().readFileAlloc(self.alloc, port_path, 64 * 1024) catch return null;
+    defer self.alloc.free(bytes);
+    const parsed = std.json.parseFromSlice(InfoFile, self.alloc, bytes, .{ .ignore_unknown_fields = true }) catch return null;
+    defer parsed.deinit();
+    const pid = std.math.cast(posix.pid_t, parsed.value.pid) orelse return null;
+    if (pid <= 0 or !pidAlive(pid)) return null;
+    const s = parsed.value.socket orelse "";
+    const n = @min(s.len, socket_out.len);
+    @memcpy(socket_out[0..n], s[0..n]);
+    return .{ .pid = pid, .socket = socket_out[0..n] };
+}
+
+/// The socket a running agent would listen on (Mac's
+/// `Paths.current.socketFile`), into `out`; "" when it cannot be named.
+pub fn expectedSocket(self: *LocalAgent, out: []u8) []const u8 {
+    const dir = paths.stateDir(self.alloc, build_config.is_debug) catch return "";
+    defer self.alloc.free(dir);
+    return std.fmt.bufPrint(out, "{s}/{s}", .{ dir, paths.socket_file }) catch "";
+}
+
+/// The bundled agent build if something has ALREADY probed it, else null.
+/// `bundledVersion` runs `ghoztty-agent --version` on its first call; a
+/// reader that must not start an agent process (Settings) uses this.
+pub fn bundledVersionIfProbed(self: *const LocalAgent) ?[]const u8 {
+    return if (self.bundled_version_probed) self.bundled_version else null;
+}
+
 /// Find or spawn an agent for in-place recovery (T3400, win32's
 /// `reconnectForRecovery`): ignores the failure cooldown, since a confirmed
 /// drop already waited out its settle window. Only on success is the old

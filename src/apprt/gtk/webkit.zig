@@ -800,6 +800,12 @@ pub extern fn adw_preferences_group_remove(group: *GtkWidget, child: *GtkWidget)
 pub const adw_response_destructive: c_int = 2;
 pub extern fn adw_alert_dialog_get_heading(dialog: *GtkWidget) ?[*:0]const u8;
 pub extern fn adw_alert_dialog_get_body(dialog: *GtkWidget) ?[*:0]const u8;
+// Settings > Sessions & Agent / Remote Machines and Host Settings (T3635).
+pub extern fn gtk_menu_button_set_icon_name(button: *GtkWidget, icon: [*:0]const u8) void;
+pub extern fn gtk_menu_button_get_popover(button: *GtkWidget) ?*GtkWidget;
+pub extern fn gtk_popover_get_child(popover: *GtkWidget) ?*GtkWidget;
+pub extern fn gtk_widget_has_css_class(widget: *GtkWidget, class: [*:0]const u8) c_int;
+pub extern fn adw_preferences_row_get_title(row: *GtkWidget) ?[*:0]const u8;
 
 /// `GtkEventSequenceState`.
 pub const sequence_claimed: c_int = 1;

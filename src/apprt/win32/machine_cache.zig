@@ -30,6 +30,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const Allocator = std.mem.Allocator;
+const xdg = @import("../../os/xdg.zig");
 
 const log = std.log.scoped(.win32);
 
@@ -92,14 +93,21 @@ pub fn parse(alloc: Allocator, bytes: []const u8) ?Parsed {
     }) catch null;
 }
 
-/// Where the cache lives, or null when LOCALAPPDATA is unset.
+/// Where the cache lives, or null when LOCALAPPDATA is unset. On Linux
+/// (T3635) `$XDG_CACHE_HOME/ghoztty/machines[-debug].json` (default
+/// `~/.cache`): a remembered answer the app can always fetch again.
 pub fn cachePath(alloc: Allocator) ?[]u8 {
-    const dir = std.process.getEnvVarOwned(alloc, "LOCALAPPDATA") catch return null;
-    defer alloc.free(dir);
     const name = if (builtin.mode == .Debug)
         "machines-debug.json"
     else
         "machines.json";
+    if (comptime builtin.os.tag != .windows) {
+        const dir = xdg.cache(alloc, .{ .subdir = "ghoztty" }) catch return null;
+        defer alloc.free(dir);
+        return std.fs.path.join(alloc, &.{ dir, name }) catch null;
+    }
+    const dir = std.process.getEnvVarOwned(alloc, "LOCALAPPDATA") catch return null;
+    defer alloc.free(dir);
     return std.fs.path.join(alloc, &.{ dir, "ghoztty", name }) catch null;
 }
 
@@ -131,7 +139,8 @@ pub fn save(alloc: Allocator, account: []const u8, entries: []const Entry) void 
     defer alloc.free(path);
     const json = serialize(alloc, account, entries) orelse return;
     defer alloc.free(json);
-    if (std.fs.path.dirname(path)) |dir| std.fs.makeDirAbsolute(dir) catch {};
+    // makePath: on Linux the XDG cache dir itself may not exist yet.
+    if (std.fs.path.dirname(path)) |dir| std.fs.cwd().makePath(dir) catch {};
     const f = std.fs.createFileAbsolute(path, .{}) catch return;
     defer f.close();
     f.writeAll(json) catch {};

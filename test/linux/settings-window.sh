@@ -153,8 +153,8 @@ line_of() { grep "^$1 = " "$dev" | tail -1 | sed "s/^$1 = //"; }
 
 o=$(st --op=state)
 pg=$(jget "$o" '",".join(p["id"] for p in d["pages"])')
-[ "$pg" = "appearance,panes,terminal,keyboard,session,updates,advanced" ]
-hl_check "P1 the sidebar lists the curated pages in Mac's order, then Advanced (no empty Remote page)" $? "pages=$pg"
+[ "$pg" = "appearance,panes,terminal,keyboard,session,remote,updates,advanced" ]
+hl_check "P1 the sidebar lists the curated pages in Mac's order, then Advanced (Remote Machines since T3635)" $? "pages=$pg"
 n=$(jget "$o" 'd["curated"]')
 [ -n "$n" ] && [ "$n" -gt 40 ]
 hl_check "P2 the pages carry the shared catalog's rows (>40 curated rows)" $? "curated=$n"

@@ -60,11 +60,15 @@
 //! Restore..., the current file, and the "Saved - Show Change - Undo" toast
 //! over the foot of the window after every write.
 //!
+//! **Sessions & Agent's agent status and the Remote Machines page (T3635)**
+//! are `SettingsLive.zig`: the agent read without spawning it, re-read each
+//! time the page is shown, and the enrolled machines from the remembered
+//! directory with a background presence fetch and Host Settings....
+//!
 //! Rows are built once and refreshed in place after every write (a rebuild
 //! would lose the page's scroll), from the same reader the seam reports.
 //! Sections with their own UI that are their own cards are left off for
-//! now: the preview and themes (T3636), the agent status and Remote Machines
-//! (T3635).
+//! now: the preview and themes (T3636).
 const SettingsWindow = @This();
 
 const std = @import("std");
@@ -85,6 +89,7 @@ const Application = @import("class/application.zig").Application;
 const ShortcutGuideWindow = @import("ShortcutGuideWindow.zig");
 const font_families = @import("font_families.zig");
 const ConfigFile = @import("SettingsConfigFile.zig");
+pub const SettingsLive = @import("SettingsLive.zig");
 
 const log = std.log.scoped(.gtk_settings);
 
@@ -195,6 +200,8 @@ fonts: font_families.Families = .{ .mono = &.{}, .all = &.{} },
 font_arena: std.heap.ArenaAllocator,
 /// Advanced > Config file and the change toast (T3633).
 config_file: ConfigFile = .{},
+/// Sessions & Agent's agent status and Remote Machines (T3635).
+live: SettingsLive = .{},
 
 const Group = struct { page: PageId, title: ?[]const u8, widget: *wk.GtkWidget };
 
@@ -307,8 +314,8 @@ fn tagOf(widget: *wk.GtkWidget, name: [*:0]const u8) ?usize {
 /// their own cards; see the file comment).
 fn customBuilt(c: pages.Custom) bool {
     return switch (c) {
-        .shortcut_guide, .version, .config_file, .all_settings => true,
-        .preview, .theme, .agent_status, .remote_machines => false,
+        .shortcut_guide, .version, .config_file, .all_settings, .agent_status, .remote_machines => true,
+        .preview, .theme => false,
     };
 }
 
@@ -450,7 +457,10 @@ fn addCustom(self: *SettingsWindow, group: *wk.GtkWidget, c: pages.Custom) !void
             wk.adw_preferences_group_add(group, row);
         },
         // Advanced draws its own (buildAdvanced, SettingsConfigFile.zig).
-        .config_file, .all_settings, .preview, .theme, .agent_status, .remote_machines => {},
+        // T3635: SettingsLive draws both and re-reads them when shown.
+        .agent_status => self.live.buildAgent(group),
+        .remote_machines => self.live.buildRemote(group),
+        .config_file, .all_settings, .preview, .theme => {},
     }
 }
 
@@ -1374,6 +1384,8 @@ pub fn setPage(self: *SettingsWindow, id: PageId) bool {
     const i = std.mem.indexOfScalar(PageId, self.shown_pages.items, id) orelse return false;
     self.page = id;
     wk.gtk_stack_set_visible_child_name(self.stack, @tagName(id).ptr);
+    // Mac's `.onAppear` / `.task`: the live sections re-read when shown.
+    self.live.shown(self, id);
     const row = wk.gtk_list_box_get_row_at_index(self.sidebar, @intCast(i));
     if (wk.gtk_list_box_get_selected_row(self.sidebar) != row) {
         self.syncing = true;
@@ -1779,6 +1791,7 @@ fn destroy(self: *SettingsWindow) void {
     if (self.slide_source != 0) _ = wk.g_source_remove(self.slide_source);
     const gpa = self.gpa;
     self.config_file.deinit(gpa);
+    self.live.deinit(gpa);
     self.rows.deinit(gpa);
     self.curated.deinit(gpa);
     self.groups.deinit(gpa);

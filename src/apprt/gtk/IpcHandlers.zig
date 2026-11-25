@@ -1302,6 +1302,21 @@ fn readClipboard(app: Context, request: Request) Allocator.Error![]u8 {
 ///   ({animates,leaving,shown,completed,instant,frames[]}: the alphas the
 ///   last timed exit painted)
 ///
+/// Sessions & Agent and Remote Machines (T3635) - showing the page
+/// (--page=session / --page=remote) is what re-reads them, as on Mac:
+///
+///   --op=host_settings --value=<device id>   click that row's Host Settings...
+///   --op=host-settings-fill --key=working_directory|shell --value=<text>
+///   --op=host-settings-preset --index=<i>    pick the shell field's i-th preset
+///   --op=host-settings-answer --value=save|cancel   (a separate request
+///                                from the one that opened it)
+///   state adds "live":{agent:{running,pid,running_build,bundled_build,
+///   socket,caption,drawn:{status,dot,running_build,bundled,socket,titles[]}},
+///   remote:{snapped,fetching,fetched,account,email,title,caption,drawn,
+///   machines:[{id,name,presence,working_directory,shell,caption,
+///   drawn:{title,caption,dot,button}}],rows_drawn},host_dialog,
+///   host_last_answer}
+///
 ///   state adds "page", "visible_page", "filter", "pages":[{id,title,count}],
 ///   "groups":[{page,title,drawn}] and, with --key, "key.curated":
 ///   {page,label,kind,display,expected,dot,reset,sensitive,enabled,subtitle,
@@ -1380,6 +1395,28 @@ fn settingsSeam(app: Context, request: Request) Allocator.Error![]u8 {
         // The write (and its redraw) run now, so the reply reads the result.
         w.flush();
         ok = w.problem(k) == null;
+    } else if (liveOp(op)) {
+        const HostSettingsDialog = @import("HostSettingsDialog.zig");
+        const w = SettingsWindow.current() orelse
+            return server.errorResponse(c_alloc, "the Settings window is not open", .{});
+        if (std.mem.eql(u8, op, "host_settings")) {
+            // Click the machine row's Host Settings... (by device id).
+            const id = val orelse return server.errorResponse(c_alloc, "--value=<device id> is required", .{});
+            const i = w.live.indexOf(id) orelse return server.errorResponse(c_alloc, "no machine row has id '{s}'", .{id});
+            ok = w.live.clickHostSettings(i);
+        } else {
+            const d = HostSettingsDialog.current() orelse
+                return server.errorResponse(c_alloc, "no Host Settings dialog is open", .{});
+            if (std.mem.eql(u8, op, "host-settings-fill")) {
+                const k = key orelse return server.errorResponse(c_alloc, "--key=working_directory|shell is required", .{});
+                d.fill(if (std.mem.eql(u8, k, "shell")) .shell else .working_directory, val orelse "");
+            } else if (std.mem.eql(u8, op, "host-settings-preset")) {
+                ok = d.pickPreset(index_arg);
+            } else {
+                const v = val orelse return server.errorResponse(c_alloc, "--value=save|cancel is required", .{});
+                d.answer(if (std.mem.eql(u8, v, "save")) "save" else "cancel");
+            }
+        }
     } else if (configFileOp(op)) {
         const w = SettingsWindow.current() orelse
             return server.errorResponse(c_alloc, "the Settings window is not open", .{});
@@ -1440,6 +1477,153 @@ fn settingsSeam(app: Context, request: Request) Allocator.Error![]u8 {
     var jws: std.json.Stringify = .{ .writer = &out.writer };
     writeSettingsState(&jws, arena, SettingsWindow.current(), key, ok) catch return error.OutOfMemory;
     return out.toOwnedSlice();
+}
+
+fn rowTitle(row: *wk.GtkWidget) []const u8 {
+    return std.mem.span(wk.adw_preferences_row_get_title(row) orelse "");
+}
+
+/// The dot's presence as drawn: which of the three classes it carries.
+fn dotDrawn(dot: *wk.GtkWidget) []const u8 {
+    if (wk.gtk_widget_has_css_class(dot, "success") != 0) return "online";
+    if (wk.gtk_widget_has_css_class(dot, "warning") != 0) return "checking";
+    if (wk.gtk_widget_has_css_class(dot, "dim-label") != 0) return "offline";
+    return "none";
+}
+
+/// Sessions & Agent and Remote Machines (T3635): the snapshot beside what
+/// each row draws, and the Host Settings dialog while one is open.
+fn writeLiveState(jws: *std.json.Stringify, w: anytype) !void {
+    const live = @import("../win32/settings_live.zig");
+    const HostSettingsDialog = @import("HostSettingsDialog.zig");
+    const lv = &w.live;
+    const a = lv.agent;
+    try jws.objectField("live");
+    try jws.beginObject();
+    try jws.objectField("agent");
+    try jws.beginObject();
+    try jws.objectField("running");
+    try jws.write(a.running);
+    try jws.objectField("pid");
+    try jws.write(a.pid);
+    try jws.objectField("running_build");
+    try jws.write(a.running_build);
+    try jws.objectField("bundled_build");
+    try jws.write(a.bundled_build);
+    try jws.objectField("socket");
+    try jws.write(lv.socket);
+    try jws.objectField("caption");
+    try jws.write(@TypeOf(lv.*).caption);
+    try jws.objectField("drawn");
+    if (lv.agent_rows) |r| {
+        try jws.beginObject();
+        try jws.objectField("status");
+        try jws.write(std.mem.span(wk.gtk_label_get_text(r.status_value)));
+        try jws.objectField("dot");
+        try jws.write(if (wk.gtk_widget_has_css_class(r.status_dot, "success") != 0) "green" else "grey");
+        try jws.objectField("running_build");
+        try jws.write(if (wk.gtk_widget_get_visible(r.running_build) != 0) std.mem.span(wk.gtk_label_get_text(r.running_build_value)) else null);
+        try jws.objectField("bundled");
+        try jws.write(if (wk.gtk_widget_get_visible(r.bundled) != 0) std.mem.span(wk.gtk_label_get_text(r.bundled_value)) else null);
+        try jws.objectField("socket");
+        try jws.write(std.mem.span(wk.gtk_label_get_text(r.socket_value)));
+        try jws.objectField("titles");
+        try jws.beginArray();
+        for ([_]*wk.GtkWidget{ r.status, r.running_build, r.bundled, r.socket }) |row| try jws.write(rowTitle(row));
+        try jws.endArray();
+        try jws.endObject();
+    } else try jws.write(null);
+    try jws.endObject();
+
+    try jws.objectField("remote");
+    try jws.beginObject();
+    try jws.objectField("snapped");
+    try jws.write(lv.snapped);
+    try jws.objectField("fetching");
+    try jws.write(lv.fetching);
+    try jws.objectField("fetched");
+    try jws.write(lv.fetched);
+    try jws.objectField("account");
+    try jws.write(@tagName(lv.account));
+    try jws.objectField("email");
+    try jws.write(lv.email);
+    var tb: [200]u8 = undefined;
+    try jws.objectField("title");
+    try jws.write(live.accountTitle(&tb, lv.account, lv.email));
+    try jws.objectField("caption");
+    try jws.write(live.accountCaption(lv.account));
+    try jws.objectField("drawn");
+    if (lv.account_row) |row| {
+        try jws.beginObject();
+        try jws.objectField("title");
+        try jws.write(rowTitle(row));
+        try jws.objectField("caption");
+        try jws.write(std.mem.span(wk.adw_action_row_get_subtitle(row) orelse ""));
+        try jws.endObject();
+    } else try jws.write(null);
+    try jws.objectField("machines");
+    try jws.beginArray();
+    for (lv.machines, 0..) |m, i| {
+        var cb: [1100]u8 = undefined;
+        try jws.beginObject();
+        try jws.objectField("id");
+        try jws.write(m.id);
+        try jws.objectField("name");
+        try jws.write(m.name);
+        try jws.objectField("presence");
+        try jws.write(@tagName(m.presence));
+        try jws.objectField("working_directory");
+        try jws.write(m.working_directory);
+        try jws.objectField("shell");
+        try jws.write(m.shell);
+        try jws.objectField("caption");
+        try jws.write(live.machineCaption(&cb, m));
+        try jws.objectField("drawn");
+        if (i < lv.machine_rows.items.len) {
+            const mr = lv.machine_rows.items[i];
+            try jws.beginObject();
+            try jws.objectField("title");
+            try jws.write(rowTitle(mr.row));
+            try jws.objectField("caption");
+            try jws.write(std.mem.span(wk.adw_action_row_get_subtitle(mr.row) orelse ""));
+            try jws.objectField("dot");
+            try jws.write(dotDrawn(mr.dot));
+            try jws.objectField("button");
+            try jws.write(std.mem.span(wk.gtk_button_get_label(mr.button) orelse ""));
+            try jws.endObject();
+        } else try jws.write(null);
+        try jws.endObject();
+    }
+    try jws.endArray();
+    try jws.objectField("rows_drawn");
+    try jws.write(lv.machine_rows.items.len);
+    try jws.endObject();
+
+    try jws.objectField("host_dialog");
+    if (HostSettingsDialog.current()) |d| {
+        try jws.beginObject();
+        try jws.objectField("id");
+        try jws.write(d.id());
+        try jws.objectField("title");
+        try jws.write(std.mem.span(wk.adw_alert_dialog_get_heading(d.dialog) orelse ""));
+        try jws.objectField("body");
+        try jws.write(std.mem.span(wk.adw_alert_dialog_get_body(d.dialog) orelse ""));
+        try jws.objectField("working_directory");
+        try jws.write(d.workingDirectory());
+        try jws.objectField("shell");
+        try jws.write(d.shellText());
+        try jws.endObject();
+    } else try jws.write(null);
+    try jws.objectField("host_last_answer");
+    try jws.write(HostSettingsDialog.lastAnswer());
+    try jws.endObject();
+}
+
+/// The Remote Machines / Host Settings ops (T3635).
+fn liveOp(op: []const u8) bool {
+    const ops = [_][]const u8{ "host_settings", "host-settings-fill", "host-settings-preset", "host-settings-answer" };
+    for (ops) |o| if (std.mem.eql(u8, op, o)) return true;
+    return false;
 }
 
 fn configFileOp(op: []const u8) bool {
@@ -1647,6 +1831,7 @@ fn writeSettingsState(jws: *std.json.Stringify, arena: Allocator, w_opt: anytype
         try jws.objectField("curated");
         try jws.write(w.curated.items.len);
         try writeConfigFileState(jws, arena, w);
+        try writeLiveState(jws, w);
         if (key) |k| {
             try jws.objectField("key");
             try jws.beginObject();

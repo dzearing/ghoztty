@@ -47,6 +47,18 @@ pub fn runningBuildLine(buf: []u8, a: Agent) ?[]const u8 {
     return std.fmt.bufPrint(buf, "{s}{s}", .{ b, suffix }) catch b;
 }
 
+/// `path` with the home directory written `~` (Mac's Socket line,
+/// `replacingOccurrences(of: home, with: "~")`); only a whole leading
+/// component, so `/home/meow` is not `~ow` under `/home/me`. The Linux
+/// Socket row (T3635) uses it; Windows names a pipe, which has no home.
+pub fn tildePath(buf: []u8, path: []const u8, home: ?[]const u8) []const u8 {
+    const h = home orelse return path;
+    if (h.len == 0 or !std.mem.startsWith(u8, path, h)) return path;
+    const rest = path[h.len..];
+    if (rest.len > 0 and rest[0] != '/') return path;
+    return std.fmt.bufPrint(buf, "~{s}", .{rest}) catch path;
+}
+
 /// "5 minutes ago" for `secs` seconds in the past (Mac's `.relative(.named)`).
 pub fn relative(buf: []u8, secs: i64) []const u8 {
     const s = @max(secs, 0);
@@ -183,6 +195,16 @@ test "settings_live: running build names staleness only when both builds are kno
     try testing.expect(std.mem.endsWith(u8, stale, "updates itself when no sessions need it"));
     const current = runningBuildLine(&buf, .{ .running_build = "20260730-e69d41755", .bundled_build = "20260730-e69d41755" }).?;
     try testing.expectEqualStrings("20260730-e69d41755", current);
+}
+
+test "settings_live: tildePath shortens only a whole home component" {
+    var buf: [64]u8 = undefined;
+    try testing.expectEqualStrings("~/.config/x.sock", tildePath(&buf, "/home/me/.config/x.sock", "/home/me"));
+    try testing.expectEqualStrings("~", tildePath(&buf, "/home/me", "/home/me"));
+    try testing.expectEqualStrings("/home/meow/x", tildePath(&buf, "/home/meow/x", "/home/me"));
+    try testing.expectEqualStrings("/tmp/x", tildePath(&buf, "/tmp/x", "/home/me"));
+    try testing.expectEqualStrings("/tmp/x", tildePath(&buf, "/tmp/x", null));
+    try testing.expectEqualStrings("/tmp/x", tildePath(&buf, "/tmp/x", ""));
 }
 
 test "settings_live: relative time" {
