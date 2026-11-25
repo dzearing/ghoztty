@@ -1827,8 +1827,7 @@ decision is win32's pure `apprt/win32/agent_recovery.zig`, shared.
 - Log lines: `agent recovery: link down ...`, `... recovering windows in
   place`, `rebuilt <n> pane(s) ... (<a> re-attached, <f> fresh)`, `link
   recovered on its own`, `retry`, `gave up`.
-- Not yet: refreshing a STALE agent (an older build) and the protocol-skew
-  notice (T3600).
+- A STALE agent (an older build) and a protocol skew: next section (T3600).
 
 ```powershell
 powershell -NoProfile -File scripts\linux\wsl-run.ps1 -CommandFile test\linux\agent-recover.sh
@@ -1842,6 +1841,45 @@ keeps its tint (A10d, T3589), the viewer is
 untouched, a new pane rides the new agent, a second death raced against a new
 pane recovers everything onto a third agent, and a user close still ends a
 shell.
+
+### An older agent is refreshed; a skewed one is asked about (T3600)
+
+`src/apprt/gtk/AgentUpgrade.zig` over win32's pure `agent_upgrade.zig`
+(`evaluate`, `evaluateSkew`), mapped by `agent_upgrade_rules.planFor`.
+
+- **When**: once the first resolve settles (`LocalAgent.on_resolved`, on
+  idle, never inside a pane build) and 500 ms after the last surface closes
+  (the quit-timer start). Quitting is never a check moment.
+- **Stale build** (HELLO stamp vs `ghoztty-agent --version`, probed once per
+  run): nothing live => `restartForUpgrade` + `AgentRecovery.recover`, which
+  rebuilds any tombstoned panes on the fresh agent; anything live => left
+  alone (T1056). The live count is the larger of the agent's roster and this
+  app's own panes on the connection, so a pane whose OPEN is in flight still
+  counts.
+- **Protocol skew** (`tcp_dial.dialUnixTimeoutReport` carries the peer's
+  version out of the failed dial): `LocalAgent` records it and never spawns a
+  second agent over the live one. Agent older => the mandatory-update
+  `GtkAlertDialog` (Later, Restart Now; Later is default and cancel; Later
+  holds for the run). App older => a desktop notification, never a restart.
+- **The stop** reads the pid from `port.json` and refuses unless
+  `/proc/<pid>/exe` is the agent (a ` (deleted)` suffix - the binary was
+  replaced on disk - still matches); SIGTERM, 2 s, SIGKILL.
+- Test hooks (debug only): `GHOZTTY_AGENT_BUNDLED_VERSION` (the app's bundled
+  stamp), `GHOZTTY_AGENT_PROTO_VERSION` (the agent's advertised protocol),
+  `GHOZTTY_TEST_AGENT_SKEW_DIALOG` (records the dialog) +
+  `GHOZTTY_TEST_AGENT_SKEW_ANSWER=restart` (answers it).
+- Not yet: the waiting "Background Update Ready..." row (T3691) and the
+  dialog's What's New notes (T3692).
+
+```powershell
+powershell -NoProfile -File scripts\linux\wsl-run.ps1 -CommandFile test\linux\agent-upgrade.sh
+```
+
+Ends `AGENT UPGRADE: ALL PASS` (29 checks): stale + live is deferred, the last
+window closing refreshes the idle agent, a current agent is left alone, a
+protocol-0 agent gets the dialog (Later leaves it, Restart replaces it and
+persistence returns), and a protocol-9999 agent gets the app-older notice and
+is never stopped.
 
 ### Viewer panes restore too (T3420)
 
