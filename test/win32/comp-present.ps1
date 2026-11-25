@@ -80,6 +80,11 @@
 #   R2. A pane whose context cannot move onto its window (the debug seam
 #      GHOZTTY_PANE_ADOPT_SIMULATE_FAIL=1) retries the composition path with
 #      a backoff and builds a fresh chain, instead of drawing nowhere.
+#   P. Twenty panes at once all present through the composition path (T3746):
+#      a driver caps GL interop opens per D3D11 device (15 on NVIDIA), so the
+#      shared device is a pool and a refused pane takes the next one; on an
+#      NVIDIA GL the pool must have grown (P2). Closing panes frees slots, and
+#      a new pane fills the first device again (P4).
 #
 # NOT asserted here: the pixels DWM shows. This harness runs on a background
 # desktop, which DWM never composes and Windows.Graphics.Capture refuses
@@ -378,6 +383,49 @@ try {
         Assert "R2.5 the app is still running and the pane draws text" ((Test-Alive $r2) -and (Test-DrawsText $r2.Target))
         Assert "R2.6 no OpenGL error and no failed draw" ($text -notmatch 'error\(opengl\)' -and $text -notmatch 'error drawing err=')
     } finally { Remove-Item env:GHOZTTY_PANE_ADOPT_SIMULATE_FAIL -ErrorAction SilentlyContinue }
+
+    # ========================================================================
+    "== P: twenty panes open at once all present through the composition path (T3746)"
+    # ========================================================================
+    # The NVIDIA driver lets at most 15 GL contexts open one D3D11 device for
+    # interop; the 16th pane on the one shared device (T2968) logged
+    # `unavailable ... at wgl-open-device` and fell to SwapBuffers - on a
+    # reused window, before T3739, a blank pane. The device is now a pool: a
+    # refused pane takes the next one. No knob: this is the default path.
+    Set-Knobs $null $null $null
+    $p = Start-Arm 'p' @('--undo-timeout=1s', '--confirm-close-surface=false')
+    Assert "P0 the arm's window came up" ($p.Top -ne [IntPtr]::Zero -and $null -ne $p.Win)
+    for ($i = 3; $i -le 20; $i++) {
+        & $Exe +new-window "--target=compp$i" 2>$null | Out-Null
+        Start-Sleep -Milliseconds 300
+    }
+    $want = 20
+    for ($t = 0; $t -lt 60 -and ((Count-Log $p.Err $onLine) + (Count-Log $p.Err $unavailLine)) -lt $want; $t++) { Start-Sleep -Milliseconds 250 }
+    $nOn = Count-Log $p.Err $onLine
+    $nUn = Count-Log $p.Err $unavailLine
+    Assert "P1 every one of the $want panes built its chain ($nOn built, $nUn unavailable)" ($nOn -ge $want -and $nUn -eq 0)
+    # The cap is the driver's: on this box's NVIDIA GL it is 15, so the pool
+    # MUST have grown, or the arm proves nothing. Another GL may never refuse.
+    $nvidia = (Read-Text $p.Err) -match 'renderer="NVIDIA'
+    $pooled = (Read-Text $p.Err) -match 'pooled D3D11 device 1 created'
+    if ($nvidia) {
+        Assert "P2 the NVIDIA cap was met and a second pooled device took the rest (so the arm cannot pass by never hitting it)" $pooled
+    } else { "  INFO P2 not an NVIDIA GL: pooled device 1 created=$pooled (the cap is driver-specific)" }
+    # The last pane opened is past the cap: it draws.
+    & $Exe +send-keys '--target=compp20' 'echo past-the-cap' Enter 2>$null | Out-Null
+    Assert "P3 the app is still running and the 20th pane draws text" ((Test-Alive $p) -and (Test-DrawsText 'compp20'))
+    # Closing panes frees their device's slots; a new pane fills slot 0 again.
+    for ($i = 3; $i -le 17; $i++) { & $Exe +close "--target=compp$i" 2>$null | Out-Null; Start-Sleep -Milliseconds 100 }
+    # Wait for the closed windows to leave the list (their panes are gone).
+    for ($t = 0; $t -lt 40 -and $null -ne (Get-Win 'compp17'); $t++) { Start-Sleep -Milliseconds 250 }
+    $onBefore = Count-Log $p.Err $onLine
+    $refusedBefore = Count-Log $p.Err 'refused another GL interop open'
+    & $Exe +new-window '--target=compp21' 2>$null | Out-Null
+    for ($t = 0; $t -lt 40 -and (Count-Log $p.Err $onLine) -le $onBefore; $t++) { Start-Sleep -Milliseconds 250 }
+    Assert "P4 after closing panes a new one builds its chain on the first device again (no refusal)" `
+        ((Count-Log $p.Err $onLine) -gt $onBefore -and (Count-Log $p.Err 'refused another GL interop open') -eq $refusedBefore -and (Count-Log $p.Err $unavailLine) -eq 0)
+    $text = Read-Text $p.Err
+    Assert "P5 no OpenGL error and no failed draw" ($text -notmatch 'error\(opengl\)' -and $text -notmatch 'error drawing err=')
 
     # ========================================================================
     "== C: a lost device on the composition path rebuilds its chain"

@@ -345,12 +345,14 @@ const WAIT_OBJECT_0: u32 = 0;
 extern "kernel32" fn WaitForSingleObject(HANDLE, u32) callconv(.winapi) u32;
 
 /// A D3D11 device and its immediate context, each holding one reference
-/// for the caller. `shared`: it is the process-wide device (T2968).
+/// for the caller. `shared`: it is one of the process's pooled devices
+/// (T2968), the one at `pool_index` (T3746).
 pub const Device = struct {
     device: Obj,
     context: Obj,
     warp: bool,
     shared: bool,
+    pool_index: u8 = 0,
 };
 
 /// Create a device: hardware first, WARP when there is none.
@@ -394,6 +396,16 @@ pub fn cacheReusable(hr: HRESULT) bool {
 /// fresh one, and panes still holding the old one drop it as they fail over.
 /// The cache keeps one reference for the life of the process.
 ///
+/// T3746: it is a small POOL of such devices, not one. A driver caps how
+/// many GL contexts may `wglDXOpenDeviceNV` one D3D11 device at once - the
+/// NVIDIA driver on the dev box refuses the 16th, every time - so with one
+/// device the 16th open pane lost the composition path (and, before T3739,
+/// drew nothing on a reused window). A pane whose open is refused asks for
+/// the next device (`acquireAt`), which is made on first use; slot 0 is what
+/// every pane tries first, so a slot freed by a closed pane is filled again
+/// before a new device is touched. Each pooled device is shared exactly as
+/// slot 0 is, and lives for the process.
+///
 /// Since T3074 the window chrome (`chrome_comp.zig`) and the sidebar/child
 /// hosts (`child_comp.zig`) take it too, and the chrome draws on it with
 /// Direct2D from the GUI thread. Multithread protection makes each context
@@ -403,23 +415,42 @@ pub fn cacheReusable(hr: HRESULT) bool {
 /// copies, `UpdateSubresource`, `Present` - which bind nothing a draw in
 /// flight relies on. A renderer-thread draw call would break that rule.
 pub const DeviceCache = struct {
-    mutex: std.Thread.Mutex = .{},
-    device: ?Obj = null,
-    context: ?Obj = null,
-    warp: bool = false,
+    /// How many devices the pool may hold (T3746). At the 15 interop opens
+    /// per device measured on NVIDIA that is 120 composition panes; a pane
+    /// past it presents with SwapBuffers, as on a machine with no interop.
+    pub const pool_max = 8;
 
+    const Entry = struct {
+        device: ?Obj = null,
+        context: ?Obj = null,
+        warp: bool = false,
+    };
+
+    mutex: std.Thread.Mutex = .{},
+    entries: [pool_max]Entry = .{Entry{}} ** pool_max,
+
+    /// The first pooled device: what every pane tries first, and the one
+    /// compositor hosts outside the renderer use (`processDevice`).
     pub fn acquire(self: *DeviceCache, create: D3D11CreateDeviceFn) Error!Device {
+        return self.acquireAt(create, 0);
+    }
+
+    /// The pooled device at `index` (< `pool_max`), made on first use or
+    /// remade when it was removed (T3746).
+    pub fn acquireAt(self: *DeviceCache, create: D3D11CreateDeviceFn, index: u8) Error!Device {
+        std.debug.assert(index < pool_max);
         self.mutex.lock();
         defer self.mutex.unlock();
-        if (self.device) |dev| {
+        const e = &self.entries[index];
+        if (e.device) |dev| {
             const reason = slot(*const fn (Obj) callconv(.winapi) HRESULT, dev, slot_d3d11_device_get_removed_reason)(dev);
             if (cacheReusable(reason)) {
                 addRef(dev);
-                addRef(self.context.?);
-                return .{ .device = dev, .context = self.context.?, .warp = self.warp, .shared = true };
+                addRef(e.context.?);
+                return .{ .device = dev, .context = e.context.?, .warp = e.warp, .shared = true, .pool_index = index };
             }
-            log.warn("shared D3D11 device was removed (hr=0x{x}); building a fresh one", .{@as(u32, @bitCast(reason))});
-            self.dropLocked();
+            log.warn("shared D3D11 device {} was removed (hr=0x{x}); building a fresh one", .{ index, @as(u32, @bitCast(reason)) });
+            dropEntry(e);
         }
         const fresh = try createDevice(create);
         const mt = query(fresh.device, &comp_overlay.IID_ID3D10Multithread) catch {
@@ -428,12 +459,13 @@ pub const DeviceCache = struct {
         };
         _ = slot(*const fn (Obj, i32) callconv(.winapi) i32, mt, comp_overlay.slot_multithread_set_protected)(mt, 1);
         release(mt);
-        self.device = fresh.device;
-        self.context = fresh.context;
-        self.warp = fresh.warp;
+        e.device = fresh.device;
+        e.context = fresh.context;
+        e.warp = fresh.warp;
         addRef(fresh.device);
         addRef(fresh.context);
-        return .{ .device = fresh.device, .context = fresh.context, .warp = fresh.warp, .shared = true };
+        if (index > 0) log.info("pooled D3D11 device {} created (the earlier ones refused another GL interop open)", .{index});
+        return .{ .device = fresh.device, .context = fresh.context, .warp = fresh.warp, .shared = true, .pool_index = index };
     }
 
     /// Let go of the cache's own references (tests; the process cache is
@@ -441,16 +473,24 @@ pub const DeviceCache = struct {
     pub fn deinit(self: *DeviceCache) void {
         self.mutex.lock();
         defer self.mutex.unlock();
-        self.dropLocked();
+        for (&self.entries) |*e| dropEntry(e);
     }
 
-    fn dropLocked(self: *DeviceCache) void {
-        if (self.context) |c| release(c);
-        if (self.device) |d| release(d);
-        self.context = null;
-        self.device = null;
+    fn dropEntry(e: *Entry) void {
+        if (e.context) |c| release(c);
+        if (e.device) |d| release(d);
+        e.* = .{};
     }
 };
+
+/// The pool slot a pane tries after the device at `index` refused its
+/// interop open (T3746), or null when the pool is spent or the device is not
+/// a pooled one (an unprotected device of its own has nowhere to go).
+pub fn nextPoolIndex(got: Device) ?u8 {
+    if (!got.shared) return null;
+    if (got.pool_index + 1 >= DeviceCache.pool_max) return null;
+    return got.pool_index + 1;
+}
 
 var device_cache: DeviceCache = .{};
 
@@ -660,15 +700,34 @@ pub const Presenter = struct {
             return error.Unavailable);
 
         stage = "d3d11-device";
-        const got = if (sharedDeviceEnabled())
+        var got = if (sharedDeviceEnabled())
             try device_cache.acquire(d3d11_create)
         else
             try createDevice(d3d11_create);
+
+        // T3746: open the interop on the device before anything is built on
+        // it. A pooled device whose driver refuses one more GL context (the
+        // 16th on NVIDIA) sends this pane to the next device in the pool,
+        // instead of out of the composition path.
+        stage = "wgl-open-device";
+        var opened: HANDLE = interop.open(got.device);
+        while (opened == null) {
+            const next = nextPoolIndex(got) orelse break;
+            log.info("D3D11 device {} refused another GL interop open; this pane tries pooled device {}", .{ got.pool_index, next });
+            release(got.context);
+            release(got.device);
+            stage = "d3d11-device";
+            got = try device_cache.acquireAt(d3d11_create, next);
+            stage = "wgl-open-device";
+            opened = interop.open(got.device);
+        }
         const dev = got.device;
         errdefer release(dev);
         const ctx = got.context;
         errdefer release(ctx);
         const warp = got.warp;
+        const interop_device = opened orelse return error.InteropFailed;
+        errdefer _ = interop.close(interop_device);
 
         stage = "dxgi-factory";
         const dxgi_device = try query(dev, &IID_IDXGIDevice);
@@ -741,8 +800,6 @@ pub const Presenter = struct {
         };
 
         if (tree) {
-            stage = "wgl-open-device";
-            const tree_interop = interop.open(dev) orelse return error.InteropFailed;
             var self: Presenter = .{
                 .device = dev,
                 .context = ctx,
@@ -752,7 +809,7 @@ pub const Presenter = struct {
                 .visual = null,
                 .surface_handle = surface_handle,
                 .interop = interop,
-                .interop_device = tree_interop,
+                .interop_device = interop_device,
                 .width = desc.width,
                 .height = desc.height,
                 .swap_flags = desc.flags,
@@ -763,11 +820,11 @@ pub const Presenter = struct {
                 .fail_after = debugFailAfter(),
             };
             stage = "shared-texture";
-            // The errdefers above still own the COM objects and the handle,
-            // so a failure here frees only what `createShared` made.
+            // The errdefers above still own the COM objects, the handle and
+            // the interop device, so a failure here frees only what
+            // `createShared` made.
             self.createShared(desc.width, desc.height) catch |err| {
                 self.destroyShared();
-                _ = interop.close(tree_interop);
                 return err;
             };
             self.adoptSwap2();
@@ -797,9 +854,6 @@ pub const Presenter = struct {
         try check(slot(*const fn (Obj, ?Obj) callconv(.winapi) HRESULT, tg, slot_dcomp_target_set_root)(tg, vis));
         try check(slot(*const fn (Obj) callconv(.winapi) HRESULT, dc, slot_dcomp_device_commit)(dc));
 
-        stage = "wgl-open-device";
-        const interop_device = interop.open(dev) orelse return error.InteropFailed;
-
         var self: Presenter = .{
             .device = dev,
             .context = ctx,
@@ -818,14 +872,11 @@ pub const Presenter = struct {
             .premultiplied = premultiplied,
             .fail_after = debugFailAfter(),
         };
-        // Only what `createShared` made and the interop handle: the errdefers
-        // above own the COM objects. `deinit` here released them a second
-        // time, which on the shared device (T2968) would free the cache's own
-        // reference out from under every other pane.
-        errdefer {
-            self.destroyShared();
-            _ = interop.close(interop_device);
-        }
+        // Only what `createShared` made: the errdefers above own the COM
+        // objects and the interop device. `deinit` here released them a
+        // second time, which on the shared device (T2968) would free the
+        // cache's own reference out from under every other pane.
+        errdefer self.destroyShared();
 
         stage = "shared-texture";
         try self.createShared(desc.width, desc.height);
@@ -1460,6 +1511,47 @@ test "T2968: a device that cannot be protected stays its one pane's" {
     release(b.device);
     release(b.context);
     cache.deinit();
+}
+
+test "T3746: a pane refused by a pooled device gets the next one, and slot 0 stays first" {
+    FakeFactory.reset();
+    var cache: DeviceCache = .{};
+    const a = try cache.acquire(FakeFactory.create);
+    try std.testing.expectEqual(@as(u8, 0), a.pool_index);
+    // Slot 0 refused the pane's interop open: it moves to slot 1, a new device.
+    const next = nextPoolIndex(a).?;
+    try std.testing.expectEqual(@as(u8, 1), next);
+    const b = try cache.acquireAt(FakeFactory.create, next);
+    try std.testing.expectEqual(@as(usize, 2), FakeFactory.creates);
+    try std.testing.expect(b.shared and b.device != a.device);
+    try std.testing.expectEqual(@as(u8, 1), b.pool_index);
+    try std.testing.expect(FakeCom.of(b.device).protected);
+    // Both stay pooled: the next pane still starts at slot 0, and slot 1 is
+    // handed out again rather than rebuilt.
+    const c = try cache.acquire(FakeFactory.create);
+    const d = try cache.acquireAt(FakeFactory.create, 1);
+    try std.testing.expectEqual(a.device, c.device);
+    try std.testing.expectEqual(b.device, d.device);
+    try std.testing.expectEqual(@as(usize, 2), FakeFactory.creates);
+    for ([_]Device{ a, b, c, d }) |x| {
+        release(x.device);
+        release(x.context);
+    }
+    // The cache holds one reference on each pooled device; deinit drops all.
+    try std.testing.expectEqual(@as(u32, 1), FakeCom.of(a.device).refs);
+    try std.testing.expectEqual(@as(u32, 1), FakeCom.of(b.device).refs);
+    cache.deinit();
+    try std.testing.expectEqual(@as(u32, 0), FakeCom.of(a.device).refs);
+    try std.testing.expectEqual(@as(u32, 0), FakeCom.of(b.device).refs);
+}
+
+test "T3746: the pool is bounded, and a device of its own has nowhere to go" {
+    const last: Device = .{ .device = undefined, .context = undefined, .warp = false, .shared = true, .pool_index = DeviceCache.pool_max - 1 };
+    try std.testing.expectEqual(@as(?u8, null), nextPoolIndex(last));
+    const own: Device = .{ .device = undefined, .context = undefined, .warp = false, .shared = false };
+    try std.testing.expectEqual(@as(?u8, null), nextPoolIndex(own));
+    const first: Device = .{ .device = undefined, .context = undefined, .warp = false, .shared = true };
+    try std.testing.expectEqual(@as(?u8, 1), nextPoolIndex(first));
 }
 
 test "T2968: no hardware adapter falls back to one shared WARP device" {

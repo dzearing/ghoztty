@@ -1,8 +1,8 @@
 {
     "guard":  "neuter-audit",
     "script":  "test/win32/neuter-audit.ps1",
-    "generated":  "2026-11-25T10:14:38-08:00",
-    "commit":  "1f0d44272",
+    "generated":  "2026-11-25T10:44:05-08:00",
+    "commit":  "81d54bf5c",
     "uncommitted":  [
 
                     ],
@@ -329,10 +329,10 @@
                   "src/apprt/win32/SessionRosterProbe.zig":  "97d287a7ceaf0131a0583b4a1e3ec77cd5234f010fae99c194c28dc5e8fb10c4",
                   "src/apprt/win32/settings_advanced.zig":  "b9c33bb96edbe6241fca09f87f0ef68553b96df2461e83dcc515120759eb6f10",
                   "src/apprt/win32/settings_advanced_view.zig":  "38a381894b754efbc47e1b367c0170c96c847062774ac65f3efb225e9a3fdc43",
-                  "src/apprt/win32/settings_controls.zig":  "e2da39cda7e63ed9db68b0b4ae535e9fe15e82c8ecac9f7435f227d41e20f56b",
+                  "src/apprt/win32/settings_controls.zig":  "9d22d07e3ba481ce296903f0dcafbc4e625b306e21ee7f9890dc922ad5944117",
                   "src/apprt/win32/settings_line_edit.zig":  "283ca0c97e744cb9b297b546dd955756bc969ce76536d8c16655224bb20a87e5",
                   "src/apprt/win32/settings_live.zig":  "16dd06f1176ca6fe2ce54f2d6ca20a6c3f74f25de2c9e1a81173b3cdeef0d9b1",
-                  "src/apprt/win32/settings_pages.zig":  "84a45155668f49f68496561155303d918e8c716ed4a72802e872f5283882bbb1",
+                  "src/apprt/win32/settings_pages.zig":  "c7842786eb2cf15f7b95e3f10640919b8d52f873bae15766eb73716be7116619",
                   "src/apprt/win32/settings_preview.zig":  "27aeaa68d4e470fe8dd7fc7816d8a97d978d968b185542f3a8377cd58f100a3e",
                   "src/apprt/win32/settings_preview_view.zig":  "7d03c716bf2b204a75d3aaa29aa3eb6e8f996db8b69de0ecd1f27a083a55a0dc",
                   "src/apprt/win32/settings_remote_view.zig":  "52296df322144692b2d3d96c0002660838407b16c2e5306efe3bc72c5d9358e5",
