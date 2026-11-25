@@ -7,11 +7,13 @@ pub const Key = enum {
     @"gtk-enable-primary-paste",
     @"gtk-xft-dpi",
     @"gtk-font-name",
+    @"gtk-double-click-time",
+    @"gtk-double-click-distance",
 
     fn Type(comptime self: Key) type {
         return switch (self) {
             .@"gtk-enable-primary-paste" => bool,
-            .@"gtk-xft-dpi" => c_int,
+            .@"gtk-xft-dpi", .@"gtk-double-click-time", .@"gtk-double-click-distance" => c_int,
             .@"gtk-font-name" => []const u8,
         };
     }

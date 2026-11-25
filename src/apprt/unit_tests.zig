@@ -689,6 +689,10 @@ test {
     // Stacked panes on GTK: where the grid and cards sit in the stage, a
     // strip's face and its turned label (T3567). No GTK imports.
     _ = @import("gtk/pane_stage_rules.zig");
+    // The stage's gutter bar and a gutter's double-click: which gutter a
+    // drag's bar sits on, one bar at a time, a double press (T3626). No GTK
+    // imports.
+    _ = @import("gtk/gutter_bar_rules.zig");
     // What a launch does when another build serves the socket: the dialog's
     // buttons, the scripted answer, the window a join forwards (T3598). No
     // GTK imports.

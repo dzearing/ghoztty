@@ -509,8 +509,12 @@ fn paneBanner(app: Context, request: Request) Allocator.Error![]u8 {
 /// coordinates, through the same `SplitTree.stagePress`/`stageDrag`/
 /// `stageRelease` the stage's real drag gesture calls. The headless harness
 /// has no seat, so no pointer can press. Reply `press`: what the press took
-/// hold of (`none|divider|grip|strip`); `stage`: null when the tab shows one
-/// pane.
+/// hold of (`none|divider|grip|strip`, or `even` for the second press of a
+/// double-click on a divider or a grip between cards, T3626); `stage`: null
+/// when the tab shows one pane. `--hover=<x>,<y>` puts the pointer over the
+/// stage there and `--leave` takes it off (the motion controller's calls),
+/// and the stage's `bar` is the gutter bar as lit (T3626). Arguments run in
+/// order, so `--press=P --release=0,0 --press=P` is a double-click.
 fn paneStack(app: Context, request: Request) Allocator.Error![]u8 {
     var target_arg: ?[]const u8 = null;
     for (request.arguments orelse &.{}) |arg| {
@@ -556,6 +560,11 @@ fn paneStack(app: Context, request: Request) Allocator.Error![]u8 {
             const p = pair(arg["--release=".len..]) orelse return server.errorResponse(c_alloc, "--release must be <dx>,<dy>", .{});
             tree.stageRelease(p[0], p[1]);
             tree.layoutNow();
+        } else if (std.mem.startsWith(u8, arg, "--hover=")) {
+            const p = pair(arg["--hover=".len..]) orelse return server.errorResponse(c_alloc, "--hover must be <x>,<y>", .{});
+            tree.stageHover(p);
+        } else if (std.mem.eql(u8, arg, "--leave")) {
+            tree.stageHover(null);
         }
     }
 

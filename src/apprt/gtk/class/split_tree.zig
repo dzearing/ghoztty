@@ -26,6 +26,8 @@ const pane_drop = @import("../../win32/pane_drop.zig");
 const pane_drop_apply = @import("../pane_drop_apply.zig");
 const pane_style = @import("../pane_style.zig");
 const pane_stage = @import("../pane_stage_rules.zig");
+const gutter_rules = @import("../gutter_bar_rules.zig");
+const gsettings = @import("../gsettings.zig");
 const pane_stack_grid = @import("../../win32/pane_stack_grid.zig");
 const pane_stash = @import("../../win32/pane_stash.zig");
 const pane_sidebar_add = @import("../../win32/pane_sidebar_add.zig");
@@ -221,6 +223,24 @@ pub const SplitTree = extern struct {
         glide_last_us: ?i64 = null,
         /// When the last gutter drag was let go (the 50ms gesture tail).
         drag_released_us: ?i64 = null,
+
+        /// The gutter bar (T3626; Mac `GutterBar`): one non-targetable
+        /// widget on the stage, kept above every card, allocated over the
+        /// lit gutter's core.
+        bar: ?*wk.GtkWidget = null,
+        /// Where the pointer is over the stage, while it is: the hover bar
+        /// is re-asked of every layout, so a gutter that moved out from
+        /// under a still pointer goes out.
+        pointer: ?[2]f64 = null,
+        /// What the drag under way took hold of, and the gutter its bar was
+        /// last on (`gutter_rules.place`).
+        bar_held: ?gutter_rules.Held = null,
+        bar_last: pane_stack_grid.PxRect = .{},
+        /// The bar as the last layout lit it.
+        bar_lit: ?BarShown = null,
+        /// The last press on a gutter: a second one soon after is a
+        /// double-click.
+        last_press: ?gutter_rules.Press = null,
 
         pub var offset: c_int = 0;
     };
@@ -569,6 +589,7 @@ pub const SplitTree = extern struct {
     // its pane, which is what brings it forward.
 
     const strip_class: [:0]const u8 = "pane-strip";
+    const bar_class: [:0]const u8 = "gutter-bar";
 
     fn paneKey(s: *Surface) pane_stack_layout.Id {
         return @intFromPtr(s);
@@ -629,7 +650,18 @@ pub const SplitTree = extern struct {
         wk.gtk_widget_add_controller(stage, drag);
         const motion = wk.gtk_event_controller_motion_new();
         _ = wk.g_signal_connect_data(@ptrCast(motion), "motion", @ptrCast(&stageMotion), self, null, 0);
+        _ = wk.g_signal_connect_data(@ptrCast(motion), "leave", @ptrCast(&stageLeave), self, null, 0);
         wk.gtk_widget_add_controller(stage, motion);
+
+        // The gutter bar (T3626): last on the stage, so above every card,
+        // and never the target of a press.
+        const bar = wk.gtk_box_new(wk.orientation_horizontal, 0);
+        wk.gtk_widget_add_css_class(bar, bar_class);
+        wk.gtk_widget_set_can_target(bar, 0);
+        wk.gtk_widget_set_child_visible(bar, 0);
+        wk.gtk_box_append(stage, bar);
+        priv.bar = bar;
+        priv.bar_lit = null;
 
         priv.stage = stage;
         return @ptrCast(@alignCast(stage));
@@ -757,8 +789,11 @@ pub const SplitTree = extern struct {
             if (priv.grid) |*old| old.deinit();
             priv.grid = grid;
         }
+        // Which gutter shows the bar, in this layout (T3626).
+        self.litBar(&grid);
         // The test seam asks for the layout as it stands now, between frames.
         if (!place) return;
+        defer self.placeBar(stage, if (priv.slide) |*s| s else null);
 
         // A change in what is on show glides (T3625).
         self.planGlide(tree, &grid, rect);
@@ -1135,6 +1170,7 @@ pub const SplitTree = extern struct {
         const priv = self.private();
         if (priv.row_drag) |*rd| rd.deinit(self.stackState());
         priv.row_drag = null;
+        priv.bar_held = null;
     }
 
     /// Begin a gutter drag on `row`, before item `boundary`; `centre` is the
@@ -1165,31 +1201,236 @@ pub const SplitTree = extern struct {
         return pane_stack_layout.settingRow(alloc, built.nodes, root, d, items, shares) catch null;
     }
 
-    /// What a press on the stage took hold of.
-    pub const Press = enum { none, divider, grip, strip };
+    /// What a press on the stage took hold of. `even`: the second press of
+    /// a double-click on a divider or a grip between cards, which evened its
+    /// panes out and begins no drag.
+    pub const Press = enum { none, divider, grip, strip, even };
 
     /// A press at (x, y) in the stage's coordinates: a gutter begins a row
-    /// drag, a strip is held until it is let go; anything else is the pane's.
-    /// The real gesture and the `pane-stack` test seam both come here.
+    /// drag (or, pressed twice, evens its panes out), a strip is held until
+    /// it is let go; anything else is the pane's. The real gesture and the
+    /// `pane-stack` test seam both come here.
     pub fn stagePress(self: *Self, x: f64, y: f64) Press {
         const priv = self.private();
         priv.strip_press = null;
         const grid = &(priv.grid orelse return .none);
+        if (gutterHit(grid, x, y)) |gi| {
+            const g = gutterAt(grid, gi);
+            const now: gutter_rules.Press = .{
+                .us = wk.g_get_monotonic_time(),
+                .x = x,
+                .y = y,
+                .kind = g.kind,
+                .direction = g.direction,
+            };
+            const dc = doubleClick();
+            if (gutter_rules.isDoublePress(priv.last_press, now, dc.ms, dc.px)) {
+                priv.last_press = null;
+                if (self.evenGutter(gi)) return .even;
+                // A run's edge has no double-click: the press is a drag.
+            } else priv.last_press = now;
+
+            const nd = grid.result.dividers.items.len;
+            if (gi < nd) {
+                const d = grid.result.dividers.items[gi];
+                const centre = d.node_frame.start(d.direction) + d.position - d.row.start;
+                if (!self.beginRowDrag(d.row, d.direction, d.index, centre)) return .none;
+                priv.bar_held = .{ .kind = .divider, .direction = d.direction, .node = d.node };
+                priv.bar_last = g.rect;
+                return .divider;
+            }
+            const h = grid.result.stack_handles.items[gi - nd];
+            const centre = h.frame.start(h.direction) + h.position - h.row.start;
+            if (!self.beginRowDrag(h.row, h.direction, stack_drag.gripBoundary(h), centre)) return .none;
+            priv.bar_held = .{ .kind = g.kind, .direction = h.direction };
+            priv.bar_last = g.rect;
+            return .grip;
+        }
         const px: i32 = @intFromFloat(@round(x));
         const py: i32 = @intFromFloat(@round(y));
-        if (grid.dividerAt(px, py)) |i| {
-            const d = grid.result.dividers.items[i];
-            const centre = d.node_frame.start(d.direction) + d.position - d.row.start;
-            if (self.beginRowDrag(d.row, d.direction, d.index, centre)) return .divider;
-        } else if (grid.stackHandleAt(px, py)) |i| {
-            const h = grid.result.stack_handles.items[i];
-            const centre = h.frame.start(h.direction) + h.position - h.row.start;
-            if (self.beginRowDrag(h.row, h.direction, stack_drag.gripBoundary(h), centre)) return .grip;
-        } else if (grid.stripAt(px, py)) |id| {
+        if (grid.stripAt(px, py)) |id| {
             priv.strip_press = id;
             return .strip;
         }
         return .none;
+    }
+
+    // ---- The gutter bar and a gutter's double-click (T3626) ----------------
+    //
+    // docs/reference/stacked-panes.md "The gutter bar": every divider and
+    // grip shows a 4px accent bar with a soft glow down the middle of its
+    // gutter - half strength under the pointer, full while dragged, one at a
+    // time - drawn where the layout leaves the gutter, so it stops where the
+    // edge stops, and moves to the gutter that replaced the dragged one. The
+    // choosing is `gutter_rules`; here it is one widget on the stage.
+
+    /// The bar as a layout lit it.
+    pub const BarShown = struct {
+        kind: gutter_rules.Kind,
+        direction: pane_stack_layout.Direction,
+        strength: gutter_rules.Strength,
+        /// The lit gutter as laid out, and the bar's core in it.
+        gutter: pane_stack_grid.PxRect,
+        core: pane_stack_grid.PxRect,
+    };
+
+    /// The stage's gutters, numbered dividers first, then grips (the
+    /// `pane-stack` seam's order).
+    fn gutterCount(grid: *const pane_stack_grid.Grid) usize {
+        return grid.result.dividers.items.len + grid.result.stack_handles.items.len;
+    }
+
+    fn gutterAt(grid: *const pane_stack_grid.Grid, i: usize) gutter_rules.Gutter {
+        const nd = grid.result.dividers.items.len;
+        if (i < nd) {
+            const d = grid.result.dividers.items[i];
+            return .{ .kind = .divider, .direction = d.direction, .rect = grid.dividerGutter(i), .node = d.node };
+        }
+        const h = grid.result.stack_handles.items[i - nd];
+        return .{
+            .kind = switch (h.kind) {
+                .between => .grip,
+                .expand => .edge,
+            },
+            .direction = h.direction,
+            .rect = grid.stackHandleGutter(i - nd),
+        };
+    }
+
+    /// The gutter that takes the mouse at (x, y), in `gutterAt`'s numbering.
+    fn gutterHit(grid: *const pane_stack_grid.Grid, x: f64, y: f64) ?usize {
+        const px: i32 = @intFromFloat(@round(x));
+        const py: i32 = @intFromFloat(@round(y));
+        if (grid.dividerAt(px, py)) |i| return i;
+        if (grid.stackHandleAt(px, py)) |i| return grid.result.dividers.items.len + i;
+        return null;
+    }
+
+    /// The desktop's double-click time (ms) and distance (px).
+    fn doubleClick() struct { ms: i64, px: f64 } {
+        const ms = gsettings.get(.@"gtk-double-click-time") orelse 400;
+        const px = gsettings.get(.@"gtk-double-click-distance") orelse 5;
+        return .{ .ms = ms, .px = @floatFromInt(px) };
+    }
+
+    /// Which gutter shows the bar in `grid`, and how strong: the drag's
+    /// gutter (or the one that replaced it) while a drag is under way, else
+    /// the one under the pointer.
+    fn litBar(self: *Self, grid: *const pane_stack_grid.Grid) void {
+        const priv = self.private();
+        const dragging = priv.row_drag != null;
+        var dragged: ?usize = null;
+        if (dragging) if (priv.bar_held) |held| {
+            const alloc = Application.default().allocator();
+            if (alloc.alloc(gutter_rules.Gutter, gutterCount(grid))) |gs| {
+                defer alloc.free(gs);
+                for (gs, 0..) |*g, i| g.* = gutterAt(grid, i);
+                dragged = gutter_rules.place(gs, held, priv.bar_last);
+            } else |_| {}
+        };
+        const hovered: ?usize = if (priv.pointer) |p| gutterHit(grid, p[0], p[1]) else null;
+        const l = gutter_rules.lit(hovered, dragged, dragging) orelse {
+            priv.bar_lit = null;
+            return;
+        };
+        const g = gutterAt(grid, l.index);
+        if (l.strength == .drag) priv.bar_last = g.rect;
+        priv.bar_lit = .{
+            .kind = g.kind,
+            .direction = g.direction,
+            .strength = l.strength,
+            .gutter = g.rect,
+            .core = gutter_rules.barIn(g.rect, g.direction),
+        };
+    }
+
+    /// Put the bar widget where `litBar` lit it, above every card. A
+    /// drag's bar stays over its gutter as drawn: mid-glide the cards
+    /// beside it are still on their way to where the layout puts them
+    /// (win32 T2270, Mac `PaneStageView.shownGutter`).
+    fn placeBar(self: *Self, stage: *wk.GtkWidget, slide: ?*const pane_stack_slide.Slide) void {
+        const priv = self.private();
+        const bar = priv.bar orelse return;
+        const shown = priv.bar_lit orelse {
+            wk.gtk_widget_set_child_visible(bar, 0);
+            return;
+        };
+        var gutter = shown.gutter;
+        if (shown.strength == .drag) if (slide) |s| {
+            if (s.shownGutter(gutter, shown.direction == .horizontal, 2)) |at| gutter = at;
+        };
+        wk.gtk_widget_set_opacity(bar, shown.strength.opacity());
+        wk.gtk_widget_set_child_visible(bar, 1);
+        if (wk.gtk_widget_get_next_sibling(bar) != null) wk.gtk_widget_insert_before(bar, stage, null);
+        allocateCard(bar, gutter_rules.barIn(gutter, shown.direction));
+    }
+
+    /// The pointer over the stage at `at` (null: it left). Relays the stage
+    /// out only when that changes the bar.
+    pub fn stageHover(self: *Self, at: ?[2]f64) void {
+        const priv = self.private();
+        priv.pointer = at;
+        const grid = &(priv.grid orelse return);
+        const before = priv.bar_lit;
+        self.litBar(grid);
+        const same = if (before) |b| (if (priv.bar_lit) |a| std.meta.eql(a, b) else false) else priv.bar_lit == null;
+        if (!same) self.relayoutStage();
+    }
+
+    /// A second press on gutter `gi` (Mac `TerminalSplitOperation`): a
+    /// divider evens out the panes across it in its direction only (Mac
+    /// `SplitTree.equalized(only:)`, win32 T2285), a grip between two cards
+    /// evens out the run on show (`evenRun`, win32 T2409). False for the
+    /// grip where a run meets its strips, which has no double-click.
+    fn evenGutter(self: *Self, gi: usize) bool {
+        const priv = self.private();
+        const grid = &(priv.grid orelse return false);
+        const tree = priv.tree orelse return false;
+        const g = gutterAt(grid, gi);
+        const alloc = Application.default().allocator();
+        switch (gutter_rules.evenFor(g.kind)) {
+            .none => return false,
+            .splits => {
+                const node = g.node orelse return false;
+                if (node >= tree.nodes.len) return false;
+                const only = switch (tree.nodes[node]) {
+                    .split => |s| s.layout,
+                    .leaf => return false,
+                };
+                self.endRowDrag();
+                // Even out what is on show (T1827's rule, as win32's
+                // `equalizeSplitsOnly`): a stashed pane claims no share.
+                var vis = pane_stash.visibleClone(tree.*, alloc) catch return false;
+                defer vis.deinit();
+                var eq = vis.equalizeOnly(alloc, only) catch return false;
+                defer eq.deinit();
+                pane_stash.liftRatios(tree, eq);
+                log.info("divider double-click evened the {s} splits", .{@tagName(only)});
+            },
+            .run => {
+                const h = grid.result.stack_handles.items[gi - grid.result.dividers.items.len];
+                self.endRowDrag();
+                const done = (stack_drag.evenRun(alloc, self.stackState(), h) catch return false) orelse return false;
+                switch (done) {
+                    .run => {},
+                    .tree => |shares| {
+                        defer alloc.free(shares);
+                        const ratios = self.rowRatios(h.direction, h.row.items, shares) orelse return false;
+                        defer alloc.free(ratios);
+                        for (ratios) |r| {
+                            if (r.node >= tree.nodes.len) continue;
+                            switch (tree.nodes[r.node]) {
+                                .split => tree.resizeInPlace(@enumFromInt(r.node), @floatCast(r.ratio)),
+                                else => {},
+                            }
+                        }
+                    },
+                }
+                log.info("grip double-click evened the run ({s})", .{@tagName(done)});
+            },
+        }
+        self.relayoutStage();
+        return true;
     }
 
     /// The pointer `dx`, `dy` from where the press was.
@@ -1269,12 +1510,26 @@ pub const SplitTree = extern struct {
             resizes: u32,
         };
         pub const Gutter = struct { kind: []const u8, direction: []const u8, rect: [4]i32 };
+        /// The gutter bar (T3626): the gutter it is lit in as laid out, the
+        /// bar's core there, and how strong (`hover` half, `drag` full).
+        pub const Bar = struct {
+            kind: []const u8,
+            direction: []const u8,
+            strength: []const u8,
+            gutter: [4]i32,
+            core: [4]i32,
+        };
         width: c_int,
         height: c_int,
+        /// The stage's top-left in its window (logical px): what maps a
+        /// stage rect into a `capture-pane --window` picture (T3626).
+        origin: [2]i32,
         /// A glide is under way (T3625).
         gliding: bool,
         panes: []const Pane,
         gutters: []const Gutter,
+        /// Null when no gutter shows its bar.
+        bar: ?Bar,
     };
 
     fn rectArr(r: pane_stack_grid.PxRect) [4]i32 {
@@ -1336,9 +1591,22 @@ pub const SplitTree = extern struct {
         return .{
             .width = wk.gtk_widget_get_width(stage),
             .height = wk.gtk_widget_get_height(stage),
+            .origin = origin: {
+                const root = wk.gtk_widget_get_root(stage) orelse break :origin .{ 0, 0 };
+                var b: wk.GrapheneRect = .{};
+                if (wk.gtk_widget_compute_bounds(stage, root, &b) == 0) break :origin .{ 0, 0 };
+                break :origin .{ @intFromFloat(@round(b.x)), @intFromFloat(@round(b.y)) };
+            },
             .gliding = priv.slide != null,
             .panes = panes.items,
             .gutters = gutters.items,
+            .bar = if (priv.bar_lit) |b| .{
+                .kind = @tagName(b.kind),
+                .direction = @tagName(b.direction),
+                .strength = @tagName(b.strength),
+                .gutter = rectArr(b.gutter),
+                .core = rectArr(b.core),
+            } else null,
         };
     }
 
@@ -1374,9 +1642,14 @@ pub const SplitTree = extern struct {
         s.grabFocus();
     }
 
+    fn stageLeave(_: *wk.GtkEventController, self: *Self) callconv(.c) void {
+        self.stageHover(null);
+    }
+
     fn stageMotion(_: *wk.GtkEventController, x: f64, y: f64, self: *Self) callconv(.c) void {
         const priv = self.private();
         const stage = priv.stage orelse return;
+        self.stageHover(.{ x, y });
         if (priv.row_drag != null) return;
         const grid = &(priv.grid orelse return);
         const px: i32 = @intFromFloat(@round(x));
@@ -1396,6 +1669,10 @@ pub const SplitTree = extern struct {
         self.endRowDrag();
         priv.strip_press = null;
         priv.stage = null;
+        priv.bar = null;
+        priv.bar_lit = null;
+        priv.pointer = null;
+        priv.last_press = null;
         priv.faces.clearRetainingCapacity();
         if (priv.grid) |*g| g.deinit();
         priv.grid = null;

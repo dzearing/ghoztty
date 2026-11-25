@@ -226,6 +226,18 @@ label.resize-overlay {
 }
 
 /*
+ * The gutter bar (T3626; docs/reference/stacked-panes.md "The gutter bar"):
+ * a 4px accent bar down the middle of a divider's or grip's gutter, with a
+ * soft glow (Mac `GutterBar`: shadowRadius 5 at 0.9). The split tree sizes
+ * it and sets its opacity: half under the pointer, full while dragged.
+ */
+.gutter-bar {
+  background-color: @accent_bg_color;
+  border-radius: 2px;
+  box-shadow: 0 0 5px alpha(@accent_bg_color, 0.9);
+}
+
+/*
  * A minimized pane's strip (T3567; docs/reference/stacked-panes.md): its
  * card at the strip's size, the content gone and its name down it. The label
  * is the strip; the split tree turns it to run down a vertical strip.
