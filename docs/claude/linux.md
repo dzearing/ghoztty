@@ -1583,8 +1583,56 @@ powershell -NoProfile -File scripts\linux\wsl-run.ps1 -CommandFile test\linux\st
 
 Ends `STACKED PANES: ALL PASS` (25 checks).
 
-Not yet: glides and elevation (T3625), the gutter bar and double-click
-(T3626), collapses in the session layout and undo (T3627), the featured side
+### Glides and paint order (T3625)
+
+A change in what is on show (a strip click, focus onto a minimized pane, a
+fold under a drag, a split or a close) is a **glide**, driven by win32's pure
+follower `pane_stack_slide.Slide` (Mac `PaneStageView.glide`, 45ms time
+constant), imported in place like the rest of the engine:
+
+- **`SplitTree.planGlide`**, run by every placement, compares the layout with
+  the last one (`Private.placed`, which outlives a rebuild so a split or close
+  glides across the new stage): `runsChanged` plans a glide (`plan`, with
+  `resize` under a drag); under a drag `retarget` follows the hand; a new grid
+  rect (window resize) lays out at once. A minimized pane is held at its last
+  size on show (`Private.held`, `pane_stack_slide.hold`).
+- **The clock** is a tick callback on the `SplitTree` (`glideTick`):
+  `Slide.step` with the frame clock's step (`pane_stage_rules.frameStep`), then
+  `queue_allocate` the stage. A glide that catches up under a held drag stops
+  its clock and rests (the next move's `retarget` wakes it); let go, it goes
+  on for the 50ms tail (`pane_stage_rules.gesturing`) and lands. It dies with
+  the tree (`endGlide(true)` on dispose and whenever the tab stops showing a
+  stage).
+- **A card holds its content.** Every card (`SurfaceScrolledWindow`) gets a
+  custom layout (`installCardLayout`): a bin's, unless `Private.holds` has the
+  card this frame, when its child keeps the held size, offset where the glide
+  pins it (`pane_stage_rules.heldContent`), and the card (overflow hidden, its
+  rim and rounded corners its own) cuts it. So a card narrows into its strip
+  around a terminal that is never resized, and each terminal takes its new
+  size once, when its card lands.
+- **Fades.** A card going into or out of its strip fades its content by
+  `1 - collapse` and shows its strip face over the card at `collapse`
+  (`pane_stage_rules.fadeAt`, over the last 120px, `strip_face.fadeOf`).
+- **Paint order** is `pane_stack_layout.paintOrder` (`Leaf.elevation`), each
+  face just above its card (`paintByElevation`, a no-op when already in
+  order), so a card tucking away passes under the run.
+- `GHOZTTY_STACK_SLIDE_MS` stretches the glide (win32's knob; 0 is none), and
+  `adw_get_enable_animations` off means no glide.
+- The `pane-stack` seam reports, per pane, `drawn` (the card as drawn this
+  frame), `gliding`, `fade`, `content_w` (the content's real allocated width)
+  and `resizes` (the terminal's size changes, `Surface.sizeChanges`), plus the
+  stage's `gliding`.
+
+```powershell
+powershell -NoProfile -File scripts\linux\wsl-run.ps1 -CommandFile test\linux\stack-glide.sh
+```
+
+Ends `STACK GLIDE: ALL PASS`: one sampler process polls the seam every ~40ms
+through a stretched glide (strip click, then a close) and checks the motion,
+the held content, the fades and the resize counts.
+
+Not yet: the gutter bar and double-click
+(T3626), strips as blades with their shadows (T3729), collapses in the session layout and undo (T3627), the featured side
 pane (T3628), live relabel, strip drags and a column test (T3629).
 
 ## Resize pacing (T3568)

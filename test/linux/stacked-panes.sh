@@ -195,14 +195,21 @@ r=$(st "--drag=0,0" "--release=0,0")
 hl_check "S21 dragged back to where it began, the row is as the drag found it" $? "want=$shown0 $r"
 
 # ---- 5. what the window draws is what the layout says ------------------------
+# At rest: the drag back in S21 glides the folded pane out (T3625), and a
+# card mid-glide is drawn where the glide has it, not at its slot.
+for _ in $(seq 1 50); do
+    [ "$(sq "$(st)" 's.get("gliding")')" = False ] && break
+    sleep 0.1
+done
 r=$(st)
 fid=$(sq "$r" '[p["pane"] for p in shown if p["focused"]][0]')
 fw=$(sq "$r" 'P["'"$fid"'"]["frame"][2]')
-cw=$(hl_screenshot "$fid" "$HL_RUNTIME/f.png" 2>/dev/null | python3 -I -c '
+cap=$(hl_screenshot "$fid" "$HL_RUNTIME/f.png" 2>&1)
+cw=$(printf '%s' "$cap" | python3 -I -c '
 import json, sys
 print(json.loads(sys.stdin.readline())["data"]["width"])' 2>/dev/null)
 [ -n "$cw" ] && [ -n "$fw" ] && [ $((cw - fw)) -ge -2 ] && [ $((cw - fw)) -le 2 ]
-hl_check "S22 the focused card is drawn at the width the layout gave it" $? "layout=$fw drawn=$cw"
+hl_check "S22 the focused card is drawn at the width the layout gave it" $? "layout=$fw drawn=$cw reply=$cap"
 
 # ---- 6. closing panes until the row fits unfolds it --------------------------
 cli +close --target=p4 > /dev/null 2>&1

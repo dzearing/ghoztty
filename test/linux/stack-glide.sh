@@ -208,6 +208,44 @@ sample "$samples" 5
 hl_check "G15 closing a pane on show brings a strip's pane out in a glide that lands" $? \
     "victim=$vname $(judge "$samples" "$before" '[(t, s["gliding"]) for t, s in S[:6]]')"
 
+# ---- 3. a fold under the hand glides, and settles after the release ---------
+settle
+before=$(st)
+gx=$(sq "$before" '[g for g in s["gutters"] if g["kind"] in ("divider", "grip") and g["direction"] == "horizontal"][0]["rect"][0] + 2')
+gy=$(sq "$before" '[g for g in s["gutters"] if g["kind"] in ("divider", "grip") and g["direction"] == "horizontal"][0]["rect"][1] + 20')
+samples="$HL_RUNTIME/drag.jsonl"
+# Pressed, dragged far past the far pane's minimum and let go: the pane folds
+# into its strip, and the glide runs on after the hand (the 50ms tail).
+sample "$samples" 5 "--press=$gx,$gy" "--drag=2000,0" "--release=0,0"
+[ -n "$gx" ] && [ "$(judge "$samples" "$before" '
+sum(1 for p in A["panes"] if p["minimized"]) > sum(1 for p in B["panes"] if p["minimized"])
+and len(G) >= 3 and not A["gliding"]
+and all(p["drawn"] == p["frame"] for p in A["panes"] if not p["minimized"])')" = True ]
+hl_check "G17 a drag that folds a pane away glides it into its strip and settles after the release" $? \
+    "gutter=$gx,$gy $(judge "$samples" "$before" '[(t, s["gliding"], sum(p["minimized"] for p in s["panes"])) for t, s in S[:6]]')"
+
+# ---- 4. a pane mid-glide still renders, at the size it is held at ------------
+settle
+r=$(st)
+if [ "$(sq "$r" 'len(mini)')" -ge 1 ] 2>/dev/null; then
+    t2=$(sq "$r" 'mini[0]["pane"]')
+    cx=$(sq "$r" 'mini[0]["strip"][0] + mini[0]["strip"][2] // 2')
+    cy=$(sq "$r" 'mini[0]["strip"][1] + mini[0]["strip"][3] // 2')
+    st "--press=$cx,$cy" "--release=0,0" > /dev/null
+    sleep 0.4
+    cap=$(hl_screenshot "$t2" "$HL_RUNTIME/mid.png" 2>&1)
+    r=$(st)
+    cw=$(printf '%s' "$cap" | python3 -I -c '
+import json, sys
+print(json.loads(sys.stdin.readline())["data"]["width"])' 2>/dev/null)
+    hw=$(sq "$r" 'P["'"$t2"'"]["content_w"]')
+    [ "$(sq "$r" 'P["'"$t2"'"]["gliding"]')" = True ] && [ -n "$cw" ] && [ -n "$hw" ] && [ $((cw - hw)) -ge -2 ] && [ $((cw - hw)) -le 2 ]
+    hl_check "G18 a pane captured mid-glide renders a frame at its held size" $? "capture=$cap held=$hw $(sq "$r" 'P["'"$t2"'"]')"
+else
+    hl_check "G18 a pane captured mid-glide renders a frame at its held size" 1 "no minimized pane to click: $r"
+fi
+settle
+
 ! grep -E "without calling gtk_widget_measure|Allocation (width|height) too small|Gtk-CRITICAL|gtk_widget_queue|during size allocation" "$APP_LOG" > /dev/null
 hl_check "G16 the app logged no GTK allocation warnings or criticals" $? \
     "$(grep -m3 -E 'gtk_widget_measure|too small|Gtk-CRITICAL|gtk_widget_queue|during size allocation' "$APP_LOG")"
