@@ -1,0 +1,14 @@
+{
+  "version": "1.56.23",
+  "sections": [
+    { "title": "New",
+      "items": [
+        { "text": "A Linux test run no longer hangs forever when the app stalls in its own quit." },
+        { "text": "Closing a remote window, tab or pane on Linux offers Disconnect." }
+      ] },
+    { "title": "Fixes",
+      "items": [
+        { "text": "The acceptance runner no longer blames the tests when the user installs an update mid-run." }
+      ] }
+  ]
+}
