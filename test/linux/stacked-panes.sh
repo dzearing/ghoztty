@@ -315,9 +315,6 @@ my=$(sq "$r" 'P["'"$card"'"]["frame"][1] + P["'"$card"'"]["frame"][3] // 2')
 d=$(pd "--target=$bm" --blade "--drop-at=$mx,$my")
 [ "$(dq "$d" 'd.get("target"), d.get("outcome")')" = "('none', 'none')" ]
 hl_check "S35 a strip let go over the middle of a card is no drop (no split quadrants, no swap)" $? "strip=$bm card=$card $d"
-d=$(pd "--target=$bm" "--drop-at=$mx,$my")
-[ "$(dq "$d" 'd.get("target")')" != none ]
-hl_check "S36 the same point is a target for the same pane dragged by its header (the control)" $? "$d"
 # The leading edge of the SECOND card on show is the slot between two cards
 # (the only one when one card shows): the strip moves there. A strip is never
 # between two cards on show, so this is never the strip's own place.
@@ -349,6 +346,16 @@ tx=$(sq "$r" 'P["'"$card2"'"]["frame"][0] + P["'"$card2"'"]["frame"][2] // 2')
 d=$(pd "--target=$bm2" --blade "--drop-at=$tx,3")
 [ "$(dq "$d" 'd.get("target"), d.get("side"), d.get("outcome")')" = "('top_level', 'up', 'moved')" ]
 hl_check "S40 a strip let go at the window's top edge spans the window above the row" $? "strip=$bm2 $d"
+# The control, last because it moves a pane: the point S35 refused a strip
+# is a target for a minimized pane dragged by its header (a pane's targets).
+r=$(st)
+bm3=$(sq "$r" 'mini[0]["pane"]')
+card3=$(sq "$r" 'max(shown, key=lambda p: p["frame"][2])["pane"]')
+mx3=$(sq "$r" 'P["'"$card3"'"]["frame"][0] + P["'"$card3"'"]["frame"][2] // 2')
+my3=$(sq "$r" 'P["'"$card3"'"]["frame"][1] + P["'"$card3"'"]["frame"][3] // 2')
+d=$(pd "--target=$bm3" "--drop-at=$mx3,$my3")
+[ -n "$bm3" ] && [ "$(dq "$d" 'd.get("target")')" != none ]
+hl_check "S36 the middle of a card IS a target for a pane dragged by its header (the control)" $? "pane=$bm3 card=$card3 $d"
 
 # ---- 10. a column stacks with horizontal strips (T3629) ----------------------
 cli +new-window --target=wcol --name=c1 --command="sleep 600" > /dev/null 2>&1
@@ -371,13 +378,17 @@ hl_check "S44 the column's gutters run vertically (rows of cards stacked down)" 
 # while it stays minimized. c2..c5 run a shell, so the keys reach one.
 c1id=$(id_of c1)
 rm_=$(sq "$r" '[p["pane"] for p in mini if p["pane"] != "'"$c1id"'"][0]')
-cli +send-keys --target="$rm_" "printf '\033]2;retitled-strip\007'" Enter > /dev/null 2>&1
+# The keys carry +send-keys' own \e (ESC); the shell's printf turns \a into
+# BEL, so the OSC reaches the terminal whatever the shell's escapes are.
+cli +send-keys --target="$rm_" "printf '\e]2;retitled-strip\a'" Enter > /dev/null 2>&1
 ok=1
 for _ in $(seq 1 25); do
     [ "$(sq "$(cs)" 'P["'"$rm_"'"]["minimized"] and P["'"$rm_"'"]["label"] == "retitled-strip"')" = True ] && { ok=0; break; }
     sleep 0.2
 done
-hl_check "S34 an OSC 2 retitle renames the strip while the pane stays minimized" $ok "pane=$rm_ $(cli +read --target="$rm_" --lines=4 2>&1 | tr '\n' '|' | head -c 200) $(cs)"
+titles=$(cli +list --json 2>/dev/null | grep -o '"title":"[^"]*"' | tr '\n' ' ')
+seen=$(cli +read --name="$rm_" --lines=4 2>&1 | tr '\n' '|' | head -c 200)
+hl_check "S34 an OSC 2 retitle renames the strip while the pane stays minimized" $ok "pane=$rm_ titles=[$titles] read=[$seen] $(cs)"
 ! grep -E "without calling gtk_widget_measure|Allocation (width|height) too small|Gtk-CRITICAL" "$APP_LOG" > /dev/null
 hl_check "S25 the app logged no GTK allocation warnings or criticals" $? "$(grep -m3 -E 'gtk_widget_measure|too small|Gtk-CRITICAL' "$APP_LOG")"
 
