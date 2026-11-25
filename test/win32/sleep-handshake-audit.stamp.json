@@ -1,14 +1,14 @@
 {
     "guard":  "sleep-handshake",
     "script":  "test/win32/sleep-handshake-audit.ps1",
-    "generated":  "2026-11-24T16:11:04-08:00",
-    "commit":  "be679ba55",
+    "generated":  "2026-11-24T16:33:09-08:00",
+    "commit":  "919e9222a",
     "uncommitted":  [
 
                     ],
     "files":  {
                   "test/win32/lib/SleepAudit.ps1":  "5a7848f1c893744ac3027311e82473b94e340604d4e7483a38bfe70a2275cf66",
-                  "test/win32/sleep-handshake-audit.baseline.json":  "a1c2c8c255b209d9f4995b112bf22004529941a9415fdc1efb13613157c36215",
+                  "test/win32/sleep-handshake-audit.baseline.json":  "1296270c344c8c8105ccd440d4e8dccf33def50bab5079aa7543e66b5e5f9ecb",
                   "test/win32/sleep-handshake-audit.ps1":  "a009d349a848fe3f97f43f387996734cf7211ad861c4372a9472763b21551f44"
               },
     "code":  {
