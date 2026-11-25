@@ -181,7 +181,9 @@ hl_finish "MY SCRIPT"                  # stops everything, '<LABEL>: ALL PASS', 
 | `hl_isolation_problem` | Prints the first reason the environment is not isolated, or nothing. Pure. |
 | `hl_ghoztty [root]` | `<root>/zig-out/bin/ghoztty` by absolute path; refuses a missing or non-ELF file (the interop PATH trap below). |
 | `hl_weston_sockets`, `hl_env_is_private <pid>` | Evidence that an app connected to the private Weston: its socket-fd count rises, and the app's own `/proc/<pid>/environ` names only it. |
-| `hl_stop` | Kills every launched process and its children, then Weston, then removes the runtime dir. Idempotent. |
+| `hl_stop` | Kills every launched process and its children, then the compositor, then removes the runtime dir. Idempotent. |
+| `hl_start_seat [w] [h]` | `hl_start` with a headless **sway** instead of Weston (T3620), for a test that needs a `wl_seat` - Weston headless has none. Same runtime dir, isolation, refusals and cleanup; the socket is whatever sway picks inside the private dir (`HL_SOCKET` is read back), `SWAYSOCK` is exported, `HL_WESTON_PID` holds sway's pid. No input devices, no Xwayland, pixman renderer. See "A seat, for cross-client paste" below. |
+| `hl_key_serial` | Under `hl_start_seat` only (refuses otherwise): one `Shift_L` key event to the focused window through a short-lived virtual keyboard (`wtype`). Without it no copy ever leaves the app. |
 
 Acceptance (it builds the GTK app, then proves the refusals and the isolation,
 and that a SIGTERMed harness leaves no Weston, app or dir behind):
@@ -190,7 +192,30 @@ and that a SIGTERMed harness leaves no Weston, app or dir behind):
 powershell -NoProfile -File scripts\linux\wsl-run.ps1 -CommandFile test\linux\headless-harness.sh
 ```
 
-Ends `HEADLESS HARNESS: ALL PASS` (21 checks, about a minute warm; H16-H21 are the screenshots below).
+Ends `HEADLESS HARNESS: ALL PASS` (25 checks, about a minute warm; H16-H21 are
+the screenshots below, H22-H25 the seat compositor: `hl_key_serial` refuses
+under Weston, a GTK client sees no seat under Weston and one under
+`hl_start_seat`, and a SIGTERMed seat harness leaves no sway behind).
+
+**A seat, for cross-client paste: `hl_start_seat` (T3620).** A Wayland
+selection is offered to other clients only through a `wl_seat`, and Weston's
+headless backend creates none (a GTK 4 client there reports
+`get_default_seat() == None`, H23). Weston's VNC and RDP backends do create a
+seat, but they insist on TLS keys and open a TCP listener, so they were
+rejected. sway 1.9 with `WLR_BACKENDS=headless WLR_LIBINPUT_NO_DEVICES=1`
+has a seat with no devices, and it speaks wlr-data-control, so `wl-paste`
+reads the selection without needing focus of its own. What it does not do on
+its own: **wlroots refuses a `set_selection` whose serial the client was never
+given** (sway's debug log: `Rejecting set_selection request, serial 0 was
+never given to client`). GTK claims a selection with its last key-press or
+button serial, and with no input devices that serial stays 0, so every copy
+stays inside the app. `hl_key_serial` fixes that with one real key event. A
+modifier-only tap (`wtype -M shift -m shift`) is not enough, because it sends
+`wl_keyboard.modifiers`, not `.key` (measured with `WAYLAND_DEBUG=1`). The
+press-key and pane-mouse seams do not help either: they inject inside the app,
+so Wayland never issues a serial for them. Packages: `sway wtype wl-clipboard`
+(in `setup-distro.sh`). The GTK app renders fine on the pixman sway, since
+the copy-reflow run captures panes under it as usual.
 
 **Screenshots: `hl_screenshot` (T3359).** Weston headless has no capture a
 client can ask for and Wayland has no global one, so the picture comes from
@@ -1410,13 +1435,17 @@ Two debug-only seams, compiled out of a release:
 | `pane-mouse --target=<pane> [--cell=<col>,<row>] [--mods=ctrl\|shift\|none] [--button=press\|release\|click]` | The pointer: a motion to the CENTRE of a viewport cell (converted through the pane's own cell size and padding), stored where `getCursorPos` reads it, then the left button. Reply `over_link`, `x`, `y`. A drag is a press at one cell and a release at another; a drag includes a cell only once the pointer is past its midpoint, so end one cell PAST the last character. |
 | `read-clipboard --target=<pane> --out=<abs file> [--primary]` | Reads the pane's GdkClipboard (or PRIMARY) - the object the copy filled - asynchronously; the text lands in `<out>`, or the reason in `<out>.err` (renamed into place, never half-written). |
 
-**Why not wl-paste:** the headless Weston has **no seat** (measured: a GTK 4
-client there reports `get_default_seat() == None`), and a Wayland selection is
-only ever offered through a seat, so NO second client can be offered the
-clipboard in this harness. The app's own GdkClipboard is the reader that
-remains; a cross-client paste needs a compositor with a seat (T3620).
+**And from outside the app: wl-paste (T3620).** The run uses
+`hl_start_seat` (headless sway, which has the seat the default Weston lacks),
+so another Wayland client can be offered the copy. P1 is the control: right
+after select-all, before the app has any key serial, `wl-paste --primary`
+gets nothing ("Nothing is copied"). That proves the outside checks can fail.
+P2 runs `hl_key_serial`. P3-P5 then require `wl-paste` to return **the same
+bytes** `read-clipboard` returned: the clean prose from Ctrl+Shift+C, the
+dragged paragraph from PRIMARY (`--primary`, the middle-click paste), and the
+whole URL from Copy URL.
 
-Acceptance (22 checks: the fixture `test/linux/lib/copy_reflow_fixture.py` is
+Acceptance (27 checks, R1-R22 and P1-P5: the fixture `test/linux/lib/copy_reflow_fixture.py` is
 a fake TUI that word-wraps a paragraph behind a `⏺ ` gutter and a too-long URL
 to the pane's real width, the way Ink/wrap-ansi do; `+read` is the negative
 control that the same check fails on the screen as laid out):
