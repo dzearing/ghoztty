@@ -631,31 +631,55 @@ private runtime dir, so a test app can never meet the user's.
   another tree of the window and goes through
   `pane_drop_apply.applyArriving` (`SplitTree.moveTo`/`swapWith`): split,
   swap, top-level and gap drops across tabs, the tab it left closing when it
-  empties. A pane of another window is still `not_here` (T3616). A tree now
+  empties. **Another window (T3616)**: every window's split trees and tab
+  bar hold the same targets and the compositor delivers a drop to the window
+  under the pointer, so a drop finds its source app-wide
+  (`Window.paneHome`: this window first, then every other) and the same two
+  paths take it - `SplitTree.dropArriving` (split, swap, top-level, gap) and
+  `Window.dropOnTabBar` (a new tab there, `adoptFromWindow` +
+  `SplitTree.takeSurface`). The Mac's rule (`PaneMoveCoordinator.allows`,
+  fd7385c42): joining an EXISTING window is always allowed, a window's last
+  pane included - its tab closes, and with no other tab its window closes,
+  without a confirmation (nothing runs in it any more). The source's tree
+  and window are held by a reference through the move, since that close is
+  synchronous. `Window.finishArrival` is Mac `finishRelocation`: the moved
+  panes (both, for a swap) drop a Disconnect's detach pin, a drag made in
+  rearrange mode turns the mode on in the window it lands in, and that
+  window is presented. A rebuild now syncs every header to its window's mode
+  both ways, so a pane a swap sends into a window out of the mode loses its
+  header. The agent session needs no extra step: the same `Surface` moves,
+  so nothing is freed and nothing marks CLOSE (Mac needs one because its
+  close-intent policy reads a leaf leaving a tree). A tree now
   PUSHES its is-split to its panes on every rebuild (`Surface.setIsSplit`)
   instead of binding the property: a binding from the tree that made a pane
   went on driving it after it moved. Logs: `tab bar drop pane=... index=...
   outcome=...`, `pane drag dwell opened tab <n>`, `pane <id> arrived from
-  another tab`. Not yet: cross-window drops (T3616), the ghost card, drop
+  another tab`, `pane <id> arrived from another window`, `tab bar drop ...
+  (from another window)`. Not yet: the ghost card, drop
   preview (including lighting the dwelling tab) and the hover handle with the
   mode off (T3617), a release over nothing or the header's pop-out button
   making a new window (T3618). Debug seam:
   `hl_ipc pane-drag --target=<pane> [--key=escape] [--drop-on=<pane>
   --fx=<0..1> --fy=<0..1> | --drop-at=<x>,<y> | --drop-tab=<n>]
-  [--hover-tab=<n> | --hover-leave]` replies with `mode`, `tabs_visible`,
+  [--hover-tab=<n> | --hover-leave] [--bar-of=<pane>]` (`--bar-of` aims the
+  tab-bar flags at that pane's window) replies with `mode`, `tabs_visible`,
   `tabs_autohide`, `key_effect`, every pane's header (`shown`, `height`,
   `title`, `content_height`, `is_split`), the drop (`target`, `side`,
   `pane`, `index`, `outcome`), `tab_count`, `selected_tab`, `dwell_tab` and
-  `tab_buttons`. It drops the TARGET pane through the same
+  `tab_buttons` of the window the target is in after the drop, and
+  `window_count`. It drops the TARGET pane through the same
   `SplitTree.dropPaneAt` (in the `--drop-on` pane's tab, else the tab on
   show) or `Window.dropOnTabBar` (`--drop-tab`, the middle of that tab's
   button) a release calls, and `--hover-tab` is the motion handler's
   `tabDwellAt` call. The harness has no seat, so a pointer drag cannot START
   headless; the seam is the drop half. Acceptance:
   `wsl-run.ps1 -CommandFile test\linux\cli-pane-drag.sh`, ends
-  `CLI PANE DRAG: ALL PASS` (40 checks); `NEGATIVE=1` presses Ctrl+Shift+,
-  and must fail 21: D2-D5b, D14, D15, and the tab-bar half D19-D28b, D31 and
-  D32 (with the mode off and one tab the bar is hidden, so it is no target).
+  `CLI PANE DRAG: ALL PASS` (53 checks; X1-X12 the second window);
+  `NEGATIVE=1` presses Ctrl+Shift+, and must fail 32: D2-D5b, D14, D15, the
+  tab-bar half D19-D28b, D31 and D32 (with the mode off and one tab the bar
+  is hidden, so it is no target), and X2-X10 and X12 (the mode never follows
+  a pane, the other window's bar stays hidden, and the moves cascade from a
+  different start).
 - `+send-keys` and `+read` take a pane id, a pane name or a window name (its
   active pane). `+send-keys` is the Mac's:
   text runs framed as a bracketed paste when the program asked for one, key
