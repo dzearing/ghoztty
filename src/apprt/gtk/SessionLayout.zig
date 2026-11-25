@@ -8,8 +8,9 @@
 //!
 //! What it records, per window: its target name, pinned title, size (T3549;
 //! Wayland gives no position), maximized state and selected tab; per tab its
-//! pinned title (T3549) and its split tree with exact directions and
-//! ratios; per terminal pane its agent session id, pane id, target name,
+//! pinned title (T3549), its split tree with exact directions and
+//! ratios, and its collapsed rows and focus history (T3627, by leaf
+//! position); per terminal pane its agent session id, pane id, target name,
 //! pinned title, the directory its shell is in and its banner (T3560, the
 //! markdown source; it comes back whether the pane re-attaches or opens
 //! fresh, and keeps the session-interrupted notice out of its slot); per viewer pane its pane
@@ -162,6 +163,9 @@ fn captureWindow(
             .active = is_active,
             // The tab's pinned title (T3549); a shell's own title is not.
             .title = if (tab.titleOverride()) |t| try arena.dupe(u8, t) else null,
+            // Its collapsed rows and focus history, by leaf position (T3627;
+            // win32 T3126, Mac `paneStack`).
+            .pane_stack = tab.getSplitTree().stackPersisted(arena),
         });
     }
     if (tabs.items.len == 0) return null;
@@ -432,6 +436,9 @@ fn restoreWindow(app: *Application, ctx: *Ctx, win: schema.Window) bool {
         const anchor = tree.getActiveSurface() orelse continue;
         buildSubtree(ctx, tree, tab.nodes, 0, anchor, 0) catch |err|
             log.warn("session layout: a tab's split tree is corrupt err={}; kept what was built", .{err});
+        // Its collapsed rows come back, and the caret goes to the pane it
+        // was in - never a blade (T3627, Mac `restoredFocusTarget`).
+        if (tab.pane_stack) |ps| tree.adoptStackPersisted(ps);
         tabs_built += 1;
     }
     const w = window orelse return false;

@@ -46,6 +46,7 @@ const WeakRef = @import("weak_ref.zig").WeakRef;
 const close_undo = @import("../win32/close_undo.zig");
 const layout_undo = @import("../win32/layout_undo.zig");
 const pane_id = @import("../ipc/pane_id.zig");
+const pane_stack_state = @import("../win32/pane_stack_state.zig");
 
 const log = std.log.scoped(.gtk_close_undo);
 
@@ -68,6 +69,9 @@ const Entry = union(enum) {
         surface: *Surface,
         anchor: Anchor,
         home: *Home,
+        /// The tab's stacked rows as they were before the close (T3627,
+        /// win32 T2126): the undo puts them back exactly. Owned.
+        stack: ?pane_stack_state.Saved,
     },
     /// Undo: put the layout before a `+rearrange` back.
     layout: struct {
@@ -211,6 +215,7 @@ fn finalize(entry: *Entry) void {
         .pane => |*p| {
             endSurface(p.surface);
             p.anchor.deinit(alloc);
+            if (p.stack) |*st| st.deinit(alloc);
             freeHome(p.home);
         },
         .layout => |*l| {
@@ -341,13 +346,16 @@ pub fn parkClosedPane(
         anchor.deinit(alloc);
         return false;
     };
+    var stack = split_tree.stackSaved();
     if (!push(&undos, owner, .{ .pane = .{
         .surface = surface.ref(),
         .anchor = anchor,
         .home = home,
+        .stack = stack,
     } })) {
         surface.unref();
         anchor.deinit(alloc);
+        if (stack) |*st| st.deinit(alloc);
         freeHome(home);
         return false;
     }
@@ -611,7 +619,15 @@ fn restorePane(owner: usize, entry: *Entry) bool {
     };
     defer next.deinit();
     split_tree.setTree(&next);
-    split_tree.focusSurface(p.surface);
+    // Its row comes back exactly as it was (T3627). A pane that comes back
+    // as a strip stays one: focusing it would bring it out, and the row is
+    // meant to be as it was - the caret stays where it is.
+    if (p.stack) |*st| {
+        split_tree.restoreStackRows(st);
+        st.deinit(alloc);
+        p.stack = null;
+    }
+    if (!split_tree.isStackMinimized(p.surface)) split_tree.focusSurface(p.surface);
     // T3563: back in a live tree, a later close is a close again.
     p.surface.clearDetachPin();
 

@@ -1154,6 +1154,143 @@ pub const SplitTree = extern struct {
         return p.is_tucked or p.is_sliver;
     }
 
+    // ---- Stacked panes that last (T3627; win32 T3126/T2126) -----------------
+    //
+    // docs/reference/stacked-panes.md "Saved with the window": the rows the
+    // user collapsed and the focus history ride the session layout by leaf
+    // position (`PaneStackState.Persisted`), an undone close puts the rows
+    // back exactly as they were (`Saved`), and a restore never focuses a
+    // blade (`restoredFocusTarget`). The state is per tab here (win32 keeps
+    // one per window), so "this tab's rows" is every row the state has.
+
+    /// The tab's rows on screen now (the stash skipped), in `a`.
+    fn stackRowsNow(self: *Self, a: Allocator) Allocator.Error!pane_stack_state.Rows {
+        const tree = self.private().tree orelse return &.{};
+        var out: std.ArrayListUnmanaged([]const []const pane_stack_layout.Id) = .empty;
+        try pane_stack_grid.appendRows(a, &out, tree, paneKey);
+        return out.items;
+    }
+
+    /// Note the tree's rows as they stand, so a collapse is carried over a
+    /// tree change now rather than at the next layout.
+    fn noteStackRows(self: *Self) void {
+        var arena = std.heap.ArenaAllocator.init(Application.default().allocator());
+        defer arena.deinit();
+        const rows = self.stackRowsNow(arena.allocator()) catch return;
+        self.stackState().noteRows(rows) catch |err| log.warn("stacked rows not carried over: {}", .{err});
+    }
+
+    /// Every stacked row's collapse as it stands, for a close's undo to put
+    /// back (win32 `Window.stackSaved`). Taken BEFORE the tree changes. Null
+    /// when it could not be copied: the undo then carries the rows over the
+    /// way any tree change does. The caller owns it.
+    pub fn stackSaved(self: *Self) ?pane_stack_state.Saved {
+        self.noteStackRows();
+        return self.stackState().saved() catch null;
+    }
+
+    /// An undo put a pane back: the rows come back exactly as `saved` had
+    /// them. The tree change is noted first, as any other is, so the next
+    /// layout sees nothing left to carry over it. A row `saved` had that is
+    /// not on screen now keeps nothing.
+    pub fn restoreStackRows(self: *Self, saved: *const pane_stack_state.Saved) void {
+        const tree = self.private().tree orelse return;
+        self.noteStackRows();
+        var arena = std.heap.ArenaAllocator.init(Application.default().allocator());
+        defer arena.deinit();
+        const a = arena.allocator();
+        var scope: std.ArrayListUnmanaged(pane_stack_layout.Id) = .empty;
+        var it = tree.iterator();
+        while (it.next()) |entry| scope.append(a, paneKey(entry.view)) catch return;
+        const rows = self.stackRowsNow(a) catch return;
+        self.stackState().restoreScoped(saved, scope.items, rows) catch |err|
+            log.warn("stacked rows not restored by undo: {}", .{err});
+        self.relayoutStage();
+    }
+
+    /// Whether `surface` is a strip of a collapsed row as the state stands
+    /// now (not as the stage was last laid out): focusing it would bring it
+    /// back out.
+    pub fn isStackMinimized(self: *Self, surface: *Surface) bool {
+        const state = if (self.private().stacks) |*s| s else return false;
+        var arena = std.heap.ArenaAllocator.init(Application.default().allocator());
+        defer arena.deinit();
+        const rows = self.stackRowsNow(arena.allocator()) catch return false;
+        return state.isMinimized(paneKey(surface), rows) catch false;
+    }
+
+    /// The tab's panes in screen order, the stash included: the positions
+    /// `Persisted` names panes by (Mac's `leaves()`).
+    fn stackLeaves(self: *Self, a: Allocator) Allocator.Error![]const pane_stack_layout.Id {
+        const tree = self.private().tree orelse return &.{};
+        var out: std.ArrayListUnmanaged(pane_stack_layout.Id) = .empty;
+        var it = tree.leafIterator();
+        while (it.next()) |entry| try out.append(a, paneKey(entry.view));
+        return out.items;
+    }
+
+    /// The tab's collapses and focus history as the session layout saves
+    /// them (win32 `Window.stackPersisted`, Mac `persistedPaneStack`). Null
+    /// when there is nothing to keep. Allocated in `a` (the capture's arena).
+    pub fn stackPersisted(self: *Self, a: Allocator) ?pane_stack_state.Persisted {
+        const state = if (self.private().stacks) |*s| s else return null;
+        // The focused pane leads the history even before a layout noted it.
+        if (self.private().last_focused.get()) |f| {
+            defer f.unref();
+            if (state.recency.first() != paneKey(f)) state.noteFocus(paneKey(f));
+        }
+        const leaves = self.stackLeaves(a) catch return null;
+        return state.persisted(a, leaves) catch null;
+    }
+
+    /// Take back a saved tab's collapses and focus history, once its tree is
+    /// whole and before it is shown (win32 `adoptStackPersisted`, Mac
+    /// `adoptPersistedPaneStack`), then put the caret where the restore
+    /// wants it (`focusRestoredPane`).
+    pub fn adoptStackPersisted(self: *Self, saved: pane_stack_state.Persisted) void {
+        // The rows as built are the baseline: nothing to carry over them.
+        self.noteStackRows();
+        var arena = std.heap.ArenaAllocator.init(Application.default().allocator());
+        defer arena.deinit();
+        const leaves = self.stackLeaves(arena.allocator()) catch return;
+        self.stackState().adopt(saved, leaves) catch |err| {
+            log.warn("stacked rows not restored: {}", .{err});
+            return;
+        };
+        self.focusRestoredPane();
+        self.relayoutStage();
+    }
+
+    /// Where the caret goes in a restored tab (Mac `restoredFocusTarget`,
+    /// win32 `focusRestoredPane`): the pane focused last there, unless it is
+    /// stashed, and never a strip of a collapsed row - focusing one would
+    /// bring it back out - when it is the pane on show nearest it, focused
+    /// last. Only records it: the tree's rebuild moves the keyboard there.
+    fn focusRestoredPane(self: *Self) void {
+        const priv = self.private();
+        const tree = priv.tree orelse return;
+        const state = if (priv.stacks) |*s| s else return;
+        var preferred: ?*Surface = null;
+        for (state.recency.items()) |id| {
+            var it = tree.iterator();
+            while (it.next()) |entry| {
+                if (paneKey(entry.view) != id) continue;
+                if (!pane_stash.isStashed(entry.view)) preferred = entry.view;
+                break;
+            }
+            if (preferred != null) break;
+        }
+        const candidate: *Surface = preferred orelse (priv.last_focused.get() orelse return);
+        if (preferred == null) candidate.unref(); // the tree holds it
+        var arena = std.heap.ArenaAllocator.init(Application.default().allocator());
+        defer arena.deinit();
+        const rows = self.stackRowsNow(arena.allocator()) catch return;
+        const id = state.paneOnShow(paneKey(candidate), rows, rows) catch paneKey(candidate);
+        const target = self.surfaceByKey(id) orelse candidate;
+        if (target != candidate) log.info("restored focus goes to the pane on show, not a blade", .{});
+        priv.last_focused.set(target);
+    }
+
     fn relayoutStage(self: *Self) void {
         if (self.private().stage) |s| wk.gtk_widget_queue_allocate(s);
     }
