@@ -67,7 +67,7 @@ fn stripDeleted(s: []const u8) []const u8 {
 
 /// The skew dialog's buttons, in order. Later is first, the default, and the
 /// cancel: Enter or Escape must never end sessions (win32's default_cancel).
-pub const skew_buttons = [_][]const u8{ agent_upgrade.install_now_cancel, agent_upgrade.install_now_ok };
+pub const skew_buttons = [_][:0]const u8{ agent_upgrade.install_now_cancel, agent_upgrade.install_now_ok };
 pub const skew_default_index: usize = 0;
 pub const skew_cancel_index: usize = 0;
 const restart_index: usize = 1;

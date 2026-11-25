@@ -218,7 +218,7 @@ fn askRestart(app: *Application, peer: ?u16) void {
     const detail = std.fmt.bufPrintZ(&text_z, "{s}", .{text}) catch return;
 
     var labels: [rules.skew_buttons.len + 1]?[*:0]const u8 = undefined;
-    inline for (rules.skew_buttons, 0..) |l, i| labels[i] = l;
+    inline for (rules.skew_buttons, 0..) |l, i| labels[i] = l.ptr;
     labels[rules.skew_buttons.len] = null;
 
     const dialog = gobject.ext.newInstance(gtk.AlertDialog, .{});
