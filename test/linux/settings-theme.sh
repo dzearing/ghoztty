@@ -79,7 +79,7 @@ lc=$(th "$o" '["light_count"]'); dc=$(th "$o" '["dark_count"]')
   && [ "$(jget "$o" '[g["drawn"] for g in d["groups"] if g["title"]=="Theme"][0]')" = Theme ] \
   && [ "$(th "$o" '["drawn"] is not None')" = true ] && [ "$(pv "$o" '["drawn"] is not None')" = true ]
 hl_check "K1 Appearance draws the Theme section and the preview; the catalog has both kinds ($lc light, $dc dark, read in $(th "$o" '["load_ms"]') ms)" $? "groups=$(jget "$o" '[g["title"] for g in d["groups"] if g["page"]=="appearance"]')"
-cat_of() { th "$o" "[[t for t in d['theme']['catalog'] if t['name']=='$1'][0]['$2']][0]"; }
+cat_of() { jget "$o" "[t for t in d['theme']['catalog'] if t['name']=='$1'][0]['$2']"; }
 [ "$(cat_of 'Catppuccin Mocha' user)" = true ] && [ "$(cat_of 'Catppuccin Mocha' background)" = '#101820' ] \
   && [ "$(cat_of 'Zz Test Light' user)" = true ] && [ "$(cat_of 'Zz Test Light' light)" = true ] \
   && [ "$(cat_of 'Catppuccin Latte' user)" = false ] && [ "$(cat_of 'Catppuccin Latte' light)" = true ]
@@ -89,35 +89,35 @@ sysd=$(th "$o" '["system_dark"]'); want_tab=light; [ "$sysd" = true ] && want_ta
   && [ "$(th "$o" '["follows"]')" = false ] && [ "$(th "$o" '["drawn"]["one_active"]')" = true ] \
   && [ "$(th "$o" '["drawn"]["use_caption"]')" = "One theme, whatever the system appearance." ] \
   && [ "$(th "$o" '["drawn"]["tab_caption"]')" = "Filter only — the theme you pick is used all the time." ] \
-  && [ "$(th "$o" '"|".join(d["theme"]["drawn"]["tab_labels"])')" = "☀  Light themes|☾  Dark themes" ]
+  && [ "$(jget "$o" '"|".join(d["theme"]["drawn"]["tab_labels"])')" = "☀  Light themes|☾  Dark themes" ]
 hl_check "K3 no theme set: One theme, Mac's captions, the tab follows the system (dark=$sysd)" $? "$(th "$o" '["drawn"]')"
 
 # ---- the grid -----------------------------------------------------------
 o=$(st --op=theme-tab --value=dark)
-names_ok() { [ "$(th "$1" '[t["name"] for t in d["theme"]["drawn"]["tiles"]] == d["theme"]["tiles"]')" = true ]; }
-[ "$(th "$o" '["drawn"]["tab_active"]')" = dark ] && [ "$(th "$o" 'len(d["theme"]["drawn"]["tiles"])')" = 11 ] \
-  && [ "$(th "$o" 'all(not t["light"] for t in d["theme"]["drawn"]["tiles"])')" = true ] && names_ok "$o" \
+names_ok() { [ "$(jget "$1" '[t["name"] for t in d["theme"]["drawn"]["tiles"]] == d["theme"]["tiles"]')" = true ]; }
+[ "$(th "$o" '["drawn"]["tab_active"]')" = dark ] && [ "$(jget "$o" 'len(d["theme"]["drawn"]["tiles"])')" = 11 ] \
+  && [ "$(jget "$o" 'all(not t["light"] for t in d["theme"]["drawn"]["tiles"])')" = true ] && names_ok "$o" \
   && [ "$(th "$o" '["drawn"]["all"]')" = "All $dc dark themes…" ]
-hl_check "G1 the dark tab lists only dark themes: 11 tiles, then 'All $dc dark themes…'" $? "tiles=$(th "$o" '[t["name"] for t in d["theme"]["drawn"]["tiles"]]') all=$(th "$o" '["drawn"]["all"]')"
+hl_check "G1 the dark tab lists only dark themes: 11 tiles, then 'All $dc dark themes…'" $? "tiles=$(jget "$o" '[t["name"] for t in d["theme"]["drawn"]["tiles"]]') all=$(th "$o" '["drawn"]["all"]')"
 o=$(st --op=theme-all)
-[ "$(th "$o" 'len(d["theme"]["drawn"]["tiles"])')" = "$dc" ] && [ "$(th "$o" '["drawn"]["all"]')" = null ] && names_ok "$o"
-hl_check "G2 'All…' draws every dark theme ($dc) and goes away" $? "drawn=$(th "$o" 'len(d["theme"]["drawn"]["tiles"])')"
+[ "$(jget "$o" 'len(d["theme"]["drawn"]["tiles"])')" = "$dc" ] && [ "$(th "$o" '["drawn"]["all"]')" = null ] && names_ok "$o"
+hl_check "G2 'All…' draws every dark theme ($dc) and goes away" $? "drawn=$(jget "$o" 'len(d["theme"]["drawn"]["tiles"])')"
 o=$(st --op=theme-tab --value=light)
-[ "$(th "$o" '["show_all"]')" = false ] && [ "$(th "$o" 'len(d["theme"]["drawn"]["tiles"])')" = 11 ] \
-  && [ "$(th "$o" 'all(t["light"] for t in d["theme"]["drawn"]["tiles"])')" = true ] \
+[ "$(th "$o" '["show_all"]')" = false ] && [ "$(jget "$o" 'len(d["theme"]["drawn"]["tiles"])')" = 11 ] \
+  && [ "$(jget "$o" 'all(t["light"] for t in d["theme"]["drawn"]["tiles"])')" = true ] \
   && [ "$(th "$o" '["drawn"]["all"]')" = "All $lc light themes…" ] && names_ok "$o"
 hl_check "G3 a tab click collapses again; the light tab lists only light themes" $? "all=$(th "$o" '["drawn"]["all"]')"
 st --op=theme-tab --value=dark > /dev/null
 o=$(st --op=theme-filter --value=MOCHA)
-[ "$(th "$o" '[t["name"] for t in d["theme"]["drawn"]["tiles"]]')" = '["Catppuccin Mocha"]' ] \
+[ "$(jget "$o" '[t["name"] for t in d["theme"]["drawn"]["tiles"]]')" = '["Catppuccin Mocha"]' ] \
   && [ "$(th "$o" '["drawn"]["filter"]')" = MOCHA ] && [ "$(th "$o" '["drawn"]["all"]')" = null ]
-hl_check "G4 the filter folds case: MOCHA on the dark tab draws Catppuccin Mocha alone" $? "$(th "$o" '[t["name"] for t in d["theme"]["drawn"]["tiles"]]')"
+hl_check "G4 the filter folds case: MOCHA on the dark tab draws Catppuccin Mocha alone" $? "$(jget "$o" '[t["name"] for t in d["theme"]["drawn"]["tiles"]]')"
 o=$(st --op=theme-filter --value=zzqq)
-[ "$(th "$o" 'len(d["theme"]["drawn"]["tiles"])')" = 0 ] && [ "$(th "$o" '["drawn"]["empty"]')" = "No dark themes match “zzqq”." ]
+[ "$(jget "$o" 'len(d["theme"]["drawn"]["tiles"])')" = 0 ] && [ "$(th "$o" '["drawn"]["empty"]')" = "No dark themes match “zzqq”." ]
 hl_check "G5 an unmatched filter says so in Mac's words" $? "empty=$(th "$o" '["drawn"]["empty"]')"
 o=$(st --op=theme-filter --value=)
-[ "$(th "$o" 'len(d["theme"]["drawn"]["tiles"])')" = 11 ] && [ "$(th "$o" '["drawn"]["empty"]')" = null ]
-hl_check "G6 clearing the filter brings the collapsed grid back" $? "n=$(th "$o" 'len(d["theme"]["drawn"]["tiles"])')"
+[ "$(jget "$o" 'len(d["theme"]["drawn"]["tiles"])')" = 11 ] && [ "$(th "$o" '["drawn"]["empty"]')" = null ]
+hl_check "G6 clearing the filter brings the collapsed grid back" $? "n=$(jget "$o" 'len(d["theme"]["drawn"]["tiles"])')"
 
 # ---- One theme: pick a tile ---------------------------------------------
 st --op=theme-filter --value=catppuccin > /dev/null
@@ -125,9 +125,9 @@ o=$(st --op=theme-tile '--value=Catppuccin Mocha')
 [ "$(jget "$o" 'd["ok"]')" = true ] && [ "$(theme_line)" = "Catppuccin Mocha" ] \
   && [ "$(th "$o" '["follows"]')" = false ] && [ "$(th "$o" '["light"]')" = "Catppuccin Mocha" ]
 hl_check "P1 a tile click writes 'theme = Catppuccin Mocha' to the user's file" $? "file theme=$(theme_line)"
-[ "$(th "$o" '[t["name"] for t in d["theme"]["drawn"]["tiles"] if t["picked"]]')" = '["Catppuccin Mocha"]' ] \
+[ "$(jget "$o" '[t["name"] for t in d["theme"]["drawn"]["tiles"] if t["picked"]]')" = '["Catppuccin Mocha"]' ] \
   && [ "$(th "$o" '["drawn"]["tiles"][0]["name"]')" = "Catppuccin Mocha" ]
-hl_check "P2 the picked tile is ringed and listed first" $? "$(th "$o" '[(t["name"],t["picked"]) for t in d["theme"]["drawn"]["tiles"]]')"
+hl_check "P2 the picked tile is ringed and listed first" $? "$(jget "$o" '[(t["name"],t["picked"]) for t in d["theme"]["drawn"]["tiles"]]')"
 o=$(st --op=theme-filter --value=)
 [ "$(th "$o" '["tiles"][0]')" = "Catppuccin Mocha" ] && [ "$(th "$o" '["drawn"]["tiles"][0]["picked"]')" = true ]
 hl_check "P3 unfiltered, the pick still comes first among the 11" $? "first=$(th "$o" '["tiles"][0]')"
@@ -142,7 +142,7 @@ o=$(st --op=theme-mode --value=true)
 [ "$(theme_line)" = "light:$want_light,dark:Catppuccin Mocha" ] && [ "$(th "$o" '["follows"]')" = true ] \
   && [ "$(th "$o" '["drawn"]["follow_active"]')" = true ]
 hl_check "M1 Light & dark seeds the light slot from the same family: theme = light:$want_light,dark:Catppuccin Mocha" $? "file theme=$(theme_line)"
-[ "$(th "$o" '"|".join(d["theme"]["drawn"]["tab_labels"])')" = "☀  Catppuccin Latte|☾  Catppuccin Mocha" ] \
+[ "$(jget "$o" '"|".join(d["theme"]["drawn"]["tab_labels"])')" = "☀  Catppuccin Latte|☾  Catppuccin Mocha" ] \
   && [ "$(th "$o" '["drawn"]["tab_caption"]')" = "Showing dark themes — your pick is used in dark mode." ] \
   && [ "$(th "$o" '["drawn"]["use_caption"]')" = "Switches between a light and a dark theme with the system appearance." ]
 hl_check "M2 the tabs carry the two picked names; Mac's captions for light & dark" $? "$(th "$o" '["drawn"]["tab_labels"]') / $(th "$o" '["drawn"]["tab_caption"]')"
@@ -150,12 +150,12 @@ st --op=theme-tab --value=light > /dev/null
 st --op=theme-filter --value=zz > /dev/null
 o=$(st --op=theme-tile '--value=Zz Test Light')
 [ "$(theme_line)" = "light:Zz Test Light,dark:Catppuccin Mocha" ] \
-  && [ "$(th "$o" '[t["name"] for t in d["theme"]["drawn"]["tiles"] if t["picked"]]')" = '["Zz Test Light"]' ] \
+  && [ "$(jget "$o" '[t["name"] for t in d["theme"]["drawn"]["tiles"] if t["picked"]]')" = '["Zz Test Light"]' ] \
   && [ "$(th "$o" '["drawn"]["tab_caption"]')" = "Showing light themes — your pick is used in light mode." ]
 hl_check "M3 on the light tab a tile fills the light slot and keeps the dark one" $? "file theme=$(theme_line)"
 o=$(st --op=theme-filter --value=)
 r=$(st --op=theme-tile '--value=Catppuccin Mocha')
-[ "$(th "$o" 'all(t["light"] for t in d["theme"]["drawn"]["tiles"])')" = true ] \
+[ "$(jget "$o" 'all(t["light"] for t in d["theme"]["drawn"]["tiles"])')" = true ] \
   && printf '%s' "$r" | grep -q 'does not draw' && [ "$(theme_line)" = "light:Zz Test Light,dark:Catppuccin Mocha" ]
 hl_check "M4 the light tab draws no dark theme, so the slots cannot be mixed" $? "reply=$r"
 want_one="Zz Test Light"; [ "$sysd" = true ] && want_one="Catppuccin Mocha"
@@ -168,7 +168,7 @@ sed -i -E 's/^theme *=.*/theme = light:Catppuccin Mocha,dark:Catppuccin Mocha/' 
 st --op=set --key=font-size --value=13.5 > /dev/null   # any write re-reads the file
 o=$(st --op=state)
 [ "$(th "$o" '["mismatch"]')" = light ] \
-  && [ "$(th "$o" '"⚠ Catppuccin Mocha is a dark theme but is set for light mode. Pick a light theme to fix it." in d["theme"]["drawn"]["notices"]')" = true ]
+  && [ "$(jget "$o" '"⚠ Catppuccin Mocha is a dark theme but is set for light mode. Pick a light theme to fix it." in d["theme"]["drawn"]["notices"]')" = true ]
 hl_check "X1 light:<a dark theme> is warned about in Mac's words" $? "notices=$(th "$o" '["drawn"]["notices"]')"
 
 # ---- the preview --------------------------------------------------------
@@ -216,8 +216,8 @@ printf 'theme = Dracula\n' > "$later"
 st --op=set --key=font-size --value=14 > /dev/null
 o=$(st --op=state)
 [ "$(th "$o" '["editable"]')" = false ] && [ "$(th "$o" '["drawn"]["mode_sensitive"]')" = false ] \
-  && [ "$(th "$o" 'all(not t["sensitive"] for t in d["theme"]["drawn"]["tiles"])')" = true ] \
-  && [ "$(th "$o" '"Set in a file that loads after your config - edit it there." in d["theme"]["drawn"]["notices"]')" = true ]
+  && [ "$(jget "$o" 'all(not t["sensitive"] for t in d["theme"]["drawn"]["tiles"])')" = true ] \
+  && [ "$(jget "$o" '"Set in a file that loads after your config - edit it there." in d["theme"]["drawn"]["notices"]')" = true ]
 hl_check "O1 a later file that sets theme dims the switch and every tile, and says where to edit it" $? "notices=$(th "$o" '["drawn"]["notices"]')"
 r=$(st --op=theme-mode --value=true); r2=$(st --op=theme-pick --key=light '--value=Catppuccin Latte')
 printf '%s' "$r" | grep -q 'not editable' && [ "$(jget "$r2" 'd["ok"]')" = false ] && [ "$(theme_line)" = "$before" ]
