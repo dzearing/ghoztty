@@ -1,8 +1,8 @@
 {
     "guard":  "doc-claims",
     "script":  "test/win32/doc-claims.ps1",
-    "generated":  "2026-11-24T22:50:33-08:00",
-    "commit":  "9941adbf0",
+    "generated":  "2026-11-24T23:10:47-08:00",
+    "commit":  "1f78536b5",
     "uncommitted":  [
 
                     ],

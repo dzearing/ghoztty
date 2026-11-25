@@ -173,6 +173,41 @@ function Assert([bool]$cond, [string]$label) {
     else { $script:fail++; Write-Host "FAIL  $label" -ForegroundColor Red }
 }
 
+# CAP-1's verdict (T2208). BitBlt off the desktop DC is DEAD when the call
+# fails outright, or when the CHROME band it returns is uniform (<= 2 distinct
+# colours) while PrintWindow's chrome band of the same window holds content
+# (> 4) - the positive control that says the band was there to capture. It
+# used to be "not (whole-window mean > 60 and distinct > 4)", and a WORKING
+# capture fails that bar: the dark terminal surface fills most of the window,
+# so the interactive-desktop BitBlt measured mean 55 / 406 distinct and would
+# have been scored dead. A band that could not be measured (no surface child,
+# no band) is no verdict, so it is NOT dead.
+function Test-BitBltDead([bool]$Ok, [int]$ChromeDistinct, [int]$ControlChromeDistinct) {
+    if (-not $Ok) { return $true }
+    if ($ControlChromeDistinct -le 4) { return $false }
+    return ($ChromeDistinct -ge 0 -and $ChromeDistinct -le 2)
+}
+
+# The verdict's own controls, before anything launches - pure arithmetic over
+# readings this file records, so the oracle is shown able to say both answers
+# on every run, not only the one a background desktop produces.
+#  - 2026-09-02 background desktop: BitBlt returned FALSE.          -> dead
+#  - a black (uncomposed) bitmap: chrome band 1 colour, control 103. -> dead
+#  - 2026-09-02 interactive desktop: whole window mean 55 / 406
+#    distinct; its chrome band carries the title bar and tab strip,
+#    which PrintWindow read as 35 distinct over the same band.      -> LIVE
+#  - no positive control (PrintWindow chrome flat too).             -> no verdict
+Assert (Test-BitBltDead -Ok $false -ChromeDistinct -1 -ControlChromeDistinct 103) `
+    "CAP-1 verdict control: a BitBlt that returns FALSE scores dead"
+Assert (Test-BitBltDead -Ok $true -ChromeDistinct 1 -ControlChromeDistinct 103) `
+    "CAP-1 verdict control: a uniform chrome band under a live control scores dead"
+Assert (-not (Test-BitBltDead -Ok $true -ChromeDistinct 35 -ControlChromeDistinct 35)) `
+    "CAP-1 verdict control: the interactive-desktop working capture (whole-window mean 55) scores LIVE"
+Assert (-not (Test-BitBltDead -Ok $true -ChromeDistinct 1 -ControlChromeDistinct 1)) `
+    "CAP-1 verdict control: with no positive control there is no dead verdict"
+Assert (-not (Test-BitBltDead -Ok $true -ChromeDistinct -1 -ControlChromeDistinct 103)) `
+    "CAP-1 verdict control: an unmeasured chrome band is no dead verdict"
+
 Add-Type -ReferencedAssemblies System.Drawing -TypeDefinition @'
 using System;
 using System.Text;
@@ -259,6 +294,14 @@ public class DeskSpike {
     public static int WinW = 0, WinH = 0;
     public static int BitBltMeanLum = -1;      // -1 = capture failed outright
     public static int BitBltDistinct = -1;
+    // T2208: BitBlt scored by REGION as well. The whole-window mean above is
+    // dominated by the dark terminal surface, so a WORKING capture reads under
+    // any brightness bar (interactive desktop, 2026-09-02: mean 55). What tells
+    // a dead capture from a live one is the CHROME band: uniform when nothing
+    // was composed, many colours when it was.
+    public static bool BitBltOk = false;
+    public static int BitBltChromeMeanLum = -1;
+    public static int BitBltChromeDistinct = -1;
     public static int PrintMeanLum = -1;
     public static int PrintDistinct = -1;
     // T1115: the whole-window mean above is dominated by the terminal surface,
@@ -523,13 +566,28 @@ public class DeskSpike {
 
             // --- capture path 1: BitBlt off the desktop DC (== CopyFromScreen)
             if (WinW > 0 && WinH > 0) {
+                // The surface child's rect splits every capture into a chrome
+                // band and the region below it (T1115); found first so the
+                // BitBlt capture is scored by the same band (T2208).
+                IntPtr surfEarly = FindChildClass(top, "GhozttyTerminal");
+                RECT sr = new RECT();
+                bool haveSurf = (surfEarly != IntPtr.Zero) && GetWindowRect(surfEarly, out sr);
+                int bandH = haveSurf ? (sr.top - r.top) : -1;
+
                 IntPtr hdcScreen = GetDC(IntPtr.Zero);
                 IntPtr hdcMem = CreateCompatibleDC(hdcScreen);
                 IntPtr hbmp = CreateCompatibleBitmap(hdcScreen, WinW, WinH);
                 IntPtr old = SelectObject(hdcMem, hbmp);
                 bool ok = BitBlt(hdcMem, 0, 0, WinW, WinH, hdcScreen, r.left, r.top, 0x00CC0020 /*SRCCOPY*/);
                 note("BitBlt from desktop DC ok=" + ok);
-                if (ok) { int m, d; Sample(hdcMem, WinW, WinH, out m, out d); BitBltMeanLum = m; BitBltDistinct = d; }
+                BitBltOk = ok;
+                if (ok) {
+                    int m, d; Sample(hdcMem, WinW, WinH, out m, out d); BitBltMeanLum = m; BitBltDistinct = d;
+                    if (bandH > 8) {
+                        int bcm, bcd; SampleRect(hdcMem, 0, 0, WinW, bandH, out bcm, out bcd);
+                        BitBltChromeMeanLum = bcm; BitBltChromeDistinct = bcd;
+                    }
+                }
                 SelectObject(hdcMem, old); DeleteObject(hbmp); DeleteDC(hdcMem); ReleaseDC(IntPtr.Zero, hdcScreen);
 
                 // --- capture path 2: PrintWindow(PW_RENDERFULLCONTENT)
@@ -540,10 +598,6 @@ public class DeskSpike {
                 // client area was rendered - which is exactly the thing this
                 // measurement has to tell apart. What discriminates is
                 // UNIFORMITY: an uncomposed capture is one flat color.
-                IntPtr surfEarly = FindChildClass(top, "GhozttyTerminal");
-                RECT sr = new RECT();
-                bool haveSurf = (surfEarly != IntPtr.Zero) && GetWindowRect(surfEarly, out sr);
-
                 IntPtr hdcWin = GetDC(top);
                 IntPtr hdcMem2 = CreateCompatibleDC(hdcWin);
                 IntPtr hbmp2 = CreateCompatibleBitmap(hdcWin, WinW, WinH);
@@ -818,10 +872,15 @@ Write-Host "CAPTURE    chrome band region:      meanLum=$cl distinct=$cd"
 $wl = [DeskSpike]::PrintBelowMeanLum;   $wd = [DeskSpike]::PrintBelowDistinct
 Write-Host "CAPTURE    everything below chrome:  meanLum=$wl distinct=$wd"
 Write-Host "CAPTURE  PrintWindow(flags=0):     meanLum=$zl distinct=$zd (negative control)"
-$bitbltReal = ($bl -gt 60 -and $bd -gt 4)
+$bok = [DeskSpike]::BitBltOk
+$bcl = [DeskSpike]::BitBltChromeMeanLum; $bcd = [DeskSpike]::BitBltChromeDistinct
+Write-Host "CAPTURE    BitBlt ok=$bok chrome band: meanLum=$bcl distinct=$bcd"
 # CAP-1: CopyFromScreen/BitBlt is dead there - DWM composes only the input
 # desktop, exactly as the task predicted. Recorded so it is not re-tried.
-Assert (-not $bitbltReal) "CopyFromScreen/BitBlt off the desktop DC is dead on a background desktop"
+# Scored by the chrome band against PrintWindow's chrome band as the positive
+# control (T2208; Test-BitBltDead above), never by a whole-window mean.
+Assert (Test-BitBltDead -Ok $bok -ChromeDistinct $bcd -ControlChromeDistinct $cd) `
+    "CopyFromScreen/BitBlt off the desktop DC is dead on a background desktop (ok=$bok, chrome distinct=$bcd vs PrintWindow chrome $cd)"
 
 # CAP-2..5 (T1115) replace a single "PrintWindow returns real content" assertion
 # that scored the WHOLE window on brightness. That oracle could not tell the two
