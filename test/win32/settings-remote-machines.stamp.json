@@ -1,14 +1,14 @@
 {
     "guard":  "settings-remote-machines",
     "script":  "test/win32/settings-remote-machines.ps1",
-    "generated":  "2026-11-24T03:07:44-08:00",
-    "commit":  "696762529",
+    "generated":  "2026-11-25T13:53:51-08:00",
+    "commit":  "2d40b2a37",
     "uncommitted":  [
-                        "test/win32/settings-remote-machines.ps1"
+
                     ],
     "files":  {
                   "src/apprt/win32/DirectoryProbe.zig":  "8a3c2a82c923ef8c08aabbeb3af4abbbf50515d5c1f6f8442bc92e0715936ef1",
-                  "src/apprt/win32/settings_live.zig":  "16dd06f1176ca6fe2ce54f2d6ca20a6c3f74f25de2c9e1a81173b3cdeef0d9b1",
+                  "src/apprt/win32/settings_live.zig":  "0e966f74741abe8b274ffd7802120485faa514d193b376cdd6f47d792c4c5065",
                   "src/apprt/win32/settings_remote_view.zig":  "52296df322144692b2d3d96c0002660838407b16c2e5306efe3bc72c5d9358e5",
                   "test/win32/settings-remote-machines.ps1":  "a16e827b8c1836eb395c408b47a29c7ea0687b5cdaf877b5c58297dfca52b44c"
               },

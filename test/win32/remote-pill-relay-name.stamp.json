@@ -1,13 +1,13 @@
 {
     "guard":  "remote-pill-relay-name",
     "script":  "test/win32/remote-pill-relay-name.ps1",
-    "generated":  "2026-11-22T14:43:01-08:00",
-    "commit":  "37816554e",
+    "generated":  "2026-11-25T13:54:01-08:00",
+    "commit":  "2d40b2a37",
     "uncommitted":  [
-                        "test/win32/remote-pill-relay-name.ps1"
+
                     ],
     "files":  {
-                  "src/apprt/win32/machine_cache.zig":  "cab3ce827634113b0d3373c65eee72f716ee08604ff72f4ea2dfc1a7dc5af954",
+                  "src/apprt/win32/machine_cache.zig":  "4537e53edeabf8dcd38d4818183f18da381ff14cefcad0a751c9ba8372b0f3c4",
                   "src/apprt/win32/remote_pill.zig":  "6997259de405ee7fecb4e29c179ba56380c4ce423cf48e09bba95f0a249e6286",
                   "test/win32/remote-pill-relay-name.ps1":  "82bc4021d0bf33b4af72a8ae60ff6d40d9cbb54c3fc3d57684d87d42946ff7df"
               },

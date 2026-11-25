@@ -1,13 +1,13 @@
 {
     "guard":  "host-settings",
     "script":  "test/win32/host-settings.ps1",
-    "generated":  "2026-11-24T07:58:23-08:00",
-    "commit":  "ad0fcdeb1",
+    "generated":  "2026-11-25T13:54:26-08:00",
+    "commit":  "2d40b2a37",
     "uncommitted":  [
 
                     ],
     "files":  {
-                  "src/apprt/win32/host_defaults.zig":  "994b374543855d65b0203cfd687650c1d07d6ff5ff645d0455854f50e4ca59be",
+                  "src/apprt/win32/host_defaults.zig":  "940a60b09d994fdfdb3d2e4e64d0510dff2176883897f50b5405b304d0ba676b",
                   "src/apprt/win32/HostSettingsDialog.zig":  "93054aa1e3906a51be134accd8a31ff154ab1c9e1c70650c1956ce903749fd93",
                   "test/win32/host-settings.ps1":  "ff923d3102d797b78bdc9ce1ec3b99730696f9fac462c806b8a30f389794d6d3"
               },
