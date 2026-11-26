@@ -1,0 +1,11 @@
+{
+  "version": "1.56.33",
+  "sections": [
+    { "title": "New",
+      "items": [
+        { "text": "Linux single-window mode: closing a workspace keeps the one window - the toplevel's close button closes the workspace on show, and the toplevel's own workspace closing leaves its window as the frame." },
+        { "text": "The T3652 acceptance makes its asker busy while on show, since a terminal made parked starts only on first show." },
+        { "text": "Each shell can have its own starting folder: shell-working-directory, set in Settings > Terminal > Shell." }
+      ] }
+  ]
+}
