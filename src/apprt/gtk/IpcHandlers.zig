@@ -967,6 +967,7 @@ fn workspacesSeam(app: Context, request: Request) Allocator.Error![]u8 {
         shown = Workspaces.show(target.window_(), false);
     }
 
+    const Grid = struct { pane: []const u8, grid: ?[]const u8 };
     const Row = struct {
         window: ?[]const u8,
         parked: bool,
@@ -982,7 +983,6 @@ fn workspacesSeam(app: Context, request: Request) Allocator.Error![]u8 {
         /// terminal started), by pane id, tree order.
         grids: []const Grid,
     };
-    const Grid = struct { pane: []const u8, grid: ?[]const u8 };
     const snap = Workspaces.snapshot();
     var rows: std.ArrayListUnmanaged(Row) = .empty;
     for (snap.order) |w| {
