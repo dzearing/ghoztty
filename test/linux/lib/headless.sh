@@ -213,6 +213,7 @@ hl_launch() {
     "$@" > "$log" 2>&1 &
     local pid=$!
     HL_PIDS="$HL_PIDS $pid"
+    HL_PID_LOGS="${HL_PID_LOGS:-} $pid=$log"
     printf -v "$var" '%s' "$pid"
     printf -v "${var}_LOG" '%s' "$log"
 }
@@ -424,6 +425,19 @@ hl_stop_agent() {
     return 0
 }
 
+# hl_report_crash_ <pid> <wait status> (T3677): a process that died of a
+# signal other than the TERM/KILL hl_stop sent (an abort, a segfault) gets the
+# tail of its log on stderr, since the log is deleted with $HL_RUNTIME.
+hl_report_crash_() {
+    local p=$1 rc=$2 entry log=""
+    [ "$rc" -gt 128 ] || return 0
+    case "$rc" in 143|137) return 0 ;; esac
+    for entry in ${HL_PID_LOGS:-}; do [ "${entry%%=*}" = "$p" ] && log=${entry#*=}; done
+    echo "hl_stop: pid $p died of signal $(( rc - 128 )) at teardown; last lines of ${log:-its log}:" >&2
+    [ -n "$log" ] && [ -f "$log" ] && tail -40 "$log" >&2
+    return 0
+}
+
 # hl_stop: kill everything hl_launch started (children too), then the agent
 # the app spawned, then Weston, then remove the runtime dir. Idempotent; it is
 # also the EXIT trap.
@@ -443,6 +457,7 @@ hl_stop() {
             pkill -KILL -P "$p" 2>/dev/null; kill -KILL "$p" 2>/dev/null
         fi
         wait "$p" 2>/dev/null
+        hl_report_crash_ "$p" $?
     done
     HL_PIDS=""
     hl_stop_agent
