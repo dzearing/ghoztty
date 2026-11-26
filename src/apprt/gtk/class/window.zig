@@ -2369,6 +2369,14 @@ pub const Window = extern struct {
         // T3384: nothing can put this window's closed panes back now.
         CloseUndo.dropWindow(self);
 
+        // T3665: out of the application's window list BEFORE the template
+        // goes. Disposing the template clears `tab_view`, and the panes it
+        // tears down synchronously reach code that walks every window
+        // (`getWindows`) and asks each for its tabs - which logged five
+        // `adw_tab_view_*` CRITICALs per window closed with live shells.
+        // GtkWindow's own dispose makes this same removal a moment later.
+        if (self.as(gtk.Window).getApplication()) |app| app.removeWindow(self.as(gtk.Window));
+
         // T3671: a relay window closed outside a quit does not come back at
         // the next launch; one a quit tears down does.
         RelayWindows.windowDisposed(self, Application.default().isQuitting());
