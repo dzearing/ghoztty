@@ -56,6 +56,14 @@
 //! {"action":"settings","arguments":["--op=flag","--key=shell-integration-features","--value=sudo:true"]}
 //! {"action":"settings","arguments":["--op=color","--key=cursor-color","--value=#ff8800"]}         (the color dialog's pick)
 //! {"action":"settings","arguments":["--op=shell","--key=command","--value=cmd.exe /K"]}           (a shell pick / Other...)
+//! {"action":"settings","arguments":["--op=choose","--key=font-family","--value=Consolas"]}  (T3766: the Font menu's pick; "" is Default)
+//! {"action":"settings","arguments":["--op=list-add","--key=font-family","--value=Segoe UI Emoji"]}
+//! {"action":"settings","arguments":["--op=list-remove","--key=font-family","--index=0"]}
+//!   (a curated list row's chips; on the Font row its fallback chips, so
+//!   index 0 is the file's SECOND value); the Font row's state adds
+//!   "choices":[{value,label}], "subtitle" (the not-installed warning),
+//!   "fallback" ("+N fallback" or null), "fallback_tooltip",
+//!   "fallback_painted", "fallback_chips" and "other_visible"
 //! {"action":"settings","arguments":["--op=shells"]}   (T3750: the shell list the Shell menu offers; no window needed)
 //!   -> {"success":true,"data":{"shells":[{"label","command","spec"}]}}
 //!   a stepper / megabytes row's --op=set types into its field (the number /
@@ -135,7 +143,16 @@ pub const Op = enum {
     shell,
     // The shell list every picker offers (T3750).
     shells,
+    // A curated list row's chips; on the Font row, its fallbacks (T3766).
+    @"list-add",
+    @"list-remove",
 };
+
+/// The Font row (T3766): a curated `.font` control.
+fn isFontRow(key: []const u8) bool {
+    const row = settings_pages.rowFor(key) orelse return false;
+    return row.control == .font;
+}
 
 pub const Request = struct {
     op: Op,
@@ -250,7 +267,25 @@ pub fn handle(app: *App, alloc: Allocator, arguments: ?[]const []const u8) Alloc
         },
         .choose => {
             const key = req.key orelse return errorResponse(alloc, "--key is required for --op=choose", .{});
-            ok = w.chooseValue(key, req.value orelse "");
+            // The Font picker's item (T3766): what its menu's pick calls.
+            ok = if (isFontRow(key)) w.pickFont(req.value orelse "") else w.chooseValue(key, req.value orelse "");
+        },
+        // A curated list row's chips (the GTK seam's names): on the Font
+        // row they are the fallbacks, so index 0 is the file's SECOND value.
+        .@"list-add" => {
+            const key = req.key orelse return errorResponse(alloc, "--key is required for --op=list-add", .{});
+            const value = req.value orelse return errorResponse(alloc, "--value is required for --op=list-add", .{});
+            if (!w.beginEdit(key)) {
+                ok = false;
+            } else {
+                w.setFieldText(value);
+                w.commitEdit();
+                ok = w.editingKey() == null and w.model.problem(key) == null;
+            }
+        },
+        .@"list-remove" => {
+            const key = req.key orelse return errorResponse(alloc, "--key is required for --op=list-remove", .{});
+            ok = if (isFontRow(key)) w.removeFallback(req.index orelse 0) else w.removeValue(key, req.index orelse 0);
         },
         .reveal => {
             const key = req.key orelse return errorResponse(alloc, "--key is required for --op=reveal", .{});
@@ -619,6 +654,47 @@ fn writePreview(jws: *std.json.Stringify, w: *SettingsWindow) !void {
     try jws.endObject();
 }
 
+/// The Font row (T3766), as its menu and its lines show it: the menu's
+/// items, the not-installed warning ("subtitle"), "+N fallback" (null when
+/// hidden) and its tooltip, the fallback chips, and whether the Fallback
+/// fonts line is drawn ("other_visible", the GTK seam's name).
+fn writeFont(jws: *std.json.Stringify, alloc: Allocator, w: *SettingsWindow) !void {
+    var arena_state = std.heap.ArenaAllocator.init(alloc);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    try jws.objectField("choices");
+    try jws.beginArray();
+    for (try w.fontChoices(arena)) |c| {
+        try jws.beginObject();
+        try jws.objectField("value");
+        try jws.write(c.value);
+        try jws.objectField("label");
+        try jws.write(c.label);
+        try jws.endObject();
+    }
+    try jws.endArray();
+    var wb: [600]u8 = undefined;
+    try jws.objectField("subtitle");
+    try jws.write(w.fontWarning(&wb));
+    var lb: [32]u8 = undefined;
+    var tb: [1024]u8 = undefined;
+    const fb = w.fontFallback(&lb, &tb);
+    try jws.objectField("fallback");
+    try jws.write(if (fb) |x| x.label else null);
+    try jws.objectField("fallback_tooltip");
+    try jws.write(if (fb) |x| x.tip else null);
+    // What the last paint drew beside the picker (null before a paint, or
+    // with no fallback).
+    try jws.objectField("fallback_painted");
+    try jws.write(w.font_fallback_rect != null);
+    const file_vals = w.fontFileValues();
+    defer w.gpa.free(file_vals);
+    try jws.objectField("fallback_chips");
+    try jws.write(if (file_vals.len > 1) file_vals[1..] else &[_][]const u8{});
+    try jws.objectField("other_visible");
+    try jws.write(file_vals.len > 0);
+}
+
 fn writeRect(jws: *std.json.Stringify, r: anytype) !void {
     try jws.beginObject();
     try jws.objectField("x");
@@ -833,8 +909,10 @@ fn writeState(jws: *std.json.Stringify, alloc: Allocator, w_opt: ?*SettingsWindo
                 try jws.objectField("enabled");
                 try jws.write(w.rowEnabled(row));
                 var dbuf: [std.fs.max_path_bytes]u8 = undefined;
+                if (row.control == .font) _ = w.ensureFonts(false);
                 try jws.objectField("display");
                 try jws.write(w.controlDisplay(&dbuf, row));
+                if (row.control == .font) try writeFont(jws, alloc, w);
                 if (row.control == .flags) {
                     const ctl = @import("settings_controls.zig");
                     try jws.objectField("flags");

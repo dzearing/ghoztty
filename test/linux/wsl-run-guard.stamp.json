@@ -1,24 +1,21 @@
 {
     "guard":  "wsl-run",
     "script":  "test/linux/wsl-run-guard.ps1",
-    "generated":  "2026-11-25T03:01:12-08:00",
-    "commit":  "8328deb2f",
+    "generated":  "2026-11-25T20:29:00-08:00",
+    "commit":  "0b7d13cf33",
     "uncommitted":  [
-                        "scripts/lib/WslLease.ps1",
-                        "scripts/linux/open.ps1",
-                        "scripts/linux/wsl-run.ps1",
-                        "test/linux/wsl-run-guard.ps1"
+
                     ],
     "files":  {
                   "scripts/lib/WslLease.ps1":  "b47dbd4fe727e1e6810fa70b2cba977b88b0505f948ea344a8ba68a96d38a780",
-                  "scripts/linux/open.ps1":  "55a1cefc2cc407bb0808dce0b379fe0beba42d171685110ce80d08357316ae3d",
-                  "scripts/linux/wsl-run.ps1":  "afdc8e4fa2a320a82d4b25c1fed31ebfff5dc70e8d49bbc838e13c8fa063b475",
+                  "scripts/linux/open.ps1":  "d3d7dc6d5bff1060bcfb8fa5b454ea2246af371d7297c225e183c2c437f661b0",
+                  "scripts/linux/wsl-run.ps1":  "d6eca2033ece7760262317db31fffaddd4b4eefc5f8a258302ba62475e6f9a74",
                   "test/linux/wsl-run-guard.ps1":  "d3ea109d260a74602a264bee269dd1a4cd0a942c5d67a931cdd2a817c06ff9fe"
               },
     "code":  {
                  "scripts/lib/WslLease.ps1":  "code1:bd8b05bc1e024770163a0d230d8d9dd9f3cf9c21003b2b8e00b9329ddeb7fdf2",
-                 "scripts/linux/open.ps1":  "code1:384d89b0f994715508afca878f1e7d5ceee6baf97ae1f933ecde4472b3e7d71e",
-                 "scripts/linux/wsl-run.ps1":  "code1:ec8aa9668a65fe4fba09765eb8bed62bde98749896e8292769dad43d919a417b",
+                 "scripts/linux/open.ps1":  "code1:63d3a4f2050172988e88b809f371eb3c2af6e541b6198cd2fe4f09a205491b14",
+                 "scripts/linux/wsl-run.ps1":  "code1:a9f6e55adf17242d38d1e758ec4ec930db83d2340cd9152155f17e630f2946b9",
                  "test/linux/wsl-run-guard.ps1":  "code1:4227eaea333f4110eb019d002ed5e841e21278be75468f9ad435c33c9c56432b"
              }
 }

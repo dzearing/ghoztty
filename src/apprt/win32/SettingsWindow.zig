@@ -81,6 +81,8 @@ const remote_view = @import("settings_remote_view.zig");
 const DirectoryProbe = @import("DirectoryProbe.zig");
 const folder_dialog = @import("folder_dialog.zig");
 const wsl_distros = @import("wsl_distros.zig");
+const font_families = @import("font_families.zig");
+const help_tooltip = @import("help_tooltip.zig");
 const ShortcutGuideWindow = @import("ShortcutGuideWindow.zig");
 const panel_theme = @import("panel_theme.zig");
 const system_colors = @import("system_colors.zig");
@@ -333,6 +335,17 @@ preview_face: [64]u8 = undefined,
 preview_face_len: usize = 0,
 preview_caption: [160]u8 = undefined,
 preview_caption_len: usize = 0,
+/// The installed font families the Font row lists (T3766): read from
+/// DirectWrite when the row is first laid out and again each time its menu
+/// opens, in `font_arena` (null until then).
+font_arena: ?std.heap.ArenaAllocator = null,
+font_fams: font_families.Families = .{},
+/// The Font row's "+N fallback" as last painted (its tooltip's hover rect),
+/// and that tooltip.
+font_fallback_rect: ?Rect = null,
+font_tip: FontTip = .{},
+
+const FontTip = help_tooltip.HelpTip(enum {}, 1024);
 
 // ---------------------------------------------------------------------
 // Open / close
@@ -563,6 +576,7 @@ fn destroyState(self: *SettingsWindow) void {
     self.hits.deinit(gpa);
     self.text.deinit();
     self.remote.deinit();
+    if (self.font_arena) |*a| a.deinit();
     self.view_arena.deinit();
     gpa.destroy(self);
 }
@@ -1276,6 +1290,158 @@ pub fn chooseValue(self: *SettingsWindow, key: []const u8, value: []const u8) bo
 }
 
 // ---------------------------------------------------------------------
+// The Font row (T3766) - Mac `FontControl`: a picker over the installed
+// monospaced families, Default (JetBrains Mono) first. The rules are the
+// shared `settings_controls` font functions (T3765); the families come from
+// DirectWrite (`font_families.zig`).
+// ---------------------------------------------------------------------
+
+/// The installed families, read on first need; `reread` reads them again
+/// (the menu does, so a font installed while Settings is open is offered).
+pub fn ensureFonts(self: *SettingsWindow, reread: bool) font_families.Families {
+    if (self.font_arena != null and !reread) return self.font_fams;
+    if (self.font_arena) |*a| a.deinit();
+    self.font_arena = std.heap.ArenaAllocator.init(self.gpa);
+    self.font_fams = font_families.load(self.font_arena.?.allocator()) catch |err| blk: {
+        log.warn("settings: listing fonts failed err={}", .{err});
+        break :blk .{};
+    };
+    log.info("settings: font picker lists {d} monospaced families of {d}", .{ self.font_fams.mono.len, self.font_fams.all.len });
+    return self.font_fams;
+}
+
+/// The font-family values in effect (the first is the font, the rest its
+/// fallbacks). Caller frees the slice; the strings are the reader's.
+fn fontValues(self: *const SettingsWindow) []const []const u8 {
+    const r = self.reader() orelse return &.{};
+    return r.values(self.gpa, "font-family") catch &.{};
+}
+
+/// The Font picker's items for the primary in effect (in `arena`).
+pub fn fontChoices(self: *SettingsWindow, arena: Allocator) Allocator.Error![]const controls.FontChoice {
+    const fams = self.ensureFonts(false);
+    const vals = self.fontValues();
+    defer self.gpa.free(vals);
+    const primary = if (vals.len > 0) try arena.dupe(u8, vals[0]) else "";
+    return controls.fontChoices(arena, fams.mono, fams.all, primary);
+}
+
+/// What the Font picker shows: Default, the family as installed, or the
+/// primary marked "(not installed)" - its item's label. Before the
+/// families are read, the primary as written.
+fn fontDisplay(self: *const SettingsWindow, buf: []u8) []const u8 {
+    const vals = self.fontValues();
+    defer self.gpa.free(vals);
+    if (vals.len == 0 or vals[0].len == 0) return controls.font_default_label;
+    const primary = vals[0];
+    if (self.font_arena != null) {
+        for (self.font_fams.mono) |f| if (std.ascii.eqlIgnoreCase(f, primary)) return f;
+        if (!controls.hasFamily(self.font_fams.all, primary))
+            return std.fmt.bufPrint(buf, "{s} (not installed)", .{primary}) catch primary;
+    }
+    const n = @min(primary.len, buf.len);
+    @memcpy(buf[0..n], primary[0..n]);
+    return buf[0..n];
+}
+
+/// Mac's line under the picker when no installed family matches the
+/// primary; null otherwise (and before the families are read).
+pub fn fontWarning(self: *const SettingsWindow, buf: []u8) ?[]const u8 {
+    if (self.font_arena == null) return null;
+    const vals = self.fontValues();
+    defer self.gpa.free(vals);
+    if (vals.len == 0 or vals[0].len == 0) return null;
+    if (controls.hasFamily(self.font_fams.all, vals[0])) return null;
+    return controls.fontNotInstalledText(buf, vals[0]);
+}
+
+/// "+N fallback" (null with no fallback) and its tooltip, the fallbacks in
+/// order, comma-separated.
+pub fn fontFallback(self: *const SettingsWindow, label_buf: []u8, tip_buf: []u8) ?struct { label: []const u8, tip: []const u8 } {
+    const vals = self.fontValues();
+    defer self.gpa.free(vals);
+    const label = controls.fontFallbackLabel(label_buf, vals.len) orelse return null;
+    var fbs = std.io.fixedBufferStream(tip_buf);
+    for (vals[1..], 0..) |v, i| {
+        if (i > 0) fbs.writer().writeAll(", ") catch break;
+        fbs.writer().writeAll(v) catch break;
+    }
+    return .{ .label = label, .tip = fbs.getWritten() };
+}
+
+/// The fallback chips: the user's file's values after the first. Caller
+/// frees the slice (the outer one: it is the file's list, offset by one).
+pub fn fontFileValues(self: *const SettingsWindow) []const []const u8 {
+    return self.file.values(self.gpa, "font-family") catch &.{};
+}
+
+/// The Font picker's pick (Mac `FontControl`'s setter): "" (Default) removes
+/// every font-family line; a family replaces the FIRST value of the user's
+/// file and keeps every fallback.
+pub fn pickFont(self: *SettingsWindow, family: []const u8) bool {
+    const key = "font-family";
+    const k = self.catalogKey(key) orelse return false;
+    if (self.overridingSource(k) != null) return false;
+    self.commitEdit();
+    if (family.len == 0) return self.chooseValue(k, "");
+    // Copied: the write reloads the file the values point into.
+    const fam = self.gpa.dupe(u8, family) catch return false;
+    defer self.gpa.free(fam);
+    const vals = self.file.values(self.gpa, k) catch return false;
+    defer self.gpa.free(vals);
+    const next = (controls.fontPick(self.gpa, vals, fam) catch return false) orelse return true;
+    defer self.gpa.free(next);
+    return self.write(SettingsModel.setList, .{ k, next });
+}
+
+/// A fallback chip's x: the i-th fallback, which is the file's (i+1)-th value.
+pub fn removeFallback(self: *SettingsWindow, index: usize) bool {
+    return self.removeValue("font-family", index + 1);
+}
+
+/// The Font row's menu, hung under its control: Default, the monospaced
+/// families, then a configured primary that is none of them.
+fn openFontMenu(self: *SettingsWindow, anchor: Rect) void {
+    _ = self.ensureFonts(true);
+    var arena_state = std.heap.ArenaAllocator.init(self.gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const choices = self.fontChoices(arena) catch return;
+    const vals = self.fontValues();
+    const primary = if (vals.len > 0) arena.dupe(u8, vals[0]) catch "" else "";
+    self.gpa.free(vals);
+    const labels = arena.alloc(?[]const u8, choices.len + 1) catch return;
+    // Default, a separator, then the families (Mac's menu).
+    labels[0] = choices[0].label;
+    labels[1] = null;
+    for (choices[1..], 0..) |c, i| labels[i + 2] = c.label;
+    const sel = controls.fontChoiceIndex(choices, primary) orelse 0;
+    const checked: usize = if (sel == 0) 0 else sel + 1;
+    const idx = self.popupPick(anchor, labels, checked) orelse return;
+    if (idx == 1) return;
+    const choice = if (idx == 0) choices[0] else choices[idx - 1];
+    _ = self.pickFont(choice.value);
+}
+
+/// Show or hide "+N fallback"'s tooltip for the pointer at x,y (client).
+fn updateFontTip(self: *SettingsWindow, x: i32, y: i32) void {
+    const over = if (self.font_fallback_rect) |r| r.contains(x, y) and self.frame().list.contains(x, y) else false;
+    if (!over) {
+        if (self.font_tip.shown) self.font_tip.hide(self.hwnd);
+        return;
+    }
+    if (self.font_tip.shown) return;
+    var lb: [32]u8 = undefined;
+    var tb: [1024]u8 = undefined;
+    const fb = self.fontFallback(&lb, &tb) orelse return;
+    const tip = self.font_tip.ensure(self.hwnd, self.app.hinstance, !system_colors.usesLightTheme()) orelse return;
+    const r = self.font_fallback_rect.?;
+    var pt: w32.POINT = .{ .x = r.x, .y = r.y + r.h + layout.px(dip.tight, self.scale) };
+    _ = w32.ClientToScreen(self.hwnd, &pt);
+    _ = self.font_tip.showTrack(self.hwnd, tip, fb.tip, pt);
+}
+
+// ---------------------------------------------------------------------
 // The curated controls (T2681) - Mac `SettingsRowView.swift`'s Slider,
 // Number, Megabytes, Color, Flags, Shell and Folder controls. Each turns a
 // gesture into the value text the parser accepts and writes it through
@@ -1468,6 +1634,7 @@ pub fn controlDisplay(self: *const SettingsWindow, buf: []u8, row: *const settin
             std.mem.copyForwards(u8, buf[0..n], shown[0..n]);
             break :blk buf[0..n];
         },
+        .font => self.fontDisplay(buf),
         else => row.labelFor(value),
     };
 }
@@ -1500,6 +1667,7 @@ fn openChoice(self: *SettingsWindow, key: []const u8, anchor: Rect) void {
     switch (row.control) {
         .shell => |sh| return self.openShellMenu(key, sh.scripted, anchor),
         .folder => return self.openFolderMenu(key, anchor),
+        .font => return self.openFontMenu(anchor),
         else => {},
     }
     const r = self.reader() orelse return;
@@ -1911,6 +2079,7 @@ fn paint(self: *SettingsWindow, hdc_screen: w32.HDC) void {
     const p = self.pal();
     self.text.palette = p;
     self.hits.clearRetainingCapacity();
+    self.font_fallback_rect = null;
     _ = w32.SetBkMode(mem, w32.TRANSPARENT);
     const f = layout.frameFor(self.scale, w, h, self.showsFilter());
     fillRect(mem, .{ .x = 0, .y = 0, .w = w, .h = h }, cr(p.bg));
@@ -2079,7 +2248,11 @@ fn paintRow(self: *SettingsWindow, hdc: w32.HDC, p: panel_theme.Panel, item: Ite
     const key = item.key;
     const r = self.reader() orelse return 0;
     const entry = self.catalog.get(key);
-    const repeatable = if (entry) |e| e.repeatable else false;
+    // The Font row (T3766) is a picker, though `font-family` is a list: its
+    // fallbacks get a line of their own under it.
+    const font_row = if (item.row) |row| row.control == .font else false;
+    if (font_row) _ = self.ensureFonts(false);
+    const repeatable = if (entry) |e| e.repeatable and !font_row else false;
     const override = self.overridingSource(key);
     const f = self.frame();
     const g = layout.px(dip.gap, self.scale);
@@ -2195,6 +2368,8 @@ fn paintRow(self: *SettingsWindow, hdc: w32.HDC, p: panel_theme.Panel, item: Ite
         cy += ch;
     }
 
+    if (font_row) cy = self.paintFontExtras(hdc, p, key, cols, cy, editing, draw);
+
     // A repeatable key's values in effect.
     if (repeatable) {
         const vals = r.values(self.gpa, key) catch &.{};
@@ -2254,11 +2429,51 @@ fn paintRow(self: *SettingsWindow, hdc: w32.HDC, p: panel_theme.Panel, item: Ite
     return cy - y;
 }
 
+/// Under the Font row's picker (T3766): Mac's warning when the font is not
+/// installed, then - once the file names a font - "Fallback fonts" with the
+/// file's later values as chips and an "add a fallback" field (Linux's
+/// shape; Mac edits them in the file). Returns the new `cy`.
+fn paintFontExtras(self: *SettingsWindow, hdc: w32.HDC, p: panel_theme.Panel, key: []const u8, cols: layout.RowColumns, cy0: i32, editing: bool, draw: bool) i32 {
+    var cy = cy0;
+    const t = layout.px(dip.tight, self.scale);
+    const lh = self.text.lineHeight(.body);
+    const ch = self.text.lineHeight(.caption);
+    const fh = layout.px(dip.field_h, self.scale);
+    const width = cols.right - cols.left;
+    var wb: [600]u8 = undefined;
+    if (self.fontWarning(&wb)) |warning| {
+        cy += t;
+        if (draw) self.text.drawEllipsized(hdc, .{ .x = cols.left, .y = cy, .w = width, .h = ch }, warning, .{}, .caption, cr(p.warn), false);
+        cy += ch;
+    }
+    const file_vals = self.fontFileValues();
+    defer self.gpa.free(file_vals);
+    // A fallback follows a font the file names; with none there is nothing
+    // to fall back from (and an add would become the font).
+    if (file_vals.len == 0) return cy;
+    cy += layout.px(dip.gap, self.scale);
+    const band = @max(lh, fh);
+    if (draw) {
+        _ = self.text.drawText(hdc, cols.left, cy + @divTrunc(band - lh, 2), font_fallback_title, .{}, .body, cr(p.text), true);
+        const lw = @min(layout.px(dip.list_w, self.scale), width);
+        const area: Rect = .{ .x = cols.right - lw, .y = cy + @divTrunc(band - fh, 2), .w = lw, .h = fh };
+        self.paintValueListFrom(hdc, p, key, area, editing, 1, "add a fallback");
+    }
+    cy += band + t;
+    if (draw) self.text.drawEllipsized(hdc, .{ .x = cols.left, .y = cy, .w = width, .h = ch }, font_fallback_caption, .{}, .caption, cr(p.secondary), false);
+    cy += ch;
+    return cy;
+}
+
+/// The Font row's fallback line (Linux's row title and subtitle).
+pub const font_fallback_title = "Fallback fonts";
+pub const font_fallback_caption = "Used in order for characters the font does not have.";
+
 /// The curated controls `paintControl` draws (T2681); the rest are a
 /// switch, a popup, cards or a text field.
 fn drawnControl(c: settings_pages.Control) bool {
     return switch (c) {
-        .slider, .stepper, .megabytes, .color, .flags, .shell, .folder => true,
+        .slider, .stepper, .megabytes, .color, .flags, .shell, .folder, .font => true,
         else => false,
     };
 }
@@ -2399,6 +2614,20 @@ fn paintControl(self: *SettingsWindow, hdc: w32.HDC, p: panel_theme.Panel, row: 
             } else {
                 self.paintChoiceBox(hdc, p, box, self.controlDisplay(&dbuf, row), live);
                 if (live) self.hit(.{ .rect = box, .kind = .choice, .key = key });
+            }
+        },
+        .font => {
+            // Mac `FontControl`: the picker, with "+N fallback" left of it
+            // (the fallbacks are its tooltip).
+            self.paintChoiceBox(hdc, p, box, self.controlDisplay(&dbuf, row), live);
+            if (live) self.hit(.{ .rect = box, .kind = .choice, .key = key });
+            var lb: [32]u8 = undefined;
+            var tb: [16]u8 = undefined;
+            if (self.fontFallback(&lb, &tb)) |fb| {
+                const fw = self.text.measure(hdc, fb.label, .{}, .caption).cx;
+                const fr: Rect = .{ .x = box.x - g - fw, .y = box.y, .w = fw, .h = box.h };
+                _ = self.text.drawText(hdc, fr.x, box.y + @divTrunc(box.h - ch, 2), fb.label, .{}, .caption, muted, true);
+                self.font_fallback_rect = fr;
             }
         },
         else => {},
@@ -3092,14 +3321,21 @@ fn paintField(self: *SettingsWindow, hdc: w32.HDC, p: panel_theme.Panel, r: Rect
 /// A repeatable key's value list (Mac's `ListControl`): the user's file's
 /// values as removable chips, then an "add a value" field.
 fn paintValueList(self: *SettingsWindow, hdc: w32.HDC, p: panel_theme.Panel, key: []const u8, area: Rect, editing: bool) void {
+    self.paintValueListFrom(hdc, p, key, area, editing, 0, "add a value");
+}
+
+/// `paintValueList` from the file's `first`-th value on (the Font row's
+/// fallbacks start at 1); a chip's remove hit names its index in the file.
+fn paintValueListFrom(self: *SettingsWindow, hdc: w32.HDC, p: panel_theme.Panel, key: []const u8, area: Rect, editing: bool, first: usize, placeholder: []const u8) void {
     const override = self.overridingSource(key) != null;
     const add_w = @min(layout.px(dip.add_w, self.scale), area.w);
     const add: Rect = .{ .x = area.x + area.w - add_w, .y = area.y, .w = add_w, .h = area.h };
-    self.paintField(hdc, p, add, if (editing) self.field.text() else "", "add a value", editing and w32.GetFocus() == self.hwnd, self.field.caret, true, override);
+    self.paintField(hdc, p, add, if (editing) self.field.text() else "", placeholder, editing and w32.GetFocus() == self.hwnd, self.field.caret, true, override);
     if (!override) self.hit(.{ .rect = add, .kind = .add_field, .key = key });
 
-    const vals = self.file.values(self.gpa, key) catch return;
-    defer self.gpa.free(vals);
+    const all_vals = self.file.values(self.gpa, key) catch return;
+    defer self.gpa.free(all_vals);
+    const vals = all_vals[@min(first, all_vals.len)..];
     const g = layout.px(dip.tight, self.scale);
     const chip_h = layout.px(dip.chip_h, self.scale);
     const cpad = layout.px(dip.chip_pad_x, self.scale);
@@ -3125,7 +3361,7 @@ fn paintValueList(self: *SettingsWindow, hdc: w32.HDC, p: panel_theme.Panel, key
         _ = self.text.drawText(hdc, chip.x + cpad, ty, shown, .{ .code = true }, .caption, cr(p.text), true);
         const xr: Rect = .{ .x = chip.x + cpad + tw + g, .y = chip.y, .w = xw + cpad, .h = chip_h };
         _ = self.text.drawText(hdc, xr.x, ty, x_glyph, .{}, .caption, cr(p.secondary), true);
-        if (!override) self.hit(.{ .rect = xr, .kind = .chip_remove, .key = key, .index = i });
+        if (!override) self.hit(.{ .rect = xr, .kind = .chip_remove, .key = key, .index = first + i });
         x += w + g;
     }
 }
@@ -3340,6 +3576,7 @@ fn onMouseMove(self: *SettingsWindow, x: i32, y: i32) void {
         _ = w32.TrackMouseEvent(&tme);
         self.tracking_leave = true;
     }
+    self.updateFontTip(x, y);
     const over = self.rowAt(x, y);
     const changed = if (over) |o| (self.hover_key == null or !std.mem.eql(u8, o, self.hover_key.?)) else self.hover_key != null;
     if (changed) {
@@ -3572,6 +3809,7 @@ fn wndProc(hwnd: w32.HWND, msg: u32, wparam: usize, lparam: isize) callconv(.win
         },
         w32.WM_MOUSELEAVE => {
             self.tracking_leave = false;
+            if (self.font_tip.shown) self.font_tip.hide(self.hwnd);
             if (self.hover_key != null) {
                 self.hover_key = null;
                 self.invalidate();

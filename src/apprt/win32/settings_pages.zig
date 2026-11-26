@@ -31,8 +31,9 @@
 //!   switch: `window-padding-balance` is an enum with `equal` as its third
 //!   value, which a switch cannot reach (the drift test refuses a toggle on
 //!   a non-bool key).
-//! - The Font row edits `font-family` as its list of names (Mac draws a font
-//!   picker); the key, label and placement are Mac's.
+//! - The Font row is Mac's font picker over the installed monospaced
+//!   families (T3766, DirectWrite's on Windows, fontconfig's on Linux); its
+//!   fallbacks, which Mac only counts, are chips on a line under it.
 //!
 //! The GTK (Linux) Settings window shows these same pages (T3631), so a
 //! curation fix is made once for both seats. Where Linux words differ it is
@@ -74,7 +75,8 @@ pub const Control = union(enum) {
     color: struct { none_label: []const u8 },
     text: struct { placeholder: []const u8 },
     list: struct { placeholder: []const u8 },
-    /// A font family (Mac's font picker); edited as the key's value list.
+    /// A font family (Mac's font picker): the installed monospaced families;
+    /// a pick replaces the list's first value, the rest are fallbacks.
     font,
     flags,
     shell: struct { scripted: bool },

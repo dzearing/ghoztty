@@ -87,6 +87,103 @@ function Get-KeyLines([string]$text, [string]$key) {
     return @(($text -split "`r?`n") | Where-Object { $_ -match ('^\s*' + [regex]::Escape($key) + '\s*=') })
 }
 
+# The values of `key`'s lines, as Ghostty reads them (trimmed, one pair of
+# outer quotes stripped).
+function Get-KeyValues([string]$text, [string]$key) {
+    return @(Get-KeyLines $text $key | ForEach-Object {
+            $v = ($_ -split '=', 2)[1].Trim()
+            if ($v.Length -ge 2 -and $v.StartsWith('"') -and $v.EndsWith('"')) { $v = $v.Substring(1, $v.Length - 2) }
+            $v
+        })
+}
+
+# T3766's oracle: DirectWrite's system font collection asked from C#, NOT
+# through ghoztty - every family with a face IDWriteFont1 calls monospaced,
+# by its en-us name (else its first), hidden ('.') and blank names dropped,
+# unique, sorted ordinally (Mac `monospacedFamilies`' cleanup).
+function Get-DWriteMonospacedFamilies {
+    if (-not ('T3766DWrite' -as [type])) {
+        Add-Type -TypeDefinition @'
+using System;
+using System.Collections.Generic;
+using System.Runtime.InteropServices;
+public static class T3766DWrite {
+    [DllImport("dwrite.dll")] static extern int DWriteCreateFactory(int type, ref Guid iid, out IntPtr factory);
+    [UnmanagedFunctionPointer(CallingConvention.StdCall)] delegate uint Rel(IntPtr self);
+    [UnmanagedFunctionPointer(CallingConvention.StdCall)] delegate int QI(IntPtr self, ref Guid iid, out IntPtr obj);
+    [UnmanagedFunctionPointer(CallingConvention.StdCall)] delegate int GetColl(IntPtr self, out IntPtr coll, int check);
+    [UnmanagedFunctionPointer(CallingConvention.StdCall)] delegate uint Count(IntPtr self);
+    [UnmanagedFunctionPointer(CallingConvention.StdCall)] delegate int Item(IntPtr self, uint i, out IntPtr obj);
+    [UnmanagedFunctionPointer(CallingConvention.StdCall)] delegate int Names(IntPtr self, out IntPtr names);
+    [UnmanagedFunctionPointer(CallingConvention.StdCall)] delegate int IsMono(IntPtr self);
+    [UnmanagedFunctionPointer(CallingConvention.StdCall)] delegate int FindLocale(IntPtr self, [MarshalAs(UnmanagedType.LPWStr)] string loc, out uint idx, out int exists);
+    [UnmanagedFunctionPointer(CallingConvention.StdCall)] delegate int StrLen(IntPtr self, uint i, out uint len);
+    // The buffer is raw memory: a char[] here would marshal as 1-byte ANSI
+    // chars and DirectWrite would write UTF-16 past its end.
+    [UnmanagedFunctionPointer(CallingConvention.StdCall)] delegate int GetStr(IntPtr self, uint i, IntPtr buf, uint size);
+    static T Fn<T>(IntPtr obj, int slot) where T : class {
+        IntPtr vt = Marshal.ReadIntPtr(obj);
+        return Marshal.GetDelegateForFunctionPointer(Marshal.ReadIntPtr(vt, slot * IntPtr.Size), typeof(T)) as T;
+    }
+    static void Release(IntPtr o) { if (o != IntPtr.Zero) Fn<Rel>(o, 2)(o); }
+    static string Name(IntPtr fam) {
+        IntPtr names;
+        if (Fn<Names>(fam, 6)(fam, out names) < 0) return null;
+        try {
+            if (Fn<Count>(names, 3)(names) == 0) return null;
+            uint idx; int exists;
+            if (Fn<FindLocale>(names, 4)(names, "en-us", out idx, out exists) < 0 || exists == 0) idx = 0;
+            uint len;
+            if (Fn<StrLen>(names, 7)(names, idx, out len) < 0) return null;
+            IntPtr buf = Marshal.AllocHGlobal((int)(len + 1) * 2);
+            try {
+                if (Fn<GetStr>(names, 8)(names, idx, buf, len + 1) < 0) return null;
+                return Marshal.PtrToStringUni(buf, (int)len);
+            } finally { Marshal.FreeHGlobal(buf); }
+        } finally { Release(names); }
+    }
+    static bool Mono(IntPtr fam) {
+        Guid iid1 = new Guid("acd16696-8c14-4f5d-877e-fe3fc1d32738");
+        uint n = Fn<Count>(fam, 4)(fam);
+        for (uint j = 0; j < n; j++) {
+            IntPtr font;
+            if (Fn<Item>(fam, 5)(fam, j, out font) < 0) continue;
+            try {
+                IntPtr f1;
+                if (Fn<QI>(font, 0)(font, ref iid1, out f1) < 0) return false;
+                try { if (Fn<IsMono>(f1, 17)(f1) != 0) return true; } finally { Release(f1); }
+            } finally { Release(font); }
+        }
+        return false;
+    }
+    public static string[] Families() {
+        Guid iid = new Guid("b859ee5a-d838-4b5b-a2e8-1adc7d93db48");
+        IntPtr factory;
+        if (DWriteCreateFactory(0, ref iid, out factory) < 0) return new string[0];
+        IntPtr coll;
+        if (Fn<GetColl>(factory, 3)(factory, out coll, 1) < 0) { Release(factory); return new string[0]; }
+        var set = new SortedSet<string>(StringComparer.Ordinal);
+        uint count = Fn<Count>(coll, 3)(coll);
+        for (uint i = 0; i < count; i++) {
+            IntPtr fam;
+            if (Fn<Item>(coll, 4)(coll, i, out fam) < 0) continue;
+            try {
+                string name = Name(fam);
+                if (string.IsNullOrEmpty(name) || name[0] == '.') continue;
+                if (Mono(fam)) set.Add(name);
+            } finally { Release(fam); }
+        }
+        Release(coll);
+        Release(factory);
+        var list = new List<string>(set);
+        return list.ToArray();
+    }
+}
+'@
+    }
+    return @([T3766DWrite]::Families())
+}
+
 $work = Join-Path $env:TEMP "ghoztty-settings-$PID"
 $cfgHome = Join-Path $work 'xdg'
 $cfgDir = Join-Path $cfgHome 'ghostty'
@@ -637,6 +734,69 @@ try {
     }
     $s = Invoke-Settings @('--op=state', '--page=appearance')
     Assert ([string]$s.data.preview.theme -eq 'Default colors' -and [string]$s.data.preview.cursor_style -eq 'bar') "K2: resetting puts the preview back (theme='$($s.data.preview.theme)')"
+
+    # =====================================================================
+    # F: the Font row (T3766) - Mac's installed-font picker, the checks of
+    # test/linux/settings-window.sh F1-F8. The oracle for the items is
+    # DirectWrite asked independently (C# below): the system collection's
+    # families with a face IDWriteFont1 calls monospaced, named en-us.
+    # =====================================================================
+    $mono = @(Get-DWriteMonospacedFamilies)
+    function Font-Row { return Find-Row (Invoke-Settings @('--op=state', '--page=appearance')) 'font-family' }
+    function Font-Lines { return (@(Get-KeyValues (Read-Config) 'font-family') -join '|') }
+    [void](Invoke-Settings @('--op=reset', '--key=font-family'))
+    $fr = Font-Row
+    $ch = @($fr.choices)
+    $items = @($ch | Select-Object -Skip 1 | ForEach-Object { [string]$_.value })
+    # PS5.1's Compare-Object refuses an empty side; the diff is only a hint.
+    $diff = @()
+    if ($mono.Count -gt 0 -and $items.Count -gt 0) {
+        $diff = @(Compare-Object -ReferenceObject $mono -DifferenceObject $items -CaseSensitive | ForEach-Object { "$($_.SideIndicator)$($_.InputObject)" })
+    }
+    Assert ([string]$fr.control -eq 'font' -and [string]$ch[0].value -eq '' -and [string]$ch[0].label -eq 'Default (JetBrains Mono)' -and $mono.Count -gt 0 -and (($items -join "`n") -ceq ($mono -join "`n")) -and [string]$fr.display -eq 'Default (JetBrains Mono)' -and -not [bool]$fr.other_visible -and $null -eq $fr.fallback) "F1: the Font row is a picker: Default (JetBrains Mono), then exactly DirectWrite's monospaced families; no fallback line while unset (control=$($fr.control) items=$($items.Count) dwrite=$($mono.Count) diff=$(($diff | Select-Object -First 6) -join ' '))"
+    $fam1 = if ($items -contains 'Consolas') { 'Consolas' } else { $items[0] }
+    $fam2 = @($items | Where-Object { $_ -ne $fam1 })[0]
+    $s = Invoke-Settings @('--op=choose', '--key=font-family', "--value=$fam1")
+    $fr = Font-Row
+    Assert ([bool]$s.data.ok -and (Font-Lines) -eq $fam1 -and [string]$fr.display -eq $fam1 -and [bool]$fr.modified -and $null -eq $fr.fallback -and [bool]$fr.other_visible) "F2: picking '$fam1' writes one font-family line; the picker shows it; the fallback line opens (lines=$(Font-Lines) display=$($fr.display))"
+    [void](Invoke-Settings @('--op=list-add', '--key=font-family', '--value=Segoe UI Symbol'))
+    $fr = Font-Row
+    Assert ((Font-Lines) -eq "$fam1|Segoe UI Symbol" -and [string]$fr.fallback -eq '+1 fallback' -and [string]$fr.fallback_tooltip -eq 'Segoe UI Symbol' -and ((@($fr.fallback_chips) -join '|') -eq 'Segoe UI Symbol') -and [string]$fr.display -eq $fam1) "F3: a fallback added under it follows the font; '+1 fallback' beside the picker names it (lines=$(Font-Lines) fallback=$($fr.fallback) tip=$($fr.fallback_tooltip) chips=$(@($fr.fallback_chips) -join ','))"
+    # Painted: the picker, "+1 fallback" and the chip; the chip's x is the
+    # fallback's, not the font's (clicked where the paint put it).
+    $shotF = Join-Path $work 'settings-font.png'
+    [void](Invoke-Settings @('--op=reveal', '--key=font-family'))
+    $s = Invoke-Settings @('--op=shot', "--path=$shotF")
+    if ($ShotDir -and (Test-Path $shotF)) { New-Item -ItemType Directory -Force -Path $ShotDir | Out-Null; Copy-Item $shotF (Join-Path $ShotDir 'font-row.png') -Force }
+    $fr = Find-Row $s 'font-family'
+    $picker = @($s.data.hits | Where-Object { $_.kind -eq 'choice' -and $_.key -eq 'font-family' })
+    Assert ($picker.Count -eq 1 -and [bool]$fr.fallback_painted) "F9: the Font row paints its picker and '+1 fallback' (choice hits=$($picker.Count) fallback_painted=$($fr.fallback_painted))"
+    if ($fam2) { [void](Invoke-Settings @('--op=choose', '--key=font-family', "--value=$fam2")) }
+    $fr = Font-Row
+    Assert ($fam2 -and (Font-Lines) -eq "$fam2|Segoe UI Symbol" -and [string]$fr.display -eq $fam2 -and [string]$fr.fallback -eq '+1 fallback') "F4: picking another family ('$fam2') replaces only the first value; the fallback stays (lines=$(Font-Lines) display=$($fr.display))"
+    [void](Invoke-Settings @('--op=reveal', '--key=font-family'))
+    [void](Invoke-Settings @('--op=shot', "--path=$shotF"))
+    $s = Invoke-Settings @('--op=click', '--value=chip_remove:font-family')
+    $fr = Font-Row
+    Assert ([bool]$s.data.ok -and (Font-Lines) -eq $fam2 -and $null -eq $fr.fallback -and @($fr.fallback_chips).Count -eq 0) "F5: a fallback chip's x removes that fallback, not the font (lines=$(Font-Lines) fallback=$($fr.fallback))"
+    [void](Invoke-Settings @('--op=list-add', '--key=font-family', '--value=Segoe UI Symbol'))
+    [void](Invoke-Settings @('--op=list-remove', '--key=font-family', '--index=0'))
+    Assert ((Font-Lines) -eq $fam2) "F5: ...and so does the seam's list-remove, whose index 0 is the first fallback (lines=$(Font-Lines))"
+    # A font this box does not have, named by hand (All Settings' list row).
+    [void](Invoke-Settings @('--op=reset', '--key=font-family'))
+    [void](Invoke-Settings @('--op=add', '--key=font-family', '--value=Nowhere Mono'))
+    [void](Invoke-Settings @('--op=add', '--key=font-family', "--value=$fam1"))
+    $fr = Font-Row
+    $warn = "Nowhere Mono isn't installed $([char]0x2014) Ghoztty uses the next font."
+    $last = @($fr.choices)[-1]
+    Assert ((Font-Lines) -eq "Nowhere Mono|$fam1" -and [string]$fr.display -eq 'Nowhere Mono (not installed)' -and [string]$fr.subtitle -eq $warn -and [string]$fr.fallback -eq '+1 fallback' -and [string]$last.value -eq 'Nowhere Mono' -and [string]$last.label -eq 'Nowhere Mono (not installed)') "F6: a font that is not installed is listed '(not installed)' and the row says Ghoztty uses the next font (lines=$(Font-Lines) display=$($fr.display) subtitle=$($fr.subtitle))"
+    [void](Invoke-Settings @('--op=choose', '--key=font-family', "--value=$fam1"))
+    $fr = Font-Row
+    $notInst = @($fr.choices | Where-Object { [string]$_.label -match 'not installed' })
+    Assert ((Font-Lines) -eq "$fam1|$fam1" -and $null -eq $fr.subtitle -and $notInst.Count -eq 0) "F7: picking an installed family over it clears the warning and the '(not installed)' item (lines=$(Font-Lines) subtitle=$($fr.subtitle))"
+    [void](Invoke-Settings @('--op=choose', '--key=font-family', '--value='))
+    $fr = Font-Row
+    Assert (@(Get-KeyLines (Read-Config) 'font-family').Count -eq 0 -and [string]$fr.display -eq 'Default (JetBrains Mono)' -and -not [bool]$fr.modified -and -not [bool]$fr.other_visible) "F8: Default removes every font-family line, fallbacks included (lines=$(Font-Lines) display=$($fr.display))"
 
     # =====================================================================
     # L: the curated controls (T2681) - slider, stepper, megabytes, color,
