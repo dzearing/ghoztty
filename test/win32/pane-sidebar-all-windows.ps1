@@ -535,6 +535,35 @@ try {
     "  $g"
     Assert "closing D dropped it from A's list" ($g -match 'order=alpha\|zeta\|ghoztty/feature-2$')
 
+    "== 6a: a background window's list waits for its window to be activated (T2347, Mac PaneRoster)"
+    # Titles and activity are the flood (T1935): another window's change to
+    # them re-reads only the list of the window in use; a background one
+    # catches up as its window is activated. (A layout or close change still
+    # reaches every list at once - section 6 above.)
+    $aId = [int64]$top
+    $otherTop = @(Get-TestWindows -ProcessId $app.Pid -Class 'GhozttyWindow' | Where-Object { [int64]$_.Hwnd -ne $aId }) | Select-Object -First 1
+    Assert "setup: another window to put in use" ($null -ne $otherTop)
+    if ($otherTop) {
+        Assert "setup: the other window is the active one" (Set-TestActiveWindow -Window ([IntPtr]$otherTop.Hwnd))
+        # settle: the activation's own catch-up refresh lands before the mark, so A's deferral below is the busy change's
+        Start-Sleep -Milliseconds 400
+        $mark = Get-LogCount
+        Assert "+set-state c1 busy ($(Get-CliErr))" ((Invoke-Cli "+set-state --target=c1 --state=busy") -eq 0)
+        Assert "A, in the background, defers the re-read (log)" ($null -ne (Wait-Log "pane sidebar roster deferred window=$aId" $mark 4000))
+        Assert "...and does not catch up while it stays in the background" ($null -eq (Wait-Log "pane sidebar roster caught up window=$aId" $mark 600))
+        $mark = Get-LogCount
+        Assert "setup: A is the active window again" (Set-TestActiveWindow -Window $top)
+        Assert "activated, A catches up (log)" ($null -ne (Wait-Log "pane sidebar roster caught up window=$aId" $mark 3000))
+        # In use, A follows another window live again: no deferral.
+        # settle: A's activation finishes (WM_ACTIVATE sets it in use) before the next change is made
+        Start-Sleep -Milliseconds 400
+        $mark = Get-LogCount
+        Assert "+set-state c1 idle ($(Get-CliErr))" ((Invoke-Cli "+set-state --target=c1 --state=idle") -eq 0)
+        # settle: a NEGATIVE check - the coalesced refresh (one SIDEBAR_SYNC_MS tick) has had time to run and defer nothing
+        Start-Sleep -Milliseconds 800
+        Assert "in use, A re-reads at once: no deferral" ($null -eq (Wait-Log "pane sidebar roster deferred window=$aId" $mark 300))
+    }
+
     "== 6b: the search field filters by every word, Escape clears, Return reveals (T1877)"
     # Windows now: alpha (b1, b2), ghoztty: feature-2 (c1), zeta (P, s1).
     $o = Read-Outline (Wait-Log 'pane sidebar outline mode=expanded' 0 1000)

@@ -12087,11 +12087,11 @@ fn refreshOutstandingOffer(self: *App) void {
 pub fn schedulePaneScopes(self: *App) void {
     if (self.pane_scopes_armed) return;
     const mh = self.msg_hwnd orelse {
-        PaneSidebar.refreshScopes(self.windows.items, null);
+        PaneSidebar.refreshScopesLive(self.windows.items);
         return;
     };
     if (w32.SetTimer(mh, PANE_SCOPES_TIMER_ID, Window.SIDEBAR_SYNC_MS, null) == 0) {
-        PaneSidebar.refreshScopes(self.windows.items, null);
+        PaneSidebar.refreshScopesLive(self.windows.items);
         return;
     }
     self.pane_scopes_armed = true;
@@ -15481,7 +15481,7 @@ fn msgWndProc(
     if (msg == w32.WM_TIMER and wparam == PANE_SCOPES_TIMER_ID) {
         _ = w32.KillTimer(hwnd, PANE_SCOPES_TIMER_ID);
         app.pane_scopes_armed = false;
-        PaneSidebar.refreshScopes(app.windows.items, null);
+        PaneSidebar.refreshScopesLive(app.windows.items);
         return 0;
     }
 

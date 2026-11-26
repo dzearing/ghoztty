@@ -230,6 +230,8 @@ pub var shared: shared_mod.Shared = .{};
 /// Every sidebar's `refresh` count together (T2423). UI thread only.
 var refreshes_all: u64 = 0;
 
+const pane_roster = @import("pane_roster.zig");
+
 /// A window group of the outline: one tab of one top-level window (a Mac
 /// window is a tab here - see `pane_sidebar_outline.zig`).
 const Group = struct {
@@ -546,6 +548,11 @@ signature: u64 = 0,
 /// sidebar's together (`refreshes_all`): a drag start counts what it redrew
 /// in other windows by them (T2423).
 refreshes: u64 = 0,
+/// Another window's titles or activity changed while this window was not the
+/// one in use (T2347, Mac `PaneRoster` + `isLive`): the all-windows list
+/// re-reads its roster when this window is next activated (`catchUp`)
+/// instead of on every tick anywhere. Cleared by any refresh.
+roster_stale: bool = false,
 
 // The all-windows scope (T1829). Not persisted, as Mac's is not: the switch,
 // and what is folded, belong to one look at every window. This and the
@@ -879,8 +886,14 @@ pub fn catchUp(self: *PaneSidebar) void {
             self.seen_gen,
         });
     }
+    if (self.roster_stale) log.info("pane sidebar roster caught up window={d}", .{
+        if (self.window.hwnd) |h| @intFromPtr(h) else 0,
+    });
     if (behind or clicked) {
         self.signature = 0;
+        self.refresh();
+    } else if (self.roster_stale) {
+        // The hash still decides whether anything repaints.
         self.refresh();
     }
     self.takeScroll();
@@ -1061,6 +1074,7 @@ pub fn deskPainted(self: *PaneSidebar, gen: u32) void {
 pub fn refresh(self: *PaneSidebar) void {
     self.refreshes +%= 1;
     refreshes_all +%= 1;
+    self.roster_stale = false;
     if (self.all_windows) return self.refreshAll();
     const win = self.window;
     if (win.tab_count == 0) {
@@ -1948,12 +1962,38 @@ fn appendEntries(self: *PaneSidebar, views: []const *PaneView, window: *Window, 
 /// Every OTHER sidebar showing all windows re-reads its roster: something in
 /// `except` (or a window that just closed, with `except` null) changed what
 /// they list. Cheap - each hashes and returns when nothing it shows moved.
+///
+/// `refreshScopesLive` (T2347) is the coalesced title/activity flavour:
+/// only the window in use re-reads; see `pane_roster`.
 pub fn refreshScopes(windows: []const *Window, except: ?*Window) void {
+    refreshScopesWith(windows, except, .every);
+}
+
+/// Titles and activity changed somewhere (T1935's coalesced refresh): the
+/// window in use re-reads now, every other window when it is next activated
+/// (T2347, Mac `PaneRoster` / `PaneSidebarState.isLive`).
+pub fn refreshScopesLive(windows: []const *Window) void {
+    refreshScopesWith(windows, null, .live);
+}
+
+fn refreshScopesWith(windows: []const *Window, except: ?*Window, policy: pane_roster.Policy) void {
     for (windows) |w| {
         if (w == except or w.closing) continue;
         const sb = w.sidebar orelse continue;
-        if (sb.all_windows) sb.refresh();
+        if (!sb.all_windows) continue;
+        switch (pane_roster.scopeAction(policy, w.activated, sb.roster_stale)) {
+            .refresh => sb.refresh(),
+            .defer_first => {
+                sb.roster_stale = true;
+                log.info("pane sidebar roster deferred window={d}", .{if (w.hwnd) |h| @intFromPtr(h) else 0});
+            },
+            .already_stale => {},
+        }
     }
+}
+
+test {
+    _ = pane_roster;
 }
 
 /// A row's icon: one of Mac's drawn symbols, or an icon-font glyph where Mac
