@@ -54,6 +54,11 @@ CFG
 
 export SHELL=/bin/sh
 export LIBGL_ALWAYS_SOFTWARE=1
+# A fixed mmap threshold: glibc otherwise raises it to the size of the first
+# big block freed, after which a freed render target (about 2 MB) stays in
+# its heap and the process's private memory never shows the release (R5 read
+# +3 MB over a 3 MB release without this, 2026-11-25).
+export MALLOC_MMAP_THRESHOLD_=131072
 if [ "${NEGATIVE:-0}" = 1 ]; then export GHOZTTY_IDLE_FRAME_RELEASE=0; fi
 hl_launch APP "$app" --gtk-single-instance=false
 hl_wait_for 30 test -S "$(hl_socket)"
