@@ -1379,11 +1379,13 @@ pub const Window = extern struct {
     }
 
     /// The toolbar view's bounds in the window, where the desk is drawn;
-    /// null before it has a size.
+    /// null before it has a size. In single mode the toolbar is the one of
+    /// the workspace on show (T3651): the toplevel's own left the window
+    /// with its content, and measuring it drew no desk at all.
     fn deskArea(self: *Self) ?wk.GrapheneRect {
-        const priv = self.private();
+        const owner = Workspaces.deskOwner(self);
         var area: wk.GrapheneRect = .{};
-        if (wk.gtk_widget_compute_bounds(@ptrCast(priv.toolbar), @ptrCast(self.as(gtk.Widget)), &area) == 0) return null;
+        if (wk.gtk_widget_compute_bounds(@ptrCast(owner.private().toolbar), @ptrCast(self.as(gtk.Widget)), &area) == 0) return null;
         if (@round(area.w) <= 0 or @round(area.h) <= 0) return null;
         return area;
     }
@@ -1423,17 +1425,28 @@ pub const Window = extern struct {
             return;
         }
         const priv = self.private();
-        const area = self.deskArea() orelse return;
         const bg = cfg.background;
         const is_light = pane_style.isLight(.{ .r = bg.r, .g = bg.g, .b = bg.b });
-        const w: i32 = @intFromFloat(@round(area.w));
-        const h: i32 = @intFromFloat(@round(area.h));
-        // The desk the window shows right now is `from`'s: reuse it.
-        const want: pane_style.DeskKey = .{ .w = @intCast(w), .h = @intCast(h), .seed = if (from) |v| v.seed else null, .is_light = is_light };
-        const old: *wk.GdkTexture = if (priv.desk_texture != null and priv.desk_key.eql(want))
+        const from_seed: ?u64 = if (from) |v| v.seed else null;
+        // The desk the window showed until now is `from`'s: reuse it. The
+        // new content is not laid out yet, so a desk rendered afresh takes
+        // the size the last one was drawn at.
+        const old: *wk.GdkTexture = if (priv.desk_texture != null and
+            priv.desk_key.seed == from_seed and priv.desk_key.is_light == is_light)
             @ptrCast(wk.g_object_ref(priv.desk_texture.?))
-        else
-            renderDeskTexture(w, h, from, is_light) orelse return;
+        else old: {
+            var w: i32 = @intCast(priv.desk_key.w);
+            var h: i32 = @intCast(priv.desk_key.h);
+            if (w <= 0 or h <= 0) {
+                const area = self.deskArea() orelse {
+                    log.info("workspace shade swap (no fade): the window has no desk area yet", .{});
+                    return;
+                };
+                w = @intFromFloat(@round(area.w));
+                h = @intFromFloat(@round(area.h));
+            }
+            break :old renderDeskTexture(w, h, from, is_light) orelse return;
+        };
         priv.fade_texture = old;
         priv.fade_from_seed = seedOf(from);
         priv.fade_t0_us = wk.g_get_monotonic_time();
@@ -1571,7 +1584,8 @@ pub const Window = extern struct {
 
         // The sidebar card's glass sheet, inside its rounded corners.
         const sheet = pane_style.sidebarSheet(style, cfg.@"macos-pane-glass", rgb) orelse return;
-        const sidebar = priv.pane_sidebar orelse return;
+        // The sidebar in the window: the workspace on show's (T3651).
+        const sidebar = Workspaces.deskOwner(self).private().pane_sidebar orelse return;
         if (wk.gtk_widget_get_mapped(sidebar.card) == 0) return;
         var card: wk.GrapheneRect = .{};
         if (wk.gtk_widget_compute_bounds(sidebar.card, @ptrCast(widget), &card) == 0) return;

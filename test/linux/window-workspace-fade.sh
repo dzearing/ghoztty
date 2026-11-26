@@ -125,6 +125,16 @@ sys.exit(0 if max(sum(abs(a[i+j]-b[i+j]) for j in range(3)) for i in (0, 3)) >= 
 ' "$@"
 }
 
+# tinted <6>: both probes are a colour, not the stock header grey (r == g == b)
+# that shows where no desk is drawn.
+tinted() {
+    python3 -I -c '
+import sys
+v = [int(x) for x in sys.argv[1:7]]
+sys.exit(0 if all(max(v[i:i+3]) - min(v[i:i+3]) >= 8 for i in (0, 3)) else 1)
+' "$@"
+}
+
 hl_launch APP "$app" --gtk-single-instance=false --session-persistence=false
 hl_wait_for 30 test -S "$(hl_socket)"
 hl_check "F0c the app serves its socket" $?
@@ -145,7 +155,9 @@ sleep 1
 hl_wait_for 5 wsis "(True, 0, False)" 'k.get("drawn"), k.get("drawn_seed"), k.get("fade_on")'
 hl_check "F2 the toplevel draws $first's desk (the ocean), no fade running" $? "$(last)"
 old=$(probe "$first")
-echo "ocean probe: $old"
+# shellcheck disable=SC2086
+tinted $old
+hl_check "F2b control: the header's top rows show the ocean desk" $? "probe=$old"
 
 # ---- 1. a switch to another gradient crossfades ---------------------------
 started0=$(ws 'k.get("fades_started", 0)')
@@ -175,8 +187,8 @@ hl_check "F6c ...logged done" $? "$(grep 'shade' "$APP_LOG" | tail -3)"
 new=$(probe "$first")
 echo "rnd probe: $new"
 # shellcheck disable=SC2086
-apart $old $new
-hl_check "F7 after the fade the desk is rnd's own gradient, not the ocean" $? "ocean=$old rnd=$new"
+apart $old $new && tinted $new
+hl_check "F7 after the fade the desk is rnd's own gradient: not the ocean, and not the stock grey of no desk at all" $? "ocean=$old rnd=$new"
 # shellcheck disable=SC2086
 between "$k1" "$k2" $old $new $mid && apart $old $mid && apart $new $mid
 hl_check "F8 the mid-fade frame is the old desk over the new at what was left of it (neither one alone)" $? "ocean=$old mid=$mid rnd=$new keep=$k1->$k2"
