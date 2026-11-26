@@ -178,6 +178,10 @@ if (-not $fresh.Ok) { exit 4 }
 # T1230: the before-half of the persistent-state arm, taken after the rebuild
 # (a build writes nothing durable) and before any script can.
 $stateBefore = if ($NoStateCheck) { $null } else { Get-PersistentStateSnapshot }
+# T2452: name this run, so the fixture claims its workers write (inherited
+# env) are told apart from another lane's. A run nested inside another keeps
+# the outer run's name - it is part of that run.
+if (-not $env:GHOZTTY_ACCEPTANCE_RUN) { $env:GHOZTTY_ACCEPTANCE_RUN = [guid]::NewGuid().ToString('N') }
 
 $clock = [Diagnostics.Stopwatch]::StartNew()
 $results = Invoke-AcceptanceRun -Repo $Repo -Jobs $jobs -Width $Width -LogDir $LogDir -TimeoutSec $TimeoutSec -NoConfirm:$NoConfirm -FailFast:$FailFast -OnResult {
@@ -198,6 +202,10 @@ $stateChanges = @(if ($stateBefore) { Invoke-PersistentStateCheck -Before $state
 $stateAttr = Resolve-PersistentStateAttribution -Changes $stateChanges
 $userUpdate = @($stateAttr.UserUpdate)
 $stateChanges = @($stateAttr.Unattributed)
+# T2452: and a fixture another lane's live script still holds is that lane's.
+$claimAttr = Resolve-PersistentStateClaimAttribution -Changes $stateChanges -RunId $env:GHOZTTY_ACCEPTANCE_RUN
+$concurrent = @($claimAttr.Concurrent)
+$stateChanges = @($claimAttr.Unattributed)
 $busy = ($results | ForEach-Object { ($_.Ended - $_.Started).TotalSeconds } | Measure-Object -Sum).Sum
 
 $summary = [pscustomobject]@{
@@ -212,6 +220,7 @@ $summary = [pscustomobject]@{
     scheduleViolations = $overlap
     stateCheck = $(if ($NoStateCheck) { 'skipped' } else { 'ran' })
     stateChanges = @($stateChanges | ForEach-Object { Format-PersistentStateChange $_ })
+    concurrentFixtures = @($concurrent | ForEach-Object { Format-PersistentStateChange $_ })
     userUpdate = $(if ($userUpdate.Count -gt 0) { [pscustomobject]@{ version = $stateAttr.Version; changes = @($userUpdate | ForEach-Object { Format-PersistentStateChange $_ }) } } else { $null })
 }
 $summary | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath (Join-Path $LogDir 'summary.json') -Encoding UTF8
@@ -226,6 +235,10 @@ if ($userUpdate.Count -gt 0) {
     foreach ($c in $userUpdate) { "  user update: $(Format-PersistentStateChange $c)" }
 } elseif ($stateChanges.Count -gt 0 -and $stateAttr.Reason) {
     "PERSISTENT STATE: not attributed to a user update - $($stateAttr.Reason)"
+}
+if ($concurrent.Count -gt 0) {
+    "PERSISTENT STATE CONCURRENT FIXTURE (another run's, does not fail this one): $($claimAttr.Reason)"
+    foreach ($c in $concurrent) { "  concurrent: $(Format-PersistentStateChange $c)" }
 }
 foreach ($c in $stateChanges) { "PERSISTENT STATE CHANGED: $(Format-PersistentStateChange $c)" }
 

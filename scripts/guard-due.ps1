@@ -9192,6 +9192,7 @@ $GuardTable = @(
         Stamp  = 'test\win32\persistent-state.stamp.json'
         Covers = @(
             'test\win32\lib\PersistentState.ps1',
+            'test\win32\lib\FixtureClaim.ps1',   # T2452: the cross-lane claim ledger
             'test\win32\persistent-state.ps1',
             'scripts\acceptance-parallel.ps1'
         )

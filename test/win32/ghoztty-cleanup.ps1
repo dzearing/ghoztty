@@ -73,6 +73,10 @@ if (-not (Test-Path -LiteralPath $Script)) {
 
 $Sandbox = Join-Path $env:TEMP ('ghoztty-cleanup-test\' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '-' + $PID)
 $TestHive = 'HKCU:\Software\dzearing-cleanup-test'
+# T2452: the hive sits on a surface every lane's acceptance sweep snapshots;
+# claim it, so another lane's sweep that sees it mid-run knows whose it is.
+. (Join-Path $PSScriptRoot 'lib\FixtureClaim.ps1')
+$HiveClaim = Register-PersistentStateClaim -Surface hives -Pattern 'Software\dzearing-cleanup-test'
 
 # The scratch hive mirrors the shape of the real one so the script's own key
 # paths are exercised, not a simplified stand-in.
@@ -477,6 +481,7 @@ if ($NegativeControl) {
 }
 
 Remove-Sandbox
+Unregister-PersistentStateClaim -Path $HiveClaim
 
 Complete-TestBody  # T1039/T1511: before the stamp, which is a child process reading this run's state
 if ($script:failures -eq 0 -and $script:skips -eq 0 -and -not $NegativeControl) {

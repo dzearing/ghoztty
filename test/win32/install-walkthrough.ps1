@@ -126,6 +126,16 @@ $userInstallDir = Get-ThrowawayUserInstallDir -RealLocalAppData $realLocalAppDat
 $shortcut = Join-Path $realAppData "Microsoft\Windows\Start Menu\Programs\$Identity.lnk"
 $installedExe = Join-Path $installDir 'ghoztty.exe'
 
+# T2452: the throwaway product lands on three surfaces every lane's acceptance
+# sweep snapshots; claim them, so another lane's sweep knows whose they are.
+# Never for the user's own product name - that claim would excuse a real leak.
+. (Join-Path $PSScriptRoot 'lib\FixtureClaim.ps1')
+$identityClaims = @(if ($Identity -ne 'Ghoztty') {
+    Register-PersistentStateClaim -Surface hives -Pattern "Software\dzearing\$Identity"
+    Register-PersistentStateClaim -Surface arp -Pattern "*$Identity*"
+    Register-PersistentStateClaim -Surface startmenu -Pattern "*$Identity*"
+})
+
 # ---------------------------------------------------------------------------
 # -TeethCheck: the refusal, on its own. Runs first and exits, so the proof that
 # this harness cannot touch the user's product needs neither a package nor a
@@ -750,6 +760,7 @@ Complete-TestBody
         }
     }
     if ($desktopUp) { Remove-TestDesktop | Out-Null }
+    foreach ($c in $identityClaims) { Unregister-PersistentStateClaim -Path $c }
 
     # The user's install, measured AFTER the cleanup (T3405): the cleanup runs
     # `msiexec /x` too, and a run that threw half-way never reached G.

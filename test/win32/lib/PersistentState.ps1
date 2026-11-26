@@ -78,7 +78,10 @@
 # The caller re-snapshots after a settle delay and reports only what is still
 # different (see Invoke-PersistentStateCheck), so a transient of somebody
 # else's does not paint this run red - and a real leak, which does not go away,
-# still does.
+# still does. A fixture that outlives the settle delay is attributed through
+# the claim ledger instead (T2452, Register-PersistentStateClaim below): a
+# script that plants one claims it, and only a LIVE claim from ANOTHER run
+# excuses the change.
 #
 # SEAMS (for test\win32\persistent-state.ps1, which must be able to make every
 # surface change without touching the user's real state): -HkcuPrefix reroots
@@ -90,6 +93,9 @@
 Set-StrictMode -Off
 
 $script:PersistentStateSurfaces = @('run', 'env', 'classes', 'hives', 'arp', 'tasks', 'startmenu', 'install', 'account')
+
+# T2452: the fixture-claim ledger (Register-PersistentStateClaim and friends).
+. (Join-Path $PSScriptRoot 'FixtureClaim.ps1')
 
 function Get-PsRegKey {
     param([string]$Sub)

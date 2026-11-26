@@ -325,6 +325,9 @@ else {
 # administrator anywhere in the picture.
 
 $sandboxRoot = 'HKCU:\Software\ghoztty-test-t808\LocalDumps'
+# T2452: claimed, so another lane's acceptance sweep can tell it is ours.
+. (Join-Path $PSScriptRoot 'lib\FixtureClaim.ps1')
+$t808Claim = Register-PersistentStateClaim -Surface hives -Pattern 'Software\ghoztty-test-t808'
 Remove-Item -LiteralPath 'HKCU:\Software\ghoztty-test-t808' -Recurse -Force -ErrorAction SilentlyContinue
 New-Item -Path $sandboxRoot -Force | Out-Null
 $savedRoot = $env:GHOZTTY_WER_KEY_ROOT
@@ -368,6 +371,7 @@ Check 'after the disarm the binary reads as mini again' `
 if ($null -eq $savedRoot) { Remove-Item Env:\GHOZTTY_WER_KEY_ROOT -ErrorAction SilentlyContinue }
 else { $env:GHOZTTY_WER_KEY_ROOT = $savedRoot }
 Remove-Item -LiteralPath 'HKCU:\Software\ghoztty-test-t808' -Recurse -Force -ErrorAction SilentlyContinue
+Unregister-PersistentStateClaim -Path $t808Claim
 
 # The CLI half, unelevated on purpose: it must print the commands and FAIL,
 # never report an arm it did not perform. (This run is unelevated; if it ever

@@ -27,6 +27,10 @@
      updater installs mid-run is attributed and does not fail the run; a leak
      beside it, an unpublished version, a fixture install elsewhere, a
      throwaway identity and a bare exe swap all still do.
+  F  another lane's fixture (T2452): a key a LIVE script of ANOTHER run has
+     claimed (lib\FixtureClaim.ps1) does not fail this run; the same key
+     claimed by this run, by a dead process or by a reused pid, or a key no
+     claim's pattern covers, still does - shown with a real second process.
   D  the runner is wired: acceptance-parallel.ps1 takes the snapshot before
      the run, checks after it, and the exit code and GREEN verdict both depend
      on the result. The live demonstration - a fixture script that really
@@ -306,6 +310,76 @@ try {
     $r = Resolve-PersistentStateAttribution -Changes @() -LocalAppData $localAppData -ReleaseExists { throw 'must not be called' }
     Assert 'E9 an empty diff attributes nothing and asks nobody' (@($r.Unattributed).Count -eq 0 -and @($r.UserUpdate).Count -eq 0)
 
+    # --- F. another lane's live fixture is attributed; a leak is not (T2452) ---
+    ''
+    '-- F. a fixture another run''s LIVE script claims is forgiven; its own run''s, or a dead claimant''s, is not'
+    $claimDir = Join-Path $scratch 'claims'
+    $hiveChange = [pscustomobject]@{ Surface = 'hives'; Item = 'Software\dzearing-cleanup-test'; Change = 'added'; Before = $null; After = '<key>' }
+    $runChange = [pscustomobject]@{ Surface = 'run'; Item = 'GhozttyAgent-t2452'; Change = 'added'; Before = $null; After = 'String:x' }
+    $cl = Register-PersistentStateClaim -Surface hives -Pattern 'Software\dzearing-cleanup-test' -ClaimDir $claimDir -RunId 'lane-a-run'
+    $live = @(Get-PersistentStateClaims -ClaimDir $claimDir)
+    Assert 'F1 a claim held by a live process (this one) reads back live, with its surface, pattern and run' `
+        ($live.Count -eq 1 -and $live[0].surface -eq 'hives' -and $live[0].pid -eq $PID -and $live[0].run -eq 'lane-a-run' -and $live[0].script -match 'persistent-state\.ps1') "live=$($live.Count)"
+    $r = Resolve-PersistentStateClaimAttribution -Changes @($hiveChange, $runChange) -RunId 'lane-b-run' -Claims $live
+    Assert 'F2 the 2026-10-29 shape: lane a''s live cleanup hive is NOT a state change in lane b''s sweep, and is named' `
+        (@($r.Concurrent).Count -eq 1 -and $r.Concurrent[0].Item -eq 'Software\dzearing-cleanup-test' -and $r.Reason -match 'persistent-state\.ps1 \(pid \d+, run lane-a-run\)') "concurrent=$(Show $r.Concurrent) reason=$($r.Reason)"
+    Assert 'F3 a change no claim covers, in the same diff, still fails the run' `
+        (@($r.Unattributed).Count -eq 1 -and $r.Unattributed[0].Surface -eq 'run') "left=$(Show $r.Unattributed)"
+    $r = Resolve-PersistentStateClaimAttribution -Changes @($hiveChange) -RunId 'lane-a-run' -Claims $live
+    Assert 'F4 NEGATIVE: the same key claimed by THIS run''s own script is still a leak (a run never excuses itself)' `
+        (@($r.Unattributed).Count -eq 1 -and @($r.Concurrent).Count -eq 0) "left=$(@($r.Unattributed).Count)"
+    $r = Resolve-PersistentStateClaimAttribution -Changes @($hiveChange) -RunId 'lane-b-run' `
+        -Claims @(Get-PersistentStateClaims -ClaimDir $claimDir -ProcessStartTicks { param($ProcessId) $null })
+    Assert 'F5 NEGATIVE: a claim whose process has exited excuses nothing (the leak shape: the script is gone, the key is not)' `
+        (@($r.Unattributed).Count -eq 1) "left=$(@($r.Unattributed).Count)"
+    $r = Resolve-PersistentStateClaimAttribution -Changes @($hiveChange) -RunId 'lane-b-run' `
+        -Claims @(Get-PersistentStateClaims -ClaimDir $claimDir -ProcessStartTicks { param($ProcessId) [int64]1 })
+    Assert 'F6 NEGATIVE: a reused pid (same number, another start time) is not the claimant' (@($r.Unattributed).Count -eq 1)
+    $other = [pscustomobject]@{ Surface = 'hives'; Item = 'Software\ghoztty-test-fixture'; Change = 'added'; Before = $null; After = '<key>' }
+    $r = Resolve-PersistentStateClaimAttribution -Changes @($other, ([pscustomobject]@{ Surface = 'run'; Item = 'Software\dzearing-cleanup-test'; Change = 'added'; Before = $null; After = 'x' })) -RunId 'lane-b-run' -Claims $live
+    Assert 'F7 NEGATIVE: a claim excuses only its own surface and pattern - a neighbour hive, or the same name on another surface, still fails' `
+        (@($r.Unattributed).Count -eq 2 -and @($r.Concurrent).Count -eq 0) "left=$(Show $r.Unattributed)"
+    $arpChange = [pscustomobject]@{ Surface = 'arp'; Item = '{1234-ABCD}'; Change = 'added'; Before = $null; After = 'GhozttyT1299Test 1.2.3' }
+    $arpClaim = @([pscustomobject]@{ surface = 'arp'; pattern = '*GhozttyT1299Test*'; pid = 1; started = 1; run = ''; script = 'install-walkthrough.ps1' })
+    $r = Resolve-PersistentStateClaimAttribution -Changes @($arpChange) -RunId 'lane-b-run' -Claims $arpClaim
+    Assert 'F8 an arp row (keyed by product code) is matched by the name its value reads; a hand run with no run id is foreign to every sweep' `
+        (@($r.Concurrent).Count -eq 1 -and $r.Reason -match 'no run') "reason=$($r.Reason)"
+    Assert 'F9 an unknown surface is refused at claim time, not silently unmatchable' `
+        ($(try { $null = Register-PersistentStateClaim -Surface nope -Pattern x -ClaimDir $claimDir; $false } catch { $_.Exception.Message -match 'unknown persistent-state surface' }))
+    Unregister-PersistentStateClaim -Path $cl
+    Assert 'F10 an unregistered claim is gone from the ledger' (@(Get-PersistentStateClaims -ClaimDir $claimDir).Count -eq 0)
+
+    # a real second process, the way another lane's script holds one
+    $childScript = Join-Path $scratch 'claimant.ps1'
+    $libPath = Join-Path $PSScriptRoot 'lib\FixtureClaim.ps1'
+    Set-Content -LiteralPath $childScript -Encoding ASCII -Value @"
+Set-StrictMode -Version 2.0
+. '$libPath'
+`$null = Register-PersistentStateClaim -Surface hives -Pattern 'Software\dzearing-cleanup-test' -ClaimDir '$claimDir' -RunId 'lane-a-run'
+Start-Sleep -Seconds 60
+"@
+    $child = Start-Process -FilePath powershell.exe -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$childScript`"") -WindowStyle Hidden -PassThru
+    $seen = @(); $deadline = (Get-Date).AddSeconds(20)
+    while ((Get-Date) -lt $deadline) { $seen = @(Get-PersistentStateClaims -ClaimDir $claimDir); if ($seen.Count -gt 0) { break }; Start-Sleep -Milliseconds 200 }
+    $r = Resolve-PersistentStateClaimAttribution -Changes @($hiveChange) -RunId 'lane-b-run' -Claims $seen
+    Assert 'F11 live, cross-process: another process''s claim (under strict mode) excuses the key while that process runs' `
+        ($seen.Count -eq 1 -and $seen[0].pid -eq $child.Id -and @($r.Concurrent).Count -eq 1) "seen=$($seen.Count) child=$($child.Id)"
+    Stop-Process -Id $child.Id -Force -ErrorAction SilentlyContinue
+    $null = $child.WaitForExit(10000)
+    $r = Resolve-PersistentStateClaimAttribution -Changes @($hiveChange) -RunId 'lane-b-run' -Claims @(Get-PersistentStateClaims -ClaimDir $claimDir)
+    Assert 'F12 live, cross-process: once that process is dead the same key is a leak again' `
+        (@($r.Unattributed).Count -eq 1 -and @($r.Concurrent).Count -eq 0) "left=$(@($r.Unattributed).Count)"
+    $deadFile = @(Get-ChildItem -LiteralPath $claimDir -Filter '*.json')
+    foreach ($f in $deadFile) { $f.LastWriteTimeUtc = [DateTime]::UtcNow.AddMinutes(-5) }
+    $null = Get-PersistentStateClaims -ClaimDir $claimDir
+    Assert 'F13 a dead claimant''s file is pruned from the ledger once it is a minute old' `
+        ($deadFile.Count -eq 1 -and @(Get-ChildItem -LiteralPath $claimDir -Filter '*.json').Count -eq 0) "files before=$($deadFile.Count)"
+    foreach ($pair in @(@('ghoztty-cleanup.ps1', 'Software\dzearing-cleanup-test'), @('crash-first-chance.ps1', 'Software\ghoztty-test-t808'))) {
+        $src = Get-Content -Raw -LiteralPath (Join-Path $PSScriptRoot $pair[0])
+        Assert "F14 $($pair[0]) claims the hive it plants ($($pair[1])) and lets the claim go" `
+            ($src -match [regex]::Escape("Register-PersistentStateClaim -Surface hives -Pattern '$($pair[1])'") -and $src -match 'Unregister-PersistentStateClaim')
+    }
+
     # --- D. the runner is wired -------------------------------------------
     ''
     '-- D. scripts\acceptance-parallel.ps1 carries the arm'
@@ -324,6 +398,12 @@ try {
     Assert 'D6 the user-update attribution runs after the check and before the verdict, and only its leftovers count (T2188)' `
         ($iAttr -gt $iCheck -and $iVerdict -gt $iAttr -and $runner -match '\$stateChanges = @\(\$stateAttr\.Unattributed\)') "check=$iCheck attr=$iAttr verdict=$iVerdict"
     Assert 'D7 an attributed update is printed, never silently dropped' ($runner -match 'PERSISTENT STATE USER UPDATE')
+    $iClaim = $runner.IndexOf('Resolve-PersistentStateClaimAttribution -Changes $stateChanges -RunId $env:GHOZTTY_ACCEPTANCE_RUN')
+    $iRunId = $runner.IndexOf('$env:GHOZTTY_ACCEPTANCE_RUN = [guid]::NewGuid()')
+    Assert 'D8 the runner names its run before any script starts, so its workers'' claims carry it (T2452)' ($iRunId -gt 0 -and $iRunId -lt $iRun) "runId=$iRunId run=$iRun"
+    Assert 'D9 the concurrent-fixture attribution runs after the update attribution and before the verdict, and only its leftovers count' `
+        ($iClaim -gt $iAttr -and $iVerdict -gt $iClaim -and $runner -match '\$stateChanges = @\(\$claimAttr\.Unattributed\)') "attr=$iAttr claim=$iClaim verdict=$iVerdict"
+    Assert 'D10 an attributed concurrent fixture is printed, never silently dropped' ($runner -match 'PERSISTENT STATE CONCURRENT FIXTURE')
 
     Complete-TestBody
 }
