@@ -435,6 +435,7 @@ try {
     # parent's folder only ever reached a Windows process cwd.
     Reset-RepoState
     Remove-Item $errlog -ErrorAction SilentlyContinue
+    # persistence: on (the default) - the default shell is the user's own, with the user's default persistence.
     $script:app = Start-OnTestDesktop -Exe $exe -Arguments @("--command=$stubWsl --cd ~") -StdErr $errlog
     $top = Wait-TestWindow -ProcessId $app.Pid -Class 'GhozttyWindow'
     Assert ($top -ne [IntPtr]::Zero) 'G: the app came up with the stub WSL as its default shell'

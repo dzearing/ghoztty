@@ -181,6 +181,91 @@ pub fn composeFold(out: []u32, bg: []const u32, tall: []const u32, short: []cons
     }
 }
 
+/// The most groups one many-group fold moves (T2349): one per header the
+/// list can lay out.
+pub const max_bands: usize = 48;
+
+/// One group's rows in a many-group fold (T2349): they begin at `y0` in the
+/// tall frame (its header's bottom) and are `h` tall there.
+pub const Band = struct { y0: i32, h: i32 };
+
+/// A header both frames lay out: its top and bottom in the tall frame, its
+/// top in the short one.
+pub const HeadPair = struct { tall_top: i32, tall_bottom: i32, short_top: i32 };
+
+/// The bands a fold of many groups at once moves (T2349, Mac's drag folding
+/// every group or every window under one `foldAnimation`): for each header
+/// both frames show, in order, how much shorter the stretch after it is in
+/// the short frame. `tall_end` / `short_end` are where each frame's content
+/// ends. Zero when the two frames are not one fold apart - the first header
+/// moved, or a stretch grew - so the change simply lands.
+pub fn foldBands(heads: []const HeadPair, tall_end: i32, short_end: i32, out: []Band) usize {
+    if (heads.len == 0 or heads[0].tall_top != heads[0].short_top) return 0;
+    var n: usize = 0;
+    for (heads, 0..) |hd, i| {
+        const next_tall = if (i + 1 < heads.len) heads[i + 1].tall_top else tall_end;
+        const next_short = if (i + 1 < heads.len) heads[i + 1].short_top else short_end;
+        const shrink = (next_tall - hd.tall_top) - (next_short - hd.short_top);
+        if (shrink < 0 or shrink > next_tall - hd.tall_bottom) return 0;
+        if (shrink == 0) continue;
+        if (n == out.len) return 0;
+        out[n] = .{ .y0 = hd.tall_bottom, .h = shrink };
+        n += 1;
+    }
+    return n;
+}
+
+/// One frame of a fold of many groups at once into `out` (T2349): every
+/// band of `bands` (in the tall frame) is `composeFold`'s group, masked from
+/// the top down to `h * p` opening or `h * (1 - p)` closing, and every row
+/// between and below them follows, pulled up by what the bands above it have
+/// given up. Rows the tall frame cannot supply (they lay below the viewport)
+/// are the short frame's, at the place the same fold puts them; above the
+/// first band and outside `region` is the new frame.
+pub fn composeFolds(out: []u32, bg: []const u32, tall: []const u32, short: []const u32, new: []const u32, w: i32, h: i32, region: Region, bands: []const Band, opening: bool, p: f64) void {
+    @memcpy(out, new);
+    if (bands.len == 0) return;
+    const r = region.clampTo(w, h);
+    const frac = if (opening) p else 1 - p;
+    const uw: usize = @intCast(w);
+    var y = @max(r.top, bands[0].y0);
+    while (y < r.bottom) : (y += 1) {
+        // Walk the bands down to the one this row falls in or before.
+        var cut: i32 = 0; // rows the bands above have given up
+        var hid: i32 = 0; // the full height of the bands above
+        var in_band = false;
+        for (bands) |b| {
+            const vis: i32 = @intFromFloat(@round(@as(f64, @floatFromInt(b.h)) * frac));
+            const start = b.y0 - cut;
+            if (y < start) break;
+            if (y < start + vis) {
+                in_band = true;
+                break;
+            }
+            cut += b.h - vis;
+            hid += b.h;
+        }
+        const row: usize = @as(usize, @intCast(y)) * uw;
+        const t = y + cut;
+        if (t < r.bottom) {
+            copyRow(out, tall, row, @as(usize, @intCast(t)) * uw, r);
+            continue;
+        }
+        const s = t - hid;
+        if (in_band or s < r.top or s >= r.bottom) {
+            fillSpan(out, bg, row, r);
+            continue;
+        }
+        copyRow(out, short, row, @as(usize, @intCast(s)) * uw, r);
+    }
+}
+
+fn copyRow(out: []u32, src: []const u32, out_row: usize, src_row: usize, r: Region) void {
+    const l: usize = @intCast(r.left);
+    const rr: usize = @intCast(r.right);
+    @memcpy(out[out_row + l .. out_row + rr], src[src_row + l .. src_row + rr]);
+}
+
 /// The column's width at eased progress `p` of a collapse or expand (T2291):
 /// from the width it was shown at to the one its new mode takes.
 pub fn columnWidthAt(from_w: i32, to_w: i32, p: f64) i32 {
@@ -500,6 +585,106 @@ test "a fold closing covers the group from the bottom up and pulls the rows belo
     composeFold(&out, &bg, &open, &closed, &closed, w, h, region, 2, 3, false, 2.0 / 3.0);
     try std.testing.expectEqual(@as(u32, 0x00010101), out[2]);
     try std.testing.expectEqual(@as(u32, 0x00555555), out[3]);
+}
+
+test "T2349: the bands of a many-group fold are each header's lost stretch" {
+    var out: [4]Band = undefined;
+    // Three headers 2 tall at 0, 6 and 10 open (4 rows under the first, 2
+    // under the second, 3 under the last, content to 15); folded, at 0, 2
+    // and 4 with the content ending at 6.
+    const heads = [_]HeadPair{
+        .{ .tall_top = 0, .tall_bottom = 2, .short_top = 0 },
+        .{ .tall_top = 6, .tall_bottom = 8, .short_top = 2 },
+        .{ .tall_top = 10, .tall_bottom = 12, .short_top = 4 },
+    };
+    const n = foldBands(&heads, 15, 6, &out);
+    try std.testing.expectEqual(@as(usize, 3), n);
+    try std.testing.expectEqual(Band{ .y0 = 2, .h = 4 }, out[0]);
+    try std.testing.expectEqual(Band{ .y0 = 8, .h = 2 }, out[1]);
+    try std.testing.expectEqual(Band{ .y0 = 12, .h = 3 }, out[2]);
+    // A header that keeps its stretch gives no band.
+    const kept = [_]HeadPair{
+        .{ .tall_top = 0, .tall_bottom = 2, .short_top = 0 },
+        .{ .tall_top = 2, .tall_bottom = 4, .short_top = 2 },
+        .{ .tall_top = 8, .tall_bottom = 10, .short_top = 4 },
+    };
+    try std.testing.expectEqual(@as(usize, 1), foldBands(&kept, 10, 6, &out));
+    try std.testing.expectEqual(Band{ .y0 = 4, .h = 4 }, out[0]);
+}
+
+test "T2349: frames that are not one fold apart give no bands, so the change lands" {
+    var out: [4]Band = undefined;
+    // The first header moved (the list re-scrolled).
+    try std.testing.expectEqual(@as(usize, 0), foldBands(&.{.{ .tall_top = 0, .tall_bottom = 2, .short_top = 1 }}, 8, 4, &out));
+    // A stretch grew in the "short" frame.
+    try std.testing.expectEqual(@as(usize, 0), foldBands(&.{
+        .{ .tall_top = 0, .tall_bottom = 2, .short_top = 0 },
+        .{ .tall_top = 4, .tall_bottom = 6, .short_top = 5 },
+    }, 8, 9, &out));
+    // Shrinking more than the stretch's own rows.
+    try std.testing.expectEqual(@as(usize, 0), foldBands(&.{.{ .tall_top = 0, .tall_bottom = 2, .short_top = 0 }}, 4, 1, &out));
+    try std.testing.expectEqual(@as(usize, 0), foldBands(&.{}, 4, 1, &out));
+}
+
+test "T2349: a many-group fold starts as the tall frame, ends as the short one, and folds every band at once" {
+    const w = 1;
+    const h = 10;
+    const bg = frame(w, h, bgc);
+    // Open: header A row 0, its rows 1..2, header B row 3, its rows 4..5,
+    // a lone row 6. Folded: A 0, B 1, lone 2.
+    var open = bg;
+    open[0] = 0x00A0A0A0;
+    open[1] = 0x00010101;
+    open[2] = 0x00020202;
+    open[3] = 0x00B0B0B0;
+    open[4] = 0x00040404;
+    open[5] = 0x00050505;
+    open[6] = 0x00666666;
+    var closed = bg;
+    closed[0] = 0x00A0A0A0;
+    closed[1] = 0x00B0B0B0;
+    closed[2] = 0x00666666;
+    const bands = [_]Band{ .{ .y0 = 1, .h = 2 }, .{ .y0 = 4, .h = 2 } };
+    const region: Region = .{ .left = 0, .top = 0, .right = w, .bottom = h };
+    var out = frame(w, h, 0);
+
+    // Closing: tall = the old frame, short = the new.
+    composeFolds(&out, &bg, &open, &closed, &closed, w, h, region, &bands, false, 0);
+    try std.testing.expectEqualSlices(u32, &open, &out);
+    composeFolds(&out, &bg, &open, &closed, &closed, w, h, region, &bands, false, 1);
+    try std.testing.expectEqualSlices(u32, &closed, &out);
+    // Halfway: each group shows its first row, everything below follows.
+    composeFolds(&out, &bg, &open, &closed, &closed, w, h, region, &bands, false, 0.5);
+    try std.testing.expectEqualSlices(u32, &[_]u32{ 0x00A0A0A0, 0x00010101, 0x00B0B0B0, 0x00040404, 0x00666666, bgc, bgc, bgc, bgc, bgc }, &out);
+
+    // Opening is the same fold the other way: tall = the new frame.
+    composeFolds(&out, &bg, &open, &closed, &open, w, h, region, &bands, true, 0);
+    try std.testing.expectEqualSlices(u32, &closed, &out);
+    composeFolds(&out, &bg, &open, &closed, &open, w, h, region, &bands, true, 1);
+    try std.testing.expectEqualSlices(u32, &open, &out);
+}
+
+test "T2349: rows the tall frame cut off at the viewport come up from the short frame" {
+    const w = 1;
+    const h = 6;
+    const bg = frame(w, h, bgc);
+    // Viewport rows 0..3. Open: header 0, rows 1..3 fill it; the next
+    // header sits below it, out of the picture. Folded: header 0, next 1.
+    var open = bg;
+    open[0] = 0x00A0A0A0;
+    open[1] = 0x00010101;
+    open[2] = 0x00020202;
+    open[3] = 0x00030303;
+    var closed = bg;
+    closed[0] = 0x00A0A0A0;
+    closed[1] = 0x00B0B0B0;
+    const region: Region = .{ .left = 0, .top = 0, .right = w, .bottom = 4 };
+    var out = frame(w, h, 0);
+    composeFolds(&out, &bg, &open, &closed, &closed, w, h, region, &.{.{ .y0 = 1, .h = 3 }}, false, 2.0 / 3.0);
+    // One row of the group left, then the next header from the short frame.
+    try std.testing.expectEqual(@as(u32, 0x00010101), out[1]);
+    try std.testing.expectEqual(@as(u32, 0x00B0B0B0), out[2]);
+    try std.testing.expectEqual(bgc, out[3]);
 }
 
 test "T2291: the column's width runs from where it was shown to its new mode's" {

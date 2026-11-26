@@ -1,18 +1,24 @@
 {
     "guard":  "frame-lab-catalogue",
     "script":  "test/win32/frame-lab-catalogue.ps1",
-    "generated":  "2026-11-06T21:41:46-08:00",
-    "commit":  "61d11ab13",
+    "generated":  "2026-11-26T08:35:08-08:00",
+    "commit":  "f1718f9a9c",
     "uncommitted":  [
-                        "test/win32/frame-lab-catalogue.ps1",
-                        "test/win32/lib/FrameLabCatalogue.ps1"
+                        "src/apprt/win32/pane_sidebar_transition.zig"
                     ],
     "files":  {
-                  "src/apprt/win32/pane_sidebar_transition.zig":  "f6ef471df85a3f7b888102aa9740540612337d6121bd7099b0f5ac8cfd751c68",
+                  "src/apprt/win32/pane_sidebar_transition.zig":  "e52d6bf91b8ee2f00ca75964b27e1fefc8d8596b23c4e21cf53dce9f5024231e",
                   "test/win32/frame-lab-catalogue.ps1":  "120058a164916bc96adb7194be43299e5c1abcf29e27c31729ad4fbb74faef64",
                   "test/win32/lib/FrameLabCatalogue.ps1":  "a7f1cc92b0b7c69993ed3191b3510a44f0bf1f8c4222d15cd67502a79416ee26",
                   "test/win32/lib/FrameLabInput.ps1":  "c10386b0534bbf823329a2801b8f86c8a5b0ef66fae405aa69663b7e9c2ab0f4",
                   "test/win32/lib/FrameLabTrigger.ps1":  "e34b9a8562bf5e4266c62f7fa51d2b41b25976908a39f5310d250eedb78d2078",
                   "test/win32/lib/FrameScore.ps1":  "bbae7d0196076712df01ca2625a8eac5af348c03f31b9589fafc48f0dc43aae7"
-              }
+              },
+    "code":  {
+                 "test/win32/frame-lab-catalogue.ps1":  "code1:0ef016539b4202b5d4a18c74f0c132820b9bb57321500af23d75277d6070f791",
+                 "test/win32/lib/FrameLabCatalogue.ps1":  "code1:0a6858f421a09e2eb128f09e06846a39564563154193cfe9cb413670e8364f65",
+                 "test/win32/lib/FrameLabInput.ps1":  "code1:70da2bd0760fd4e7dc3a94b090137fae3ded9e0a824b0d78dc98fad392d9a0eb",
+                 "test/win32/lib/FrameLabTrigger.ps1":  "code1:c5985adacb0ef02ff907a27b7165117a1b36e5ee1d824e22341acbb5bc9efd7e",
+                 "test/win32/lib/FrameScore.ps1":  "code1:8e6962bfcd9f4ffcfac618e91fd45b37757152ee50d3a33a7312ff84366568bd"
+             }
 }

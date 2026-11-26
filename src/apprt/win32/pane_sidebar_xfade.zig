@@ -11,6 +11,23 @@ pub const Kind = union(enum) {
     /// The scope switch; true going to all windows.
     scope: bool,
     fold: Fold,
+    /// Many groups folding, or unfolding, at once (T2349): a drag's lift and
+    /// its drop.
+    folds: Folds,
+};
+
+/// A fold of many groups at once (T2349): the bands that fold, measured in
+/// the tall frame, which way they go, and how far the list was scrolled. A
+/// scroll that moved under it lands it.
+pub const Folds = struct {
+    bands: [tr.max_bands]tr.Band = undefined,
+    count: usize = 0,
+    opening: bool,
+    scroll: i32,
+
+    pub fn slice(self: *const Folds) []const tr.Band {
+        return self.bands[0..self.count];
+    }
 };
 
 /// A fold, as the list stood before it: the folded head's index and bottom,
@@ -119,7 +136,7 @@ pub const Xfade = struct {
     pub fn duration(self: *const Xfade) u64 {
         return switch (self.kind) {
             .scope => tr.scope_ms,
-            .fold => tr.fold_ms,
+            .fold, .folds => tr.fold_ms,
         };
     }
 

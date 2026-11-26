@@ -736,6 +736,9 @@ column: ?xf.Column = null,
 /// Paint the material alone - no header, no rows: the backdrop a transition
 /// lays the moving lists over.
 paint_bare: bool = false,
+/// Paint the list without the item a drag holds (T2349): the pictures a
+/// drag's fold moves, the held item drawn live over them, under the pointer.
+paint_no_held: bool = false,
 /// The last roster tally logged (busy, bell), so the log says when it moved
 /// rather than on every refresh.
 logged_marks: [2]usize = .{ 0, 0 },
@@ -2573,7 +2576,7 @@ fn paintFrame(self: *PaneSidebar, hdc: w32.HDC, width: i32, height: i32) void {
         .mini => self.paintMini(hdc, &l, t),
     }
     if (l.mode != .hidden) self.paintHeld(hdc, &laid, height, t);
-    if (l.mode == .expanded) self.paintHeldItem(hdc, &laid, t);
+    if (l.mode == .expanded and !self.paint_no_held) self.paintHeldItem(hdc, &laid, t);
     // T2801: a picture taken for a transition or a probe draws every sheen
     // itself and leaves the clock to the window's own paints.
     if (!self.paint_live) return;
@@ -3293,24 +3296,31 @@ fn maybeStartItemDrag(self: *PaneSidebar, hwnd: w32.HWND, x: i32, y: i32) bool {
     self.pressed = .none;
     self.hover = .none;
     self.syncHoverTint();
+    self.stopReorderClock();
+    self.item_drag = d;
+    self.join_logged = false;
+    // The list as it stands, the item lifted out of it (it is painted live,
+    // under the pointer), so the folds below fold rather than snap (T2349,
+    // Mac `foldAnimation`).
+    const before = self.foldFrom();
+    const snap = self.foldSnapshot(false);
+    const held = &self.item_drag.?;
     // Every group folds to its header for a group drag, every window to its
     // row for a window drag, so each is one line high and easy to place.
     if (hd.kind == .project) {
         var projects: [pane_sidebar.max_heads]u64 = undefined;
         var np: usize = 0;
-        for (d.siblings[0..d.count]) |*sk| {
+        for (held.siblings[0..held.count]) |*sk| {
             if (!window_order.isProject(sk.slice())) continue;
             projects[np] = projectKey(sk.slice()[window_order.project_prefix.len..]);
             np += 1;
         }
-        d.folds_before = shared.foldProjects(self.alloc, projects[0..np]);
-    } else d.unfolded_before = shared.foldWindows(self.alloc);
-    self.stopReorderClock();
-    self.item_drag = d;
-    self.join_logged = false;
+        held.folds_before = shared.foldProjects(self.alloc, projects[0..np]);
+    } else held.unfolded_before = shared.foldWindows(self.alloc);
     self.published();
-    log.info("pane sidebar item drag start kind={s} key={s} {s}={d} source={d}", .{ @tagName(hd.kind), d.key.slice(), if (d.cross) "rows" else "siblings", d.count, d.source });
+    log.info("pane sidebar item drag start kind={s} key={s} {s}={d} source={d}", .{ @tagName(hd.kind), held.key.slice(), if (held.cross) "rows" else "siblings", held.count, held.source });
     self.refresh();
+    self.startFolds(snap, &before, false);
     self.itemRelayout();
     self.logLift(t0, all0, own0);
     return true;
@@ -3634,11 +3644,16 @@ fn allOrderKeys(self: *const PaneSidebar, bufs: []window_order.Key, out: [][]con
 fn finishItemDrag(self: *PaneSidebar) void {
     var d = self.item_drag orelse return;
     self.item_drag = null;
+    // The folds come back as a fold too (T2349): pictured folded, first.
+    const refolds = d.folds_before != null or d.unfolded_before != null;
+    const before: FoldFrom = if (refolds) self.foldFrom() else .{};
+    const snap = if (refolds) self.foldSnapshot(true) else null;
     if (d.folds_before) |*b| shared.restoreFolds(self.alloc, .projects, b);
     if (d.unfolded_before) |*b| shared.restoreFolds(self.alloc, .windows, b);
     self.published();
     log.info("pane sidebar item drag settled", .{});
     self.refresh();
+    if (refolds) self.startFolds(snap, &before, true);
     var pt: w32.POINT = undefined;
     const over = self.pointerOn() and w32.GetCursorPos_(&pt) != 0 and w32.ScreenToClient(self.hwnd, &pt) != 0;
     self.setHover(if (over) self.hitAt(pt.x, pt.y) else .none);
@@ -3920,6 +3935,86 @@ fn snapshot(self: *PaneSidebar, kind: xf.Kind) ?xf.Xfade {
     return .{ .kind = kind, .w = size[0], .h = size[1], .old = d };
 }
 
+/// A header as a fold of many groups matches it from one frame to the next
+/// (T2349): whose header it is, and where it was laid out.
+const HeadId = struct { kind: pane_sidebar.HeadKind, key: window_order.Key, top: i32, bottom: i32 };
+
+/// The list's headers, where its content ends, and its scroll: what a fold
+/// of many groups is measured from, taken on each side of the change.
+const FoldFrom = struct {
+    ids: [pane_sidebar.max_heads]HeadId = undefined,
+    n: usize = 0,
+    end: i32 = 0,
+    scroll: i32 = 0,
+};
+
+fn foldFrom(self: *PaneSidebar) FoldFrom {
+    const l = self.currentLayout();
+    var f: FoldFrom = .{ .end = scroll_mod.contentBottom(&l, l.viewport.top), .scroll = l.scroll };
+    for (l.heads[0..l.head_count]) |hd| {
+        if (hd.index >= self.groups.items.len or f.n == f.ids.len) continue;
+        const g = &self.groups.items[hd.index];
+        f.ids[f.n] = .{ .kind = hd.kind, .key = if (hd.kind == .project) g.pkey else g.wkey, .top = hd.rect.top, .bottom = hd.rect.bottom };
+        f.n += 1;
+    }
+    return f;
+}
+
+/// Picture the list for a drag's fold (T2349): without the held item,
+/// which is painted live over the fold.
+fn foldSnapshot(self: *PaneSidebar, opening: bool) ?xf.Xfade {
+    self.paint_no_held = true;
+    defer self.paint_no_held = false;
+    return self.snapshot(.{ .folds = .{ .opening = opening, .scroll = 0 } });
+}
+
+/// The change from `before` has been made: fold the groups it folded (or
+/// unfold those it opened) from picture `snap`, or - the frames are not one
+/// fold apart, the list re-scrolled - let it land.
+fn startFolds(self: *PaneSidebar, snap: ?xf.Xfade, before: *const FoldFrom, opening: bool) void {
+    var x = snap orelse return;
+    const after = self.foldFrom();
+    const f = foldsBetween(before, &after, opening) orelse {
+        log.info("pane sidebar transition folds lands: not one fold apart", .{});
+        return x.deinit();
+    };
+    x.kind = .{ .folds = f };
+    log.info("pane sidebar transition folds bands={d} opening={}", .{ f.count, opening });
+    self.startTransition(x);
+}
+
+fn foldsBetween(before: *const FoldFrom, after: *const FoldFrom, opening: bool) ?xf.Folds {
+    if (before.scroll != after.scroll) return null;
+    const tall = if (opening) after else before;
+    const short = if (opening) before else after;
+    // Every header the short frame shows, the tall one shows too, in order;
+    // the tall frame's others are inside a band.
+    var pairs: [pane_sidebar.max_heads]transition.HeadPair = undefined;
+    var np: usize = 0;
+    var ti: usize = 0;
+    for (short.ids[0..short.n]) |*s| {
+        while (ti < tall.n and !sameHead(&tall.ids[ti], s)) ti += 1;
+        if (ti == tall.n) return null;
+        pairs[np] = .{ .tall_top = tall.ids[ti].top, .tall_bottom = tall.ids[ti].bottom, .short_top = s.top };
+        np += 1;
+        ti += 1;
+    }
+    var f: xf.Folds = .{ .opening = opening, .scroll = after.scroll };
+    f.count = transition.foldBands(pairs[0..np], tall.end, short.end, &f.bands);
+    return if (f.count == 0) null else f;
+}
+
+fn sameHead(a: *const HeadId, b: *const HeadId) bool {
+    return a.kind == b.kind and std.mem.eql(u8, a.key.slice(), b.key.slice());
+}
+
+/// The held item moved off its place, or is settling: a drag's fold would
+/// fight it, so the fold lands.
+fn heldMoved(self: *const PaneSidebar) bool {
+    const d = if (self.item_drag) |*x| x else return false;
+    return d.settle != null or d.target != d.source;
+}
+
 /// Run `snap`, replacing any transition already running. The logs keep
 /// their `surface=rail` field (see `armMotion`).
 fn startTransition(self: *PaneSidebar, snap: ?xf.Xfade) void {
@@ -3990,6 +4085,13 @@ fn paintTransition(self: *PaneSidebar, hdc: w32.HDC, w: i32, h: i32) bool {
             const opening = nb > f.bottom;
             fold = .{ .y0 = f.y0, .group_h = if (opening) nb - f.bottom else f.bottom - nb, .opening = opening };
         },
+        .folds => |*f| {
+            if (l.scroll != f.scroll or self.heldMoved()) {
+                log.info("pane sidebar transition folds lands: the list or the held item moved", .{});
+                self.dropTransition();
+                return false;
+            }
+        },
     }
     if (x.on_comp) {
         // The compositor plays it; the live frame goes under its layers.
@@ -4004,11 +4106,15 @@ fn paintTransition(self: *PaneSidebar, hdc: w32.HDC, w: i32, h: i32) bool {
     const new = Dib32.create(hdc, w, h) orelse return false;
     defer new.destroy();
     // The material first, so the motion tally the live frame leaves is the
-    // one that stands.
+    // one that stands. A drag's fold leaves the held item out of both: it is
+    // painted live over the fold (T2349).
+    const folds = x.kind == .folds;
+    self.paint_no_held = folds;
     self.paint_bare = true;
     self.paintFrame(bg.dc, w, h);
     self.paint_bare = false;
     self.paintFrame(new.dc, w, h);
+    self.paint_no_held = false;
     _ = w32.GdiFlush();
     const scope_region: transition.Region = .{
         .left = l.header.left,
@@ -4047,6 +4153,25 @@ fn paintTransition(self: *PaneSidebar, hdc: w32.HDC, w: i32, h: i32) bool {
                 p,
             );
         },
+        .folds => |*f| transition.composeFolds(
+            out.pixels,
+            bg.pixels,
+            if (f.opening) new.pixels else old.pixels,
+            if (f.opening) old.pixels else new.pixels,
+            new.pixels,
+            w,
+            h,
+            fold_region,
+            f.slice(),
+            f.opening,
+            p,
+        ),
+    }
+    if (folds and self.item_drag != null) {
+        // The held item over the folding list, where the pointer has it.
+        const laid = self.currentLayout();
+        _ = w32.SetBkMode(out.dc, w32.TRANSPARENT);
+        self.paintHeldItem(out.dc, &laid, self.theme());
     }
     _ = w32.BitBlt(hdc, 0, 0, w, h, out.dc, 0, 0, w32.SRCCOPY);
     return true;
@@ -4075,11 +4200,18 @@ fn declareTransitionComp(
         log.info("pane sidebar transition {s} stepped: the stepped knob is set", .{@tagName(x.kind)});
         return false;
     }
+    // Many bands at once, the held item drawn live over them (T2349): the
+    // UI thread steps it.
+    if (x.kind == .folds) {
+        log.info("pane sidebar transition folds stepped: many bands", .{});
+        return false;
+    }
     const band: list_comp.Rect = .{ .left = region.left, .top = region.top, .right = region.right, .bottom = region.bottom };
     const fold_plan: ?list_comp.FoldPlan = if (fold) |f| list_comp.foldPlan(band, f.y0, f.group_h, f.opening) else null;
     const r: list_comp.Rect = switch (x.kind) {
         .scope => band,
         .fold => (fold_plan orelse return false).rect,
+        .folds => return false,
     };
     if (!r.fits(x.w, x.h)) return false;
     const s = self.comp.ensure(w32.GetTickCount64(), "list-transition") orelse return false;
@@ -4095,6 +4227,7 @@ fn declareTransitionComp(
             const short = if (f.opening) old.pixels else new.pixels;
             break :blk self.list_layers.declareFold(s, fold_plan.?, .{ .w = x.w, .h = x.h, .bg = bg.pixels, .a = tall, .b = short }, elapsed_s, dur_s, scratch);
         },
+        .folds => unreachable,
     };
     if (!ok) {
         log.warn("pane sidebar transition {s} could not go on the compositor; stepping it", .{@tagName(x.kind)});

@@ -44,6 +44,9 @@
 #      the first group - there are no lone windows - it leaves: retitled
 #      "wt-1" (+list), the top of the list: wt-1 | zz/one | proj/wt-2 |
 #      proj/solo.
+#      (T2349) Each drag's folds, and their return after the drop, run as
+#      one animated fold (Mac `foldAnimation`): the `transition folds
+#      bands=` lines, and a stepped transition that drew frames.
 #  10. With twelve windows (T2423, Mac 6bd2962eb), a drag start redraws the
 #      window in use alone: the `item drag lifted` line counts no other
 #      sidebar redrawn and all eleven left to catch up, inside 80 ms. Another
@@ -291,6 +294,10 @@ try {
         Assert "a group drag started among the top level's three items" ($null -ne (Wait-Log 'pane sidebar item drag start kind=project key=project:proj siblings=3 source=1' $mark))
         $during = Get-LogLines $mark 'pane sidebar outline mode=expanded' | Select-Object -First 1
         Assert "every group folded for the drag: three heads left, under the Ungrouped header a group drag leaves as it is (T2524) ($during)" ($during -match ' heads=U\d+@[-\d,]+;W\d+@[-\d,]+;P\d+@[-\d,]+;P\d+@[-\d,]+; ')
+        # T2349 (Mac `foldAnimation`): both groups fold as a fold, not a snap,
+        # and the frames of it were drawn.
+        Assert "both groups folded as one animated fold (T2349)" ($null -ne (Wait-Log 'pane sidebar transition folds bands=2 opening=false' $mark))
+        Assert "...whose frames were drawn (T2349)" ($null -ne (Wait-Log 'pane sidebar transition done surface=rail compositor=false ui_steps=[1-9]' $mark))
         Assert "the held header followed the pointer" (@(Get-LogLines $mark 'pane sidebar item held top=').Count -ge 2)
         Assert "its index moved past zz" ($null -ne (Wait-Log 'pane sidebar item drag target=2' $mark))
         Assert "the drop landed it at 2" ($null -ne (Wait-Log 'pane sidebar item drag end commit=true from=1 to=2' $mark))
@@ -300,6 +307,7 @@ try {
         Assert "order: solo | zz/one | proj/wt-1 | proj/wt-2 ($o)" ($o -eq 'solo|zz/one|proj/wt-1|proj/wt-2')
         $after = Get-Heads $mark
         Assert "the folds came back: six heads again ($(($after | ForEach-Object { $_.Kind }) -join ''))" ((($after | ForEach-Object { $_.Kind }) -join '') -eq 'WPWPWW')
+        Assert "...and came back as an animated fold (T2349)" ($null -ne (Wait-Log 'pane sidebar transition folds bands=2 opening=true' $mark))
     }
     Assert "no window moved on screen" ((Get-TopRects $script:app.Pid) -eq $rectsBefore)
 
@@ -326,6 +334,7 @@ try {
         [void](Invoke-HeadDrag $topA $sb $heads[5] 0 -Dir -1 -TargetFrom { param($h) $h[4].Y - (Px 6) })
         Assert "a window drag over the whole list's six rows" ($null -ne (Wait-Log 'pane sidebar item drag start kind=window key=window:\S+ rows=6 source=5' $mark))
         Assert "every window folded for it" ($null -ne (Wait-Log 'pane sidebar all-windows groups=4 .* folded=4 ' $mark))
+        Assert "...solo's rows folding as a fold (T2349)" ($null -ne (Wait-Log 'pane sidebar transition folds bands=1 opening=false' $mark))
         Assert "it would land first in proj" ($null -ne (Wait-Log 'pane sidebar item drag dest=group:proj@0' $mark))
         Assert "landed in the slot under the header" ($null -ne (Wait-Log 'pane sidebar item drag end commit=true from=5 to=4' $mark))
         Assert "its own group: no join outline" (@(Get-LogLines $mark 'pane sidebar item drag join=proj').Count -eq 0)
@@ -333,6 +342,7 @@ try {
         $o = Wait-Order 'solo|zz/one|proj/wt-2|proj/wt-1' $mark
         Assert "order: solo | zz/one | proj/wt-2 | proj/wt-1 ($o)" ($o -eq 'solo|zz/one|proj/wt-2|proj/wt-1')
         Assert "and solo is open again once it settled" ($null -ne (Wait-Log 'pane sidebar all-windows groups=4 .* folded=3 ' $mark))
+        Assert "...unfolding as a fold (T2349)" ($null -ne (Wait-Log 'pane sidebar transition folds bands=1 opening=true' $mark))
     }
 
     "== 3: solo dragged past the last group's end would join that group (T2526)"
