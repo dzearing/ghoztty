@@ -50,6 +50,9 @@
 #      a build where the frame wait was simply deleted.
 #   D. A batched drag holds two frames or better per move, and the drags being
 #      compared really ran (tick counts).
+#   G. (T2368) The pane sidebar's edge drag, on a 4-pane window: it reports
+#      the same summary line (led by `sidebar`), relays every pane out per
+#      move, waits for a frame once per move, and holds section D's budget.
 #   The absolute numbers for every configuration are printed and written to
 #   $env:TEMP\ghoztty-drag-perf\<stamp>\report.txt, which is the "measure
 #   first, keep the numbers" half of the task. What they said on 2026-09-04,
@@ -75,6 +78,8 @@ param(
     [string]$ExePath,
     [int[]]$PaneCounts = @(2, 4, 8),
     [int]$Moves = 24,
+    # Section G (T2368): the pane count the sidebar edge drag is measured on.
+    [int]$SidebarPanes = 4,
     [switch]$NegativeControl,
     [switch]$Interactive
 )
@@ -138,12 +143,15 @@ function Kill-RepoInstances {
     [void](Stop-RepoGhoztty -Exe $exe -AppOnly -SettleMs 500)
 }
 
-# Every `divider drag ...` summary the app has printed so far, oldest first.
-function Get-DragSamples([string]$log) {
+# Every `<kind> drag ...` summary the app has printed so far, oldest first.
+# Both drags report through one `Window.reportDragCost`, so a divider drag's
+# line and a sidebar edge drag's (T2359) carry the same fields; only the
+# leading word differs.
+function Get-DragSamples([string]$log, [string]$Kind = 'divider') {
     if (-not (Test-Path $log)) { return @() }
     $out = @()
     foreach ($l in @(Get-Content $log -ErrorAction SilentlyContinue)) {
-        if ($l -match ('divider drag ticks=(\d+) mean_us=(\d+) max_us=(\d+) ' +
+        if ($l -match ("(?<![\w-])$Kind drag ticks=(\d+) mean_us=(\d+) max_us=(\d+) " +
                 'mean_wait_us=(\d+) fps=(\d+) panes=(\d+) resizes_max=(\d+) waits_max=(\d+) ' +
                 'waits_total=(\d+) timeouts=(\d+) stale=(\d+) (?:woken=\d+ )?mean_layout_us=(\d+) ' +
                 'mean_place_us=(\d+) mean_paint_us=(\d+) ' +
@@ -251,6 +259,36 @@ function Invoke-DividerDrag([IntPtr]$top, [string]$log, [int]$moves) {
     return $null
 }
 
+# Grow the window's panes from $have to $want in the one-column stack every
+# shape drags (T1854), sizing the window for $most panes on the first call
+# ($have 1). Returns the new pane count. Shared by the divider shapes and the
+# sidebar drag (T2368), so both measure the same layout.
+function Build-PaneColumn([IntPtr]$top, [int]$have, [int]$want, [int]$most, [int]$width) {
+    if ($have -eq 1) {
+        $height = [math]::Max(900, 360 * ($most - 1) + 160)
+        [void](Set-TestWindowPos -Window $top -X 40 -Y 40 -Width $width -Height $height)
+        Start-Sleep -Milliseconds 800
+    }
+    while ($have -lt $want) {
+        # First split makes the root boundary; the rest nest inside the
+        # right half, so the root divider keeps resizing everything.
+        $dir = if ($have -eq 1) { 'right' } else { 'down' }
+        & $exe +split --direction=$dir 2>&1 | Out-Null
+        $have++
+        # Wait for the pane to actually exist rather than guessing at a
+        # sleep: the first split has a shell to spawn and the earlier
+        # 900 ms guess made the 2-pane drag land on a window that still
+        # had one pane, which produced no sample at all.
+        for ($t = 0; $t -lt 40; $t++) {
+            Start-Sleep -Milliseconds 250
+            if (@(Get-VisiblePanes $top).Count -ge $have) { break }
+        }
+    }
+    # settle: the last split's relayout and first shell paint finish before a drag is timed over them
+    Start-Sleep -Milliseconds 500
+    return $have
+}
+
 # One instance, one wait shape, one drag per pane count. Returns a hashtable of
 # paneCount -> sample.
 function Measure-DragShape([string]$mode, [int[]]$counts, [int]$moves) {
@@ -295,28 +333,9 @@ function Measure-DragShape([string]$mode, [int[]]$counts, [int]$moves) {
         # divider: no drag started, no summary was printed, and every count
         # above 2 was scored with the 2-pane sample or NO SAMPLE (T1854). The
         # tree shapes (T2769) proved the column first.
-        $height = [math]::Max(900, 360 * (($counts | Measure-Object -Maximum).Maximum - 1) + 160)
-        [void](Set-TestWindowPos -Window ([IntPtr]$top) -X 40 -Y 40 -Width 1400 -Height $height)
-        Start-Sleep -Milliseconds 800
-
         $have = 1
         foreach ($want in ($counts | Sort-Object)) {
-            while ($have -lt $want) {
-                # First split makes the root boundary; the rest nest inside the
-                # right half, so the root divider keeps resizing everything.
-                $dir = if ($have -eq 1) { 'right' } else { 'down' }
-                & $exe +split --direction=$dir 2>&1 | Out-Null
-                $have++
-                # Wait for the pane to actually exist rather than guessing at a
-                # sleep: the first split has a shell to spawn and the earlier
-                # 900 ms guess made the 2-pane drag land on a window that still
-                # had one pane, which produced no sample at all.
-                for ($t = 0; $t -lt 40; $t++) {
-                    Start-Sleep -Milliseconds 250
-                    if (@(Get-VisiblePanes ([IntPtr]$top)).Count -ge $have) { break }
-                }
-            }
-            Start-Sleep -Milliseconds 500
+            $have = Build-PaneColumn ([IntPtr]$top) $have $want (($counts | Measure-Object -Maximum).Maximum) 1400
             $live = @(Get-VisiblePanes ([IntPtr]$top)).Count
             $s = Invoke-DividerDrag ([IntPtr]$top) $log $moves
             if ($null -eq $s) {
@@ -391,6 +410,82 @@ function Get-CompSamples([string]$log) {
     return @($out)
 }
 
+# T2368: the pane sidebar's edge drag on an N-pane window. Since T2359 every
+# tick of it relays the grid out on the same live path a divider drag takes
+# (`Window.setPaneSidebarWidth` -> `layoutSplitsLive`, timed per tick) and it
+# prints the same summary line on release, led by `sidebar` - so the same
+# per-tick budget applies, and until this section it was only ever measured
+# on pane-sidebar-resize.ps1's 2-pane window.
+#
+# The panel starts expanded (`macos-pane-sidebar=expanded`, default 200 DIP
+# wide), and the drag goes out and back by 3 px a move - 36 px at the peak,
+# well inside the panel's 180..380 DIP clamp at any scale, so every tick
+# changes the width and resizes the grid. Returns the sample, with
+# `EdgeDragStarted` and `Visible` noted on it, or $null with the reason on
+# $script:sidebarWhy.
+function Measure-SidebarDrag([int]$count, [int]$moves) {
+    $log = Join-Path $outDir 'sidebar-stderr.log'
+    $script:sidebarWhy = ''
+    Kill-RepoInstances
+    $env:GHOZTTY_PERF = '1'
+    $app = Start-OnTestDesktop -Exe $exe -StdErr $log -Arguments @(
+        '--config-default-files=false', '--background=#101014', '--session-persistence=false',
+        '--macos-pane-glass=false', '--macos-pane-sidebar=expanded')
+    try {
+        $top = Wait-TestWindow -ProcessId $app.Pid -Class 'GhozttyWindow' -TimeoutMs 20000
+        if ($top -eq [IntPtr]::Zero) { $script:sidebarWhy = 'no window'; return $null }
+        # The same one-column stack the divider shapes build (T1854), wide
+        # enough for the expanded panel (720 DIP and up) at any scale this
+        # box runs.
+        [void](Build-PaneColumn ([IntPtr]$top) 1 $count $count 1600)
+        $visible = @(Get-VisiblePanes ([IntPtr]$top)).Count
+        $sb = @(Get-TestChildWindows -Window ([IntPtr]$top) -Class 'GhozttyPaneSidebar' | Where-Object Visible) | Select-Object -First 1
+        if ($null -eq $sb) { $script:sidebarWhy = 'no visible pane sidebar'; return $null }
+        $before = @(Get-DragSamples $log 'sidebar').Count
+        $logFrom = @(Get-Content $log -ErrorAction SilentlyContinue).Count
+        # Where the grip is depends on the pane style (`pane_sidebar.
+        # pinnedGripInGutter`). Elevated - the default, and what this run
+        # launches - it is the window's gutter between the panel's card and
+        # the first pane, so the press goes to the top-level window there.
+        # Flat, it is the last pixels inside the sidebar's own column
+        # (pane-sidebar-resize.ps1's Get-PanelEdgeX).
+        $first = @(Get-VisiblePanes ([IntPtr]$top) | Sort-Object Left)[0]
+        if ($first.Left - $sb.Right -ge 2) {
+            $target = [IntPtr]$top
+            $x = [int](($sb.Right + $first.Left) / 2)
+        } else {
+            $target = [IntPtr]$sb.Hwnd
+            $x = $sb.Right - 2
+        }
+        $y = [int](($sb.Top + $sb.Bottom) / 2)
+        [void](Send-TestMouse -Window $top -Target $target -X $x -Y $y -Action down -HoldMs 0)
+        # settle: a held press before the first move, the way a hand drags; the summary poll below is the handshake
+        Start-Sleep -Milliseconds 150
+        for ($i = 1; $i -le $moves; $i++) {
+            $dx = if ($i -le ($moves / 2)) { $i * 3 } else { ($moves - $i) * 3 }
+            [void](Send-TestMouse -Window $top -Target $target -X ($x + $dx) -Y $y -Action move -HoldMs 0)
+            Start-Sleep -Milliseconds 25
+        }
+        [void](Send-TestMouse -Window $top -Target $target -X $x -Y $y -Action up -HoldMs 0)
+        for ($t = 0; $t -lt 40; $t++) {
+            Start-Sleep -Milliseconds 250
+            $all = @(Get-DragSamples $log 'sidebar')
+            if ($all.Count -gt $before) {
+                $s = $all[$all.Count - 1]
+                $since = @(Get-Content $log -ErrorAction SilentlyContinue | Select-Object -Skip $logFrom)
+                $started = @($since | Where-Object { $_ -match 'pane sidebar edge drag start' }).Count -ge 1
+                Add-Member -InputObject $s -NotePropertyName EdgeDragStarted -NotePropertyValue $started -Force
+                Add-Member -InputObject $s -NotePropertyName Visible -NotePropertyValue $visible -Force
+                return $s
+            }
+        }
+        $script:sidebarWhy = "the app printed no sidebar drag summary ($visible panes visible, edge at x=$x)"
+        return $null
+    } finally {
+        Kill-RepoInstances
+    }
+}
+
 $td = New-TestDesktop -Interactive:$Interactive
 try {
     Rep "T1343 splitter-drag cost, $stamp"
@@ -412,6 +507,19 @@ try {
             $r = Measure-DragShape $mode @($c) $Moves
             if ($r.ContainsKey($c)) { $shapes[$mode][$c] = $r[$c] }
         }
+    }
+    # T2368: the sidebar edge drag, default (batched) shape.
+    $side = Measure-SidebarDrag $SidebarPanes $Moves
+    if ($null -eq $side) {
+        Rep ("  sidebar  panes={0,-2} NO SAMPLE ({1})" -f $SidebarPanes, $script:sidebarWhy)
+    } else {
+        $sideFmt = '  sidebar  panes={0,-2} ticks={1,-3} mean={2,6}us max={3,6}us layout={4,6}us place={5,6}us ' +
+            'paint={6,6}us wait={7,6}us overlay={8,6}us ~{9,4} fps resizes/move={10,-2} waits/move={11,-2} ' +
+            'timeouts={12,-3} over_budget={13} {14}'
+        Rep ($sideFmt -f
+            $side.Panes, $side.Ticks, $side.MeanUs, $side.MaxUs, $side.LayoutUs, $side.PlaceUs,
+            $side.PaintUs, $side.MeanWaitUs, $side.OverlayUs, $side.Fps, $side.ResizesMax,
+            $side.WaitsMax, $side.Timeouts, $side.OverBudget, $side.Verdict)
     }
     $gpuEnd = Get-GpuLoad3D
     Rep "box GPU 3D load: ${gpuStart}% before the drags, ${gpuEnd}% after (-1 = counter unavailable)"
@@ -492,7 +600,8 @@ try {
     ("every batched drag holds two frames or better (worst mean ${worst}us, " +
         "budget $(2 * $FRAME_US)us; box GPU 3D load ${gpuStart}%/${gpuEnd}%" +
         $(if ($gpuBusy) { " - GPU-BUSY BOX: re-run idle before filing this as a regression (T2241)" } else { '' }) + ")")
-    $ticks = ($batched.Values | Measure-Object -Property Ticks -Minimum).Minimum
+    $script:gpuBusy = $gpuBusy
+    $ticks =($batched.Values | Measure-Object -Property Ticks -Minimum).Minimum
     Assert ($ticks -ge 8) `
     ("each measured drag really moved (fewest ticks in a batched drag: $ticks)")
 
@@ -614,6 +723,31 @@ try {
     Assert ($treeSerial.Keys.Count -gt 0 -and $sComp.Count -eq 0) `
     ("GHOZTTY_COMP_DRAG_SERIAL puts the old ordering back: no compositor write ahead of the pass " +
         "in $($treeSerial.Keys.Count) drags, the pointer waits the whole move (fastest mean ${sMean}us)")
+
+    # ---- G. the pane sidebar's edge drag (T2368) -------------------------
+    # The same budget a divider drag is held to, on the path T2359 put the
+    # sidebar drag on. COUNTS first, like B/C: the drag really started on the
+    # edge, really resized every pane on each move, and waited for a frame
+    # ONCE per move; then the clock, against the section-D budget.
+    Assert ($null -ne $side) `
+    ("the sidebar edge drag produced a drag summary on a $SidebarPanes-pane window" +
+        $(if ($null -eq $side) { " ($($script:sidebarWhy))" } else { " ($($side.Ticks) ticks)" }))
+    if ($null -ne $side) {
+        Assert ($side.EdgeDragStarted -and $side.Ticks -ge 8) `
+        ("the press landed on the panel's edge and the drag moved it (edge drag start logged: " +
+            "$($side.EdgeDragStarted), ticks $($side.Ticks))")
+        Assert ($side.Panes -eq $SidebarPanes -and $side.ResizesMax -ge $SidebarPanes) `
+        ("each tick relaid the whole grid out: panes=$($side.Panes) resizes/move=$($side.ResizesMax) " +
+            "on a $SidebarPanes-pane window ($($side.Visible) visible)")
+        $once = ($side.WaitsMax -le 1 -and $side.WaitsTotal -ge 1)
+        if ($NegativeControl) { $once = -not $once }
+        Assert $once ("a sidebar tick waits for a frame ONCE, not once per pane " +
+            "($($side.WaitsMax) wait/move max, $($side.WaitsTotal) over the drag, $($side.Timeouts) timeouts)")
+        Assert ($side.MeanUs -le (2 * $FRAME_US)) `
+        ("the sidebar edge drag holds two frames or better at $SidebarPanes panes (mean $($side.MeanUs)us, " +
+            "max $($side.MaxUs)us, budget $(2 * $FRAME_US)us, verdict $($side.Verdict)" +
+            $(if ($script:gpuBusy) { " - GPU-BUSY BOX: re-run idle before filing this as a regression (T2241)" } else { '' }) + ")")
+    }
 
     Rep ''
     Rep "report: $report"
