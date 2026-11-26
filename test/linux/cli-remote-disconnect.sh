@@ -180,6 +180,13 @@ sleep 1
 hl_check "W1 Cancel on a remote window close keeps it and its shell" $? "out=$out pid=$p0"
 hl_wait_for 15 no_dialog rdp
 hl_check "W1b the cancelled dialog has left the window" $? "$(dialog rdp)"
+# Not a check (it is timing): whether the Cancel landed before libadwaita had
+# finished presenting the dialog, the case T3677 fixed.
+if grep -q 'dialog close deferred' "$APP_LOG" 2>/dev/null; then
+    echo "INFO W1 the Cancel raced the dialog's presentation; the close was retried"
+else
+    echo "INFO W1 the Cancel landed after the dialog was fully up"
+fi
 
 out=$(dialog rdp --op=window)
 [ "$(field "$out" open)" = true ] && [ "$(field "$out" disconnect)" = true ]

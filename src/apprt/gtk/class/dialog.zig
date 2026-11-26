@@ -102,7 +102,7 @@ pub const Dialog = extern struct {
             _ = adw.Dialog.signals.closed.connect(dialog, *CloseRetry, onClosed, self, .{});
             dialog.forceClose();
             if (self.closed) return destroy(self);
-            log.debug("dialog close deferred: not presented yet, retrying each frame", .{});
+            log.info("dialog close deferred: not presented yet, retrying each frame", .{});
             _ = dialog.as(gtk.Widget).addTickCallback(&tick, self, &destroy);
         }
 
