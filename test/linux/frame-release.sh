@@ -152,7 +152,10 @@ hid_t=$(fr "$p1" target_bytes)
 [ -n "$hid" ] && [ "$busy_rel" = False ] && [ "${busy_t:-0}" -gt 100000 ] && [ "${hid_t:-99}" -le 12 ] && grep -q 'released hidden render targets' "$APP_LOG"
 hl_check "R4 a busy pane sent to a background tab releases its frames (targets $busy_t -> ${hid_t:-?} bytes, atlases ${busy_a:-?} bytes; log: $(grep -m1 -o 'released hidden render targets.*' "$APP_LOG"))" $? "busy_rel=$busy_rel $(seen)"
 
-# The second tab is on screen now and draws once, then goes idle again.
+# The second tab is on screen now and draws once (its frames hold targets
+# again), then goes idle and gives them back: wait for both, or the sample
+# counts its fresh frames against the release.
+for _ in $(seq 1 30); do [ "$(fr "$p2" released)" = False ] && break; sleep 0.1; done
 for _ in $(seq 1 50); do [ "$(fr "$p2" released)" = True ] && break; sleep 0.2; done
 sleep 1
 m_hidden=$(priv_kb)
