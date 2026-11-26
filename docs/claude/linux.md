@@ -549,9 +549,24 @@ private runtime dir, so a test app can never meet the user's.
   list through the live drop's code; both skip the redraw. Acceptance:
   `wsl-run.ps1 -CommandFile test\linux\cli-sidebar-drag.sh`, ends `CLI
   SIDEBAR DRAG: ALL PASS` (25 checks); `NEGATIVE=1` must fail D2, D2b, D4b.
-  A real pointer drag is NOT RUN (no seat). Not yet: window and group drag
-  (T3697), the stash tray (T3698), cross-window drops (T3699), the order
-  across a restore (T3700).
+  A real pointer drag is NOT RUN (no seat). Not yet: the stash tray
+  (T3698), cross-window drops (T3699), the order across a restore (T3700).
+  **Windows and groups drag too (T3697)**, in the expanded all-windows list
+  only: a project header among the top level (never above the lone
+  windows), a window row anywhere - into a group (retitled `<group>:
+  <name>`, pinned), out of one, or within its own (win32's pure
+  `pane_sidebar_window_order` / `pane_sidebar_cross_drop`, fed by
+  `pane_sidebar_all.dropItem`). The order is `scope.window_order`, keys =
+  the rows' ids (`project:<name>`, `window:<tab address, hex>`), stored in
+  `<config root>/ghoztty/pane-sidebar-order[-debug]`; at launch only its
+  project keys are kept, since a tab address does not survive a relaunch
+  (T3700). The drop reads the rows where they are drawn (no glide, so no
+  closed-up pitch). Picking one up folds every group (or window) to its row
+  and letting go restores them; the seam's `--lift=<row id>` is the drag's
+  begin, `--drag=<row id>:<y>` its release. Move to Group / Remove from
+  Group keep the list's place (`window_order.renamingWindow`). Acceptance:
+  `wsl-run.ps1 -CommandFile test\linux\cli-sidebar-drag-items.sh`, ends `CLI
+  SIDEBAR DRAG ITEMS: ALL PASS` (32 checks); `NEGATIVE=1` must fail I3, I3c.
   **Group editing (T3608)**: a window row's right-click menu (a
   `GtkPopoverMenu` parented to the card, actions `sbmenu.*`) offers Create
   Group..., Move to Group (the other groups as listed, only when there is

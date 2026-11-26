@@ -40997,3 +40997,8 @@ WebKitGTK's script message carries no frame, and a page-world handler is visible
 - Filed: none.
 
 - 2026-11-26 (lane b) T2453 closed, not reproduced: 29 host-floor logs since 2026-10-29 show no silent exit 255; 3/3 isolated runs green with the TOC click reached. Filed T3833 for the unrelated 'link routing: expected 4, found 5' flake behind all five reds.
+
+## 2026-11-26 14:58 lane l - T3697 done: on Linux, windows and groups in the all-windows sidebar list drag to reorder, into and out of groups
+- What: a project header drags among the top level (never above the lone windows) and a window row anywhere: into a group (retitled `<group>: <name>`, pinned), out of one, or within its own. The rules are win32's pure `pane_sidebar_window_order` / `pane_sidebar_cross_drop`, fed by the new `pane_sidebar_all.dropItem`, with pitch 0 because nothing glides on GTK (the pointer is read against the rows where they are drawn). Lifting folds every group (or window) to its row and letting go restores the folds. The order is stored in `<config>/ghoztty/pane-sidebar-order[-debug]`, and at launch only its project keys are kept, since window keys are tab addresses. Move to Group and Remove from Group now keep the list's place (`renamingWindow`). The seam gains `--lift`.
+- Evidence: `test/linux/cli-sidebar-drag-items.sh` 32/32 ALL PASS in WSL; `NEGATIVE=1` fails exactly I3 and I3c. Linux floor ALL PASS (lib, none, agentx, agent, gtk). cli-sidebar-groups, cli-sidebar-all, cli-sidebar-drag and window-workspace-switch ALL PASS. Pure tests pass on Windows, and the Windows Debug build is green. NOT RUN: a real pointer drag (no seat in the harness) and the look on the real WSLg screen.
+- Filed: nothing new; the window-key persistence across a restore is noted on T3700.
