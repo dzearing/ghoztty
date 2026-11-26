@@ -57,6 +57,7 @@ const grid_snapshot = @import("grid_snapshot.zig");
 // externs it needs. Neither imports this module, so there is no cycle.
 const descendants = @import("descendants.zig");
 const proc = @import("proc.zig");
+const heap_stats = @import("heap_stats.zig");
 // Only for the vanish sweep's own-pid control test (T1162).
 const builtin = @import("builtin");
 
@@ -1380,6 +1381,7 @@ pub const SessionTable = struct {
         try self.by_id.put(self.alloc, id, s);
         errdefer _ = self.by_id.remove(id);
         try self.by_channel.put(self.alloc, channel, s);
+        heap_stats.logEvent("session created", self.liveCount(), self.deadCount());
         return s;
     }
 
@@ -1452,6 +1454,7 @@ pub const SessionTable = struct {
         try self.by_id.put(self.alloc, id, s);
         errdefer _ = self.by_id.remove(id);
         try self.by_channel.put(self.alloc, channel, s);
+        heap_stats.logEvent("session created", self.liveCount(), self.deadCount());
         return s;
     }
 
@@ -1502,6 +1505,9 @@ pub const SessionTable = struct {
         s.child.terminate();
         s.deinit();
         self.alloc.destroy(s);
+        // Outside the lock (see above), so the counts are a racy read of two
+        // map sizes: fine for the diagnostic line, never used to decide.
+        heap_stats.logEvent("session freed", self.liveCount(), self.deadCount());
     }
 
     /// Parse a 32-hex-char session id; null on anything malformed.

@@ -100,6 +100,17 @@ descendants() {
     echo "$out"
 }
 priv_kb() { awk '/^Private_(Clean|Dirty):/ { s += $2 } END { print s + 0 }' "/proc/$1/smaps_rollup" 2>/dev/null || echo 0; }
+# The Debug agent's own count of heap bytes it has handed out and not had
+# back (T3646, src/remote/agent/heap_stats.zig): the newest `heap:` line in
+# its agent.log, or -1 when there is none (a release agent keeps no count).
+# Private memory cannot tell a leak from the DebugAllocator pinning a page
+# under one long-lived slot; this can.
+agent_heap() {
+    local v
+    v=$(cat "${XDG_CONFIG_HOME:-/nonexistent}"/ghoztty/local-agent*/agent.log 2>/dev/null \
+        | sed -n 's/.*(heap): .*live_bytes=\([0-9]*\).*/\1/p' | tail -1)
+    echo "${v:--1}"
+}
 # sample -> "priv_kb threads fds procs proc_kb": the app's own private memory,
 # threads and fds; then every process under the app (viewer web processes)
 # and under the session agent (pane shells), and their private memory plus
@@ -110,7 +121,7 @@ sample() {
     d="$(descendants "$APP") ${ag:+$(descendants "$ag")}"
     for p in $d; do procs=$((procs + 1)); pkb=$((pkb + $(priv_kb "$p"))); done
     [ -n "$ag" ] && pkb=$((pkb + $(priv_kb "$ag")))
-    echo "$(priv_kb "$APP") $(ls /proc/"$APP"/task | wc -l) $(ls /proc/"$APP"/fd | wc -l) $procs $pkb"
+    echo "$(priv_kb "$APP") $(ls /proc/"$APP"/task | wc -l) $(ls /proc/"$APP"/fd | wc -l) $procs $pkb $(agent_heap)"
 }
 # settle: let threads join, GL deletes land and malloc trim, then sample
 settled() { sleep "${1:-1.5}"; sample; }
@@ -175,7 +186,7 @@ cycle() {
 }
 
 per() { python3 -I -c "print(round(($2 - $1) / $3, 2))"; }
-show() { [ "${REPORT:-0}" = 1 ] && echo "    $1: priv=$(echo "$2" | cut -d' ' -f1)KB threads=$(echo "$2" | cut -d' ' -f2) fds=$(echo "$2" | cut -d' ' -f3) procs=$(echo "$2" | cut -d' ' -f4) procKB=$(echo "$2" | cut -d' ' -f5)"; return 0; }
+show() { [ "${REPORT:-0}" = 1 ] && echo "    $1: priv=$(echo "$2" | cut -d' ' -f1)KB threads=$(echo "$2" | cut -d' ' -f2) fds=$(echo "$2" | cut -d' ' -f3) procs=$(echo "$2" | cut -d' ' -f4) procKB=$(echo "$2" | cut -d' ' -f5) agentHeap=$(echo "$2" | cut -d' ' -f6)B"; return 0; }
 
 summary=""
 for kind in $SCENARIOS; do

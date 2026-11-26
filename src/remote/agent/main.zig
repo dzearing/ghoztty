@@ -143,6 +143,7 @@ const single_instance = @import("single_instance.zig");
 const startup_error = @import("startup_error.zig");
 const agent_lineage = @import("../agent_lineage.zig");
 const agent_log = @import("agent_log.zig");
+const heap_stats = @import("heap_stats.zig");
 const job_object = @import("../../apprt/win32/job_object.zig");
 
 /// The agent's baked build version: `YYYYMMDD-<git short hash>` (commit date),
@@ -177,10 +178,14 @@ pub fn main() !void {
     // bucket into a VirtualAlloc/VirtualFree pair plus a locked hashmap insert,
     // and the agent and every holder relay each session's output through it
     // (T3017, PA-I03). SmpAllocator keeps a per-thread freelist instead.
-    var gpa: std.heap.GeneralPurposeAllocator(.{}) = .{};
+    // `enable_memory_limit` makes it count the bytes it has handed out, which
+    // `heap_stats` logs per session so a leak can be told apart from the
+    // DebugAllocator's own never-reuse page pinning (T3646).
+    var gpa: std.heap.GeneralPurposeAllocator(.{ .enable_memory_limit = true }) = .{};
     defer if (comptime use_debug_allocator) {
         _ = gpa.deinit();
     };
+    if (comptime use_debug_allocator) heap_stats.live_bytes = &gpa.total_requested_bytes;
     const alloc = if (comptime use_debug_allocator) gpa.allocator() else std.heap.smp_allocator;
 
     // Clear the inherited ignore-Ctrl-C flag (T84 / T89d). The Windows local
@@ -3353,6 +3358,7 @@ test {
     std.testing.refAllDecls(@This());
     // Not reachable via pub decls, so reference explicitly for test discovery.
     _ = @import("link_control.zig");
+    _ = @import("heap_stats.zig");
     _ = @import("pty_host_proto.zig");
     _ = @import("pty_host_spec.zig");
     _ = @import("pty_holder_child.zig");
