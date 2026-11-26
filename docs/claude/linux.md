@@ -551,7 +551,7 @@ private runtime dir, so a test app can never meet the user's.
   SIDEBAR DRAG: ALL PASS` (25 checks); `NEGATIVE=1` must fail D2, D2b, D4b.
   A real pointer drag is NOT RUN (no seat). Not yet: window and group drag
   (T3697), the stash tray (T3698), cross-window drops (T3699), the order
-  across a restore (T3700); the rest of the row tools (T3695).
+  across a restore (T3700).
   **Group editing (T3608)**: a window row's right-click menu (a
   `GtkPopoverMenu` parented to the card, actions `sbmenu.*`) offers Create
   Group..., Move to Group (the other groups as listed, only when there is
@@ -573,6 +573,25 @@ private runtime dir, so a test app can never meet the user's.
   (26 checks); `NEGATIVE=1` never presses Return and must fail G9/G9b. Not
   yet: the list keeping its place across a regroup (needs T3697's window
   order) and script-proof user titles (T3702).
+  **This window's header and the rail's + (T3695)**: a window always holds
+  its panes - the expanded per-window list starts with the window's own
+  header row (`window:<key>`: chevron, name, pane count, + and x on hover)
+  with its panes one level in (`depth` 1), and a `<project>: <name>` window
+  has its group's header above it (labeled by worktree, counting - and its x
+  closing - the whole group; folded, the group's header alone). Built by
+  `pane_sidebar_all.buildOwn` with the outline's own rules; the header's
+  fold is this list's (`Shared.folded_this`, so `toggleFold` follows the
+  scope), and it is drawn selected only folded. The panel caption reads
+  `Panes` / `All Windows` (seam `title`). The rail's first tile is a +
+  (kind `rail_add`, id `rail-add`, win32 `railAdd`): in Panes a new pane in
+  this window (the window header's +, split the last manual direction,
+  logged `from=rail`), in all windows a new window. Acceptance:
+  `wsl-run.ps1 -CommandFile test\linux\cli-sidebar-header.sh`, ends `CLI
+  SIDEBAR HEADER: ALL PASS` (23 checks); `NEGATIVE=1` never folds and must
+  fail H4. The other sidebar suites read pane rows by kind, so the header
+  does not shift them. Not yet: the pencil (T3828), the hover tint (T3823),
+  the busy sheen (T3824), the width grip (T3825), hero suppression (T3826),
+  a + from a remote window opening on its machine (T3827).
   `--view` on `+new-window`/`+split` opens a viewer pane (T3411, below).
 - **Names (T3370)** follow win32's rules exactly (`apprt/ipc/target_lookup.zig`,
   T2250): a window name is global (`+new-window --target`, else a minted
