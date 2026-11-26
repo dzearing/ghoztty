@@ -644,15 +644,28 @@ private runtime dir, so a test app can never meet the user's.
   closing (`+close`, its close key) closes the TAB, tree intact
   (`CloseUndo.closeTabInstead`), so it parks whole. Close Other Tabs and
   Close Tabs to the Right are ONE undo and one redo (win32's group ids,
-  begun in `Tab.actionClose`). A tab whose shells have all exited, and a
-  window's last tab, are not parked. Not yet: a window (T3665).
+  begun in `Tab.actionClose`). A tab whose shells have all exited is not
+  parked. **A closed window parks too (T3665, win32 T1874)** - its close
+  button, `win.close`, `+close` (not `--force`), or its last tab or last
+  pane going (`Window.finishTabClose` declines the last page's close and
+  `CloseUndo.parkWindow` takes the window whole). `Window.parkForUndo` hides
+  it and REMOVES it from the GtkApplication, so every `getWindows` walk
+  (`+list`, targeting, sidebars, session layout, the quit check) sees it
+  gone with no per-walker filter; undo `addWindow`s and presents it. The
+  entry is owned by a shared key, so ANY window's Ctrl+Shift+Z reaches it in
+  recency order with that window's own closes (`popForEither`). Never
+  parked: the last window (nowhere to press undo), the quick terminal, a
+  window with no running shell, and a single-window-mode workspace (T3790).
+  A parked window closed again (its last shell exited) drops its undo
+  (`forgetWindow`) and closes for real.
   **Pressing keys headless**: Wayland has no input injection and the harness
   has no seat, so a debug build serves the `press-key` IPC seam - `hl_ipc
   press-key --target=<pane> --key=ctrl+shift+z` - which feeds one press and
   release through the pane's core `keyCallback`, so the configured binding
   table decides what it does; the reply's `effect` is `consumed`, `ignored`
   or `closed`. Acceptance: `wsl-run.ps1 -CommandFile test\linux\cli-undo.sh`,
-  ends `CLI UNDO: ALL PASS` (47 checks, T1-T16 the tabs); `NEGATIVE=1` runs it with undo off
+  ends `CLI UNDO: ALL PASS` (60 checks, T1-T16 the tabs, W0-W12 the windows; P2 tolerates only
+  T3802's known teardown CRITICAL); `NEGATIVE=1` runs it with undo off
   and must fail.
 - **Pane rearrange mode and pane drops (T3564)**: `toggle_rearrange_mode`
   (**Ctrl+Shift+.**, the shared default; the command palette's "Toggle
@@ -2343,7 +2356,8 @@ unset makes no workspaces.
   the Close Window? dialog inside the toplevel (`dialogParent`);
   `openDialog` looks in `dialogHost` (the toplevel for the workspace on show,
   nothing for a parked one or a frame).
-- Undo of a workspace close is T3790, after window-close undo (T3665).
+- Undo of a workspace close is T3790 (window-close undo, T3665, refuses a
+  workspace).
 - Seam: `workspaces` has `toplevel_frame`, `gtk_windows` and
   `mapped_windows` (the "one window" oracle); `close-dialog --target=<w>
   --op=frame` presses the toplevel's close button, `--op=window` the
