@@ -1,16 +1,17 @@
 {
     "guard":  "activity-state",
     "script":  "test/win32/activity-state.ps1",
-    "generated":  "2026-10-17T07:46:17-07:00",
-    "commit":  "590ee23c3",
+    "generated":  "2026-11-25T22:33:02-08:00",
+    "commit":  "89d63b6cbf",
     "uncommitted":  [
-                        "src/apprt/win32/assets/ghoztty/hooks/ghoztty-activity-state.sh",
-                        "test/win32/activity-state.ps1",
-                        "test/win32/lib/upstream/test-activity-state.sh"
+
                     ],
     "files":  {
                   "src/apprt/win32/assets/ghoztty/hooks/ghoztty-activity-state.sh":  "6220aedd95f707f8fc143574ada94b836496895f574cc65c076a270323bfbe28",
                   "test/win32/activity-state.ps1":  "0b3669240e2083d6e3b8ba56b430a2f85c9e7ee52f6822650dd4243aefa36155",
                   "test/win32/lib/upstream/test-activity-state.sh":  "513049af18721acf1a9a95f2c8a3ad4601f1bc92fafd18cf397688b47405dc8b"
-              }
+              },
+    "code":  {
+                 "test/win32/activity-state.ps1":  "code1:e867b1eda982e04729f821cd7f5cc33c56cac41fb128a85318ceeaf5b80697b0"
+             }
 }

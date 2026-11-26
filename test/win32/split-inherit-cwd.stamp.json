@@ -1,15 +1,15 @@
 {
     "guard":  "split-inherit-cwd",
     "script":  "test/win32/split-inherit-cwd.ps1",
-    "generated":  "2026-11-25T21:40:01-08:00",
-    "commit":  "bbacdece43",
+    "generated":  "2026-11-25T22:45:00-08:00",
+    "commit":  "89d63b6cbf",
     "uncommitted":  [
-                        "src/apprt/win32/IpcHandlers.zig"
+
                     ],
     "files":  {
                   "src/apprt/surface.zig":  "7a465159bfaeb123ab88dfffdd810ab0b593800ce58df9911264ff3ab0b8d494",
                   "src/apprt/win32/IpcHandlers.zig":  "f7ff6d0aef3d5d5adcacbd6878dcc38e5be6203236a8b4c581a3b93614145ba3",
-                  "src/apprt/win32/Window.zig":  "635cae50abba6e2ddd2b32555c6c50e36cb86a3c00135283c447e280cd96fbff",
+                  "src/apprt/win32/Window.zig":  "9aee67bb5e7664f57d8a26487aba1adad22df05d97e94698203e7a6ba5ecc422",
                   "test/win32/split-inherit-cwd.ps1":  "5e9dc174c910069125b39bcc0af5619e534c615816d0c0ceda716fdbf0a909f3"
               },
     "code":  {
