@@ -229,6 +229,7 @@ sleep 0.5
 [ "$(q "$o" 'd["activated"]')" = true ] && [ "$(q "$(mc)" 'd["open"]')" = true ]
 hl_check "O1 the window menu's New Remote Window… opens the chooser" $? "reply=$(printf '%s' "$o" | head -c 300)"
 mc --op=close > /dev/null
+hl_ipc settings --op=action > /dev/null 2>&1
 hl_ipc settings --op=state --page=remote > /dev/null 2>&1
 o=$(hl_ipc settings --op=new_remote_window 2>&1)
 sleep 0.5
