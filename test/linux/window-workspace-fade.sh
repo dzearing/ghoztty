@@ -164,7 +164,7 @@ started0=$(ws 'k.get("fades_started", 0)')
 wsis "(True, True, 0, $((started0 + 1)))" 'd["shown"], k.get("fade_on"), k.get("fade_from_seed"), k.get("fades_started")' --show=rnd
 hl_check "F3 putting rnd on show starts a fade from the ocean (seed 0)" $? "$(last)"
 grep -q "workspace shade fade from=0 to=$rnd_seed" "$APP_LOG"
-hl_check "F3b ...logged with both gradients" $? "$(grep 'shade' "$APP_LOG" | tail -3)"
+hl_check "F3b ...logged with both gradients" $? "$(grep 'workspace shade' "$APP_LOG" | tail -3)"
 hl_wait_for 5 wsis "$rnd_seed" 'k.get("drawn_seed")'
 hl_check "F4 the toplevel now draws rnd's desk under the fade (the workspace on show's, not its own)" $? "$(last)"
 
@@ -183,7 +183,7 @@ frames=$(ws 'k.get("fade_frames", 0)')
 [ "$frames" -ge 10 ]
 hl_check "F6b ...over many drawn frames, each with the old desk laid on ($frames)" $? "$(last)"
 grep -q "workspace shade fade done frames=" "$APP_LOG"
-hl_check "F6c ...logged done" $? "$(grep 'shade' "$APP_LOG" | tail -3)"
+hl_check "F6c ...logged done" $? "$(grep 'workspace shade' "$APP_LOG" | tail -3)"
 new=$(probe "$first")
 echo "rnd probe: $new"
 # shellcheck disable=SC2086
@@ -201,7 +201,7 @@ started1=$(ws 'k.get("fades_started", 0)')
 wsis "(True, False, $started1, 0)" 'd["shown"], k.get("fade_on"), k.get("fades_started"), d["active"] and row[d["active"]]["desk_seed"]' --show=oc
 hl_check "F10 $first -> oc, both the ocean: no fade (Mac: leavingShade != deskVariant)" $? "$(last)"
 grep -q "workspace shade swap (no fade) from=0 to=0 elevated=true" "$APP_LOG"
-hl_check "F10b ...logged as a swap" $? "$(grep 'shade' "$APP_LOG" | tail -3)"
+hl_check "F10b ...logged as a swap" $? "$(grep 'workspace shade' "$APP_LOG" | tail -3)"
 
 # ---- 3. the flat style has no desk ----------------------------------------
 write_cfg flat
@@ -210,7 +210,7 @@ sleep 1
 wsis "(True, False, $started1)" 'd["shown"], k.get("fade_on"), k.get("fades_started")' --show=rnd
 hl_check "F11 flat style: oc -> rnd swaps with no fade" $? "$(last)"
 grep -q "workspace shade swap (no fade) from=0 to=$rnd_seed elevated=false" "$APP_LOG"
-hl_check "F11b ...logged elevated=false" $? "$(grep 'shade' "$APP_LOG" | tail -3)"
+hl_check "F11b ...logged elevated=false" $? "$(grep 'workspace shade' "$APP_LOG" | tail -3)"
 
 alive "$APP"; hl_check "F12 the app is alive" $?
 grep -E "shade|workspace: show" "$APP_LOG" | tail -20
