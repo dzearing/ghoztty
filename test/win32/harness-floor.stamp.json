@@ -1,10 +1,10 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-11-26T06:26:21-08:00",
-    "commit":  "1be2fd1100",
+    "generated":  "2026-11-26T07:44:20-08:00",
+    "commit":  "8806b03b41",
     "uncommitted":  [
-                        "test/win32/split-inherit-cwd.ps1"
+                        "test/win32/clipboard-paste.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "cfa23792d110d499fa4086697daa516d218d0d110e594a7452167a81220ee15e",
@@ -106,7 +106,7 @@
                   "test/win32/click-coord-audit.ps1":  "cd83fc5d9f26712fd0c66245cb9fc86a2879206235fc7ffc9a47f5b43534d7c0",
                   "test/win32/cli-focus-policy.ps1":  "ac2c6e83a76aa74ef843c2f01cc66ff58d1a4f2197eb5231697bc37912bdd5f2",
                   "test/win32/cli-launch-cwd.ps1":  "aa79a875925450e707b550f271536226757715a10b876ee36b8634995b1e6d99",
-                  "test/win32/clipboard-paste.ps1":  "d1405059ff33f3ef0f432bb3c1c60b6e8d0b01b70f81b72dcd58840b7dccbc02",
+                  "test/win32/clipboard-paste.ps1":  "4621c0848cab4a5993ffafc4cc25d0dd5c02f467dd4cdbe9df0d7eb4dbc67431",
                   "test/win32/clipboard-retry.ps1":  "43b4fe9e1b843df6e073bcec780f8b10a2051e948566c99a6c776d2e13992208",
                   "test/win32/cli-shim-redirect.ps1":  "6b3c196cf43c06cb19e7fd5592f31a9491a5ff8c87c96ec0a31fedc4f5b8ce50",
                   "test/win32/cli-unknown-flag.ps1":  "113c82da658e4244469714ea10631d50b0f9b08f3c13ec11df628965ff719109",

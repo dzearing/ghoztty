@@ -87,14 +87,43 @@ if ([Threading.Thread]::CurrentThread.GetApartmentState() -ne 'STA') {
     exit 1
 }
 
+# T2345: a setter that gives up says WHY. On 2026-10-27 Set-TextClipboard failed
+# ten tries in a row, twice, with no clipboard holder visible afterwards, and the
+# swallowed exception left nothing to diagnose from. Each failed try's message is
+# kept, and the give-up line names the last one, the apartment state and the
+# window (and its process) holding the clipboard open at that moment.
+Add-Type -Namespace T2345 -Name Clip -MemberDefinition @'
+[DllImport("user32.dll")] public static extern System.IntPtr GetOpenClipboardWindow();
+[DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(System.IntPtr hWnd, out uint pid);
+'@
+function Write-ClipboardGiveUp([string]$what, [string[]]$errors) {
+    $holder = [T2345.Clip]::GetOpenClipboardWindow()
+    $holderText = 'none'
+    if ($holder -ne [IntPtr]::Zero) {
+        $hpid = [uint32]0
+        [void][T2345.Clip]::GetWindowThreadProcessId($holder, [ref]$hpid)
+        $hname = (Get-Process -Id $hpid -ErrorAction SilentlyContinue).ProcessName
+        $holderText = ('hwnd=0x{0:X} pid={1} ({2})' -f $holder.ToInt64(), $hpid, $hname)
+    }
+    $distinct = @($errors | Select-Object -Unique)
+    Write-Host ("CLIPBOARD GIVE-UP {0}: {1} tries, apartment={2}, holder={3}" -f $what, $errors.Count,
+        [Threading.Thread]::CurrentThread.GetApartmentState(), $holderText) -ForegroundColor Yellow
+    foreach ($e in $distinct) { Write-Host "  error: $e" -ForegroundColor Yellow }
+}
+
 function Set-TextClipboard([string]$text) {
+    $errors = @()
     for ($t = 0; $t -lt 10; $t++) {
         try {
             [System.Windows.Forms.Clipboard]::Clear()
             if ($text -ne '') { [System.Windows.Forms.Clipboard]::SetText($text) }
             return $true
-        } catch { Start-Sleep -Milliseconds 200 }
+        } catch {
+            $errors += ('{0}: {1}' -f $_.Exception.GetType().FullName, $_.Exception.Message)
+            Start-Sleep -Milliseconds 200
+        }
     }
+    Write-ClipboardGiveUp 'Set-TextClipboard' $errors
     return $false
 }
 
@@ -115,15 +144,20 @@ function Set-ImageOnlyClipboard {
     $g = [System.Drawing.Graphics]::FromImage($bmp)
     $g.Clear([System.Drawing.Color]::Red)
     $g.Dispose()
+    $errors = @()
     try {
         for ($t = 0; $t -lt 10; $t++) {
             try {
                 [System.Windows.Forms.Clipboard]::Clear()
                 [System.Windows.Forms.Clipboard]::SetImage($bmp)
                 return $true
-            } catch { Start-Sleep -Milliseconds 200 }
+            } catch {
+                $errors += ('{0}: {1}' -f $_.Exception.GetType().FullName, $_.Exception.Message)
+                Start-Sleep -Milliseconds 200
+            }
         }
     } finally { $bmp.Dispose() }
+    Write-ClipboardGiveUp 'Set-ImageOnlyClipboard' $errors
     return $false
 }
 
@@ -208,6 +242,7 @@ function Set-ImageAndTextClipboard([string]$text) {
     $g = [System.Drawing.Graphics]::FromImage($bmp)
     $g.Clear([System.Drawing.Color]::Blue)
     $g.Dispose()
+    $errors = @()
     try {
         for ($t = 0; $t -lt 10; $t++) {
             try {
@@ -216,9 +251,13 @@ function Set-ImageAndTextClipboard([string]$text) {
                 $do.SetData([System.Windows.Forms.DataFormats]::UnicodeText, $text)
                 [System.Windows.Forms.Clipboard]::SetDataObject($do, $true)
                 return $true
-            } catch { Start-Sleep -Milliseconds 200 }
+            } catch {
+                $errors += ('{0}: {1}' -f $_.Exception.GetType().FullName, $_.Exception.Message)
+                Start-Sleep -Milliseconds 200
+            }
         }
     } finally { $bmp.Dispose() }
+    Write-ClipboardGiveUp 'Set-ImageAndTextClipboard' $errors
     return $false
 }
 
