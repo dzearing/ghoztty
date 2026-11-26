@@ -211,11 +211,15 @@ hl_launch APP3 "$app" --gtk-single-instance=false
 hl_wait_for 30 test -S "$(hl_socket)"
 hl_wait_for 10 wsis True 'd["toplevel_mapped"]'
 first3=$(ws 'd["toplevel"]')
-cli +new-window --target=asker >/dev/null 2>&1
-hl_wait_for 10 wsis "('$first3', True)" 'd["active"], row["asker"]["parked"]'
+# A terminal made while parked starts on first show (T3786), so asker runs
+# its busy command on show and is then parked behind $first3.
+cli +new-window --target=asker --focus >/dev/null 2>&1
+hl_wait_for 10 wsis "('asker', True)" 'd["active"], row["asker"]["grids"][0]["grid"] is not None'
 cli +send-keys --target=asker "sleep 600
 " >/dev/null 2>&1
 sleep 1
+hl_wait_for 10 wsis "('$first3', True)" 'd["active"], row["asker"]["parked"]' --show="$first3"
+hl_check "K12pre asker runs sleep 600 and is parked behind $first3" $? "$(cat "$XDG_RUNTIME_DIR/ws-last" 2>/dev/null)"
 o=$(hl_ipc close-dialog --target=asker --op=window 2>&1)
 hl_wait_for 10 wsis "('asker', 'asker')" 'd["active"], d["content"]'
 hl_check "K12a closing the parked, busy asker puts it on show first" $? "$o / $(cat "$XDG_RUNTIME_DIR/ws-last" 2>/dev/null)"
