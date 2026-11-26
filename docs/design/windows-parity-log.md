@@ -40841,3 +40841,8 @@ WebKitGTK's script message carries no frame, and a page-world handler is visible
 - What: pane-sidebar-foreign-drag.ps1 gains sections C and D. C renames window A so it sorts first, drags A's own row in the expanded all-windows panel, and reads the well open under A's last pane (`tray=x,y` mid-drag, same column, head below down one row, nothing above moved). Dropped on the well (`tray hot=1`) the pane is stashed and the line reads `tray=-` with the head back. D drags A's stashed row: no well on any mid-drag line, Escape cancels it. No app defect.
 - Evidence: acceptance-parallel run ALL PASS (58 assertions), -NegativeControl red (11). Scoped harness floor completed (sleep-handshake re-run green after the new sleeps became condition waits) and stamped. unwired-hook and docs-routing audits green.
 - Filed: none.
+
+## 2026-11-26 03:10 lane a - T2330 done: closed against T2047, which already lets the commit guard record a merge
+- What: no code change. T2330 (filed 10-27) asked the guard to commit an in-progress merge; T2047 (6094b67d0, 11-24) built exactly that - whole-index commit after a foreign-staged-path check, first-parent read-back, merge-pull on a rejected push. T3282's 11-20 fallback predates it.
+- Evidence: W28s1-W28s5 of test/win32/go-loop-guard.ps1 cover all three criteria (s2 is the stray-path negative control); guard `go-loop` CURRENT, stamped green 2026-11-26.
+- Filed: none.
