@@ -604,6 +604,7 @@ test {
     // GALLIUM_DRIVER=d3d12 and when the user's choice stands (T3350). Pure,
     // no GTK imports.
     _ = @import("gtk/wslg_gpu.zig");
+    _ = @import("gtk/wslg_display.zig");
 
     // The GTK viewer nav chrome's pure half - the template URL that carries
     // its file through history, and a GDK key event onto the shared chord

@@ -52,6 +52,7 @@ const GlobalShortcuts = @import("global_shortcuts.zig").GlobalShortcuts;
 const OpenURI = @import("../portal.zig").OpenURI;
 const url_scheme = @import("../url_scheme.zig");
 const wslg_gpu = @import("../wslg_gpu.zig");
+const wslg_display_mod = @import("../wslg_display.zig");
 const viewer_chrome = @import("../viewer_chrome.zig");
 const viewer_links = @import("../viewer_links.zig");
 const CloseUndo = @import("../CloseUndo.zig");
@@ -379,6 +380,11 @@ pub const Application = extern struct {
         // does not do by default. Removed again once GDK's GL is up, below.
         const wslg_gpu_set = setWslgGpuEnv();
 
+        // Ghoztty (T3783): under WSLg reach Weston's Wayland socket when this
+        // user's runtime dir has none (root), instead of falling back to an
+        // X11 that d3d12 cannot draw to. Put back once the display is open.
+        const wslg_display = setWslgDisplayEnv(alloc);
+
         // Setup our GTK init env vars
         setGtkEnv(&config) catch |err| switch (err) {
             error.NoSpaceLeft => {
@@ -432,7 +438,8 @@ pub const Application = extern struct {
             log.warn("gdk display is null, exiting", .{});
             std.posix.exit(1);
         };
-        if (wslg_gpu_set) settleWslgGpuEnv(display);
+        restoreWslgDisplayEnv(alloc, wslg_display);
+        settleWslgGpuEnv(display, wslg_gpu_set);
 
         // Setup our windowing protocol logic
         var wp: winprotopkg.App = winprotopkg.App.init(
@@ -3723,11 +3730,92 @@ fn setWslgGpuEnv() bool {
     return false;
 }
 
+/// What `setWslgDisplayEnv` changed, so `restoreWslgDisplayEnv` can put it back.
+const WslgDisplayOverride = struct {
+    set: bool = false,
+    /// `$WAYLAND_DISPLAY` before the override; null when it was unset.
+    original: ?[:0]u8 = null,
+};
+
+fn isSocket(path: []const u8) bool {
+    const st = std.posix.fstatat(std.fs.cwd().fd, path, 0) catch return false;
+    return std.posix.S.ISSOCK(st.mode);
+}
+
+/// Point `WAYLAND_DISPLAY` at WSLg's socket when the one libwayland would try
+/// is missing (T3783; `wslg_display.zig` has the rules). Before GTK opens its
+/// display.
+fn setWslgDisplayEnv(alloc: Allocator) WslgDisplayOverride {
+    if (comptime builtin.os.tag != .linux) return .{};
+    assert(gtk.isInitialized() == 0);
+    const current = std.posix.getenv(wslg_display_mod.env_name);
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const decision = wslg_display_mod.decide(.{
+        .wslg_socket = isSocket(wslg_display_mod.wslg_socket),
+        .wayland_socket = std.posix.getenv("WAYLAND_SOCKET"),
+        .gdk_backend = std.posix.getenv("GDK_BACKEND"),
+        .current_resolves = if (wslg_display_mod.socketPath(&buf, current, std.posix.getenv("XDG_RUNTIME_DIR"))) |p| isSocket(p) else false,
+    });
+    switch (decision) {
+        .use_wslg => {
+            const original: ?[:0]u8 = if (current) |c| alloc.dupeZ(u8, c) catch {
+                log.warn("wslg: out of memory saving " ++ wslg_display_mod.env_name ++ "; leaving it alone", .{});
+                return .{};
+            } else null;
+            _ = internal_os.setenv(wslg_display_mod.env_name, wslg_display_mod.wslg_socket);
+            log.info("wslg: no Wayland socket at the runtime dir's {s}; connecting to WSLg's " ++ wslg_display_mod.wslg_socket ++ " instead of falling back to X11", .{current orelse "wayland-0"});
+            return .{ .set = true, .original = original };
+        },
+        .user_choice => log.info("wslg: Wayland display left to the environment (WAYLAND_SOCKET or GDK_BACKEND set)", .{}),
+        .reachable, .not_wslg => {},
+    }
+    return .{};
+}
+
+/// Put `WAYLAND_DISPLAY` back once GDK's display is open, so a pane's shell
+/// sees exactly what WSLg gave the app.
+fn restoreWslgDisplayEnv(alloc: Allocator, o: WslgDisplayOverride) void {
+    if (!o.set) return;
+    if (o.original) |v| {
+        defer alloc.free(v);
+        _ = internal_os.setenv(wslg_display_mod.env_name, v);
+    } else {
+        _ = internal_os.unsetenv(wslg_display_mod.env_name);
+    }
+}
+
 /// Bring GDK's GL up while our `GALLIUM_DRIVER` is in place - Mesa reads it
 /// when the display's EGL initializes and every later context reuses that
 /// display - then remove it, so neither a shell nor WebKit's sandboxed web
 /// process (which aborts on it, T3410) inherits a choice that was the app's.
-fn settleWslgGpuEnv(display: *gdk.Display) void {
+fn settleWslgGpuEnv(display: *gdk.Display, app_set: bool) void {
+    if (comptime builtin.os.tag != .linux) return;
+    const x11 = x11: {
+        const class = display.as(gobject.Object).f_g_type_instance.f_g_class orelse break :x11 false;
+        const name = std.mem.span(gobject.typeName(class.f_g_type) orelse break :x11 false);
+        break :x11 std.mem.eql(u8, name, "GdkX11Display");
+    };
+    const dxg = dxg: {
+        std.fs.accessAbsolute(wslg_gpu.device_path, .{}) catch break :dxg false;
+        break :dxg true;
+    };
+    switch (wslg_gpu.onDisplay(.{
+        .dxg = dxg,
+        .x11 = x11,
+        .app_set = app_set,
+        .gallium_driver = std.posix.getenv(wslg_gpu.env_name),
+    })) {
+        .keep => {},
+        .drop_for_x11 => {
+            _ = internal_os.unsetenv(wslg_gpu.env_name);
+            log.warn("wslg: the display is X11, where the d3d12 GPU driver cannot present (MIT-SHM fails across WSLg) and every frame would be dropped; " ++
+                "using software rendering instead. Remedy: make WSLg's Wayland socket reachable, e.g. WAYLAND_DISPLAY=" ++ wslg_display_mod.wslg_socket ++ " (T3783)", .{});
+            return;
+        },
+        .warn_user_d3d12 => log.warn("wslg: " ++ wslg_gpu.env_name ++ "=d3d12 on an X11 display under WSLg draws nothing (MIT-SHM fails across WSLg); " ++
+            "unset it, or make WSLg's Wayland socket reachable, e.g. WAYLAND_DISPLAY=" ++ wslg_display_mod.wslg_socket ++ " (T3783)", .{}),
+    }
+    if (!app_set) return;
     var err_: ?*glib.Error = null;
     if (display.prepareGl(&err_) == 0) {
         if (err_) |err| {

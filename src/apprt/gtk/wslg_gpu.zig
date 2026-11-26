@@ -58,6 +58,47 @@ pub fn decide(in: Inputs) Decision {
     return .set;
 }
 
+/// Once GDK's display is open, before its GL comes up (T3783): d3d12 cannot
+/// present to an X11 window under WSLg - Mesa needs MIT-SHM for it and that
+/// fails across the WSLg boundary, so every frame is dropped and the window
+/// is see-through. Software GL draws.
+pub const OnDisplay = enum {
+    /// Wayland (or not WSL): keep whatever was chosen.
+    keep,
+    /// X11 with the d3d12 the APP set: take it back before GL comes up, so
+    /// Mesa picks software rendering, and warn once.
+    drop_for_x11,
+    /// X11 with a d3d12 the USER set: it is their choice, but say once,
+    /// loudly, that it will draw nothing.
+    warn_user_d3d12,
+};
+
+pub fn onDisplay(in: struct {
+    dxg: bool,
+    x11: bool,
+    /// The app set `GALLIUM_DRIVER` itself (`decide` returned `.set`).
+    app_set: bool,
+    /// `$GALLIUM_DRIVER` now, null when unset.
+    gallium_driver: ?[]const u8,
+}) OnDisplay {
+    if (!in.dxg or !in.x11) return .keep;
+    if (in.app_set) return .drop_for_x11;
+    if (in.gallium_driver) |g| if (std.mem.eql(u8, g, driver)) return .warn_user_d3d12;
+    return .keep;
+}
+
+test "wslg gpu on display: wayland and non-WSL keep the choice" {
+    try std.testing.expectEqual(OnDisplay.keep, onDisplay(.{ .dxg = true, .x11 = false, .app_set = true, .gallium_driver = driver }));
+    try std.testing.expectEqual(OnDisplay.keep, onDisplay(.{ .dxg = false, .x11 = true, .app_set = false, .gallium_driver = driver }));
+}
+
+test "wslg gpu on display: X11 drops the app's d3d12, warns over the user's, ignores other drivers" {
+    try std.testing.expectEqual(OnDisplay.drop_for_x11, onDisplay(.{ .dxg = true, .x11 = true, .app_set = true, .gallium_driver = driver }));
+    try std.testing.expectEqual(OnDisplay.warn_user_d3d12, onDisplay(.{ .dxg = true, .x11 = true, .app_set = false, .gallium_driver = driver }));
+    try std.testing.expectEqual(OnDisplay.keep, onDisplay(.{ .dxg = true, .x11 = true, .app_set = false, .gallium_driver = "llvmpipe" }));
+    try std.testing.expectEqual(OnDisplay.keep, onDisplay(.{ .dxg = true, .x11 = true, .app_set = false, .gallium_driver = null }));
+}
+
 /// Mesa's `env_var_as_boolean` true spellings; anything else is false.
 fn mesaTrue(v: []const u8) bool {
     inline for (.{ "1", "true", "y", "yes" }) |t| {
