@@ -2986,11 +2986,21 @@ refusal is made before any dial, and the relay wins when both are given.
   `Window.newTabPage` hands the pressed (else active) pane's link, its remote
   cwd (the same 1.5 s query) and its command to the tab's first pane through
   `RemoteLink.pending_open`. A tab in a local window stays local.
+- **Per-host defaults** (T3669, win32 `openDialedWindow` / `buildRemoteInherit`'s
+  T174, Mac `Machine.applyOpenDefaults`): the store Host Settings... writes
+  (`host_defaults`, keyed by relay device id, else `host:port` -
+  `RemoteLink.Machine.hostDefaultsKey`). A NEW remote window takes the
+  machine's default shell AND cwd, seeded in the one open tail
+  (`ipc_remote_window.openWith`), so `--from-focused` gets them too; an
+  explicit `--shell` / `--working-directory` (or the inherited cwd) wins, and
+  an ATTACH (a relay window brought back) skips the lookup. A tab or split on
+  the machine takes the default SHELL only (`Machine.hostDefaultShell`) and
+  keeps its parent's remote cwd.
 - **`+list`** gives a remote window `machine` (the host, or the relay name /
   device) and `connection.state`; a local window has neither field.
 - **Not in the layout file**: `SessionLayout` skips remote windows, and a
   remote pane moved into a local window records no session id. Relay windows
-  coming back at relaunch are T3671, per-host defaults T3669; Close vs
+  coming back at relaunch are T3671; Close vs
   Disconnect is T3563 (below); the chooser is T3674, the pill and reconnect
   ladder T3675.
 
@@ -3005,15 +3015,19 @@ with `DEV_AUTH`, a device enrolled with the dev bearer, and an agent in
 powershell -NoProfile -File scripts\linux\wsl-run.ps1 -CommandFile test\linux\cli-remote-window.sh
 ```
 
-Ends `CLI REMOTE WINDOW: ALL PASS` (48 checks: the four refusals, the panes
+Ends `CLI REMOTE WINDOW: ALL PASS` (H1-H7 plus 48 checks: the four refusals, the panes
 descend from the TCP agent and not the app, keys and `--command` round-trip,
 splits, a new tab (in the pressed pane's cwd; a local window's new tab stays
 local) and `--from-focused` stay on the machine, `+close` ends the remote
 shells and closes the link; then Y0-Y15 over the relay: the relayed panes
 descend from the `--relay` agent, `+list` names the machine by `--name` or
 else by device id, a split and a new tab stay on it, `+close` ends all three
-sessions). `NEGATIVE=1` dials a dead port for the main window and must fail
-R1; `NEGATIVE=relay` dials a device nobody enrolled and must fail Y5 with
+sessions). Section H (T3669) writes a host-defaults row for the TCP machine
+naming a marker shell: the window opens in that shell and cwd, explicit flags
+win, and a split and a new tab take the shell but their parent's cwd.
+`NEGATIVE=1` dials a dead port for the main window and must fail
+R1; `NEGATIVE=hostdefaults` keys the row on a port nobody dials and must fail
+H2; `NEGATIVE=relay` dials a device nobody enrolled and must fail Y5 with
 `failed to reach <device> via relay <url>: ...`.
 
 ## Closing a remote pane, tab or window: Close vs Disconnect (T3563)

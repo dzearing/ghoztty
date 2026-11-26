@@ -30,7 +30,8 @@
 # FAIL R1. NEGATIVE=relay dials a device the relay never enrolled for the relay
 # window, which must FAIL Y5. NEGATIVE=restore relaunches with no relay
 # credential, which must FAIL Z6. NEGATIVE=hostdefaults keys the per-host
-# defaults row (section H, T3669) on a port nobody dials, which must FAIL H2.
+# defaults row (section H, T3669) on a port nobody dials, which must FAIL H2
+# (and H5, H6: the split and the tab read the same row).
 #
 # Output: one PASS/FAIL line per check, then 'CLI REMOTE WINDOW: ALL PASS' or
 # 'CLI REMOTE WINDOW: <n> FAILURE(S)'. Exit 0 only on ALL PASS.
@@ -267,7 +268,7 @@ hl_check "C4 the last pane off rem's link closed the connection" $? "$(grep -m3 
 # newSplit); an explicit --shell / --working-directory always wins. The shell
 # is a wrapper that marks its environment, so each pane's /proc says which
 # shell started it. NEGATIVE=hostdefaults keys the row on a port nobody dials,
-# which must FAIL H2.
+# which must FAIL H2 (and H5, H6, which read the same row).
 hddir=$(mktemp -d /tmp/remhd.XXXXXX)
 hdsplit=$(mktemp -d /tmp/remhds.XXXXXX)
 hdother=$(mktemp -d /tmp/remhdo.XXXXXX)
