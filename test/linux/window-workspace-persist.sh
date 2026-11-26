@@ -10,7 +10,9 @@
 #           only the one on show `frontmost` - with the toplevel's own
 #           workspace closed, so the size comes from the frame (T3652).
 #   P5-P8   a crash + relaunch in single mode: three workspaces, ONE window
-#           mapped, the same one on show, the same order, the same processes.
+#           mapped, the same one on show, the same order, the same processes
+#           (a parked one re-attaches on first show - T3786 owns starting it
+#           while parked, so P8 shows each).
 #   P9-P11  the single-mode manifest read in separate mode: three windows,
 #           the same processes, the frontmost one built last (in front), and
 #           every window at the one frame they shared.
@@ -175,15 +177,21 @@ hl_check "P6 the relaunch brings every workspace back, two on show, in the same 
 wsis "(1, True)" 'd["mapped_windows"], d["toplevel_mapped"]'
 hl_check "P7 ...in ONE window: only the shared toplevel is mapped" $? "$(ws_last)"
 same_pids() { [ "$(pid_of pone)" = "$pid1" ] && [ "$(pid_of ptwo)" = "$pid2" ] && [ "$(pid_of pthree)" = "$pid3" ]; }
+two_same() { [ "$(pid_of ptwo)" = "$pid2" ]; }
+hl_wait_for 15 two_same
+hl_check "P8a two, on show, re-attached to its own process $pid2" $? "now: $(pid_of ptwo)"
+# A parked workspace's terminal starts on first show (T3786 owns starting it
+# while parked): show each, then two again, and every pane is its own process.
+for n in three one two; do wsis True 'd["shown"]' --show=$n; done
 hl_wait_for 15 same_pids
-hl_check "P8 every workspace re-attached to its own process ($pid1 $pid2 $pid3)" $? "now: $(pid_of pone) $(pid_of ptwo) $(pid_of pthree)"
+hl_check "P8 every workspace re-attached to its own process once on show ($pid1 $pid2 $pid3)" $? "now: $(pid_of pone) $(pid_of ptwo) $(pid_of pthree)"
 grep "session layout: building window=" "$APP2_LOG" | tail -1 | grep -q "window=two frontmost=true"
 hl_check "P8b the restore built two (frontmost) last" $? "$(grep 'session layout: building' "$APP2_LOG")"
 
 # ---- 3. the single-mode manifest read in separate mode ---------------------
 stop_app "$APP2"
-[ "$(mq '[(x.get("ipc_name"), bool(x.get("frontmost"))) for x in w]')" = "[('two', True), ('three', False), ('one', False)]" ]
-hl_check "P8c the quit's write keeps the same entries and mark" $? "$(mq '[(x.get("ipc_name"), x.get("frontmost")) for x in w]')"
+[ "$(mq '[(x.get("ipc_name"), bool(x.get("frontmost"))) for x in w]')" = "[('two', True), ('one', False), ('three', False)]" ]
+hl_check "P8c the quit's write follows the new order (two, one, three) and keeps two marked" $? "$(mq '[(x.get("ipc_name"), x.get("frontmost")) for x in w]')"
 write_cfg ""
 hl_launch APP3 "$app" --gtk-single-instance=false
 hl_wait_for 30 serving
@@ -222,8 +230,9 @@ hl_wait_for 30 serving
 hl_wait_for 15 wsis 3 'len(d["order"])'
 wsis "('single', 'one', 1)" 'd["mode"], d["active"], d["mapped_windows"]'
 hl_check "P12 read in single mode the windows come back as three workspaces in one window, the front one (one) on show" $? "$(ws_last)"
+for n in two three one; do wsis True 'd["shown"]' --show=$n; done
 hl_wait_for 15 same_pids
-hl_check "P13 ...on the same processes" $? "now: $(pid_of pone) $(pid_of ptwo) $(pid_of pthree)"
+hl_check "P13 ...on the same processes, each once on show" $? "now: $(pid_of pone) $(pid_of ptwo) $(pid_of pthree)"
 stop_app "$APP4"
 
 hl_finish "$L"

@@ -2430,6 +2430,36 @@ headless Weston has no seat, so the toplevel is never active and A7 sees
 `urgent=true`. `NEGATIVE=1` runs it in `separate` mode and must fail from A1
 on (11 failures).
 
+### Persistence: the one on show comes back on show (T3655)
+
+- **Capture** (`SessionLayout.capture`): in single mode the manifest lists
+  the workspaces in `Workspaces.order()` - on show first, then most recently
+  shown - and only then any window that is no workspace, in GTK focus order.
+  GTK's own order cannot tell workspaces apart: only the shared toplevel is
+  ever focused. Every workspace records the toplevel's size and maximized
+  state (`Workspaces.physical()`, which is the frame once the toplevel's own
+  workspace closed, T3652), and the one on show is marked `frontmost`.
+- **Restore** (`SessionLayout.restore`): builds back to front with the
+  `frontmost` entry last wherever it is listed
+  (`session_layout_rules.restoreOrder`). Every restored window is presented
+  with activate, so the last one built is on show in single mode and
+  presented last in separate mode, and the workspace order round-trips. Each
+  build logs `session layout: building window=<name> frontmost=<b>`.
+- **Across modes**: a single-mode manifest read in separate mode is windows
+  at the one size they shared; a separate-mode manifest read in single mode
+  is workspaces, the `frontmost` one on show.
+- **Gap**: a restored PARKED workspace re-attaches its session on first
+  show, not at launch (T3786, the born-parked start). Its process is alive in
+  the agent the whole time; `+list` shows pid 0 for it until shown.
+
+```powershell
+powershell -NoProfile -File scripts\linux\wsl-run.ps1 -CommandFile test\linux\window-workspace-persist.sh
+```
+
+Ends `WORKSPACE PERSIST: ALL PASS` (25 checks, about two minutes: four
+launches). Against the pre-T3655 capture it was red on P2, P6 and P8b, with
+three on show instead of two.
+
 ### Parked layout (T3650)
 
 A parked workspace's content is out of every window, so no window lays it
