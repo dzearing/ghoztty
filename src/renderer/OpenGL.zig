@@ -1695,6 +1695,17 @@ pub fn hiddenTargetsReleased(self: *OpenGL) void {
     // reveal shows the old frame until the redraw lands rather than nothing.
     // `begin` rebuilds the texture on the first frame back.
     if (self.comp) |p| p.releaseShared();
+    // GTK (T3645): Mesa keeps the framebuffer it last drew to - and so the
+    // storage of the target just deleted - referenced in the context's state
+    // until a draw validates new state, which a pane that has stopped drawing
+    // never does. Measured on llvmpipe: the targets stayed mapped after the
+    // release. A clear of a 2x1 framebuffer of our own is that validation.
+    if (comptime apprt.runtime == apprt.gtk) if (self.probeFbo()) |fbo| {
+        const ctx = &gl.glad.context;
+        ctx.BindFramebuffer.?(gl.c.GL_FRAMEBUFFER, fbo.id);
+        ctx.Clear.?(gl.c.GL_COLOR_BUFFER_BIT);
+        ctx.BindFramebuffer.?(gl.c.GL_FRAMEBUFFER, 0);
+    };
     // The deletes sit in the command stream until something submits it, and
     // a hidden pane draws nothing that would: without this the driver keeps
     // the storage until the window is shown again.
