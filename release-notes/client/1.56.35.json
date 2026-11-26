@@ -1,0 +1,23 @@
+{
+  "version": "1.56.35",
+  "sections": [
+    { "title": "New",
+      "items": [
+        { "text": "The all-windows stash well needs no more work: Mac shows it only during a drag, and T2313 already does that." },
+        { "text": "A Linux relaunch in single-window mode brings back the workspace that was on show." }
+      ] },
+    { "title": "Fixes",
+      "items": [
+        { "text": "The Linux app can now report what a live window resize costs per frame." },
+        { "text": "The Linux build compiles again: pane-seen's draw reset no longer shadows its own flag." },
+        { "text": "resize-frame-cost.sh reads the draw block where the seam puts it." },
+        { "text": "A person can read the Linux app's frame costs off a real WSLg drag." },
+        { "text": "Record the green docs-routing and doc-claims runs over the Linux quality-bar note." },
+        { "text": "On Linux a quit whose window teardown hangs in Mesa's d3d12 driver now ends the process anyway, so SIGTERM always quits." }
+      ] },
+    { "title": "Improvements",
+      "items": [
+        { "text": "A folding card's face now reports where it hands its name to the strip, and stack-fold-slide fails if the name would jump." }
+      ] }
+  ]
+}
