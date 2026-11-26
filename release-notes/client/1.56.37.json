@@ -1,0 +1,23 @@
+{
+  "version": "1.56.37",
+  "sections": [
+    { "title": "New",
+      "items": [
+        { "text": "On Linux, Ctrl+Shift+N opens the machine chooser: your machines, what is still running on each, and Resume for a session a Disconnect left." },
+        { "text": "On Linux, the machine chooser's account row signs in and out with Google, and says when your sign-in is kept in a private file." },
+        { "text": "On Linux, a remote window names its machine in the title bar, and a dropped link comes back on its own with the same shells." },
+        { "text": "On Linux, a sign-out that cannot remove this machine offers Sign Out Anyway, and the removal finishes itself." }
+      ] },
+    { "title": "Fixes",
+      "items": [
+        { "text": "An unfocused pane's dim now covers its read-only badge, bell frame and hover tint, as on Mac." },
+        { "text": "On Linux, a close confirmation answered Cancel now actually goes away." },
+        { "text": "On Linux a quit now frees every window, so a debug build exits 0 instead of aborting." }
+      ] },
+    { "title": "Improvements",
+      "items": [
+        { "text": "The all-windows sidebar folds and unfolds as a drag picks an item up and lets it go, instead of jumping." },
+        { "text": "Background windows' all-windows sidebars stop re-reading every title tick and catch up when activated." }
+      ] }
+  ]
+}
