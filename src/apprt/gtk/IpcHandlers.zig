@@ -946,7 +946,6 @@ fn ghostReport(arena: Allocator, surface: *Surface, png_path: ?[]const u8) Ghost
 fn workspacesSeam(app: Context, request: Request) Allocator.Error![]u8 {
     const Workspaces = @import("Workspaces.zig");
     const window_mode = @import("../win32/window_mode.zig");
-    const Tab = @import("class/tab.zig").Tab;
     var show_arg: ?[]const u8 = null;
     for (request.arguments orelse &.{}) |arg| {
         if (std.mem.startsWith(u8, arg, "--show=")) show_arg = arg["--show=".len..];
