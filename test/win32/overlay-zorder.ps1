@@ -68,6 +68,8 @@
 #   B. negative control: SetWindowPos(overlay, HWND_TOPMOST) reproduces the
 #      filed report - the same overlay now indexes above the active window
 #      and WindowFromPoint says the banner is what you see there.
+#      (The app runs with GHOZTTY_TEST_NO_OCCLUSION=1 so that nothing but C
+#      and D can heal it first - see the launch, T2300.)
 #   C. a reposition heals it: bit gone, still above its own window, nothing
 #      foreign sandwiched.
 #   D. so does an activation change (WM_ACTIVATE), which is when the defect
@@ -236,11 +238,30 @@ try {
     # The float keybind is bound at launch: toggle_window_float_on_top has no
     # default binding, and section E needs the PRODUCT's own float, not an
     # injected one.
+    #
+    # T2300: the visibility poll is OFF for this app. With it on, section B's
+    # injection heals itself before it can be read: topmosting the overlay
+    # drags its covered owner up over the active window too, the poll (every
+    # 250 ms, T1951) sees that window "revealed", and the reveal's layout pass
+    # clears the stray bit through the very heal C exists to prove. Measured
+    # 2026-11-25: WS_EX_TOPMOST set on the read straight after SetWindowPos,
+    # gone 50 ms later, a scope=full heal logged in between. That made B red
+    # and left C and D passing on a heal they never triggered. The env var is
+    # read once at launch, so it covers every window this process opens.
+    #
+    # T2300: glass panes off, or F/dim has nothing to inject into. Glass panes
+    # (the default since T2281) never dim, so with it on the split in F made
+    # no dim wash and F/dim was a SKIP on every run - and a skipped section
+    # keeps the guard from stamping even when everything else is green.
+    $prevNoOcclusion = $env:GHOZTTY_TEST_NO_OCCLUSION
+    $env:GHOZTTY_TEST_NO_OCCLUSION = '1'
     $app = Start-OnTestDesktop -Exe $exe -Arguments @(
         '--background=#101014',
         '--session-persistence=false',
+        '--macos-pane-glass=false',
         '--keybind=ctrl+shift+f9=toggle_window_float_on_top',
         '--keybind=ctrl+shift+f10=toggle_quick_terminal')
+    $env:GHOZTTY_TEST_NO_OCCLUSION = $prevNoOcclusion
     Start-Sleep -Seconds 3
     if ($app.Process -and $app.Process.HasExited) { Write-Host 'SETUP FAIL: GUI died at launch'; exit 1 }
     $appPid = $app.Pid

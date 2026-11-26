@@ -1,10 +1,10 @@
 {
     "guard":  "seam-audit",
     "script":  "test/win32/seam-audit.ps1",
-    "generated":  "2026-11-25T23:17:12-08:00",
-    "commit":  "9d5c962203",
+    "generated":  "2026-11-26T00:05:46-08:00",
+    "commit":  "8b880eecc4",
     "uncommitted":  [
-
+                        "test/win32/seam-audit.registry.json"
                     ],
     "files":  {
                   "src/apprt/win32/about_links.zig":  "9bb9ec60b7b6099fda1350ec165c06d9404a32c4f53de1bb2fd0ce697a52683a",
@@ -707,6 +707,6 @@
                   "src/termio/title_pace.zig":  "914afed249d211b9f119a1f551b1012008c75c2d4f9f1373639d40435eddf32d",
                   "test/win32/lib/SeamAudit.ps1":  "209b551bd95a6e77fbd4c47f40dd4cd8401b81b6c43503acd9ca77534c171b82",
                   "test/win32/seam-audit.ps1":  "e7ef6b8614ad022f48f0cfa94c7183270545ba2d3f29fc2e0b14669429e6c586",
-                  "test/win32/seam-audit.registry.json":  "62c1d8ee4dd60c8ca3f4e77ea421afdb48d3d377ad515365c2e05810ee039997"
+                  "test/win32/seam-audit.registry.json":  "8046ed076be29326c2211f5e1f263ecc640d6c661cb2fda0ac348bfb6b8776dd"
               }
 }

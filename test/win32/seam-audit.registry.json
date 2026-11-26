@@ -455,6 +455,11 @@
             "unsetArm": "test\\win32\\window-count-scale.ps1::Remove-Item Env:GHOZTTY_TEST_NO_PACE",
             "note": "unset = panes outside the window in use present at a capped pace (T3761, renderer/pace.zig), which window-count-scale.ps1's section D asserts with it cleared; set, every window stays at full pace (the pre-T3761 renderer) so -NegativeControl proves D1 goes red. low-power-render.ps1 sets it to measure the low-power cap alone."
         },
+        "GHOZTTY_TEST_NO_OCCLUSION": {
+            "class": "non-default",
+            "unset": "shipped-elsewhere",
+            "note": "unset = the visibility poll marks covered windows hidden and re-lays them out on reveal (T1951/T2914), which every other GUI run does and hidden-new-pane.ps1 asserts. overlay-zorder.ps1 sets it (T2300) because that reveal heals section B's injected stray topmost before B can read it, leaving C and D to pass on a heal they never triggered."
+        },
         "GHOZTTY_GL_SIMULATE_RESET_AFTER": {
             "class": "fault",
             "unset": "shipped-elsewhere",

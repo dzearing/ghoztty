@@ -1,10 +1,10 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-11-25T23:33:01-08:00",
-    "commit":  "89d63b6cbf",
+    "generated":  "2026-11-26T00:05:52-08:00",
+    "commit":  "8b880eecc4",
     "uncommitted":  [
-
+                        "test/win32/overlay-zorder.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "cfa23792d110d499fa4086697daa516d218d0d110e594a7452167a81220ee15e",
@@ -409,7 +409,7 @@
                   "test/win32/opacity-reload.ps1":  "b79367eddf623fd7c5907d0eafccc471acae34b4d0bd1eede04277cdb400eeef",
                   "test/win32/orphan-endpoint.ps1":  "e9a11e77194463cb49f7a34ee7fdcc52f81c26f37728aa23003be8565c8a760b",
                   "test/win32/orphan-notify.ps1":  "a8c7962850f4bdf5c8c5f8c09b20930b57e88264dedfa13a3bd47e69aaf2bf55",
-                  "test/win32/overlay-zorder.ps1":  "76c45c89ee49d5e8b2ad2548a974932237dcdbb5bb3089fc89f6d2c15b8c7da6",
+                  "test/win32/overlay-zorder.ps1":  "46858ec79bf526f2ff623b0abc99165810f01973cecea9320f07e1a312165203",
                   "test/win32/palette-close-crash.ps1":  "c4da5e073557f044caeb352dea0605783436f0eddd82039ecdcaa3bbe1a1c639",
                   "test/win32/palette-grid-size.ps1":  "503b63cbcb1bc6763c2d2800245923385ce4a4b5bb5a8e1649e5ddfe48f265b1",
                   "test/win32/palette-jump.ps1":  "ee11e403b39036691fbaf1f12aab1820f9a98ca96fc0d9a04f94e50200c1d7a7",
@@ -577,7 +577,7 @@
                   "test/win32/sprite-testdata.ps1":  "79914472fe57b285f38ca6e0740a22e4975c142ccd15fe554b9b3b0835033d21",
                   "test/win32/stack-caret-on-show.ps1":  "70db1bcbb5a17f5e0819d05b500a247ed314f385d7ef752d37f7450866d95541",
                   "test/win32/stack-collapse-carry.ps1":  "2fb0e9c3403e77a583f2eee95338ea9b0cbd9005eff39ca7dd278e5e202b713c",
-                  "test/win32/stack-collapse-drag.ps1":  "361cdf30d5cc7152c6ea7457809cef559f7b831ff0bf3e1ec7fae84ff37a54fb",
+                  "test/win32/stack-collapse-drag.ps1":  "3920e3507becefdfffe664522336401ed45fe9c6b0006b85494d199f0cad090f",
                   "test/win32/stack-fold-slide.ps1":  "e663a7f1cafad809988faf665a58dd7e40797e46dbada6dab251cff39986655f",
                   "test/win32/stale-build-notify.ps1":  "4ab2898604ac45d3a62e7f78232a6e6a02081d7fee27716f1975831fda65d4a1",
                   "test/win32/startup-failure.ps1":  "17e72b90d659b5f98d19e3f18aa7aca5d9ba87004f41a10016ba96f08ca015ea",
