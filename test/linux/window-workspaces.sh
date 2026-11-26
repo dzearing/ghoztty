@@ -54,8 +54,8 @@ WS_LAST=""
 ws() {
     local expr="$1"; shift
     WS_LAST=$(hl_ipc workspaces "$@" 2>&1)
-    printf '%s' "$(cat "$XDG_RUNTIME_DIR/ws-last" 2>/dev/null)" > "$XDG_RUNTIME_DIR/ws-last"
-    printf '%s' "$(cat "$XDG_RUNTIME_DIR/ws-last" 2>/dev/null)" | python3 -I -c '
+    printf '%s' "$WS_LAST" > "$XDG_RUNTIME_DIR/ws-last"
+    printf '%s' "$WS_LAST" | python3 -I -c '
 import json, sys
 try:
     r = json.load(sys.stdin)
