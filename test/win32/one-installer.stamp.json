@@ -1,8 +1,8 @@
 {
     "guard":  "one-installer",
     "script":  "test/win32/one-installer.ps1",
-    "generated":  "2026-11-25T17:57:02-08:00",
-    "commit":  "6b74c8f9f",
+    "generated":  "2026-11-25T18:28:38-08:00",
+    "commit":  "da7a3488b",
     "uncommitted":  [
 
                     ],

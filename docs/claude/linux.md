@@ -2143,21 +2143,38 @@ One window stays open; each scenario (`split`, `rapid` - closed while it
 starts, `tab`, `window`, `viewer`) runs 8 warm-up and 12 measured
 open/close cycles, each close waited past `undo-timeout` (1 s), and asserts
 per cycle: app private memory (`smaps_rollup` Private_*) <= 1 MB, threads
-<= 0.5, fds <= 0.5, descendant processes <= 0.2 and their memory <= 1 MB.
+<= 0.5, fds <= 0.5, descendant processes <= 0.2 and their memory <= 1 MB,
+and the session agent's live heap <= 1 KB (M6, below).
 Descendants are the app's (WebKit web processes) AND the session agent's
 (pane shells live under `ghoztty-agent`, not the app). The app runs with
 `LIBGL_ALWAYS_SOFTWARE=1`, so its GL textures are its own memory and a
 leaked render target would show (P0d checks no d3d12 driver is mapped).
-Ends `PANE CLOSE MEMORY: ALL PASS` (32 checks), about 6 minutes.
-`NEGATIVE=1` leaves the panes open and must fail every budget check.
+Ends `PANE CLOSE MEMORY: ALL PASS` (40 checks), about 6 minutes.
+`NEGATIVE=1` leaves the panes open and must fail every budget check (today
+the app dies after ~20 open splits, so only the split scenario's checks are
+meaningful there - T3779; its M6 reads ~10 KB per kept session). At
+`CYCLES=50` the app's own M1 goes red, ~1 MB a cycle (T3778).
 The wrapper does not pass environment variables into WSL: for `SCENARIOS`,
 `CYCLES`, `WARMUP`, `REPORT=1` (every sample) or `NEGATIVE=1`, write a
 scratch command file that exports them and then holds the script's text.
 
 Measured 2026-11-24: nothing in the app leaks per close. The app's memory
 climbs ~15 MB over the first ten cycles and then holds (allocator and GTK
-caches), hence the warm-up. The agent climbs ~40-50 KB per closed session,
-linearly (T3646).
+caches), hence the warm-up.
+
+**The agent's private memory climbs ~27-45 KB per closed session and that is
+not a leak** (T3646). A Debug agent runs on Zig 0.15's `DebugAllocator`,
+which never reuses a freed slot and returns a page only once every slot on it
+is freed, so any long-lived small allocation pins a page per session's worth
+of churn. Its own count of bytes handed out says what is really kept: a Debug
+agent built with `enable_memory_limit` writes `heap: session created|freed:
+live_bytes=N sessions_live=N sessions_dead=N` (scope `heap`, debug level) to
+its `agent.log` on every session create and free
+(`src/remote/agent/heap_stats.zig`). Over 30 split cycles that stayed at
+29,110 -> 29,830 bytes (~24 B a cycle, in hash-map-growth steps) while private
+memory rose 800 KB; one open session holds ~10 KB. M6 asserts it, and reports
+`-1` (a FAIL) if the line ever stops being written. A release agent runs on
+`smp_allocator`, which reuses its freelists and keeps no such count.
 
 ## Panes that are not drawing give back their frames (T3645)
 
