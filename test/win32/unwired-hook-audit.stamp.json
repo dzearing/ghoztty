@@ -1,8 +1,8 @@
 {
     "guard":  "unwired-hook",
     "script":  "test/win32/unwired-hook-audit.ps1",
-    "generated":  "2026-11-26T14:20:18-08:00",
-    "commit":  "f02b6712b3",
+    "generated":  "2026-11-26T14:30:03-08:00",
+    "commit":  "44530a0e7b",
     "uncommitted":  [
 
                     ],
@@ -1581,7 +1581,7 @@
                   "test/win32/pane-sidebar-drag.ps1":  "0787d30978a219fb443eb8199282475fea7867c50e65f446af3cad0f4e4ccad6",
                   "test/win32/pane-sidebar-elevated.ps1":  "77decaf8df557213aed7abeb46669903ab1b45bf6e9aed12df6764a34e14fd2b",
                   "test/win32/pane-sidebar-foreign-drag.ps1":  "41896d62e9125f29db942863219ea8c7ed996119e9fb003f3067ee1d31a5f379",
-                  "test/win32/pane-sidebar-glide.ps1":  "9099e4690e8119f75ab7689f339d28c151b527152d26329c5d2bb537ad5a978c",
+                  "test/win32/pane-sidebar-glide.ps1":  "5ff3d389705d26a274510dcf78f1cf2ebc3b5a27947f0c2745964563d7259b99",
                   "test/win32/pane-sidebar-hover-resync.ps1":  "a05c2b4894385ba80ac8343db8817baf84fb27cabef9dd769164ebc54e27e551",
                   "test/win32/pane-sidebar-hue.ps1":  "661c963a69bf741e1c3030d49ae248108567b4d47590b52d97d3439e1c61df28",
                   "test/win32/pane-sidebar-motion-cost.ps1":  "39ed18d7a1201e444fee8a1b9e6d454ca72d9fb7bacfb6c2d8c22283f65e1277",

@@ -40986,3 +40986,8 @@ WebKitGTK's script message carries no frame, and a page-world handler is visible
 - Filed: none.
 - **2026-11-26 (lane b) T2431 done (already fixed): pane-stack-strip D6 was the same mis-aimed strip probe T2918 fixed on 2026-11-11 (2cc31dff26).** Two tucked strips read as one, so D6 pressed on s3; the app was moving the right pane. Closed against T2918's commit.
   - Validation: pane-stack-strip ALL PASS (34) at HEAD, `D6: it holds the dragged pane s2 (1: s2)`. No code change.
+
+## 2026-11-26 14:35 lane a - T2434 closed: the sidebar window-order test asserts beside other scripts; no code change
+- What: re-verified before building. The 2026-10-28 zero-assertion run no longer happens: the harness was reworked six times since, and it stays classified `parallel`.
+- Evidence: 23 of 23 surviving parallel logs (11-15 to 11-26, 5-9 scripts beside it) assert 95-106 times; fresh run 20261126-142755 beside ipc-p1 and pane-sidebar-glide ALL PASS (106). Inherited due guards re-run green: unwired-hook audit, scoped harness floor.
+- Filed: none.
