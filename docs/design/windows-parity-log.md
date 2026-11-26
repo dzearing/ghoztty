@@ -40836,3 +40836,8 @@ WebKitGTK's script message carries no frame, and a page-world handler is visible
 - What: no code change. Every acceptance-parallel summary.json still on the box (2026-11-14 -> 11-26) was read: pane-sidebar-persist/actions ran in the width-4 pool 28 times, every one green, never PARALLEL-SENSITIVE. The 10-26 reds fell on the sidebar-rebuild day; no marker added.
 - Evidence: fresh pool run 20261126-014241 (persist 60, actions 39, beside stash-restore + pane-stack-grid) ALL PASS. Due sweep 20261126-015034 for lane B's T2301 Window.zig/strip_face.zig edit: 52 green (harness floor ALL PASS 37) and stamped; 12 red, all against open cards. Newly acked: window-color -> T3386, pane-hwnd-reap -> T2921.
 - Filed: none.
+
+## 2026-11-26 03:00 lane a - T2329 done: the all-windows sidebar's drag-only stash well is checked on-box
+- What: pane-sidebar-foreign-drag.ps1 gains sections C and D. C renames window A so it sorts first, drags A's own row in the expanded all-windows panel, and reads the well open under A's last pane (`tray=x,y` mid-drag, same column, head below down one row, nothing above moved). Dropped on the well (`tray hot=1`) the pane is stashed and the line reads `tray=-` with the head back. D drags A's stashed row: no well on any mid-drag line, Escape cancels it. No app defect.
+- Evidence: acceptance-parallel run ALL PASS (58 assertions), -NegativeControl red (11). Scoped harness floor completed (sleep-handshake re-run green after the new sleeps became condition waits) and stamped. unwired-hook and docs-routing audits green.
+- Filed: none.

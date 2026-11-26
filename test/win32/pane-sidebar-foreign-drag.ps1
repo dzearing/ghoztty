@@ -15,6 +15,13 @@
 #   B. One of Charlie's rows (foreign again) carried into A's own GRID, beside
 #      P: the pane - the same HWND - is now A's, and P is still A's (a split,
 #      not a swap that sent P away).
+#   C. (T2329, Mac b7de64ce8) A renamed Alpha so it sorts first; A's own row
+#      dragged: mid-drag the outline opens the drag-only stash well under A's
+#      last pane (`tray=<x>,<y>`), the head below moves down one row and
+#      nothing above it moves; released on the well (`tray hot=1`) the pane
+#      is stashed and the line reads `tray=-` again.
+#   D. With that pane stashed, a drag of A's stashed row opens no well
+#      (`tray=-` on every mid-drag line); Escape cancels it.
 #
 # Geometry comes from the `pane sidebar outline` log line (A's, `win=`).
 # Runs on a BACKGROUND desktop (lib\TestDesktop.ps1) and never takes the
@@ -268,6 +275,87 @@ try {
         Assert "B: one pane left Charlie ($($termsC0.Count) -> $($termsC1.Count))" ($came.Count -eq 1)
         Assert "B: ...and is the same HWND, now in A" ($came.Count -eq 1 -and $termsA1 -contains $came[0])
         Assert "B: P is still A's (a split beside it, not a swap)" (@($termsA0 | Where-Object { $termsA1 -contains $_ }).Count -eq $termsA0.Count)
+    }
+
+    "== C: a drag opens this window's empty stash well under its last pane, and the release closes it (T2329)"
+    # A now holds P and the pane B brought in, nothing stashed. Renamed so it
+    # sorts FIRST: the well opens under A's last pane, and only a group laid
+    # out below it shows the rows opening to make room.
+    $mark = Get-LogCount
+    Assert "setup: window A renamed Alpha ($(Get-CliErr))" ((Invoke-Cli "+rename --target=window-1 --title=Alpha") -eq 0)
+    [void](Wait-Log 'pane sidebar all-windows groups=' $mark 2000)
+    Assert "setup: A is the active window again" (Set-TestActiveWindow -Window $top)
+    $sb = Get-Sidebar $top
+    $gA = Get-GroupOf 'Alpha'
+    # The relaid outline after the rename (Wait-Log re-reads once it lands).
+    $o0 = Read-Outline (Wait-Log $aLine $mark 3000)
+    $aRows = @(if ($o0) { $o0.Items | Where-Object { $_.Group -eq $gA -and $_.Sec -eq 'g' } | Sort-Object { $_.Y } })
+    $below0 = if ($o0 -and $aRows.Count -gt 0) { $o0.Heads | Where-Object { $_.Kind -eq 'W' -and $_.Group -ne $gA -and $_.Y -gt $aRows[-1].Y } | Sort-Object { $_.Y } | Select-Object -First 1 } else { $null }
+    Assert "setup: A's group (g$gA) lists two grid rows and a window head below them" ($aRows.Count -eq 2 -and $null -ne $below0)
+    Assert "C: at rest the outline carries no well (tray=-)" ($o0 -and $o0.Raw -match ' tray=- ')
+    $visA0 = @(Get-TestChildWindows -Window $top -Class 'GhozttyTerminal' | Where-Object Visible).Count
+    if ($aRows.Count -eq 2 -and $below0) {
+        $mark = Get-LogCount
+        if (-not $NegativeControl) {
+            Assert "C: press and travel on A's own first row delivered" (Start-RowDrag $top $sb $aRows[0])
+        }
+        Assert "C: A's own row started a drag (log)" ($null -ne (Wait-Log 'pane sidebar row drag start item=\d+ section=grid$' $mark 2000))
+        $dLine = Wait-Log "pane sidebar outline .* tray=\d+,\d+ win=$([int64]$top)$" $mark 2000
+        $o1 = Read-Outline $dLine
+        $tx = $null; $ty = $null
+        if ($dLine -match ' tray=(\d+),(\d+) ') { $tx = [int]$Matches[1]; $ty = [int]$Matches[2] }
+        Assert "C: mid-drag the outline reports the well (tray=$tx,$ty)" ($null -ne $ty)
+        Assert "C: ...under A's last pane, in its column (last row y=$($aRows[-1].Y), x=$($aRows[-1].X))" ($null -ne $ty -and $ty -gt $aRows[-1].Y -and [math]::Abs($tx - $aRows[-1].X) -le (Px 2))
+        $below1 = if ($o1) { Head $o1 $below0.Group } else { $null }
+        $grow = if ($below1) { $below1.Y - $below0.Y } else { 0 }
+        Assert "C: ...and the window head below it sits one row lower (moved $grow px)" ($grow -ge (Px 20) -and $grow -le (Px 80))
+        Assert "C: ...and above it nothing moved (A's first row y=$($aRows[0].Y))" ($o1 -and @($o1.Items | Where-Object { $_.Group -eq $gA -and $_.Y -eq $aRows[0].Y }).Count -ge 1)
+        # Onto the well: the stash target lights, and the release stashes.
+        $wx = $sb.Left + $tx; $wy = $sb.Top + $ty
+        [void](Move-Drag $top $wx ($wy - (Px 12)) 'move')
+        Assert "C: move onto the well delivered" (Move-Drag $top $wx $wy 'move')
+        Assert "C: the well lights as the stash target (log)" ($null -ne (Wait-Log 'pane sidebar tray hot=1' $mark 2000))
+        $mark2 = Get-LogCount
+        [void](Move-Drag $top $wx $wy 'up')
+        Assert "C: the release stashes the pane (log)" ($null -ne (Wait-Log 'pane drop stashed index=' $mark2 3000))
+        $deadline = (Get-Date).AddSeconds(3)
+        do {
+            $visA1 = @(Get-TestChildWindows -Window $top -Class 'GhozttyTerminal' | Where-Object Visible).Count
+            if ($visA1 -lt $visA0) { break }
+            Start-Sleep -Milliseconds 100
+        } while ((Get-Date) -lt $deadline)
+        Assert "C: ...one of A's panes left the screen ($visA0 -> $visA1)" ($visA1 -eq ($visA0 - 1))
+        $o2 = Read-Outline (Wait-Log $aLine $mark2 2000)
+        Assert "C: after release the outline reads tray=-" ($o2 -and $o2.Raw -match ' tray=- ')
+        # @() OUTSIDE the if: a one-element result unrolls to the hashtable,
+        # whose .Count is its key count.
+        $sRows = @(if ($o2) { $o2.Items | Where-Object { $_.Group -eq $gA -and $_.Sec -eq 's' } })
+        if ($sRows.Count -ne 1) { "  (after release: $(if ($o2) { $o2.Raw } else { 'no outline line' }))" }
+        Assert "C: ...and A's group now lists the pane as stashed" ($sRows.Count -eq 1)
+        $below2 = if ($o2) { Head $o2 $below0.Group } else { $null }
+        "  (head below A: rest y=$($below0.Y), mid-drag y=$($below1.Y), after release y=$($below2.Y))"
+        Assert "C: ...and the head below is no longer pushed down by a well" ($below2 -and $below2.Y -lt $below1.Y)
+
+        "== D: no well while this window already stashes a pane (T2329)"
+        if ($sRows.Count -eq 1) {
+            $mark = Get-LogCount
+            if (-not $NegativeControl) {
+                Assert "D: press and travel on A's stashed row delivered" (Start-RowDrag $top $sb $sRows[0])
+            }
+            Assert "D: the stashed row started a drag (log)" ($null -ne (Wait-Log 'pane sidebar row drag start item=\d+ section=stashed$' $mark 2000))
+            Assert "D: the drag armed A's sidebar (log)" ($null -ne (Wait-Log 'pane drag sidebars armed=' $mark 2000))
+            $dl = @(Get-Content $script:errlog -ErrorAction SilentlyContinue | Select-Object -Skip $mark | Where-Object { $_ -match "pane sidebar outline .* win=$([int64]$top)$" })
+            Assert "D: mid-drag A's outline still reads tray=- ($($dl.Count) line(s))" ($dl.Count -ge 1 -and @($dl | Where-Object { $_ -notmatch ' tray=- ' }).Count -eq 0)
+            $hP = @(Get-TestChildWindows -Window $top -Class 'GhozttyTerminal' | Where-Object Visible) | Select-Object -First 1
+            $k = if ($hP) { Send-TestKeys -Window $top -Target ([IntPtr]$hP.Hwnd) -Key Escape } else { $false }
+            Assert "D: Escape delivered" $k
+            Assert "D: Escape ended it - the held row glides back (log)" ($null -ne (Wait-Log 'pane sidebar row settle from=' $mark 2000))
+            $mark3 = Get-LogCount
+            [void](Move-Drag $top ($sb.Left + $sRows[0].X) ($sb.Top + $sRows[0].Y + (Px 14)) 'up')
+            Assert "D: the release after the cancel drops nothing (log)" ($null -eq (Wait-Log 'pane drop ' $mark3 1000))
+            $o3 = Read-Outline (Wait-Log $aLine 0 1000)
+            Assert "D: the pane is still stashed afterwards" ($o3 -and @($o3.Items | Where-Object { $_.Group -eq $gA -and $_.Sec -eq 's' }).Count -eq 1)
+        }
     }
 
     Assert "no crash" (-not ($app.Process -and $app.Process.HasExited))
