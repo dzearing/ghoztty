@@ -2092,6 +2092,7 @@ Both are re-read each time their page is SHOWN (`setPage`), as Mac's
   `$XDG_CACHE_HOME/ghoztty/machines[-debug].json`.
 
 Seam: `--op=host_settings --value=<device id>` (the row's button),
+`--op=new_remote_window` (the account row's New Remote Window..., T3674),
 `host-settings-fill --key=working_directory|shell --value=`,
 `host-settings-preset --index=`, `host-settings-answer --value=save|cancel`
 (in a separate request from the one that opened it); state adds `live`.
@@ -3131,9 +3132,10 @@ closes).
 powershell -NoProfile -File scripts\linux\wsl-run.ps1 -CommandFile test\linux\machine-chooser.sh
 ```
 
-Ends `MACHINE CHOOSER: ALL PASS` (36 checks, a real relay built from
+Ends `MACHINE CHOOSER: ALL PASS` (35 checks, a real relay built from
 `relay/` as in `cli-remote-window.sh` section Y, about 1 minute warm): the
-chord, the list and detail, New Window on the relayed agent, Disconnect then
+chord, the window menu and Settings openers, the list and detail, New Window
+on the relayed agent, Disconnect then
 Resume of the SAME far shell, Show without a second attach, End, and a local
 session a SIGKILLed app left behind resumed. A local session's roster `pid` is
 the top of its process tree, so the test matches a local shell by ancestry.
