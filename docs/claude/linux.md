@@ -6,6 +6,18 @@
 > is how to actually run things, test things inside the headless harness, and
 > read a crash.
 
+> **The quality bar is the Mac, on a real screen** (user, 2026-11-25; T3793).
+> Functional parity in the headless Weston is not "done": the first look at
+> the Linux build on the real WSLg display found a see-through window (T3783),
+> a too-bold title (T3791) and a resize that felt slow (T3792), all green in
+> the harness. A visible change is judged side by side against the Mac
+> (`docs/reference/` for its values) on the real WSLg screen via
+> `scripts\linux\open.ps1`. That puts a window on the user's display, so it
+> runs only when the user has asked for it, never from a lane, sweep or floor
+> step. Until then, record that half as NOT RUN and park the task on the
+> user; the automated stand-in is `open.ps1 -Check`'s on-screen pixel
+> assertion.
+
 ## The one entry point: `scripts\linux\wsl-run.ps1` (T3329)
 
 Every Linux build, test or launch goes through it. Nothing else calls

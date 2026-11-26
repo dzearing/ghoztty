@@ -40810,3 +40810,7 @@ WebKitGTK's script message carries no frame, and a page-world handler is visible
 - Evidence: headless on d3d12, Debug 1.51ms mean / 2.57ms worst per draw with 15us of resize work; ReleaseSafe 1.36 / 3.23ms with 14us. ALL PASS in both builds. NEGATIVE=1 fails F4 alone. F5 proves the real-screen reader. So the user's "slow" is not the app's frame cost and not the Debug build: it lies on the compositor side (WSLg RDP/RAIL), which only the real screen can measure.
 - Parked: blocked-on user. `unblock-do` holds the open.ps1 commands. The real-screen numbers and a capture decide the fix. A mid-task commit (e89c5f15d3) broke the GTK build for one commit with a shadowed parameter. 79e7e08116 fixed it within minutes.
 - Filed: none.
+## 2026-11-26 01:30 lane l - T3793 parked (needs the user's screen): the Linux quality bar is written down
+- What: re-checked the card. Every review area (chrome, type, sidebar, splits, motion, Settings, scale, themes) is judged side by side on the user's real WSLg display through open.ps1, which the card itself rules out of a lane. Landed the one lane-runnable criterion: docs/claude/linux.md now opens with the quality-bar note (Mac on a real screen, not headless green; real-screen half NOT RUN until the user asks).
+- Parked: blocked-on user, `unblock-do` holds the open.ps1 build. No code changed.
+- Filed: none.
