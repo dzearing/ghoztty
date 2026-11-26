@@ -1799,6 +1799,23 @@ laid out so far, so poll it. The headless output is 1280 px wide and a
 150-column window already fills it, so a test narrows the window - it cannot
 grow past the output.
 
+**What a drag costs per frame (T3792, `resize-frame-cost.sh`).** Every
+terminal pane counts its draws, the core's resize work per configure, and
+the gap between frames while resizes arrive (`src/apprt/gtk/draw_stats.zig`).
+The debug `pane-seen` seam reports them as `draw` (`--reset-draw` zeroes
+them). The script drags the edge 40 steps at a prompt and holds each draw
+under a 16ms frame (F4; `NEGATIVE=1` sleeps 40ms in every draw through
+`GHOZTTY_TEST_DRAW_DELAY_MS` and fails F4 alone). `OPT=ReleaseSafe` measures
+an optimized build in its own prefix. ReleaseFast compiles the seams out.
+Measured 2026-11-26: about 1.5ms a draw and 15us of resize work, in both
+builds. On the real screen the person runs `open.ps1 -DrawStats -Reset`,
+drags, then `open.ps1 -DrawStats` (`scripts/linux/draw-stats.sh`, F5).
+
+```powershell
+powershell -NoProfile -File scripts\linux\wsl-run.ps1 -CommandFile test\linux\resize-frame-cost.sh
+powershell -NoProfile -File scripts\linux\wsl-run.ps1 -Step 'OPT=ReleaseSafe bash test/linux/resize-frame-cost.sh'
+```
+
 **At a prompt (T3630, `prompt-redraw.sh`).** No GTK code is needed for the
 prompt-redraw hold either: a GLArea resize re-renders through `glareaRender`
 -> `drawFrame` with the cells `updateFrame` held back, so a prompt the resize
