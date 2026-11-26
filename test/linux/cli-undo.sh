@@ -366,9 +366,13 @@ hl_check "W12 +close --force of a window ends its shell at once" $? "pid_z=$pid_
 grep -q "panic\|reached unreachable" "$APP_LOG"
 [ $? != 0 ]
 hl_check "P1 the app logged no panic" $? "$(grep -m3 'panic\|unreachable' "$APP_LOG")"
-grep -q "GLib-GObject-CRITICAL\|Gtk-CRITICAL" "$APP_LOG"
+# Any CRITICAL: the app's own log handler writes them as
+# `error(glib): CRITICAL: Adwaita: ...`, which the old
+# `GLib-GObject-CRITICAL\|Gtk-CRITICAL` pattern never matched (T3665).
+grep -q "CRITICAL" "$APP_LOG"
 [ $? != 0 ]
-hl_check "P2 the app logged no GTK/GObject critical" $? "$(grep -m3 'CRITICAL' "$APP_LOG")"
+hl_check "P2 the app logged no GTK/GObject/Adwaita critical" $? "$(grep -m3 'CRITICAL' "$APP_LOG")"
+grep -q "CRITICAL" "$APP_LOG" && { echo "  --- app log: before each CRITICAL ---"; grep -B6 'CRITICAL' "$APP_LOG" | head -60 | sed 's/^/  | /'; }
 
 # What the undo stack did, for reading a red run.
 echo "  --- app log: undo ---"
