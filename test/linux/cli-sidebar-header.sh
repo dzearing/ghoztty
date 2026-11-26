@@ -111,8 +111,8 @@ cli +new-window --target=wa --title=wa > /dev/null 2>&1
 hl_wait_for 15 is wa 's["mode"]' expanded
 # A first launch lists every window; this suite is the per-window list.
 [ "$(field wa 's["all_windows"]')" = True ] && sb wa --click=scope > /dev/null
-hl_wait_for 10 is wa '(s["all_windows"], k)' "(False, ['window', 'terminal'])"
-hl_check "H1 this window's list is its header, then its pane" $? "$(sb wa)"
+hl_wait_for 10 is wa '(s["all_windows"], k)' "(False, ['window', 'terminal', 'tray'])"
+hl_check "H1 this window's list is its header, then its pane, then the empty tray (T3698)" $? "$(sb wa)"
 is wa '(r[0]["label"], r[0]["count"], r[0]["folded"], r[0]["selection"], s["title"])' "('wa', 1, False, 'none', 'Panes')"
 hl_check "H2 the header is the window's name and count, open and unselected; the caption says Panes" $? "$(sb wa)"
 is wa '(r[0]["tools"], r[0]["tools_shown"], r[0]["depth"], p[0]["depth"], p[0]["selected"])' "(['add', 'close'], False, 0, 1, True)"
@@ -124,14 +124,14 @@ ka=$(field wa 'r[0]["pane"]')
 hl_wait_for 10 is wa '(k, r[0]["folded"], r[0]["selection"], r[0]["selected"])' "(['window'], True, 'accent', True)"
 hl_check "H4 the chevron folds the panes away, and the folded header carries the selection" $? "$(sb wa)"
 sb wa "--click=fold:$ka" > /dev/null
-hl_wait_for 10 is wa '(k, r[0]["folded"])' "(['window', 'terminal'], False)"
+hl_wait_for 10 is wa '(k, r[0]["folded"])' "(['window', 'terminal', 'tray'], False)"
 hl_check "H5 and unfolds them again" $? "$(sb wa)"
 
 # ---- 3. its + and x ----------------------------------------------------------
 sb wa "--click=tool:add:$ka" > /dev/null
 hl_wait_for 10 lst_is 'len(ids("wa"))' 2
 hl_check "H6 the header's + adds a pane to this window" $? "$(lst 'ids("wa")')"
-hl_wait_for 10 is wa '(k, r[0]["count"])' "(['window', 'terminal', 'terminal'], 2)"
+hl_wait_for 10 is wa '(k, r[0]["count"])' "(['window', 'terminal', 'terminal', 'tray'], 2)"
 hl_check "H7 listed under the header, which counts it" $? "$(sb wa)"
 grep -q 'pane sidebar add pane dir=right from=row' "$APP_LOG"
 hl_check "H7b split the way the user last split by hand (right, by default)" $?
@@ -148,7 +148,7 @@ hl_check "H8b and no other" $? "$(lst 'list(W)')"
 # ---- 4. a grouped window: its group's header above its own ------------------
 cli +new-window --target=p1 --title="grp: one" > /dev/null 2>&1
 cli +new-window --target=p2 --title="grp: two" > /dev/null 2>&1
-hl_wait_for 15 is p1 '(k, r[0]["label"], r[0]["count"], r[1]["label"])' "(['project', 'window', 'terminal'], 'grp', 2, 'one')"
+hl_wait_for 15 is p1 '(k, r[0]["label"], r[0]["count"], r[1]["label"])' "(['project', 'window', 'terminal', 'tray'], 'grp', 2, 'one')"
 hl_check "H9 a project window's list has the group's header (counting the group) over its own, labeled by worktree" $? "$(sb p1)"
 is p1 '(r[1]["depth"], r[2]["depth"])' "(1, 2)"
 hl_check "H9b each a level in under the one above" $? "$(sb p1)"
@@ -156,12 +156,12 @@ sb p1 "--click=fold:project:grp" > /dev/null
 hl_wait_for 10 is p1 '(k, r[0]["folded"])' "(['project'], True)"
 hl_check "H10 a folded group is its header alone" $? "$(sb p1)"
 sb p1 "--click=fold:project:grp" > /dev/null
-hl_wait_for 10 is p1 'k' "['project', 'window', 'terminal']"
+hl_wait_for 10 is p1 'k' "['project', 'window', 'terminal', 'tray']"
 hl_check "H10b unfolded, the window is back" $? "$(sb p1)"
 
 # ---- 5. the rail's + ---------------------------------------------------------
 sb wa --click=toggle > /dev/null
-hl_wait_for 10 is wa '(s["mode"], k, r[0]["tooltip"], r[0]["label_shown"])' "('mini', ['rail_add', 'terminal', 'terminal'], 'New pane', False)"
+hl_wait_for 10 is wa '(s["mode"], k, r[0]["tooltip"], r[0]["label_shown"])' "('mini', ['rail_add', 'terminal', 'terminal', 'tray'], 'New pane', False)"
 hl_check "H11 the rail starts with a + where the header was, then a tile per pane" $? "$(sb wa)"
 sb wa --click=rail-add > /dev/null
 hl_wait_for 10 lst_is 'len(ids("wa"))' 3
