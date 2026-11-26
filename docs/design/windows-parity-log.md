@@ -40918,6 +40918,10 @@ WebKitGTK's script message carries no frame, and a page-world handler is visible
 - Filed: none.## 2026-11-26 09:50 lane a - T2347 done: background windows' all-windows lists wait for activation on title/activity ticks
 - What: the coalesced title/activity refresh (T1935) now re-reads only the window in use's all-windows list. A background list marks itself stale (`pane sidebar roster deferred`) and re-reads in `catchUp` on WM_ACTIVATE (`roster caught up`), as Mac's PaneRoster/isLive does. Layout, focus, close and hand-off refreshes still reach every list at once, because rows hold pane/window pointers and close-undo frees a parked pane later. A first cut that deferred everything was withdrawn for that reason. Policy: src/apprt/win32/pane_roster.zig.
 - Evidence: pane-sidebar-all-windows 188/188 (new section 6a), pane-sidebar-shared 48/48, window-count-scale 16/16 alone; due sweep reds all acked to open tasks; harness floor PASS; zig lanes PASS.
+
+## 2026-11-26 10:50 lane b - T2351 done: a clipboard test skipped by a locked screen now says the workstation is locked
+- What: re-verified first - T2346 (bd894bfb06) already SKIPs this card's shape (OpenClipboard -> 5, no window named) as `held_unnamed`, so the floor no longer goes red on a lock. Left was naming it: `clipboard_open.Holder.Kind.desktop_locked`, chosen by `holder()` on a refusal when `inputDesktopLocked()` sees the secure `Winlogon` input desktop (or OpenInputDesktop refused with 5). `classifyWindowless(open_ok, err, input_locked)` and `isLockedInputDesktop` are pure; a non-5 failure stays unexcused even when locked. `Holder.boxConditionText()` words both skips (clipboard round trip, ViewerPane copy oracle).
+- Evidence: `zig test src/apprt/win32/clipboard_open.zig` 18/18 (3 new); floor-lane -Lane all ALL LANES PASS; due sweep 25 pass, 12 reds all pre-existing and acked to open tasks. Live run on a locked box NOT RUN (locking it takes the user's screen).
 - Filed: none.
 
 ## 2026-11-26 10:55 lane l - T3676 done: on Linux a sign-out that cannot remove this machine offers Sign Out Anyway, and the removal finishes itself

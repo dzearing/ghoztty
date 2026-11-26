@@ -10748,9 +10748,9 @@ test "host floor: a real controller on a real window, on this box" {
                 const h = clipboard_open.holder();
                 if (h.isBoxCondition()) {
                     log.warn(
-                        "SKIPPED copy[{s}] clipboard oracle: clipboard held by another process " ++
-                            "(holder={s} pid={d} image='{s}' last_error={d}) (T2231/T2346)",
-                        .{ case.tag, @tagName(h.kind), h.pid, h.image(), h.last_error },
+                        "SKIPPED copy[{s}] clipboard oracle: {s} " ++
+                            "(holder={s} pid={d} image='{s}' last_error={d}) (T2231/T2346/T2351)",
+                        .{ case.tag, h.boxConditionText(), @tagName(h.kind), h.pid, h.image(), h.last_error },
                     );
                     continue;
                 }

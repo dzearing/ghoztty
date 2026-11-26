@@ -162,6 +162,15 @@ pub const Holder = struct {
         /// does tearing down a test desktop under a live holder; what produced
         /// the real wedge is still unknown, which is why the skip prints it.
         held_unnamed,
+        /// The open is refused because the workstation is LOCKED (T2351): the
+        /// input desktop is the secure `Winlogon` one that LogonUI draws, and
+        /// while it is up `OpenClipboard` answers 5 to every process on the
+        /// user's desktop with no window named - the same trace as
+        /// `held_unnamed`, but with a cause we can name. It is the loop's
+        /// normal state whenever the user is away, so a skip that said "held
+        /// by another process" sent readers hunting for a process that does
+        /// not exist (2026-10-27/28: three red floors, LogonUI up each time).
+        desktop_locked,
         /// The open fails for some other reason with no window named. Kept
         /// apart from the box conditions so a caller does not excuse it.
         unknown,
@@ -187,21 +196,71 @@ pub const Holder = struct {
     /// `this_process` and `unknown` are still failures.
     pub fn isBoxCondition(self: *const Holder) bool {
         return switch (self.kind) {
-            .other_process, .held_unnamed => true,
+            .other_process, .held_unnamed, .desktop_locked => true,
             .free, .this_process, .unknown => false,
+        };
+    }
+
+    /// What a skip says the box is doing, in words a reader can act on: a
+    /// lock is "come back when the user is", a holder is "find that process".
+    pub fn boxConditionText(self: *const Holder) []const u8 {
+        return switch (self.kind) {
+            .desktop_locked => "the workstation is locked (LogonUI owns the input desktop, so every OpenClipboard is refused)",
+            .other_process => "the clipboard is held by another process",
+            .held_unnamed => "the clipboard open is refused with no holding window named",
+            .free, .this_process, .unknown => "not a box condition",
         };
     }
 };
 
 /// The verdict when no window is named as holding the clipboard, from the
-/// probe's own open. Pure, so the classification is tested without having to
-/// reproduce a wedge nobody has managed to build on purpose.
-pub fn classifyWindowless(open_ok: bool, last_error: u32) Holder.Kind {
+/// probe's own open and whether the input desktop is the locked one. Pure, so
+/// the classification is tested without having to lock the box or reproduce a
+/// wedge nobody has managed to build on purpose.
+pub fn classifyWindowless(open_ok: bool, last_error: u32, input_locked: bool) Holder.Kind {
     if (open_ok) return .free;
-    return if (last_error == error_access_denied) .held_unnamed else .unknown;
+    if (last_error != error_access_denied) return .unknown;
+    return if (input_locked) .desktop_locked else .held_unnamed;
 }
 
 const error_access_denied: u32 = 5;
+
+/// The name of the secure desktop LogonUI runs on (lock screen, Ctrl+Alt+Del,
+/// the credential prompt). The user's own desktop is `Default`; a test desktop
+/// has a name of its own and is never the input desktop.
+const winlogon_name = std.unicode.utf8ToUtf16LeStringLiteral("Winlogon");
+
+/// Is the input desktop the locked one? Pure over the two facts the probe can
+/// gather: whether `OpenInputDesktop` succeeded (and its error if not), and
+/// the input desktop's name when it did.
+///
+/// A user process normally cannot open `Winlogon` at all - the open fails with
+/// 5 - so that is read as locked. Any OTHER open failure is not evidence of a
+/// lock and reads as unlocked, which keeps the skip from widening: the caller
+/// then reports `held_unnamed`, exactly as before T2351.
+pub fn isLockedInputDesktop(open_ok: bool, open_err: u32, name: []const u16) bool {
+    if (!open_ok) return open_err == error_access_denied;
+    return std.ascii.eqlIgnoreCase(
+        std.mem.sliceAsBytes(name),
+        std.mem.sliceAsBytes(winlogon_name[0..]),
+    );
+}
+
+/// Ask the box whether the workstation is locked right now. Diagnostic only:
+/// it is called after a clipboard open has already failed.
+pub fn inputDesktopLocked() bool {
+    const desk = w32.OpenInputDesktop(0, 0, w32.DESKTOP_READOBJECTS) orelse
+        return isLockedInputDesktop(false, w32.GetLastError(), &.{});
+    defer _ = w32.CloseDesktop(desk);
+    var name: [64]u16 = undefined;
+    var len: u32 = 0;
+    if (w32.GetUserObjectInformationW(desk, w32.UOI_NAME, &name, @sizeOf(@TypeOf(name)), &len) == 0)
+        return false;
+    // `len` counts bytes including the terminating NUL.
+    const n = @min(name.len, len / @sizeOf(u16));
+    const trimmed = std.mem.sliceTo(name[0..n], 0);
+    return isLockedInputDesktop(true, 0, trimmed);
+}
 
 /// Probe the clipboard and say who holds it. Opens and closes it once when no
 /// window is named as holding it, so it is a test and diagnostic helper, not a
@@ -217,7 +276,9 @@ pub fn holder() Holder {
             return .{ .kind = .free };
         }
         const err = w32.GetLastError();
-        return .{ .kind = classifyWindowless(false, err), .last_error = err };
+        // Asked only for a refusal: it is the one failure a lock produces.
+        const locked = err == error_access_denied and inputDesktopLocked();
+        return .{ .kind = classifyWindowless(false, err, locked), .last_error = err };
     };
     var pid: u32 = 0;
     _ = w32.GetWindowThreadProcessId(hwnd, &pid);
@@ -316,10 +377,10 @@ test "open then close leaves the clipboard takeable again" {
         const h = holder();
         if (h.isBoxCondition()) {
             log.warn(
-                "SKIPPED clipboard round trip: clipboard held by another process " ++
+                "SKIPPED clipboard round trip: {s} " ++
                     "(holder={s} pid={d} image='{s}' last_error={d}) - a box condition, " ++
-                    "not this helper (T2231/T2346)",
-                .{ @tagName(h.kind), h.pid, h.image(), h.last_error },
+                    "not this helper (T2231/T2346/T2351)",
+                .{ h.boxConditionText(), @tagName(h.kind), h.pid, h.image(), h.last_error },
             );
             return error.SkipZigTest;
         }
@@ -363,11 +424,13 @@ test "holder: a free clipboard reads as free, and a held one names this process"
 }
 
 test "classifyWindowless: only a refused open with no window is a box condition (T2346)" {
-    try std.testing.expectEqual(Holder.Kind.free, classifyWindowless(true, 0));
-    try std.testing.expectEqual(Holder.Kind.held_unnamed, classifyWindowless(false, 5));
-    // Any other failure stays unexcused.
-    try std.testing.expectEqual(Holder.Kind.unknown, classifyWindowless(false, 0));
-    try std.testing.expectEqual(Holder.Kind.unknown, classifyWindowless(false, 1418));
+    try std.testing.expectEqual(Holder.Kind.free, classifyWindowless(true, 0, false));
+    try std.testing.expectEqual(Holder.Kind.free, classifyWindowless(true, 0, true));
+    try std.testing.expectEqual(Holder.Kind.held_unnamed, classifyWindowless(false, 5, false));
+    // Any other failure stays unexcused - a lock does not excuse it either.
+    try std.testing.expectEqual(Holder.Kind.unknown, classifyWindowless(false, 0, false));
+    try std.testing.expectEqual(Holder.Kind.unknown, classifyWindowless(false, 1418, false));
+    try std.testing.expectEqual(Holder.Kind.unknown, classifyWindowless(false, 1418, true));
 
     const unnamed: Holder = .{ .kind = .held_unnamed, .last_error = 5 };
     try std.testing.expect(unnamed.isBoxCondition());
@@ -377,6 +440,48 @@ test "classifyWindowless: only a refused open with no window is a box condition 
     inline for (.{ Holder.Kind.free, Holder.Kind.this_process, Holder.Kind.unknown }) |k| {
         const h: Holder = .{ .kind = k };
         try std.testing.expect(!h.isBoxCondition());
+    }
+}
+
+test "a refusal on a locked workstation names the lock, not a phantom holder (T2351)" {
+    // The 2026-10-27/28 shape: OpenClipboard -> 5, no window named, LogonUI up.
+    const k = classifyWindowless(false, 5, true);
+    try std.testing.expectEqual(Holder.Kind.desktop_locked, k);
+    const h: Holder = .{ .kind = k, .last_error = 5 };
+    try std.testing.expect(h.isBoxCondition());
+    try std.testing.expect(!h.isOtherProcess());
+    try std.testing.expect(std.mem.indexOf(u8, h.boxConditionText(), "locked") != null);
+    // And the other box conditions do not claim a lock.
+    const other: Holder = .{ .kind = .other_process };
+    try std.testing.expect(std.mem.indexOf(u8, other.boxConditionText(), "locked") == null);
+    const unnamed: Holder = .{ .kind = .held_unnamed };
+    try std.testing.expect(std.mem.indexOf(u8, unnamed.boxConditionText(), "locked") == null);
+}
+
+test "isLockedInputDesktop: Winlogon or a refused open is locked, anything else is not" {
+    const L = std.unicode.utf8ToUtf16LeStringLiteral;
+    try std.testing.expect(isLockedInputDesktop(true, 0, L("Winlogon")));
+    try std.testing.expect(isLockedInputDesktop(true, 0, L("winlogon")));
+    try std.testing.expect(!isLockedInputDesktop(true, 0, L("Default")));
+    try std.testing.expect(!isLockedInputDesktop(true, 0, L("ghoztty-test-desk")));
+    try std.testing.expect(!isLockedInputDesktop(true, 0, L("Winlogon2")));
+    // A user process cannot open the secure desktop: that refusal IS the lock.
+    try std.testing.expect(isLockedInputDesktop(false, 5, &.{}));
+    // Any other failure to ask is not evidence of one.
+    try std.testing.expect(!isLockedInputDesktop(false, 0, &.{}));
+    try std.testing.expect(!isLockedInputDesktop(false, 6, &.{}));
+}
+
+test "inputDesktopLocked answers on this box without crashing" {
+    if (@import("builtin").os.tag != .windows) return error.SkipZigTest;
+    // Live probe: the answer depends on the box, so it is logged, not asserted
+    // (the pure rule above is what is asserted). It must agree with a free
+    // clipboard: a box that can open the clipboard is not locked.
+    const locked = inputDesktopLocked();
+    log.info("inputDesktopLocked={}", .{locked});
+    if (open(null)) {
+        _ = w32.CloseClipboard();
+        try std.testing.expect(!locked);
     }
 }
 

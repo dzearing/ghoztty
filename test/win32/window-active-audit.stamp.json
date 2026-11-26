@@ -1,10 +1,11 @@
 {
     "guard":  "window-active-audit",
     "script":  "test/win32/window-active-audit.ps1",
-    "generated":  "2026-11-26T09:56:32-08:00",
-    "commit":  "125a6a628a",
+    "generated":  "2026-11-26T10:16:18-08:00",
+    "commit":  "5dfa91a9cc",
     "uncommitted":  [
-
+                        "src/apprt/win32/clipboard_open.zig",
+                        "src/apprt/win32/ViewerPane.zig"
                     ],
     "files":  {
                   "src/apprt/win32/about_links.zig":  "9bb9ec60b7b6099fda1350ec165c06d9404a32c4f53de1bb2fd0ce697a52683a",
@@ -89,7 +90,7 @@
                   "src/apprt/win32/ClaudeHookSpec.zig":  "6b1fd51e16dd79b3a3a30a296ba539cc2b9e9575b7043441ed302ff5e99ff86e",
                   "src/apprt/win32/ClaudeKeybinding.zig":  "a290a38d7f59255197242ed9303bdfcde5ba0022cd3d6cc60903c183c147ecf5",
                   "src/apprt/win32/clipboard_image.zig":  "b90cac60d5eb7ce990cca439a2cf1dacd502895580fff337d6995b6736482e7d",
-                  "src/apprt/win32/clipboard_open.zig":  "2c4245d76adba7068a5a1c6a498d32bbfe811d48b29446ef25091842d5d90b4d",
+                  "src/apprt/win32/clipboard_open.zig":  "308d53ba5abcbb95da6d81ef9ad79c4d8efe08be1c52c65a8479cca9c56a3f2e",
                   "src/apprt/win32/close_undo.zig":  "8316a81b0aeb43382d0f196c37933a101b1503bbe022c9a25b3e62937e221910",
                   "src/apprt/win32/CloseUndo.zig":  "9210f8638e65623f49300a63518ddb622ff3a24f18859497b60be1dae8458159",
                   "src/apprt/win32/color_math.zig":  "c876c6551fd55dc02606b05d65665ef55e8d2bd4197d28a4c86ba32eaedb8b7f",
@@ -458,7 +459,7 @@
                   "src/apprt/win32/ViewerFindBar.zig":  "6ee907004fb2b44c09adbb581f154b4066299fd389391a8379fab8758387760b",
                   "src/apprt/win32/ViewerImageDecode.zig":  "11d9a32e27289f795d9a6d4779c7dc18db054eff55a147d84f029f0f958db7b2",
                   "src/apprt/win32/ViewerNavBar.zig":  "a407509dd2226edbff97599f5bc8583e5c01a83d74d4126125c4ea0027a5f306",
-                  "src/apprt/win32/ViewerPane.zig":  "72cab4e995b9b24192d42300c3e1a550588ba48896a77dffc5e0bd66a14640f8",
+                  "src/apprt/win32/ViewerPane.zig":  "c80eb832dd9efeaa23e29d9a24bb5bf3fcae4c7f51d0103c34cf1a953f484498",
                   "src/apprt/win32/ViewerResourceServe.zig":  "bd121e0ff837e006c5be318b0908551de2987af86c7312da37e0143a0fbcb2f8",
                   "src/apprt/win32/ViewerTOCPanel.zig":  "078f58e513a7cc782fb29c1fa91081b355a07118894eef39bb641552410a5700",
                   "src/apprt/win32/ViewerWorktreeProbe.zig":  "5d03178b045024eb4a7adc140aa6cf83f4d75784c313f07d55ffa815e3c86435",
