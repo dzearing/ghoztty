@@ -1,18 +1,18 @@
 {
     "guard":  "new-tab-shell",
     "script":  "test/win32/new-tab-shell.ps1",
-    "generated":  "2026-11-25T18:38:38-08:00",
-    "commit":  "caa0d1e03",
+    "generated":  "2026-11-25T20:23:49-08:00",
+    "commit":  "169fd8fa7c",
     "uncommitted":  [
-                        "src/apprt/win32/pane_restart.zig"
+                        "test/win32/new-tab-shell.ps1"
                     ],
     "files":  {
                   "src/apprt/win32/new_tab_shell.zig":  "0ce08329e3ce909e9bfbe6519577511a35378e5737e65d42e365510ae80a0637",
                   "src/apprt/win32/pane_restart.zig":  "024a4bc0aca9e59eda1db93576b3f97aeb60735e88d4f956f7b602565b5f6332",
                   "src/apprt/win32/shell_menu.zig":  "d02dda56bb33353ae90be864fd6f30c7feef6a7e28235ea4dc853b37c7ff3e0a",
-                  "test/win32/new-tab-shell.ps1":  "2dbe0a4c1c5c3c9913230223ae226c4c8b1d50d52acf91968c85021805526c41"
+                  "test/win32/new-tab-shell.ps1":  "02abaa5c67a48fc6b47916699336c18cf5f928b39ca717f9b9826999f5affea5"
               },
     "code":  {
-                 "test/win32/new-tab-shell.ps1":  "code1:1b7e7fbdc6e31c8a62ac53a071ec3d6980310a3535df1a12073284425fcc54b5"
+                 "test/win32/new-tab-shell.ps1":  "code1:8cb629a0c039d94ce200a6130bb296febd05278b79967bec2a45ec99f7870b42"
              }
 }

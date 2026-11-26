@@ -1,8 +1,8 @@
 {
     "guard":  "wsl-run",
     "script":  "test/linux/wsl-run-guard.ps1",
-    "generated":  "2026-11-25T20:29:00-08:00",
-    "commit":  "0b7d13cf33",
+    "generated":  "2026-11-25T20:44:46-08:00",
+    "commit":  "169fd8fa7c",
     "uncommitted":  [
 
                     ],

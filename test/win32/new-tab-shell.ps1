@@ -23,6 +23,12 @@
 #      Windows PowerShell row there opens a powershell.exe tab too.
 #   E. With session persistence on, the "+" pick opens an AGENT session on
 #      powershell.exe (the leaf carries a session id).
+#   F. (T3768) The strip shows a chevron beside "+" - Windows Terminal's split
+#      button - published in +list chrome as new_tab_menu: the same square as
+#      the "+", on its row, hit boxes abutting. A LEFT click on it drops the
+#      same rows as B; Escape opens nothing; picking Windows PowerShell opens a
+#      powershell.exe tab; a left click on "+" itself still opens a tab at once
+#      with no popup.
 #
 # Nothing here starts WSL: the catalog reads the registry, and no pick names a
 # distro. Every menu is driven by posted messages on the background test
@@ -228,6 +234,14 @@ function Close-AnyMenu([IntPtr]$top, [int]$gpid) {
     }
 }
 # Right-click the "+" where the app says it is (+list --json chrome, T231).
+# Left-click the chevron beside "+" (T3768), where the app says it is.
+function Open-ChevronMenu([IntPtr]$top, [int]$gpid) {
+    $r = Get-TestStripRegions -Window $top -Exe $Exe
+    if ($null -eq $r -or $null -eq $r.NewTabMenu) { return [IntPtr]::Zero }
+    $cr = Get-TestWindowRect -Window $top -Client
+    [void](Send-TestMouse -Window $top -Target $top -X ($cr.Left + $r.NewTabMenu.CenterX) -Y ($cr.Top + $r.NewTabMenu.CenterY) -Button left -Action click)
+    return (Wait-TestPopupMenu -ProcessId $gpid -TimeoutMs 3000)
+}
 function Open-PlusMenu([IntPtr]$top, [int]$gpid) {
     $r = Get-TestStripRegions -Window $top -Exe $Exe
     if ($null -eq $r -or $null -eq $r.NewTab) { return [IntPtr]::Zero }
@@ -378,6 +392,61 @@ try {
         Assert "D.7 as a tab ($tabsD -> $(Tab-Total (Get-Tree 'd2')))" ((Tab-Total (Get-Tree 'd2b')) -eq ($tabsD + 1))
     }
     Close-AnyMenu $top $appPid
+
+    # --- F: the chevron beside "+" (T3768) -------------------------------------------
+    Say '== F: a visible chevron beside "+" drops the same list'
+    $rf = Get-TestStripRegions -Window $top -Exe $Exe
+    $chev = $(if ($null -ne $rf) { $rf.NewTabMenu })
+    $plus = $(if ($null -ne $rf) { $rf.NewTab })
+    Assert 'F.1 the strip publishes a chevron beside "+" (+list chrome new_tab_menu)' ($null -ne $chev -and $null -ne $plus)
+    if ($null -ne $chev -and $null -ne $plus) {
+        Say ("    plus=[{0},{1})-[{2},{3})  chevron=[{4},{5})-[{6},{7})" -f $plus.Left, $plus.Top, $plus.Right, $plus.Bottom, $chev.Left, $chev.Top, $chev.Right, $chev.Bottom)
+        Assert "F.2 right of the '+', hit boxes abutting (plus.right $($plus.Right) == chevron.left $($chev.Left))" ($chev.Left -eq $plus.Right)
+        Assert 'F.3 the same square on the same row as the "+"' (
+            $chev.Top -eq $plus.Top -and $chev.Bottom -eq $plus.Bottom -and
+            ($chev.Right - $chev.Left) -eq ($plus.Right - $plus.Left))
+        Assert "F.4 and inside the strip's band (band right $($rf.Band.Right))" ($chev.Right -le $rf.Band.Right)
+    }
+
+    $tabsF = Tab-Total (Get-Tree 'f0')
+    $knownF = Known-Ids 'f0k'
+    $menu = Open-ChevronMenu $top $appPid
+    Assert 'F.5 a LEFT click on the chevron opens a popup' ($menu -ne [IntPtr]::Zero)
+    $rowsF = @(if ($menu -ne [IntPtr]::Zero) { Get-MenuTree $menu })
+    $sameF = ($rowsF.Count -eq $rows.Count -and $rowsF.Count -gt 0)
+    if ($sameF) { for ($i = 0; $i -lt $rowsF.Count; $i++) { if ($rowsF[$i] -cne $rows[$i]) { $sameF = $false } } }
+    Assert "F.6 with exactly the rows the right-click on '+' showed ($($rowsF.Count) vs $($rows.Count))" $sameF
+    [void](Send-TestControlKey -Control $top -Key 'Escape')
+    Assert 'F.7 Escape closes it' (Test-MenuGone $appPid)
+    $strayF = Wait-NewLeaf $knownF 'f1-' 3
+    Assert "F.8 and opens no tab ($tabsF -> $(Tab-Total (Get-Tree 'f1')))" ($null -eq $strayF -and (Tab-Total (Get-Tree 'f1b')) -eq $tabsF)
+
+    $known = Known-Ids 'f2'
+    $menu = Open-ChevronMenu $top $appPid
+    Assert 'F.9 the chevron opens it again' ($menu -ne [IntPtr]::Zero)
+    if ($psIdx -ge 0 -and $menu -ne [IntPtr]::Zero) {
+        Pick-Row $top ($psIdx + 2)
+        Assert 'F.10 choosing a row closes it' (Test-MenuGone $appPid)
+        $new = Wait-NewLeaf $known 'f3-'
+        Assert "F.11 the pick opens a powershell.exe pane (got '$(if ($new) { $new.Proc.ProcessName })')" `
+            ($null -ne $new -and $new.Proc.ProcessName -ieq 'powershell')
+        Assert "F.12 as a tab ($tabsF -> $(Tab-Total (Get-Tree 'f4')))" ((Tab-Total (Get-Tree 'f4b')) -eq ($tabsF + 1))
+    }
+    Close-AnyMenu $top $appPid
+
+    # The "+" half of the split button is unchanged: a left click is a tab now.
+    $rp = Get-TestStripRegions -Window $top -Exe $Exe
+    $tabsP = Tab-Total (Get-Tree 'f5')
+    $known = Known-Ids 'f5k'
+    if ($null -ne $rp -and $null -ne $rp.NewTab) {
+        $cr = Get-TestWindowRect -Window $top -Client
+        [void](Send-TestMouse -Window $top -Target $top -X ($cr.Left + $rp.NewTab.CenterX) -Y ($cr.Top + $rp.NewTab.CenterY) -Button left -Action click)
+    }
+    $popP = Wait-TestPopupMenu -ProcessId $appPid -TimeoutMs 1500
+    Assert 'F.13 a left click on "+" opens no popup' ($popP -eq [IntPtr]::Zero)
+    Close-AnyMenu $top $appPid
+    $newP = Wait-NewLeaf $known 'f6-'
+    Assert "F.14 and opens a tab at once ($tabsP -> $(Tab-Total (Get-Tree 'f7')))" ($null -ne $newP -and (Tab-Total (Get-Tree 'f7b')) -eq ($tabsP + 1))
 
     # --- E: session persistence on --------------------------------------------------
     Say '== E: the "+" pick with session persistence on'

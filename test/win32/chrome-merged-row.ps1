@@ -325,10 +325,20 @@ try {
     Check ($tabs7.Count -ge 1) `
         "setup: tabs measured for the pinned-title probe ($($tabs7.Count) found)"
     if ($tabs7.Count -ge 1) {
-        $plus7 = [Math]::Min($tabs7[$tabs7.Count - 1].Right + $m7.Gap, $m7.PlusLimit)
-        # The title band, client x: one group gap off the "+"'s painted right
-        # edge, to the seam - exactly `caption_layout.mergedTitleRect`.
-        $tL = $plus7 + $m7.BtnPaint + $m7.PadMd
+        # The title band, client x: one group gap off the painted right edge of
+        # the strip's LAST travelling button, to the seam - exactly
+        # `caption_layout.mergedTitleRect`. That button is the shell-list
+        # chevron beside the "+" when the strip has one (T3768), so it is read
+        # from the regions the app publishes rather than re-derived here.
+        $rg7 = Get-TestStripRegions -Window $h -Exe $exe
+        $trail7 = $(if ($null -ne $rg7 -and $null -ne $rg7.NewTabMenu) { $rg7.NewTabMenu } elseif ($null -ne $rg7) { $rg7.NewTab })
+        Check ($null -ne $trail7) "setup: the strip publishes its '+' (and chevron) regions"
+        $trailPaintRight = $(if ($null -ne $trail7) {
+            $trail7.Right - [int](($trail7.Right - $trail7.Left - $m7.BtnPaint) / 2)
+        } else {
+            [Math]::Min($tabs7[$tabs7.Count - 1].Right + $m7.Gap, $m7.PlusLimit) + $m7.BtnPaint
+        })
+        $tL = $trailPaintRight + $m7.PadMd
         $tR = $m7.BandLeft
         # The text DT_VCENTERs in the tab band (TabTopPad..BarH): probe rows
         # around that centerline, in window-bitmap y.

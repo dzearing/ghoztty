@@ -1,13 +1,13 @@
 {
     "guard":  "ipc-list-session-id",
     "script":  "test/win32/ipc-list-session-id.ps1",
-    "generated":  "2026-11-22T02:03:01-08:00",
-    "commit":  "9a40d1d10",
+    "generated":  "2026-11-25T20:26:05-08:00",
+    "commit":  "169fd8fa7c",
     "uncommitted":  [
-                        "test/win32/ipc-list-session-id.ps1"
+                        "src/apprt/ipc/list.zig"
                     ],
     "files":  {
-                  "src/apprt/ipc/list.zig":  "b3cff45d2d8b3b2d45ae055b70e59ce8fe79568ff56241426a747ab1fcb9b892",
+                  "src/apprt/ipc/list.zig":  "078850a9a4f0e1456e50df5bd74942976c03d40f4d437f42b5210ae1ed2243ae",
                   "src/apprt/win32/ipc_session_await.zig":  "42e2b579eea7804bfafdd0a4f26b4cdb48b460a33e2a5013fd9a3d3b0052b19c",
                   "test/win32/ipc-list-session-id.ps1":  "19c4e044a427a7d1844e742f29edaf14179eba49d4f6555409aed7a0e559a455"
               },

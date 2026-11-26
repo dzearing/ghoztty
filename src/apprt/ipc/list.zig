@@ -141,6 +141,10 @@ pub const List = struct {
         /// One entry per tab, in `tabs` order.
         tabs: []const ?Rect,
         new_tab: ?Rect,
+        /// The chevron beside `new_tab` that drops down the shell list
+        /// (T3768). Written only when present, so a server or window without
+        /// one reports exactly what it did before.
+        new_tab_menu: ?Rect = null,
         menu: ?Rect,
     };
 
@@ -355,6 +359,10 @@ pub const List = struct {
             try jws.endArray();
             try jws.objectField("new_tab");
             try writeRect(jws, s.new_tab);
+            if (s.new_tab_menu) |r| {
+                try jws.objectField("new_tab_menu");
+                try writeRect(jws, r);
+            }
             try jws.objectField("menu");
             try writeRect(jws, s.menu);
             try jws.endObject();
@@ -843,6 +851,35 @@ test "List: a window with no tab strip reports chrome with a null tab_strip (T23
             "\"tabs\":[],\"title_set_by_user\":false,\"chrome\":{\"dpi\":96,\"tab_strip\":null}}]}}",
         json,
     );
+}
+
+test "List: the shell-list chevron is published beside new_tab when present (T3768)" {
+    const testing = std.testing;
+    const windows = [_]List.Window{.{
+        .id = "1",
+        .title = "pwsh",
+        .target = null,
+        .focused = true,
+        .tabs = &.{},
+        .chrome = .{
+            .dpi = 96,
+            .tab_strip = .{
+                .band = .{ .left = 4, .top = 4, .right = 900, .bottom = 40 },
+                .tabs = &.{},
+                .new_tab = .{ .left = 6, .top = 4, .right = 38, .bottom = 40 },
+                .new_tab_menu = .{ .left = 38, .top = 4, .right = 70, .bottom = 40 },
+                .menu = null,
+            },
+        },
+    }};
+    const json = try (List{ .windows = &windows }).serializeResponse(testing.allocator);
+    defer testing.allocator.free(json);
+    try testing.expect(std.mem.indexOf(
+        u8,
+        json,
+        "\"new_tab\":{\"left\":6,\"top\":4,\"right\":38,\"bottom\":40}," ++
+            "\"new_tab_menu\":{\"left\":38,\"top\":4,\"right\":70,\"bottom\":40},\"menu\":null",
+    ) != null);
 }
 
 test "List: golden shape — window with split tab" {

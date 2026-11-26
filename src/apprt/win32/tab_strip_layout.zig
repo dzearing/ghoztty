@@ -165,6 +165,13 @@ pub const Metrics = struct {
     stripe_h: i32,
     /// A 1 DIP rule (the inter-tab separator), never thinner than a pixel.
     hairline: i32,
+    /// Painted gap between the "+" and the shell-list chevron beside it
+    /// (T3768): exactly the two hit pads, so the two HIT boxes abut — a click
+    /// anywhere along the pair lands on one of them, and neither ever steals
+    /// the other's (design system §2.1: hit boxes never overlap). Not
+    /// `pad_sm`: `round(2s) * 2` overshoots `round(4s)` by a pixel at 125%,
+    /// which is exactly the overlap the rule forbids.
+    split_gap: i32,
     //
     // NOTE: the hover fill's corner radius and inset used to live here as
     // `btn_corner_r`/`btn_inset_x`/`btn_inset_y`. They moved to
@@ -197,6 +204,7 @@ pub const Metrics = struct {
             .text_pad = px(8.0, scale),
             .stripe_h = @max(px(3.0, scale), 2),
             .hairline = @max(px(1.0, scale), 1),
+            .split_gap = 2 * ib.hit_pad,
         };
     }
 
@@ -284,22 +292,42 @@ pub const Strip = struct {
     /// Right edge of the last laid-out tab (== `strip_pad_l` when none fit).
     tabs_right: i32 = 0,
     new_tab: Rect = .{},
+    /// The chevron beside the "+" that drops down the shell list (T3768,
+    /// Windows Terminal's split button). ZERO when the strip has none — a
+    /// remote window, whose "+" opens that machine's default shell — so every
+    /// half-open hit test misses it by construction, the way it misses `menu`.
+    new_tab_menu: Rect = .{},
     menu: Rect = .{},
 };
 
-/// The furthest right the "+"'s PAINTED square may start.
+/// Which of the strip's optional buttons it paints. `menu` is T260's "≡";
+/// `chevron` is T3768's shell-list chevron beside the "+".
+pub const Controls = struct {
+    menu: bool = true,
+    chevron: bool = false,
+};
+
+/// The furthest right the LAST travelling button's painted square may start:
+/// the chevron when there is one, else the "+".
 ///
-/// With a menu button the "+" stops one `group_gap` short of it; without one
-/// the "+" IS the right-anchored control and takes the menu's slot, which is
-/// why this is the single place the difference is expressed. `runWidth` and
-/// `layout` both read it, so a menu-less strip cannot end up with a run that
-/// disagrees with where the "+" actually lands.
-fn plusPaintLimit(m: Metrics, client_w: i32, has_menu: bool) i32 {
+/// With a menu button it stops one `group_gap` short of it; without one it IS
+/// the right-anchored control and takes the menu's slot, which is why this is
+/// the single place the difference is expressed.
+fn trailPaintLimit(m: Metrics, client_w: i32, has_menu: bool) i32 {
     const band_right = client_w - m.strip_pad_r;
     return if (has_menu)
         band_right - m.btn_paint - m.group_gap - m.btn_paint
     else
         band_right - m.btn_paint;
+}
+
+/// The furthest right the "+"'s PAINTED square may start: the trailing limit,
+/// less the chevron's square and the split gap when the strip has one.
+/// `runWidth` and `layout` both read it, so a strip cannot end up with a run
+/// that disagrees with where the "+" actually lands.
+fn plusPaintLimit(m: Metrics, client_w: i32, c: Controls) i32 {
+    const trail = trailPaintLimit(m, client_w, c.menu);
+    return if (c.chevron) trail - m.split_gap - m.btn_paint else trail;
 }
 
 /// The width the tab run may occupy on a `client_w`-wide strip: everything
@@ -312,7 +340,13 @@ fn plusPaintLimit(m: Metrics, client_w: i32, has_menu: bool) i32 {
 /// the same menu and does not paint. The run then reclaims exactly one painted
 /// square plus one group gap — wider tabs, which is T235's direction.
 pub fn runWidth(m: Metrics, client_w: i32, has_menu: bool) i32 {
-    return plusPaintLimit(m, client_w, has_menu) - m.group_gap - m.strip_pad_l;
+    return runWidthFor(m, client_w, .{ .menu = has_menu });
+}
+
+/// `runWidth` for any set of optional buttons (T3768): a chevron takes one
+/// painted square plus the split gap out of the run.
+pub fn runWidthFor(m: Metrics, client_w: i32, c: Controls) i32 {
+    return plusPaintLimit(m, client_w, c) - m.group_gap - m.strip_pad_l;
 }
 
 /// The most any ONE tab's slot may take: 50% of the run it sits in (design
@@ -464,6 +498,15 @@ pub fn releaseFresh(prefer: []const i32, sticky: []i32, fresh: []const bool, fre
 /// each of which is a half-open `x >= left and x < right` — misses it by
 /// construction instead of by remembering to ask.
 pub fn layout(m: Metrics, client_w: i32, has_menu: bool, prefer: []const i32, out: []Rect) Strip {
+    return layoutFor(m, client_w, .{ .menu = has_menu }, prefer, out);
+}
+
+/// `layout` for any set of optional buttons. With `c.chevron` (T3768) the
+/// chevron's painted square sits `split_gap` right of the "+"'s and travels
+/// with it; `group_gap` is then measured from the CHEVRON to the menu, since
+/// the pair is one group.
+pub fn layoutFor(m: Metrics, client_w: i32, c: Controls, prefer: []const i32, out: []Rect) Strip {
+    const has_menu = c.menu;
     std.debug.assert(out.len >= prefer.len);
     const tab_count = @min(prefer.len, MAX_TABS);
     for (out[0..prefer.len]) |*r| r.* = .{};
@@ -476,7 +519,7 @@ pub fn layout(m: Metrics, client_w: i32, has_menu: bool, prefer: []const i32, ou
     // square inset by `strip_pad_r`, matching the inset the first tab gets on
     // the left. The "+" may travel, but never past `group_gap` short of it.
     const menu_paint_left = client_w - m.strip_pad_r - m.btn_paint;
-    const plus_paint_limit = plusPaintLimit(m, client_w, has_menu);
+    const plus_paint_limit = plusPaintLimit(m, client_w, c);
 
     // The buttons live in the SAME vertical band as the tabs
     // (`tab_top_pad`..`bar_h`), not in the full bar. T204: the close "×" is
@@ -493,8 +536,8 @@ pub fn layout(m: Metrics, client_w: i32, has_menu: bool, prefer: []const i32, ou
     };
 
     // Width the tabs may occupy: up to `group_gap` short of the "+"'s limit.
-    const tabs_avail = runWidth(m, client_w, has_menu);
-    if (tab_count == 0 or tabs_avail < m.min_tab_w) return s;
+    const tabs_avail = runWidthFor(m, client_w, c);
+    if (tab_count == 0 or tabs_avail < m.min_tab_w) return withChevron(m, c, s);
 
     // SIZE TO CONTENT FIRST (T235, design system §6b). Every tab asks for what
     // its own title needs, floored at `min_tab_w` and capped at half the run.
@@ -553,6 +596,17 @@ pub fn layout(m: Metrics, client_w: i32, has_menu: bool, prefer: []const i32, ou
     // silently widen it by the gap.
     s.tabs_right = out[visible - 1].right;
     s.new_tab = m.buttonHit(@min(s.tabs_right + m.group_gap, plus_paint_limit));
+    return withChevron(m, c, s);
+}
+
+/// Place the chevron (T3768) one `split_gap` right of the "+"'s PAINTED
+/// square, so it travels with the "+" and their hit boxes abut. A strip with
+/// no chevron keeps a ZERO rect.
+fn withChevron(m: Metrics, c: Controls, strip: Strip) Strip {
+    var s = strip;
+    if (!c.chevron) return s;
+    const plus_paint_right = s.new_tab.right - m.btn_pad;
+    s.new_tab_menu = m.buttonHit(plus_paint_right + m.split_gap);
     return s;
 }
 
@@ -590,6 +644,7 @@ pub fn shiftX(strip: *Strip, out: []Rect, dx: i32) void {
     if (dx == 0) return;
     for (out) |*r| r.* = shiftRect(r.*, dx);
     strip.new_tab = shiftRect(strip.new_tab, dx);
+    strip.new_tab_menu = shiftRect(strip.new_tab_menu, dx);
     strip.menu = shiftRect(strip.menu, dx);
     strip.tabs_right += dx;
 }
@@ -1635,4 +1690,93 @@ test "shiftX: the run starts at the sidebar's edge, absent regions stay absent" 
         try testing.expectEqual(base[0].left + 210, band.left);
         try testing.expectEqual(contentBand(m, 900, 0).right + 210, band.right);
     }
+}
+
+fn layoutChevron(scale: f32, client_w: i32, n: usize, has_menu: bool, buf: []Rect) struct { Metrics, Strip } {
+    const m = Metrics.init(scale);
+    var prefer: [MAX_TABS]i32 = undefined;
+    const p = m.preferredWidth(@intFromFloat(@round(TITLE_DIP * scale)));
+    for (prefer[0..n]) |*e| e.* = p;
+    return .{ m, layoutFor(m, client_w, .{ .menu = has_menu, .chevron = true }, prefer[0..n], buf) };
+}
+
+test "T3768: no chevron unless asked, and the plain layout is unchanged" {
+    var buf: [MAX_TABS]Rect = undefined;
+    var buf2: [MAX_TABS]Rect = undefined;
+    for ([_]f32{ 1.0, 1.25, 1.5, 2.0 }) |scale| {
+        for ([_]usize{ 0, 1, 3 }) |n| {
+            for ([_]bool{ true, false }) |has_menu| {
+                const m, const a = layoutMenu(scale, WIDE, n, TITLE_DIP, has_menu, &buf);
+                var prefer: [MAX_TABS]i32 = undefined;
+                const p = m.preferredWidth(@intFromFloat(@round(TITLE_DIP * scale)));
+                for (prefer[0..n]) |*e| e.* = p;
+                const b = layoutFor(m, WIDE, .{ .menu = has_menu }, prefer[0..n], &buf2);
+                try testing.expect(a.new_tab_menu.isEmpty());
+                try testing.expectEqual(a, b);
+            }
+        }
+    }
+}
+
+test "T3768: the chevron is the shared square, split_gap right of the +, travelling with it" {
+    var buf: [MAX_TABS]Rect = undefined;
+    for ([_]f32{ 1.0, 1.25, 1.5, 1.75, 2.0 }) |scale| {
+        for ([_]usize{ 0, 1, 2, 3, 8 }) |n| {
+            for ([_]bool{ true, false }) |has_menu| {
+                const m, const s = layoutChevron(scale, WIDE, n, has_menu, &buf);
+                const plus = painted(scale, s.new_tab);
+                const chev = painted(scale, s.new_tab_menu);
+                try testing.expect(!s.new_tab_menu.isEmpty());
+                // Same square, same vertical frame as the "+".
+                try testing.expectEqual(plus.width(), chev.width());
+                try testing.expectEqual(plus.top, chev.top);
+                try testing.expectEqual(plus.bottom, chev.bottom);
+                try testing.expectEqual(m.split_gap, chev.left - plus.right);
+                // Hit boxes abut: no dead pixel between them, no overlap.
+                try testing.expectEqual(s.new_tab.right, s.new_tab_menu.left);
+                if (n > 0 and s.visible > 0) {
+                    // The "+" still sits group_gap after the last tab.
+                    try testing.expectEqual(m.group_gap, plus.left - s.tabs_right);
+                }
+                if (has_menu) {
+                    const menu = painted(scale, s.menu);
+                    try testing.expect(chev.right + m.group_gap <= menu.left);
+                    try testing.expect(s.new_tab_menu.right <= s.menu.left);
+                } else {
+                    try testing.expect(chev.right <= WIDE - m.strip_pad_r);
+                }
+            }
+        }
+    }
+}
+
+test "T3768: under pressure the chevron, not the +, is what stops at the strip's end" {
+    var buf: [MAX_TABS]Rect = undefined;
+    for ([_]f32{ 1.0, 1.25, 1.5, 2.0 }) |scale| {
+        for ([_]bool{ true, false }) |has_menu| {
+            const m, const s = layoutChevron(scale, WIDE, 64, has_menu, &buf);
+            const chev = painted(scale, s.new_tab_menu);
+            const limit = trailPaintLimit(m, WIDE, has_menu);
+            try testing.expect(chev.left <= limit);
+            // Every laid-out tab still clears the "+" by the group gap.
+            const plus = painted(scale, s.new_tab);
+            for (buf[0..s.visible]) |r| try testing.expect(r.right + m.group_gap <= plus.left);
+            // The run lost exactly one square plus the split gap.
+            try testing.expectEqual(
+                runWidth(m, WIDE, has_menu) - m.btn_paint - m.split_gap,
+                runWidthFor(m, WIDE, .{ .menu = has_menu, .chevron = true }),
+            );
+        }
+    }
+}
+
+test "T3768: shiftX carries the chevron, and leaves a missing one missing" {
+    var buf: [MAX_TABS]Rect = undefined;
+    _, var s = layoutChevron(1.25, 900, 2, true, &buf);
+    const before = s.new_tab_menu;
+    shiftX(&s, buf[0..2], 210);
+    try testing.expectEqual(before.left + 210, s.new_tab_menu.left);
+    _, var plain = layoutN(1.25, 900, 2, &buf);
+    shiftX(&plain, buf[0..2], 210);
+    try testing.expect(plain.new_tab_menu.isEmpty());
 }

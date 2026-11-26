@@ -1,19 +1,19 @@
 {
     "guard":  "window-count-scale",
     "script":  "test/win32/window-count-scale.ps1",
-    "generated":  "2026-11-25T18:57:21-08:00",
-    "commit":  "9989c421f3",
+    "generated":  "2026-11-25T20:46:50-08:00",
+    "commit":  "169fd8fa7c",
     "uncommitted":  [
-
+                        "src/apprt/win32/Window.zig"
                     ],
     "files":  {
-                  "src/apprt/win32/App.zig":  "17d85c73ca1a929358d6eb6a79baecdeea2157ea4a82bd00b661d9f1c77f3276",
-                  "src/apprt/win32/occlusion.zig":  "efe06766422d41454190b9be5d3a865ef33814801f5fb9158e326392eb39d338",
-                  "src/apprt/win32/Window.zig":  "ae40032ebbd8ea7cbf7320bcf6eefc87678cbc4fced0e2ac1b256d5a67c59dec",
-                  "src/renderer/Thread.zig":  "8f1ce8a9434e86e8a06d046e9d61dabad2c634af095211dc5eeda8474a37291f",
-                  "test/win32/window-count-scale.ps1":  "6cdcfab2808dbd26a61ee0f30f08c6c0631af04141b497c1fe3bbd199b57a71a"
+                  "src/apprt/win32/App.zig":  "6948f68068eebb8647f7855265d0f4de0ef725a5d387487274faba5c5a5082e9",
+                  "src/apprt/win32/occlusion.zig":  "6f49e880e753900a0ef7cc46d71a50237bb9159af49bb2ddf3f66a426c7caa24",
+                  "src/apprt/win32/Window.zig":  "9aee67bb5e7664f57d8a26487aba1adad22df05d97e94698203e7a6ba5ecc422",
+                  "src/renderer/Thread.zig":  "1de7cfcabea0d5adb638d73d329791642ada45fa295244193aa139d1417b8fac",
+                  "test/win32/window-count-scale.ps1":  "eaaf377dc04d8fb75de69f88c357cc69932c8d85f84f25058260dd0e59f7006f"
               },
     "code":  {
-                 "test/win32/window-count-scale.ps1":  "code1:00ed5d3f1d7e3dcf23ec5e7ba97d5ae59910a4f375fea8f5c2fee55597023acb"
+                 "test/win32/window-count-scale.ps1":  "code1:7882ef9c794c77ecef1207bb6f0a8dcb4cb81426692e6a9d36d66e0396bf0b51"
              }
 }

@@ -591,6 +591,18 @@ tab_rects: [64]w32.RECT = std.mem.zeroes([64]w32.RECT),
 /// Hit-test rectangle for the "+" (new tab) button.
 new_tab_rect: w32.RECT = .{ .left = 0, .top = 0, .right = 0, .bottom = 0 },
 
+/// Hit-test rectangle for the chevron beside the "+" that drops down the
+/// shell list (T3768). Zero on a strip that has none (a remote window), which
+/// every half-open hit test misses.
+new_tab_menu_rect: w32.RECT = .{ .left = 0, .top = 0, .right = 0, .bottom = 0 },
+
+/// Whether that chevron is being hovered.
+hover_new_tab_menu: bool = false,
+
+/// The shell list (T3753) is the menu tracking right now, so the chevron
+/// lights as pressed and the "≡" - which lights for its own menu - does not.
+shell_menu_open: bool = false,
+
 /// Index of the tab currently being hovered (-1 = none).
 hover_tab: isize = -1,
 
@@ -2875,6 +2887,16 @@ pub fn stripHasMenu(self: *const Window) bool {
     return !self.customCaption();
 }
 
+/// Right edge of the strip's travelling buttons, as published at the last
+/// paint: the chevron's (T3768) when there is one, else the "+"'s. 0 before
+/// the first paint.
+fn stripButtonsRight(self: *const Window) i32 {
+    return if (self.new_tab_menu_rect.right > self.new_tab_menu_rect.left)
+        self.new_tab_menu_rect.right
+    else
+        self.new_tab_rect.right;
+}
+
 /// Does the caption band hold the tab run as well (T205)?
 ///
 /// Every window that owns its caption and is showing a strip. That is the
@@ -2985,6 +3007,8 @@ pub const StripRegions = struct {
     /// out — the report turns an empty rect into a JSON `null`.
     tabs: [MAX_TABS]tab_strip.Rect = std.mem.zeroes([MAX_TABS]tab_strip.Rect),
     new_tab: tab_strip.Rect = .{},
+    /// The shell-list chevron beside the "+" (T3768); empty when there is none.
+    new_tab_menu: tab_strip.Rect = .{},
     menu: tab_strip.Rect = .{},
 };
 
@@ -3001,6 +3025,7 @@ pub fn stripRegions(self: *const Window) ?StripRegions {
             top,
         ),
         .new_tab = tab_strip.clientRect(layoutRect(self.new_tab_rect), top),
+        .new_tab_menu = tab_strip.clientRect(layoutRect(self.new_tab_menu_rect), top),
         .menu = tab_strip.clientRect(layoutRect(self.menu_btn_rect), top),
     };
     for (0..@min(self.tab_count, MAX_TABS)) |i| {
@@ -19541,7 +19566,7 @@ fn handleCaptionHitTest(self: *Window, lparam: isize) ?isize {
         // you see and what you can click drift apart; and before the first
         // paint it is 0, which means "the caption owns the whole band", the
         // safe answer.
-        if (self.mergedChrome()) self.new_tab_rect.right else 0,
+        if (self.mergedChrome()) self.stripButtonsRight() else 0,
     )) {
         .client => null,
         .top => w32.HTTOP,
@@ -20576,6 +20601,12 @@ fn paintTabBar(self: *Window, hdc_screen: w32.HDC) void {
     const strip_left = @min(self.tabBarLeft(), self.stripClientWidth(client_w));
     const strip_client_w = self.stripClientWidth(client_w) - strip_left;
     const has_menu = self.stripHasMenu();
+    // T3768: the shell-list chevron beside the "+", wherever the "+" has a
+    // list to offer (not on a remote window, whose shells are not ours).
+    const controls: tab_strip.Controls = .{
+        .menu = has_menu,
+        .chevron = new_tab_shell.offered(self),
+    };
 
     // T249: the widths handed to the layout are RATCHETED, not the raw
     // measurements above. A shell retitles itself per command — cmd.exe does it
@@ -20616,7 +20647,7 @@ fn paintTabBar(self: *Window, hdc_screen: w32.HDC) void {
     );
     const effective = tab_strip.applySticky(
         m,
-        tab_strip.runWidth(m, strip_client_w, has_menu),
+        tab_strip.runWidthFor(m, strip_client_w, controls),
         prefer[0..self.tab_count],
         self.tab_sticky_w[0..self.tab_count],
         self.pointer_in_strip,
@@ -20640,7 +20671,7 @@ fn paintTabBar(self: *Window, hdc_screen: w32.HDC) void {
             deferred,
         });
     }
-    var strip = tab_strip.layout(m, strip_client_w, has_menu, effective, &tabs);
+    var strip = tab_strip.layoutFor(m, strip_client_w, controls, effective, &tabs);
     tab_strip.shiftX(&strip, tabs[0..self.tab_count], strip_left);
 
     // Publish hit-test rects. Tabs past `strip.visible` did not fit and get a
@@ -20648,6 +20679,7 @@ fn paintTabBar(self: *Window, hdc_screen: w32.HDC) void {
     // out under the button band the way the old last-tab remainder rule was.
     for (0..self.tab_count) |i| self.tab_rects[i] = stripRect(tabs[i]);
     self.new_tab_rect = stripRect(strip.new_tab);
+    self.new_tab_menu_rect = stripRect(strip.new_tab_menu);
     self.menu_btn_rect = stripRect(strip.menu);
 
     // T556: remember which titles the layout ELIDED, for the tooltip. A tab
@@ -20817,6 +20849,24 @@ fn paintTabBar(self: *Window, hdc_screen: w32.HDC) void {
         bar_b,
         inactive_text_color,
     );
+    // T3768: the chevron beside it - Windows Terminal's split button, so the
+    // shell list is visible rather than behind a right-click. Lit as pressed
+    // while that list is open, the way the menu button is for its own menu.
+    if (!strip.new_tab_menu.isEmpty()) {
+        paintIconButton(
+            mem_dc,
+            ib,
+            strip.new_tab_menu,
+            .chevron_down,
+            if (self.shell_menu_open)
+                .active
+            else if (self.hover_new_tab_menu) .hover else .normal,
+            bar_r,
+            bar_g,
+            bar_b,
+            inactive_text_color,
+        );
+    }
 
     // --- Draw menu (≡) button (T190, conditional since T260) ---
     // The menu being OPEN keeps it lit, which is how every Windows menu
@@ -20832,7 +20882,7 @@ fn paintTabBar(self: *Window, hdc_screen: w32.HDC) void {
             ib,
             strip.menu,
             .menu,
-            if (self.menu_open)
+            if (self.menu_open and !self.shell_menu_open)
                 .active
             else if (self.hover_menu_btn) .hover else .normal,
             bar_r,
@@ -20857,7 +20907,11 @@ fn paintTabBar(self: *Window, hdc_screen: w32.HDC) void {
     // the titlebar would show if the strip went away.
     if (self.mergedChrome() and self.title_override != null) blk: {
         const cl = self.captionLayout() orelse break :blk;
-        const plus_paint = icon_button.targetBox(ib, strip.new_tab);
+        // The pair's right end when the chevron is there (T3768).
+        const plus_paint = icon_button.targetBox(
+            ib,
+            if (strip.new_tab_menu.isEmpty()) strip.new_tab else strip.new_tab_menu,
+        );
         const trect = caption_layout.mergedTitleRect(
             self.captionMetrics(),
             cl,
@@ -21761,6 +21815,12 @@ fn handleTabBarClick(self: *Window, x: i16, y: i16) void {
         return;
     }
 
+    // The chevron beside it drops the shell list (T3768).
+    if (x >= self.new_tab_menu_rect.left and x < self.new_tab_menu_rect.right) {
+        self.openNewTabShellMenu();
+        return;
+    }
+
     // Check each tab. A tab that did not fit has a zero rect (T202), so this
     // loop cannot find it — which is the point.
     const m = tab_strip.Metrics.init(self.scale);
@@ -21911,6 +21971,7 @@ fn handleTabBarMouseMove(self: *Window, x: i16, y: i16) void {
     var new_hover: isize = -1;
     var new_close = false;
     var new_new_tab = false;
+    var new_new_tab_menu = false;
     var new_menu_btn = false;
 
     if (y < self.tabBarHeight()) {
@@ -21920,6 +21981,8 @@ fn handleTabBarMouseMove(self: *Window, x: i16, y: i16) void {
         } else if (x >= self.new_tab_rect.left and x < self.new_tab_rect.right) {
             // Check new-tab button.
             new_new_tab = true;
+        } else if (x >= self.new_tab_menu_rect.left and x < self.new_tab_menu_rect.right) {
+            new_new_tab_menu = true;
         } else {
             // Check tabs. A tab that did not fit has a zero rect (T202).
             const m = tab_strip.Metrics.init(self.scale);
@@ -21938,6 +22001,7 @@ fn handleTabBarMouseMove(self: *Window, x: i16, y: i16) void {
     if (new_hover != self.hover_tab or
         new_close != self.hover_close or
         new_new_tab != self.hover_new_tab or
+        new_new_tab_menu != self.hover_new_tab_menu or
         new_menu_btn != self.hover_menu_btn)
     {
         // Tab-to-tab (or tab-to-nothing) movement drives the cwd tooltip;
@@ -21947,6 +22011,7 @@ fn handleTabBarMouseMove(self: *Window, x: i16, y: i16) void {
         self.hover_tab = new_hover;
         self.hover_close = new_close;
         self.hover_new_tab = new_new_tab;
+        self.hover_new_tab_menu = new_new_tab_menu;
         self.hover_menu_btn = new_menu_btn;
         self.invalidateTabBar();
         // Debug-build oracle for tab-strip.ps1's T209 hover section, the
@@ -21956,11 +22021,12 @@ fn handleTabBarMouseMove(self: *Window, x: i16, y: i16) void {
         // (T233) — which makes the TRIGGER unobservable without this line. The
         // hovered FILL is no longer a race: T282's `capture-hover` paints and
         // captures the frame on one GUI-thread stack.
-        log.debug("tab hover tab={} close={} plus={} menu={}", .{
+        log.debug("tab hover tab={} close={} plus={} menu={} chevron={}", .{
             new_hover,
             new_close,
             new_new_tab,
             new_menu_btn,
+            new_new_tab_menu,
         });
     }
 }
@@ -22352,6 +22418,9 @@ fn openNewTabShellMenu(self: *Window) void {
     _ = w32.ClientToScreen(hwnd, &pt);
 
     self.menu_open = true;
+    self.shell_menu_open = true;
+    self.invalidateTabBar();
+    log.debug("+ dropdown open rows={d}", .{shells.len});
     const cmd = w32.TrackPopupMenuEx(
         menu,
         w32.TPM_LEFTALIGN | w32.TPM_TOPALIGN | w32.TPM_RETURNCMD,
@@ -22361,6 +22430,8 @@ fn openNewTabShellMenu(self: *Window) void {
         null,
     );
     self.menu_open = false;
+    self.shell_menu_open = false;
+    self.invalidateTabBar();
 
     if (cmd <= 0) return;
     if (shell_menu.indexOf(@intCast(cmd), shells.len)) |i| {
@@ -22376,8 +22447,11 @@ fn handleTabBarRightClick(self: *Window, x: i16, y: i16) void {
     if (!self.tab_bar_visible) return;
     if (y >= self.tabBarHeight()) return;
 
-    // T3753: the "+" has its own menu - the shells a new tab can open on.
-    if (x >= self.new_tab_rect.left and x < self.new_tab_rect.right) {
+    // T3753: the "+" has its own menu - the shells a new tab can open on -
+    // and so does the chevron beside it (T3768), on either button.
+    if ((x >= self.new_tab_rect.left and x < self.new_tab_rect.right) or
+        (x >= self.new_tab_menu_rect.left and x < self.new_tab_menu_rect.right))
+    {
         return self.openNewTabShellMenu();
     }
 
@@ -22535,10 +22609,11 @@ fn handleTabBarMouseLeave(self: *Window) void {
     // the strip is free to take any width its titles grew to want. This
     // repaints on the transition, which is where a deferred grow lands.
     self.setPointerInStrip(false);
-    if (self.hover_tab != -1 or self.hover_new_tab or self.hover_menu_btn) {
+    if (self.hover_tab != -1 or self.hover_new_tab or self.hover_new_tab_menu or self.hover_menu_btn) {
         self.hover_tab = -1;
         self.hover_close = false;
         self.hover_new_tab = false;
+        self.hover_new_tab_menu = false;
         self.hover_menu_btn = false;
         self.invalidateTabBar();
     }

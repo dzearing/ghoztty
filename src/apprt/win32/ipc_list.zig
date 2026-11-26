@@ -251,6 +251,7 @@ fn windowChrome(arena: Allocator, window: *Window) Allocator.Error!apprt.ipc.Lis
             },
             .tabs = tabs,
             .new_tab = rect.opt(regions.new_tab),
+            .new_tab_menu = rect.opt(regions.new_tab_menu),
             .menu = rect.opt(regions.menu),
         },
     };

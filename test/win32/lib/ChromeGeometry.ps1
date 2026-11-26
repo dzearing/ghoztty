@@ -389,6 +389,7 @@ a few frames.
   Tabs    - one entry per tab, in tab order; $null where a tab did not fit.
   TabsRight - the last laid-out tab's right edge (Band.Left when there are none).
   NewTab  - the "+"'s hit box.
+  NewTabMenu - the shell-list chevron beside the "+" (T3768), or $null.
   Menu    - the "="'s hit box, or $null (T260).
 #>
 function Get-TestStripRegions {
@@ -438,6 +439,7 @@ function Get-TestStripRegions {
                             if ($null -ne $last) { [int]$last.right } else { [int]$r.band.left }
                         )
                         NewTab = ConvertTo-TestChromeRect $r.new_tab
+                        NewTabMenu = $(if ($r.PSObject.Properties.Name -contains 'new_tab_menu') { ConvertTo-TestChromeRect $r.new_tab_menu } else { $null })
                         Menu = ConvertTo-TestChromeRect $r.menu
                     }
                 }
