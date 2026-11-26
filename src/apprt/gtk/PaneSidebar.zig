@@ -74,8 +74,18 @@
 //! not (T3700). A group move from the menu keeps the list's place (win32
 //! `keepWindowPlace`).
 //!
+//! Stashed panes sit in the tray, after the panes on screen, the top of the
+//! stash first (T3698; Mac `PaneDropCandidate.Sidebar.trayTop`, win32
+//! `pane_drop.sidebarHit`). This window's list draws the tray's head - a
+//! hairline and "Stashed <n>" over the stash, or the empty tray's dashed well
+//! - and the all-windows outline none: a window's stashed panes just follow
+//! its others. A pane row let go at or below where the tray begins stashes
+//! there, at that place in the stash (a stashed one moves within it, the last
+//! pane on screen is refused); a tray row let go above it is restored,
+//! focused, and placed in the list.
+//!
 //! Not here yet: a row dropped into another
-//! window, and the stash tray (T3607's remainder), and from T3606's
+//! window (T3699), and from T3606's
 //! remainder rename in place, the hover tint, the busy sheen, the width grip
 //! and hero-mode suppression.
 //!
@@ -306,8 +316,10 @@ fn toggleFold(kind: RowKind, key: u64) void {
 // ---------------------------------------------------------------------------
 // One window's sidebar
 
-/// `rail_add`: the rail's + at the top of the list (T3695).
-pub const RowKind = enum { pane, window, project, ungrouped, tile, rail_add };
+/// `rail_add`: the rail's + at the top of the list (T3695). `tray`: this
+/// window's stash tray head (T3698) - the hairline and "Stashed" caption over
+/// its stashed panes, or the empty tray's well - the top of the tray.
+pub const RowKind = enum { pane, window, project, ungrouped, tile, rail_add, tray };
 pub const Tool = rows.Tool;
 
 /// One drawn row: what the seam reports, and what a click does.
@@ -490,6 +502,7 @@ pub fn create(alloc: Allocator, window: *Window) Allocator.Error!*PaneSidebar {
     _ = wk.g_signal_connect_data(drop_target, "drag-enter", @ptrCast(&onListMotion), self, null, 0);
     _ = wk.g_signal_connect_data(drop_target, "drag-motion", @ptrCast(&onListMotion), self, null, 0);
     _ = wk.g_signal_connect_data(drop_target, "drop", @ptrCast(&onListDrop), self, null, 0);
+    _ = wk.g_signal_connect_data(drop_target, "drag-leave", @ptrCast(&onListLeave), self, null, 0);
     return self;
 }
 
@@ -624,10 +637,22 @@ fn redraw(self: *PaneSidebar) void {
     collectLeaves(self.alloc, tree, &leaves) catch {};
     const tab_key = @intFromPtr(tab);
     arrangeLeaves(tab_key, leaves.items);
-    for (leaves.items) |v| self.addPaneRow(v, v == active, expanded, home, 0, true, tab_key) catch |err| {
-        log.warn("pane sidebar row failed err={}", .{err});
-        break;
-    };
+    trayLeaves(leaves.items);
+    // The tray's head goes over the first stashed tile, or (none) after the
+    // last tile as the empty well (T3698).
+    const stashed_n = stashedCount(leaves.items);
+    var headed = false;
+    for (leaves.items) |v| {
+        if (!headed and pane_stash.isStashed(v)) {
+            headed = true;
+            self.addTrayRow(tab_key, stashed_n, expanded) catch |err| log.warn("pane sidebar tray failed err={}", .{err});
+        }
+        self.addPaneRow(v, v == active, expanded, home, 0, true, tab_key) catch |err| {
+            log.warn("pane sidebar row failed err={}", .{err});
+            break;
+        };
+    }
+    if (!headed and leaves.items.len > 0) self.addTrayRow(tab_key, 0, expanded) catch |err| log.warn("pane sidebar tray failed err={}", .{err});
     self.dump();
 }
 
@@ -707,6 +732,7 @@ fn gatherFor(own: ?*Window, arena: Allocator) Allocator.Error!Gathered {
             var leaves: std.ArrayListUnmanaged(*Surface) = .empty;
             if (tab.getSurfaceTree()) |tree| try collectLeaves(arena, tree, &leaves);
             arrangeLeaves(key, leaves.items);
+            trayLeaves(leaves.items);
             const panes = try arena.alloc(rows.Pane, leaves.items.len);
             for (leaves.items, panes) |v, *p| p.* = paneOf(v);
             const active = tab.getActiveSurface();
@@ -801,15 +827,26 @@ fn refreshOwn(self: *PaneSidebar, home: ?[]const u8) error{ OutOfMemory, NotList
         if (w.own) break i;
     } else return error.NotListed;
     const items = try all.buildOwn(arena, g.windows, own, &scope, home);
+    // The tray (T3698): its head over this window's first stashed pane, or
+    // after its last pane as the empty well; none while the window is folded.
+    const stashed_n = stashedCount(g.surfaces[own]);
+    var headed = false;
+    var panes_drawn: usize = 0;
     for (items) |item| switch (item.kind) {
         .pane => {
             const v = g.surfaces[item.window][item.pane];
             const w = g.windows[item.window];
+            if (!headed and item.window == own and pane_stash.isStashed(v)) {
+                headed = true;
+                try self.addTrayRow(w.key, stashed_n, true);
+            }
             try self.addPaneRow(v, g.actives[item.window] == v, true, home, item.depth, true, w.key);
+            if (item.window == own) panes_drawn += 1;
         },
         // This window's own list does not reorder the all-windows one.
         else => try self.addHeadRow(item, false),
     };
+    if (!headed and panes_drawn > 0) try self.addTrayRow(g.windows[own].key, 0, true);
 }
 
 /// The rail's + (T3695; Mac `PaneSidebarRailAddSlot`): the first tile of the
@@ -847,6 +884,106 @@ fn addRailAdd(self: *PaneSidebar) Allocator.Error!void {
 
 /// The rail +'s row id (the seam's `--click=rail-add`).
 pub const rail_add_id = "rail-add";
+
+/// The tray head's row id (T3698): one per sidebar, this window's.
+pub const tray_id = "tray";
+
+/// Put a window's panes, already in the sidebar's order, in the order it
+/// draws them: the ones on screen, then the stash, top first (T3698,
+/// `rows.trayed`).
+fn trayLeaves(leaves: []*Surface) void {
+    const n = @min(leaves.len, sidebar_order.max_ids);
+    var seqs: [sidebar_order.max_ids]u64 = undefined;
+    var was: [sidebar_order.max_ids]*Surface = undefined;
+    for (leaves[0..n], 0..) |v, i| {
+        seqs[i] = v.stash_seq;
+        was[i] = v;
+    }
+    var idx: [sidebar_order.max_ids]usize = undefined;
+    const m = rows.trayed(seqs[0..n], &idx);
+    for (idx[0..m], 0..) |vi, i| leaves[i] = was[vi];
+}
+
+fn stashedCount(leaves: []const *Surface) usize {
+    var n: usize = 0;
+    for (leaves) |v| {
+        if (pane_stash.isStashed(v)) n += 1;
+    }
+    return n;
+}
+
+/// This window's tray head (T3698; docs/reference/pane-sidebar.md "Rows and
+/// tiles"): with panes stashed, a hairline and (the panel) the "Stashed"
+/// caption with their count, over them; with none, the empty tray's well - a
+/// faint dashed slot with the stash glyph and (the panel) "Drag a pane here
+/// to stash it" - still a place to drop. It is where the tray begins: a row
+/// let go on it or below it stashes (`dropRowAt`). Not a button.
+fn addTrayRow(self: *PaneSidebar, tab_key: usize, stashed_n: usize, expanded: bool) Allocator.Error!void {
+    const r = try self.alloc.create(Row);
+    errdefer self.alloc.destroy(r);
+    const id = try self.alloc.dupe(u8, tray_id);
+    errdefer self.alloc.free(id);
+    const label = try self.alloc.dupeZ(u8, if (stashed_n > 0) rows.tray_caption else rows.tray_well_label);
+    errdefer self.alloc.free(label);
+    const tooltip: ?[:0]u8 = if (expanded or stashed_n > 0) null else try self.alloc.dupeZ(u8, rows.tray_well_label);
+    errdefer if (tooltip) |t| self.alloc.free(t);
+
+    const box = wk.gtk_box_new(orientation_vertical, 2);
+    wk.gtk_widget_add_css_class(box, "pane-sidebar-tray");
+    if (tooltip) |t| wk.gtk_widget_set_tooltip_text(box, t);
+    if (stashed_n > 0) {
+        wk.gtk_widget_add_css_class(box, "pane-sidebar-tray-head");
+        wk.gtk_box_append(box, wk.gtk_separator_new(orientation_horizontal));
+        if (expanded) {
+            const line = wk.gtk_box_new(orientation_horizontal, 6);
+            const cap = wk.gtk_label_new(label);
+            wk.gtk_label_set_xalign(cap, 0);
+            wk.gtk_widget_set_hexpand(cap, 1);
+            wk.gtk_widget_add_css_class(cap, "caption-heading");
+            wk.gtk_widget_add_css_class(cap, "dim-label");
+            wk.gtk_box_append(line, cap);
+            var cb: [16]u8 = undefined;
+            const count_z = std.fmt.bufPrintZ(&cb, "{d}", .{stashed_n}) catch "";
+            const count = wk.gtk_label_new(count_z.ptr);
+            wk.gtk_widget_add_css_class(count, "caption");
+            wk.gtk_widget_add_css_class(count, "dim-label");
+            wk.gtk_box_append(line, count);
+            wk.gtk_widget_add_css_class(line, "pane-sidebar-tray-caption");
+            wk.gtk_box_append(box, line);
+        }
+    } else {
+        wk.gtk_widget_add_css_class(box, "pane-sidebar-tray-well");
+        const line = wk.gtk_box_new(orientation_horizontal, 8);
+        const icon = wk.gtk_image_new_from_icon_name("list-remove-symbolic");
+        wk.gtk_widget_set_valign(icon, align_center);
+        wk.gtk_box_append(line, icon);
+        if (expanded) {
+            const words = wk.gtk_label_new(label);
+            wk.gtk_label_set_xalign(words, 0);
+            wk.gtk_label_set_ellipsize(words, pango_ellipsize_end);
+            wk.gtk_widget_set_hexpand(words, 1);
+            wk.gtk_widget_add_css_class(words, "caption");
+            wk.gtk_box_append(line, words);
+        } else {
+            wk.gtk_widget_set_halign(line, align_center);
+        }
+        wk.gtk_box_append(box, line);
+    }
+    r.* = .{
+        .sidebar = self,
+        .widget = box,
+        .kind = .tray,
+        .id = id,
+        .key = tab_key,
+        .label = label,
+        .tooltip = tooltip,
+        .count = stashed_n,
+        .own = true,
+        .tab = tab_key,
+    };
+    try self.drawn.append(self.alloc, r);
+    wk.gtk_box_append(self.list, box);
+}
 
 /// A pane's row: its icon, and (expanded) its name with its directory under
 /// it. Indented one step under its window in the all-windows outline.
@@ -912,7 +1049,9 @@ fn addPaneRow(self: *PaneSidebar, surface: *Surface, selected: bool, expanded: b
         .own = own,
         .tools = rows.paneTools(expanded, own, stashed),
         .tab = tab,
-        .draggable = !stashed,
+        // A stashed pane's row drags too (T3698): up into the list it is
+        // restored, within the tray it moves in the stash.
+        .draggable = true,
     };
     _ = wk.g_signal_connect_data(button, "clicked", @ptrCast(&onRowClicked), r, null, 0);
     if (r.draggable) addRowDragSource(r, button);
@@ -1187,6 +1326,7 @@ fn onRowClicked(_: *wk.GtkWidget, r: *Row) callconv(.c) void {
         .window, .tile => _ = raiseWindow(r.key),
         .project, .ungrouped => toggleFold(r.kind, r.key),
         .rail_add => r.sidebar.railAddClicked(),
+        .tray => {},
     }
 }
 
@@ -1888,8 +2028,16 @@ fn onListAccept(_: *wk.GtkEventController, _: *wk.GdkDrop, _: *PaneSidebar) call
     return @intFromBool(rowDragged() != null);
 }
 
-fn onListMotion(_: *wk.GtkEventController, _: *wk.GdkDrop, _: f64, _: f64, _: *PaneSidebar) callconv(.c) c_int {
-    return if (rowDragged() != null) wk.gdk_action_move else 0;
+fn onListMotion(_: *wk.GtkEventController, _: *wk.GdkDrop, _: f64, y: f64, self: *PaneSidebar) callconv(.c) c_int {
+    const id = rowDragged() orelse return 0;
+    // A pane row over its own window's tray lights it (T3698).
+    const lit = if (isItemId(id)) false else if (self.rowById(id)) |r| rows.inTray(self.trayTop(r.tab), y) else false;
+    self.lightTray(lit);
+    return wk.gdk_action_move;
+}
+
+fn onListLeave(_: *wk.GtkEventController, _: *wk.GdkDrop, self: *PaneSidebar) callconv(.c) void {
+    self.lightTray(false);
 }
 
 fn onListDrop(_: *wk.GtkEventController, drop: *wk.GdkDrop, _: f64, y: f64, self: *PaneSidebar) callconv(.c) c_int {
@@ -1901,6 +2049,7 @@ fn onListDrop(_: *wk.GtkEventController, drop: *wk.GdkDrop, _: f64, y: f64, self
     var buf: [64]u8 = undefined;
     const own = buf[0..id.len];
     @memcpy(own, id);
+    self.lightTray(false);
     const moved = (if (isItemId(own)) self.dropItemAt(own, y) else self.dropRowAt(own, y)) != null;
     wk.gdk_drop_finish(drop, if (moved) wk.gdk_action_move else 0);
     return @intFromBool(moved);
@@ -1923,19 +2072,81 @@ fn rowBounds(self: *PaneSidebar, r: *const Row) ?wk.GrapheneRect {
 pub fn dropRowAt(self: *PaneSidebar, id: []const u8, y: f64) ?usize {
     const r = self.rowById(id) orelse return null;
     if (r.kind != .pane or !r.draggable) return null;
+    // Two lists, split where the tray begins (T3698, win32
+    // `pane_drop.sidebarHit`): above it the window's panes on screen, at or
+    // below it the tray.
+    const tray = rows.inTray(self.trayTop(r.tab), y);
     var mids: [sidebar_order.max_ids]f64 = undefined;
     var n: usize = 0;
     for (self.drawn.items) |o| {
-        if (o == r or o.kind != .pane or o.tab != r.tab) continue;
+        if (o == r or o.kind != .pane or o.tab != r.tab or o.stashed != tray) continue;
         const b = self.rowBounds(o) orelse continue;
         if (n == mids.len) break;
         mids[n] = b.y + b.h / 2;
         n += 1;
     }
     const index = rows.dropIndex(mids[0..n], y);
-    log.info("pane sidebar row drop pane={s} y={d:.0} index={d}", .{ id, y, index });
+    log.info("pane sidebar row drop pane={s} y={d:.0} into={s} index={d}", .{ id, y, if (tray) "tray" else "list", index });
+    if (tray) {
+        if (!stashRowAt(id, index)) return null;
+        return index;
+    }
+    // Out of the tray, it comes back to the slot it left, focused (win32
+    // `commitListDrop`), then takes its place in the list.
+    if (r.stashed) {
+        const f = findPane(id) orelse return null;
+        if (!f.tab.getSplitTree().restoreSurface(f.surface, true)) return null;
+        log.info("pane sidebar restore pane={s} from=tray", .{id});
+    }
     if (!self.moveRow(id, index)) return null;
     return index;
+}
+
+/// Where window (tab) `tab`'s tray begins in the list's coordinates
+/// (T3698): the top of its tray head where one is drawn (this window's list),
+/// else between its rows on screen and its stashed rows (the all-windows
+/// outline, `rows.trayTopBetween`). Null when none of its rows is laid out.
+fn trayTop(self: *PaneSidebar, tab: usize) ?f64 {
+    var last_list: ?f64 = null;
+    var first_stashed: ?f64 = null;
+    for (self.drawn.items) |o| {
+        if (o.tab != tab) continue;
+        const b = self.rowBounds(o) orelse continue;
+        switch (o.kind) {
+            .tray => return b.y,
+            .pane => if (o.stashed) {
+                if (first_stashed == null) first_stashed = b.y;
+            } else {
+                last_list = b.y + b.h;
+            },
+            else => {},
+        }
+    }
+    return rows.trayTopBetween(last_list, first_stashed);
+}
+
+/// Stash pane `pane_id` at `index` of its window's stash, 0 the top (T3698;
+/// win32 `commitStashDrop`): a pane on screen is stashed there - refused for
+/// the last one on screen - and a stashed one moves to that gap. False when
+/// the pane is gone or refused.
+fn stashRowAt(pane_id: []const u8, index: usize) bool {
+    const f = findPane(pane_id) orelse return false;
+    f.tab.getSplitTree().stashSurfaceAt(f.surface, index) catch |err| {
+        log.info("pane sidebar stash refused pane={s} err={}", .{ pane_id, err });
+        return false;
+    };
+    log.info("pane sidebar stash pane={s} index={d} from=drag", .{ pane_id, index });
+    return true;
+}
+
+/// Light the tray while a drag held over this list would land in it (T3698,
+/// Mac: the empty tray's well "lit in the accent while a drag would land in
+/// it"). The class goes on the tray head, which the next redraw rebuilds
+/// unlit.
+fn lightTray(self: *PaneSidebar, on: bool) void {
+    for (self.drawn.items) |o| if (o.kind == .tray) {
+        if (on) wk.gtk_widget_add_css_class(o.widget, "pane-sidebar-tray-lit") else wk.gtk_widget_remove_css_class(o.widget, "pane-sidebar-tray-lit");
+    };
 }
 
 /// Put the pane at `index` of its window's sidebar list (counted without
@@ -1949,11 +2160,21 @@ fn moveRow(self: *PaneSidebar, pane_id: []const u8, index: usize) bool {
     defer leaves.deinit(self.alloc);
     collectLeaves(self.alloc, tree, &leaves) catch return false;
     const n = @min(leaves.items.len, sidebar_order.max_ids);
+    // `index` counts the list as drawn: the panes on screen (T3698). Every
+    // pane is in the order, so a stashed one keeps its place there for when
+    // it comes back (win32 `placeInPaneSidebar`).
     var visible: [sidebar_order.max_ids][]const u8 = undefined;
-    for (leaves.items[0..n], 0..) |v, i| visible[i] = v.paneId();
+    var existing: [sidebar_order.max_ids][]const u8 = undefined;
+    var nv: usize = 0;
+    for (leaves.items[0..n], 0..) |v, i| {
+        existing[i] = v.paneId();
+        if (pane_stash.isStashed(v)) continue;
+        visible[nv] = v.paneId();
+        nv += 1;
+    }
     const key = @intFromPtr(f.tab);
     var next: [sidebar_order.max_ids][]const u8 = undefined;
-    const got = sidebar_order.moving(pane_id, index, visible[0..n], orders.get(key), visible[0..n], &next);
+    const got = sidebar_order.moving(pane_id, index, visible[0..nv], orders.get(key), existing[0..n], &next);
     orders.set(self.alloc, key, next[0..got]) catch return false;
     orders.prune(self.alloc, {}, tabIsOpen);
     log.info("pane sidebar reorder pane={s} index={d} panes={d}", .{ pane_id, index, got });
@@ -2041,7 +2262,7 @@ fn closeFromRow(self: *PaneSidebar, r: *const Row) void {
     switch (r.kind) {
         .pane => p.pane = self.alloc.dupe(u8, r.id) catch null,
         .window, .project, .ungrouped => p.keys = self.alloc.dupe(u64, r.members) catch &.{},
-        .tile, .rail_add => {},
+        .tile, .rail_add, .tray => {},
     }
     log.info("pane sidebar close {s} id={s} windows={d}", .{ @tagName(r.kind), r.id, p.keys.len });
     _ = wk.g_idle_add(@ptrCast(&onPendingClose), p);
@@ -2098,7 +2319,7 @@ fn addFromRow(self: *PaneSidebar, r: *const Row) void {
             const core = if (parent) |s| s.core() else null;
             _ = Application.default().newWindowFromSidebar(core, title);
         },
-        .pane, .tile, .rail_add => {},
+        .pane, .tile, .rail_add, .tray => {},
     }
 }
 

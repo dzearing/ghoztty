@@ -371,6 +371,42 @@ label.resize-overlay {
 }
 
 /*
+ * The stash tray's head (T3698; pane-sidebar.md "Rows and tiles"): a
+ * hairline and the "Stashed" caption over the stashed rows, or, with none,
+ * the empty tray's faint dashed well - lit in the accent while a drag would
+ * land in it.
+ */
+.pane-sidebar .pane-sidebar-tray {
+  margin: 4px 8px 0 8px;
+}
+
+.pane-sidebar .pane-sidebar-tray-head separator {
+  background-color: alpha(currentColor, 0.12);
+}
+
+.pane-sidebar .pane-sidebar-tray-caption {
+  padding: 2px 4px 0 4px;
+}
+
+.pane-sidebar .pane-sidebar-tray-well {
+  min-height: 28px;
+  padding: 2px 8px 2px 8px;
+  border-radius: 8px;
+  border: 1px dashed alpha(currentColor, 0.18);
+  opacity: 0.6;
+}
+
+.pane-sidebar .pane-sidebar-tray-well.pane-sidebar-tray-lit {
+  border-color: @accent_color;
+  background-color: alpha(@accent_bg_color, 0.18);
+  opacity: 1;
+}
+
+.pane-sidebar .pane-sidebar-tray-head.pane-sidebar-tray-lit separator {
+  background-color: @accent_color;
+}
+
+/*
  * A hovered row's buttons (T3606, Mac PaneSidebarItemButton): an 18px
  * circle whose wash deepens and whose glyph brightens under the pointer.
  */

@@ -312,6 +312,63 @@ pub fn dropIndex(mids: []const f64, y: f64) usize {
     return n;
 }
 
+// ---------------------------------------------------------------------------
+// The stash tray (T3698; docs/reference/pane-sidebar.md "Rows and tiles",
+// "Drag to reorder"; win32 `pane_drop.sidebarHit`, Mac `trayTop`)
+
+/// The list, then the tray: a window's panes as the sidebar draws them, its
+/// panes on screen first in their order and then its stashed ones, the top
+/// of the stash (the largest mark) first. `stash_seqs[i]` is pane i's mark,
+/// 0 for a pane on screen. Writes the panes' indices into `out` in that
+/// order and returns how many (all of them, up to `out.len`). Stable: panes
+/// on screen keep the order they came in.
+pub fn trayed(stash_seqs: []const u64, out: []usize) usize {
+    var n: usize = 0;
+    for (stash_seqs, 0..) |s, i| {
+        if (s != 0 or n == out.len) continue;
+        out[n] = i;
+        n += 1;
+    }
+    const first_stashed = n;
+    for (stash_seqs, 0..) |s, i| {
+        if (s == 0 or n == out.len) continue;
+        out[n] = i;
+        n += 1;
+    }
+    std.mem.sort(usize, out[first_stashed..n], stash_seqs, struct {
+        fn topFirst(seqs: []const u64, a: usize, b: usize) bool {
+            return seqs[a] > seqs[b];
+        }
+    }.topFirst);
+    return n;
+}
+
+/// Where a window's tray begins in the list's coordinates when no tray
+/// header of its own is drawn (the all-windows outline, win32 `trayTop`):
+/// between its last row on screen and its first stashed row, or right under
+/// the last row on screen when nothing is stashed, or at the first stashed
+/// row when nothing is on screen. Null with neither: no tray to drop into.
+pub fn trayTopBetween(last_list_bottom: ?f64, first_stashed_top: ?f64) ?f64 {
+    if (last_list_bottom) |b| {
+        if (first_stashed_top) |t| return (b + t) / 2;
+        return b;
+    }
+    return first_stashed_top;
+}
+
+/// Which list a row let go at `y` lands in (Mac `PaneDropCandidate.Sidebar`):
+/// at or below the tray's top it is the tray, and a drop there stashes;
+/// above it, or with no tray, it is the list.
+pub fn inTray(tray_top: ?f64, y: f64) bool {
+    const top = tray_top orelse return false;
+    return y >= top;
+}
+
+/// The tray's caption (Mac: "Stashed" only while it holds panes, with their
+/// count; the empty well's words instead, expanded).
+pub const tray_caption = "Stashed";
+pub const tray_well_label = "Drag a pane here to stash it";
+
 /// The sidebar's own pane order, one per window (a GTK tab, by address;
 /// win32 `Window.pane_sidebar_order`, Mac `PaneSidebarState.order`): the ids
 /// `pane_sidebar_order.moving` wrote at the last drag, owned. Empty, or a
@@ -381,6 +438,34 @@ test "T3607: a dropped row lands past every sibling whose middle is above the po
     try testing.expectEqual(@as(usize, 3), dropIndex(&mids, 400));
     // A window with only the dragged row: it can only land where it is.
     try testing.expectEqual(@as(usize, 0), dropIndex(&.{}, 50));
+}
+
+test "T3698: the tray follows the list - panes on screen in order, then the stash top first" {
+    var out: [8]usize = undefined;
+    // a(on) b(stash 5) c(on) d(stash 9) e(on): a c e, then d (top) and b.
+    const n = trayed(&.{ 0, 5, 0, 9, 0 }, &out);
+    try testing.expectEqualSlices(usize, &.{ 0, 2, 4, 3, 1 }, out[0..n]);
+    // Nothing stashed: the order is left as it came.
+    const m = trayed(&.{ 0, 0, 0 }, &out);
+    try testing.expectEqualSlices(usize, &.{ 0, 1, 2 }, out[0..m]);
+    // Everything stashed (the normalize invariant forbids it, but no crash).
+    const k = trayed(&.{ 3, 7 }, &out);
+    try testing.expectEqualSlices(usize, &.{ 1, 0 }, out[0..k]);
+    // A short buffer is filled, never overrun.
+    var small: [2]usize = undefined;
+    try testing.expectEqual(@as(usize, 2), trayed(&.{ 0, 4, 0 }, &small));
+}
+
+test "T3698: the tray begins between the last row on screen and the first stashed one" {
+    try testing.expectEqual(@as(?f64, 110), trayTopBetween(100, 120));
+    try testing.expectEqual(@as(?f64, 100), trayTopBetween(100, null));
+    try testing.expectEqual(@as(?f64, 40), trayTopBetween(null, 40));
+    try testing.expectEqual(@as(?f64, null), trayTopBetween(null, null));
+    // At or below the top is the tray; above it, or with no tray, the list.
+    try testing.expect(inTray(110, 110));
+    try testing.expect(inTray(110, 300));
+    try testing.expect(!inTray(110, 109.5));
+    try testing.expect(!inTray(null, 1000));
 }
 
 test "T3607: a window's order is copied in, replaced whole, forgotten when empty or closed" {

@@ -2545,6 +2545,19 @@ pub const SplitTree = extern struct {
         log.info("stashed pane={s} visible={}", .{ surface.paneId(), pane_stash.visibleLeafCount(self.getTree().?.*) });
     }
 
+    /// Stash `surface` at `index` of the stash, 0 the top (T3698, win32
+    /// `commitStashDrop`, Mac `.stash(window:index:)`): a sidebar row let go
+    /// in the tray. A pane on screen is stashed first, with `stashSurface`'s
+    /// focus rule and refusals; a stashed one only moves to the gap it was
+    /// let go on, counted without itself (`pane_stash.markAt`).
+    pub fn stashSurfaceAt(self: *Self, surface: *Surface, index: usize) StashError!void {
+        try self.stashSurface(surface);
+        const tree = self.getTree() orelse return error.NotInTree;
+        pane_stash.markAt(tree.*, surface, index);
+        self.stashChanged();
+        log.info("stashed pane={s} at stash_index={?d}", .{ surface.paneId(), pane_stash.stashIndex(self.getTree().?.*, surface) });
+    }
+
     /// Put a stashed `surface` back in the slot it left. With `focus` it
     /// becomes the tab's focused pane; without, focus is untouched (a CLI
     /// `+restore` without `--focus`). Restoring a pane on screen succeeds.

@@ -167,10 +167,10 @@ print(eval(sys.argv[1]))
 }
 if [ "$(field "$ida" 's["all_windows"]')" = True ]; then sb "$ida" scope > /dev/null; fi
 row_stashed() { field "$ida" "[(x['pane'], x.get('stashed')) for x in r if x['kind'] == 'terminal']"; }
-want_rows="[('$ida', False), ('$idb', True), ('$idc', False)]"
+want_rows="[('$ida', False), ('$idc', False), ('$idb', True)]"
 row_is() { [ "$(row_stashed)" = "$1" ]; }
 hl_wait_for 10 row_is "$want_rows"
-hl_check "T9 the sidebar lists a, b and c, b marked stashed" $? "$(row_stashed)"
+hl_check "T9 the sidebar lists a and c, then b in the tray, marked stashed (T3698)" $? "$(row_stashed)"
 
 # --- the last pane on screen cannot go ---------------------------------------
 out=$(cli +stash --target=c 2>&1); rc=$?

@@ -319,7 +319,7 @@ fn paneSidebar(app: Context, request: Request) Allocator.Error![]u8 {
         // A window or group let go puts its folds back, as the drag's end does.
         if (item) PaneSidebar.endLift();
         const index = dropped orelse
-            return server.errorResponse(c_alloc, "sidebar row '{s}' did not drop (not drawn here, not a pane on screen or a window or group of the expanded all-windows list, or not laid out)", .{id});
+            return server.errorResponse(c_alloc, "sidebar row '{s}' did not drop (not drawn here, not a pane or a window or group of the expanded all-windows list, not laid out, or refused)", .{id});
         const rep = try sidebar.report(arena);
         var out: std.Io.Writer.Allocating = .init(arena);
         std.json.Stringify.value(.{ .success = true, .index = index, .sidebar = rep }, .{}, &out.writer) catch return error.OutOfMemory;

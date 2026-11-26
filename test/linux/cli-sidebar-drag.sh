@@ -9,7 +9,9 @@
 #     new split lands beside the pane it came from, a closed pane drops out;
 #   - it is one order per window, the same in the per-window list and under
 #     that window in the all-windows list, and a drag in either changes both;
-#   - a stashed pane's row does not drag, and a row lands among its own
+#   - stashed panes sit in a tray after the panes on screen (T3698): a row let
+#     go in the tray stashes there, a tray row let go in the list is restored
+#     there, and the last pane on screen is refused; a row lands among its own
 #     window's rows whatever it is let go over.
 #
 # Run it ONLY through the wrapper, from this box:
@@ -105,6 +107,7 @@ def panes(t):
 def ids(t): return [l["id"] for l in panes(t)]
 def pids(t): return [l.get("pid") for l in panes(t)]
 def focused(t): return next((l["id"] for l in panes(t) if l.get("focused")), "")
+def stashed(t): return sorted(l["id"] for l in panes(t) if l.get("stashed"))
 print(eval(sys.argv[1]))
 ' "$1" 2>/dev/null
 }
@@ -221,15 +224,85 @@ sb wa --click=scope > /dev/null
 hl_wait_for 10 is wa '(s["all_windows"], [x["pane"] for x in p])' "(False, ['$b', '$a', '$c'])"
 hl_check "D11 back in the per-window list, the drag made there holds" $? "$(field wa '[x["pane"] for x in p]')"
 
-# ---- 5. a stashed pane's row does not drag ---------------------------------
+# ---- 5. the stash tray (T3698) ------------------------------------------------
+# The list is b a c, nothing stashed. tray: the tray head's row.
+pids1=$(lst 'pids("wa")')
+plist() { field wa '[x["pane"] for x in p]'; }
+hl_wait_for 10 is wa '(row("tray").get("kind"), row("tray").get("count"), row("tray").get("label"), [x["kind"] for x in r][-1])' "('tray', 0, 'Drag a pane here to stash it', 'tray')"
+hl_check "T1 with nothing stashed the list ends with the empty tray's well" $? "$(sb wa)"
+
 sb wa "--click=tool:stash:$a" > /dev/null
-hl_wait_for 10 is wa '(row("'"$a"'")["stashed"], row("'"$a"'")["draggable"])' "(True, False)"
-hl_check "D12 a stashed pane's row is not draggable" $? "$(sb wa)"
-hl_wait_for 10 laid wa "$a" "$b" "$c"
-out=$(sb wa "--drag=$a:0")
+hl_wait_for 10 is wa '([x["pane"] for x in p], row("'"$a"'")["stashed"], row("'"$a"'")["draggable"])' "(['$b', '$c', '$a'], True, True)"
+hl_check "T2 a stashed pane moves into the tray, after the panes on screen, and still drags" $? "$(plist) $(sb wa)"
+hl_wait_for 10 laid wa "$a" "$b" "$c" tray
+is wa '(row("tray")["count"], row("tray")["label"], row("'"$c"'")["top"] < row("tray")["top"] < row("'"$a"'")["top"])' "(1, 'Stashed', True)"
+hl_check "T3 the tray's head - Stashed, 1 - sits between the list and the stash" $? "$(sb wa --layout)"
+
+# A pane on screen let go low on the stashed row: stashed, below it.
+y=$(ylow wa "$a")
+idx=$(drop wa "$c" "$y")
+hl_wait_for 10 lst_is 'stashed("wa")' "$(printf "%s\n" "$a" "$c" | sort | python3 -I -c 'import sys; print(sorted(sys.stdin.read().split()))')"
+hl_check "T4 a row let go in the tray stashes that pane" $? "index=$idx stashed=$(lst 'stashed("wa")')"
+hl_wait_for 10 is wa '[x["pane"] for x in p]' "['$b', '$a', '$c']"
+hl_check "T4b at the place it was let go: under a, index 1" $? "index=$idx list=$(plist)"
+grep -q "pane sidebar stash pane=$c index=1 from=drag" "$APP_LOG"
+hl_check "T4c the tray drop is logged" $? "$(grep 'pane sidebar row drop pane='"$c" "$APP_LOG" | tail -2)"
+
+# Within the tray: c let go high on a (still under the tray's head) goes on top.
+hl_wait_for 10 laid wa "$a" "$b" "$c" tray
+y=$(yhigh wa "$a")
+idx=$(drop wa "$c" "$y")
+hl_wait_for 10 is wa '[x["pane"] for x in p]' "['$b', '$c', '$a']"
+hl_check "T5 a stashed row moves within the tray: let go high on a it goes on top" $? "index=$idx list=$(plist)"
+lst_is 'stashed("wa")' "$(printf "%s\n" "$a" "$c" | python3 -I -c 'import sys; print(sorted(sys.stdin.read().split()))')"
+hl_check "T5b and it stays stashed" $? "$(lst 'stashed("wa")')"
+
+# The last pane on screen cannot go into the tray.
+hl_wait_for 10 laid wa "$a" "$b" "$c" tray
+out=$(sb wa "--drag=$b:$(ylow wa "$a")")
 case "$out" in *'did not drop'*) ok=0 ;; *) ok=1 ;; esac
-hl_check "D13 and letting it go is refused" $ok "$out"
-is wa '[x["pane"] for x in p]' "['$b', '$a', '$c']"
-hl_check "D13b the list is unchanged" $? "$(field wa '[x["pane"] for x in p]')"
+hl_check "T6 the last pane on screen let go in the tray is refused" $ok "$out"
+lst_is '"'"$b"'" in stashed("wa")' False
+hl_check "T6b and stays on screen" $? "$(lst 'stashed("wa")')"
+grep -q "pane sidebar stash refused pane=$b" "$APP_LOG"
+hl_check "T6c the refusal is logged" $?
+
+# Out of the tray: a let go high on b is restored, focused, first in the list.
+hl_wait_for 10 laid wa "$a" "$b" "$c" tray
+y=$(yhigh wa "$b")
+idx=$(drop wa "$a" "$y")
+hl_wait_for 10 lst_is 'stashed("wa")' "['$c']"
+hl_check "T7 a tray row let go in the list is restored" $? "index=$idx stashed=$(lst 'stashed("wa")')"
+hl_wait_for 10 is wa '[x["pane"] for x in p]' "['$a', '$b', '$c']"
+hl_check "T7b at the place it was let go (index 0), before b" $? "index=$idx list=$(plist)"
+hl_wait_for 10 lst_is 'focused("wa")' "$a"
+hl_check "T7c and focused" $? "focused=$(lst 'focused("wa")')"
+grep -q "pane sidebar restore pane=$a from=tray" "$APP_LOG"
+hl_check "T7d the restore is logged" $?
+[ "$(lst 'pids("wa")')" = "$pids1" ]
+hl_check "T8 through all of it the same shells run" $? "pids=$(lst 'pids("wa")') was=$pids1"
+
+# ---- 6. the tray in the all-windows list: no head, the stash follows -------
+sb wa --click=scope > /dev/null
+hl_wait_for 10 is wa 's["all_windows"]' True
+[ "$(field wa 'head("wa")["folded"]')" = True ] && sb wa "--click=fold:$ka" > /dev/null
+hl_wait_for 10 is wa '(order(["'"$a"'", "'"$b"'", "'"$c"'"]), any(x["kind"] == "tray" for x in r))' "(['$a', '$b', '$c'], False)"
+hl_check "T9 all windows draws no tray head: a window's stashed panes follow its others" $? "$(field wa '[(x["pane"], x["kind"]) for x in r]')"
+hl_wait_for 10 laid wa "$a" "$b" "$c" "$f" "$e"
+y=$(ylow wa "$c")
+idx=$(drop wa "$a" "$y")
+hl_wait_for 10 lst_is 'stashed("wa")' "$(printf "%s\n" "$a" "$c" | python3 -I -c 'import sys; print(sorted(sys.stdin.read().split()))')"
+hl_check "T10 there a row let go among its window's stashed rows stashes it" $? "index=$idx stashed=$(lst 'stashed("wa")')"
+hl_wait_for 10 is wa 'order(["'"$a"'", "'"$b"'", "'"$c"'"])' "['$b', '$c', '$a']"
+hl_check "T10b under c, as let go" $? "$(field wa '[x["pane"] for x in p]')"
+hl_wait_for 10 laid wa "$a" "$b" "$c" "$f" "$e"
+y=$(yhigh wa "$b")
+idx=$(drop wa "$c" "$y")
+hl_wait_for 10 lst_is 'stashed("wa")' "['$a']"
+hl_check "T11 and a stashed row let go among the panes on screen is restored" $? "index=$idx stashed=$(lst 'stashed("wa")')"
+hl_wait_for 10 is wa 'order(["'"$a"'", "'"$b"'", "'"$c"'"])' "['$c', '$b', '$a']"
+hl_check "T11b before b, as let go" $? "$(field wa '[x["pane"] for x in p]')"
+lst_is 'stashed("wb")' "[]"
+hl_check "T11c the other window is untouched" $? "$(lst 'stashed("wb")')"
 
 hl_finish "$L"
