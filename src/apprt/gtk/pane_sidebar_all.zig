@@ -529,9 +529,12 @@ pub fn dropItem(
         m += 1;
     }
     const src = source orelse return null;
-    const pitch = window_order.pitch(src, spans[0..m]);
+    // Pitch 0: nothing slides while a GTK drag is held (no glide), so the
+    // pointer is read against the rows where they are drawn, not closed up
+    // where the dragged one left (win32/Mac `window_order.pitch`) - as a
+    // pane row's drop reads it (`rows.dropIndex`).
     const top = window_order.clamp(y - @divTrunc(height, 2), src, spans[0..m], null);
-    const r = cross_drop.resolve(cross[0..m], src, pitch, top);
+    const r = cross_drop.resolve(cross[0..m], src, 0, top);
     const dest_project = r.dest.project();
     // Its new siblings, in the list's order, without it: the group's
     // windows, or the top level - each group once, and every lone window.
@@ -898,8 +901,11 @@ test "T3697: a window row lands in a group, out of one, or among its own" {
     var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
-    // The lone window let go between a's x and b's header: into a, after x.
+    // The lone window let go low on a's x: into a, after x. Read against
+    // the rows where they are drawn: its middle on x's middle is not past x.
     var d = (try dropItem(arena, &folded_list, 120, "window:1", 70, &.{}, &folded_keys)).?;
+    try testing.expectEqual(@as(usize, 0), d.index);
+    d = (try dropItem(arena, &folded_list, 120, "window:1", 78, &.{}, &folded_keys)).?;
     try testing.expect(d.regroup);
     try testing.expectEqualStrings("a", d.project.?);
     try testing.expectEqual(@as(usize, 1), d.index);

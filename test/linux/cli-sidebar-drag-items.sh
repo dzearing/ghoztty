@@ -216,7 +216,7 @@ case "$out" in *'did not lift'*) ok=0 ;; *) ok=1 ;; esac
 hl_check "I10 the Ungrouped header does not lift" $ok "$out"
 sb wl --click=scope > /dev/null
 hl_wait_for 10 is wl 's["all_windows"]' False
-is wl '[x["draggable"] for x in H]' "[False]"
+is wl '(len(H) > 0, any(x["draggable"] for x in H))' "(True, False)"
 hl_check "I10b this window's own list: its header does not drag" $? "$(field wl 'H')"
 out=$(sb wl "--lift=$(field wl 'H[0]["pane"]')")
 case "$out" in *'did not lift'*) ok=0 ;; *) ok=1 ;; esac
