@@ -398,7 +398,7 @@ fn ensureCss(self: *SettingsTheme, widget: *wk.GtkWidget) void {
         \\button.gz-tile.gz-tile-picked { border: 2px solid @accent_color; }
         \\.gz-tile-preview { padding: 7px 8px; font-family: monospace; font-size: 0.85em; }
         \\.gz-tile-name { padding: 3px 4px 4px 4px; }
-        \\.gz-tile-name.gz-picked { color: @accent_color; font-weight: bold; }
+        \\.gz-tile-name.gz-picked { color: @accent_color; font-weight: 600; }
         \\.gz-preview-card { border-radius: 10px; }
         \\.gz-preview-desk { background-color: @window_bg_color; }
         \\.gz-preview-desk.gz-elevated { background-image: linear-gradient(to bottom right, rgb(92,140,214), rgb(64,181,176)); }

@@ -683,6 +683,15 @@ pub extern fn pango_font_description_from_string(str: [*:0]const u8) *PangoFontD
 pub extern fn pango_font_description_set_absolute_size(desc: *PangoFontDescription, size: f64) void;
 pub extern fn pango_font_description_free(desc: *PangoFontDescription) void;
 
+// The label-weights seam (T3791): the weight CSS gave each label.
+pub const PangoContext = opaque {};
+pub extern fn gtk_widget_get_pango_context(widget: *GtkWidget) *PangoContext;
+pub extern fn pango_context_get_font_description(context: *PangoContext) ?*const PangoFontDescription;
+pub extern fn pango_font_description_get_weight(desc: *const PangoFontDescription) c_int;
+pub extern fn gtk_widget_get_css_classes(widget: *GtkWidget) ?[*:null]?[*:0]u8;
+pub extern fn gtk_widget_get_css_name(widget: *GtkWidget) [*:0]const u8;
+pub extern fn g_strfreev(str_array: ?[*:null]?[*:0]u8) void;
+
 // --- Stacked panes: the stage the shared layout places (T3567) ---------------
 
 pub const GtkLayoutManager = opaque {};

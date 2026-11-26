@@ -222,6 +222,7 @@ pub fn handleSeam(app: Context, request: Request) Allocator.Error!server.SeamRep
     if (std.mem.eql(u8, request.action, "window-size")) return .{ .reply = try windowSizeSeam(app, request) };
     if (std.mem.eql(u8, request.action, "main-menu")) return .{ .reply = try mainMenuSeam(app, request) };
     if (std.mem.eql(u8, request.action, "command-palette")) return .{ .reply = try commandPaletteSeam(app, request) };
+    if (std.mem.eql(u8, request.action, "label-weights")) return .{ .reply = try labelWeightsSeam(app, request) };
     if (!std.mem.eql(u8, request.action, "capture-pane")) return .unhandled;
     return .{ .reply = try capturePane(app, request) };
 }
@@ -1133,6 +1134,83 @@ fn windowSizeSeam(app: Context, request: Request) Allocator.Error![]u8 {
         .width = wk.gtk_widget_get_width(w),
         .height = wk.gtk_widget_get_height(w),
     }, .{}, &out.writer) catch return error.OutOfMemory;
+    return c_alloc.dupe(u8, out.written());
+}
+
+const LabelWeight = struct {
+    text: []const u8,
+    weight: c_int,
+    mapped: bool,
+    /// The label's own CSS classes, then its parent's CSS node name and
+    /// classes - what a style rule selects it by.
+    classes: []const []const u8,
+    parent: []const u8,
+    parent_classes: []const []const u8,
+};
+
+fn cssClasses(arena: Allocator, w: *wk.GtkWidget) Allocator.Error![]const []const u8 {
+    var list: std.ArrayList([]const u8) = .empty;
+    const v = wk.gtk_widget_get_css_classes(w);
+    defer wk.g_strfreev(v);
+    if (v) |arr| {
+        var i: usize = 0;
+        while (arr[i]) |c| : (i += 1) try list.append(arena, try arena.dupe(u8, std.mem.span(c)));
+    }
+    return list.items;
+}
+
+fn collectLabelWeights(arena: Allocator, w: *wk.GtkWidget, out: *std.ArrayList(LabelWeight)) Allocator.Error!void {
+    if (wk.g_type_check_instance_is_a(@ptrCast(w), wk.gtk_label_get_type()) != 0) {
+        const desc = wk.pango_context_get_font_description(wk.gtk_widget_get_pango_context(w));
+        const parent = wk.gtk_widget_get_parent(w);
+        try out.append(arena, .{
+            .text = try arena.dupe(u8, std.mem.span(wk.gtk_label_get_text(w))),
+            .weight = if (desc) |d| wk.pango_font_description_get_weight(d) else 0,
+            .mapped = wk.gtk_widget_get_mapped(w) != 0,
+            .classes = try cssClasses(arena, w),
+            .parent = if (parent) |p| try arena.dupe(u8, std.mem.span(wk.gtk_widget_get_css_name(p))) else "",
+            .parent_classes = if (parent) |p| try cssClasses(arena, p) else &.{},
+        });
+    }
+    var child = wk.gtk_widget_get_first_child(w);
+    while (child) |c| : (child = wk.gtk_widget_get_next_sibling(c)) try collectLabelWeights(arena, c, out);
+}
+
+/// `label-weights --target=<pane> [--of=window|settings|guide]` (T3791):
+/// every label in the target's window (or the open Settings window, or the
+/// open shortcut guide), with the font weight its CSS computed (Pango's
+/// scale: 400 regular, 600 semibold, 700 bold), whether it is mapped, and
+/// the classes a rule selects it by. The harness has no screen to look at
+/// stem widths on; this is the weight GTK will draw with.
+fn labelWeightsSeam(app: Context, request: Request) Allocator.Error![]u8 {
+    var target_arg: ?[]const u8 = null;
+    var of: []const u8 = "window";
+    for (request.arguments orelse &.{}) |arg| {
+        if (std.mem.startsWith(u8, arg, "--target=")) target_arg = arg["--target=".len..];
+        if (std.mem.startsWith(u8, arg, "--of=")) of = arg["--of=".len..];
+    }
+    var arena_state = std.heap.ArenaAllocator.init(c_alloc);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const root: *wk.GtkWidget = if (std.mem.eql(u8, of, "window")) root: {
+        switch (try seamWindow(arena, app, target_arg, "label-weights")) {
+            .window => |w| break :root @ptrCast(w.as(gtk.Widget)),
+            .reply => |r| return r,
+        }
+    } else if (std.mem.eql(u8, of, "settings"))
+        (@import("SettingsWindow.zig").current() orelse
+            return server.errorResponse(c_alloc, "the Settings window is not open", .{})).window
+    else if (std.mem.eql(u8, of, "guide"))
+        (@import("ShortcutGuideWindow.zig").current() orelse
+            return server.errorResponse(c_alloc, "the shortcut guide is not open", .{})).window
+    else
+        return server.errorResponse(c_alloc, "--of must be window, settings or guide", .{});
+
+    var labels: std.ArrayList(LabelWeight) = .empty;
+    try collectLabelWeights(arena, root, &labels);
+    var out: std.Io.Writer.Allocating = .init(arena);
+    std.json.Stringify.value(.{ .success = true, .labels = labels.items }, .{}, &out.writer) catch return error.OutOfMemory;
     return c_alloc.dupe(u8, out.written());
 }
 
