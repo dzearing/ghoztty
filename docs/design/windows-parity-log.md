@@ -40995,3 +40995,5 @@ WebKitGTK's script message carries no frame, and a page-world handler is visible
 - What: section 9 wrote the remote-session seam and only then took its log mark. The app's 250 ms visibility poll reads the seam too, so under load the "effects off" line landed before the mark and the wait missed it. The mark now comes first. Test-only change (ff1edb5ab0).
 - Evidence: three paired `acceptance-parallel run` passes with pane-sidebar-drag.ps1, all ALL PASS (188 + 132 each); scoped harness floor and unwired-hook audit green and stamped.
 - Filed: none.
+
+- 2026-11-26 (lane b) T2453 closed, not reproduced: 29 host-floor logs since 2026-10-29 show no silent exit 255; 3/3 isolated runs green with the TOC click reached. Filed T3833 for the unrelated 'link routing: expected 4, found 5' flake behind all five reds.
