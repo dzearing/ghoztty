@@ -368,11 +368,24 @@ private runtime dir, so a test app can never meet the user's.
   stashed pane (`pane-sidebar-stashed`, the seam's `stashed`), and a click on
   it restores and focuses it. Keys: `stash_pane` is **Ctrl+Shift+M** on
   Linux (Windows' chord), `restore_stashed_pane` (top of the stash, focused)
-  has no default, as on the Mac. Not yet: a relaunch keeping the stash,
-  stash-aware resize / equalize / swap / pane drops, the Alt-click exchange
-  (T3667), the sidebar's stash tray (T3607). Acceptance: `wsl-run.ps1
-  -CommandFile test\linux\cli-stash.sh`, ends `CLI STASH: ALL PASS` (31
-  checks); `wsl-run.ps1 -Step 'NEGATIVE=1 bash test/linux/cli-stash.sh'`
+  has no default, as on the Mac. **The spatial verbs act on what is on show
+  (T3667, win32 T1827):** a keyboard resize runs `SplitTree.resize` on
+  `pane_stash.visibleClone` and lifts the ratios back (`liftRatios`), so the
+  divider that moves is one the user can see and a collapsed split keeps its
+  ratio; `equalize_splits` does the same with `equalize`; `swap_split` picks
+  its partner with `gotoVisible`, so a stashed pane is never swapped in; the
+  pane-drop resolver's hidden predicate (`pane_drop_apply.stashed`) is
+  `pane_stash.isStashed`, so "would this drop change anything" and a gap's
+  sides are judged over the panes on show. **Alt-click** on a stashed row of
+  the tab on show (`SplitTree.exchangeStashed`, `pane_stash.exchange`, win32
+  T1845) swaps it with the focused pane: it takes that slot, focused, and
+  the focused pane takes its place in the stash. GTK4's button `clicked`
+  carries no event state, so the row reads Alt off the seat's keyboard
+  (`altHeld`); the seam is `pane-sidebar --click=alt:<row id>`. Anywhere
+  else an Alt-click is a click. Not yet: the sidebar's stash tray (T3607).
+  Acceptance: `wsl-run.ps1 -CommandFile test\linux\cli-stash.sh`, ends `CLI
+  STASH: ALL PASS` (37 checks; V0-V5 and A1-A2 are T3667's);
+  `wsl-run.ps1 -Step 'NEGATIVE=1 bash test/linux/cli-stash.sh'`
   (a Windows `$env:NEGATIVE` never reaches WSL) presses Ctrl+Shift+N and must
   fail K1 (and X1, which builds on it).
 - **`handoff-quit` (T3595)** is win32's T1070 server half: the request a
@@ -2738,8 +2751,21 @@ it used to carry (a `-Dtest-filter=firstLeaf` run matched no tests).
   presented; a size under 100 or over 16384 px is ignored) and each tab
   re-pins its recorded title.
 - **Not restored:** window position - Wayland gives a client none, so where a
-  window lands is the compositor's call. **Not yet:** the stash - a stashed
-  pane (T3596) comes back on screen after a relaunch (T3667).
+  window lands is the compositor's call.
+- **The stash (T3667)** comes back too: each leaf records its place in its
+  tab's stash (`stash_index`, 0 = top; win32 T1838's field, absent for a pane
+  on show) and the relaunch stashes the panes again in that order
+  (`pane_stash.applyRecorded`, which still leaves one pane on show for a
+  manifest that would hide them all). Not at once: a GTK terminal starts
+  when its GL area is first realized and a stashed pane has no card, so a
+  pane stashed before it was ever on screen would never start its shell or
+  re-attach its session. `SplitTree.adoptRecordedStash` waits (50 ms ticks,
+  10 s cap) until every recorded pane has started, then applies the stash in
+  one go and moves the caret off a pane that left the layout. A stashed pane
+  in a tab that is not on show at launch never realizes, so it times out
+  unstarted (T3805). Acceptance: RS1-RS5 of `session-restore.sh` (recorded;
+  stashed again and off the stage after a SIGKILL relaunch, on a fresh shell,
+  and after an agent restart).
 - **Banners (T3560)** come back with their pane whether it re-attaches or
   opens a fresh shell (`session_layout_rules.bannerToRecord` /
   `bannerToRestore`, none-lane tested; win32's T422). The restored pane tells
