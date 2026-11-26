@@ -2261,6 +2261,19 @@ $GuardTable = @(
             'src\apprt\win32\Window.zig'
         )
     },
+    # A strip holds still while another pane collapses onto the stack (T2328,
+    # T2312): its reach under the newcomer waits for the glide to land.
+    [pscustomobject]@{
+        Name   = 'pane-stack-strip-hold'
+        Script = 'test\win32\pane-stack-strip-hold.ps1'
+        Stamp  = 'test\win32\pane-stack-strip-hold.stamp.json'
+        Covers = @(
+            'test\win32\pane-stack-strip-hold.ps1',
+            'src\apprt\win32\pane_stack_slide.zig',
+            'src\apprt\win32\pane_stack_layout.zig',
+            'src\apprt\win32\Window.zig'
+        )
+    },
     # An unfold slides into view (T2187): a pane held at its old size mid-slide
     # is cut to its new card, so it never covers the pane coming back.
     [pscustomobject]@{

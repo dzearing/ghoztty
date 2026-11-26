@@ -455,6 +455,12 @@
             "unsetArm": "test\\win32\\window-count-scale.ps1::Remove-Item Env:GHOZTTY_TEST_NO_PACE",
             "note": "unset = panes outside the window in use present at a capped pace (T3761, renderer/pace.zig), which window-count-scale.ps1's section D asserts with it cleared; set, every window stays at full pace (the pre-T3761 renderer) so -NegativeControl proves D1 goes red. low-power-render.ps1 sets it to measure the low-power cap alone."
         },
+        "GHOZTTY_TEST_NO_STRIP_HOLD": {
+            "class": "fault",
+            "unset": "armed",
+            "unsetArm": "test\\win32\\pane-stack-strip-hold.ps1::Remove-Item env:GHOZTTY_TEST_NO_STRIP_HOLD",
+            "note": "unset = a strip gaining its reach under a pane collapsing onto the stack is held at its old length until the glide lands (T2312, Window.zig after pane_stack_slide.plan), which pane-stack-strip-hold.ps1 H1 asserts with it cleared; set (debug builds only), the plan's held strips are dropped - the pre-T2312 answer - so -NegativeControl proves H1 goes red (T2328)."
+        },
         "GHOZTTY_TEST_NO_OCCLUSION": {
             "class": "non-default",
             "unset": "shipped-elsewhere",

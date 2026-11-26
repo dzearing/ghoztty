@@ -13443,6 +13443,11 @@ fn planStackSlide(self: *Window, tree: SplitTree(PaneView), grid: *const pane_st
             // A drag's fold or unfold resizes on the way, as the drag does
             // on every move (T2186).
             var next = pane_stack_slide.plan(before, now[0..n], current, stackGlideMs(), self.stackGesturing());
+            // pane-stack-strip-hold.ps1's negative control (T2328): no strip
+            // is held short of its reach - the answer before T2312.
+            if (comptime builtin.mode == .Debug) {
+                if (std.process.hasEnvVarConstant("GHOZTTY_TEST_NO_STRIP_HOLD")) next.held_len = 0;
+            }
             // The strip's fade gets three frames however slow they are (T2442).
             next.fade = strip_face.fadeOf(self.scale);
             if (stackTraceOn()) self.traceStackPlan("runs", &next);
@@ -13802,8 +13807,12 @@ fn releaseIdleSnapshots(self: *Window, tab: usize) void {
 fn endStackSlide(self: *Window) void {
     self.restStackSlide();
     // The pass that lands it reports what the glide moved (T2571).
-    if (self.stack_slide != null) self.glide_moves_report = true;
+    const was_sliding = self.stack_slide != null;
+    if (was_sliding) self.glide_moves_report = true;
     self.stack_slide = null;
+    if (comptime builtin.mode == .Debug) {
+        if (was_sliding) self.logShownStrips("settled");
+    }
     // The ring's lines go out once nothing is moving any more (T2485 D17).
     if (!self.dragging_split) flushStackTrace();
     // Every card is a live pane again (T2457), and one that opened says how
@@ -14180,6 +14189,7 @@ fn stackSlideTick(self: *Window) void {
     for (s.stripItems()) |sg| if (s.movingStrip(sg.id)) |m| {
         log.debug("stack strip glide left={d} top={d} right={d} bottom={d}", .{ m.left, m.top, m.right, m.bottom });
     };
+    if (comptime builtin.mode == .Debug) self.logShownStrips("glide");
     const end_t = if (done and self.drag_perf_on) std.time.Instant.now() catch null else null;
     if (done) {
         if (self.stackGesturing()) self.restStackSlide() else self.endStackSlide();
@@ -14908,6 +14918,40 @@ fn shownStripTab(self: *Window, id: pane_stack_grid.Id, p: pane_stack_grid.Place
     const t = p.tab orelse return null;
     const slide = if (self.stack_slide) |*s| s else return t;
     return slide.shownStrip(id, t, p.tab_axis orelse .horizontal, p.strip_leads orelse true);
+}
+
+/// The acceptance oracle (pane-stack-strip-hold.ps1, T2328; Mac
+/// `aStripStaysPutWhenAnotherCollapsesOntoIt` samples `placedTab`): where
+/// every strip of the active tab that is not a card on the move shows right
+/// now (`shownStripTab`), beside its laid-out tab. `when`: "glide" for a
+/// glide tick, "settled" once the glide has landed. Debug builds only.
+fn logShownStrips(self: *Window, when: []const u8) void {
+    if (self.tab_count == 0) return;
+    if (self.tab_hero_active[self.active_tab]) return;
+    const tree = self.tab_trees[self.active_tab];
+    if (tree.zoomed != null) return;
+    var grid = self.stackGrid() orelse return;
+    defer grid.deinit();
+    var it = tree.iterator();
+    while (it.next()) |entry| {
+        if (pane_stash.isStashed(entry.view)) continue;
+        const id = pane_stack_grid.viewId(entry.view);
+        const p = grid.placement(id) orelse continue;
+        const laid = p.tab orelse continue;
+        if (self.stackSlideRect(id) != null) continue;
+        const t = self.shownStripTab(id, p) orelse continue;
+        log.debug("stack strip shown when={s} hwnd={x} leads={} left={d} top={d} right={d} bottom={d} laid_left={d} laid_right={d}", .{
+            when,
+            if (entry.view.hwnd()) |h| @intFromPtr(h) else 0,
+            p.strip_leads orelse true,
+            t.left,
+            t.top,
+            t.right,
+            t.bottom,
+            laid.left,
+            laid.right,
+        });
+    }
 }
 
 /// Every tucked pane's strip in the active tab, bottom first in the engine's
