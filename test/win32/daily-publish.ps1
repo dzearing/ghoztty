@@ -852,6 +852,38 @@ try {
     AssertEq 'S4 only user-facing task commits become items' 2 $sItems.Count
     AssertEq 'S4 a client change is client-scoped' 'client' $sItems[0].Scope
     AssertEq 'S4 a src\remote change is agent-scoped' 'agent' $sItems[1].Scope
+    # T3819: only Windows work, one item per task, no test-only or bookkeeping
+    # commits. A seat:linux fix, a test-only commit naming a Windows fix task, a
+    # Stamp commit, a WIP commit and the Windows fix itself -> only the fix.
+    $fakeTasks = { param($t) switch ($t) {
+            'T10' { [pscustomobject]@{ Tags = @('fix'); Seat = 'win'; Commits = @('cccc333') } }
+            'T11' { [pscustomobject]@{ Tags = @('fix'); Seat = 'linux'; Commits = @() } }
+            'T12' { [pscustomobject]@{ Tags = @('feature'); Seat = 'mac'; Commits = @() } }
+            'T13' { [pscustomobject]@{ Tags = @('feature'); Seat = 'any'; Commits = @() } }
+            default { [pscustomobject]@{ Tags = @(); Seat = ''; Commits = @() } } } }
+    $t3819Commits = @(
+        [pscustomobject]@{ Sha = 'aaaa111'; Subject = 'On Linux the pill draws (T11)'; Files = @('src/apprt/gtk/Pill.zig') },
+        [pscustomobject]@{ Sha = 'bbbb222'; Subject = 'The pill draws, first cut (T10, WIP)'; Files = @('src/apprt/win32/Pill.zig') },
+        [pscustomobject]@{ Sha = 'cccc333'; Subject = 'The pill shows offline when it is (T10)'; Files = @('src/apprt/win32/Pill.zig') },
+        [pscustomobject]@{ Sha = 'dddd444'; Subject = 'pill.sh reloads its config (T10)'; Files = @('test/linux/pill.sh') },
+        [pscustomobject]@{ Sha = 'eeee555'; Subject = 'Stamp the pill audit green (T10)'; Files = @('src/apprt/win32/Pill.zig') },
+        [pscustomobject]@{ Sha = 'ffff666'; Subject = 'File the user''s pill reports (T10)'; Files = @('docs/design/windows-parity-tasks/T10.md') },
+        [pscustomobject]@{ Sha = '99997777'; Subject = 'On the Mac the dock badge counts (T12)'; Files = @('macos/Sources/Badge.swift') },
+        [pscustomobject]@{ Sha = '88886666'; Subject = 'The palette lists shells (T13)'; Files = @('src/apprt/win32/Palette.zig') })
+    # Positive control: the pre-T3819 rule (any non-chore commit naming a
+    # user-facing task) takes all 8 of these; the filter must be what removes them.
+    $oldRule = @($t3819Commits | Where-Object { $_.Subject -match '\((T\d+)[^)]*\)\s*$' -and (Get-ReleaseNoteKind -Tags @((& $fakeTasks $Matches[1]).Tags)) })
+    AssertEq 'S4b positive control: the old rule lists all 8 commits' 8 $oldRule.Count
+    $wItems = @(Select-ReleaseNoteItems -TaskLookup $fakeTasks -Commits $t3819Commits)
+    AssertEq 'S4b only Windows tasks, one item each' 'T10|T13' (@($wItems | ForEach-Object { $_.Task }) -join '|')
+    AssertEq 'S4b the task''s item is its recorded commit, not its WIP or test commit' 'The pill shows offline when it is.' $wItems[0].Text
+    Assert 'S4b no Linux, Mac, stamp, filing or test-script line' (-not @($wItems | Where-Object { $_.Text -match 'Linux|Mac|Stamp|File|pill\.sh' }).Count)
+    AssertEq 'S4b a commit touching only test/, docs/ or src/apprt/gtk/ is invisible' 'False|False|True' ((@('test/linux/x.sh', 'docs/a.md'), @('src/apprt/gtk/A.zig'), @('src/apprt/win32/A.zig', 'test/x.ps1') | ForEach-Object { Test-ReleaseNoteVisibleFiles $_ }) -join '|')
+    AssertEq 'S4b seat and commits are read from the frontmatter' 'linux|abc1234,def5678' ((Get-TaskFileSeat "---`nseat: `"linux`"`n---") + '|' + ((Get-TaskFileCommits "---`ncommits: [`"abc1234`", `"DEF5678`"]`n---") -join ','))
+    # A range holding only Linux work is still the stated nothing-to-say outcome.
+    $linuxOnly = @(Select-ReleaseNoteItems -TaskLookup $fakeTasks -Commits @($t3819Commits[0]))
+    AssertEq 'S4b a Linux-only range yields no Windows items' 0 $linuxOnly.Count
+    AssertMatch 'S4b and writes the plain nothing-new line' 'No user-visible changes' ((ConvertTo-ReleaseNotesJson -Version '1.2.5' -Items $linuxOnly) | ConvertFrom-Json).sections[0].items[0].text
     $doc = ConvertTo-ReleaseNotesJson -Version '1.2.3' -Items @([pscustomobject]@{ Scope = 'client'; Kind = 'fix'; Text = 'A "quoted" fix\path.'; Task = 'T1' })
     $parsed = $doc | ConvertFrom-Json
     AssertEq 'S5 the document is JSON keyed by its version' '1.2.3' $parsed.version

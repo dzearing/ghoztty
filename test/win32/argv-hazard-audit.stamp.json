@@ -1,10 +1,10 @@
 {
     "guard":  "argv-hazard",
     "script":  "test/win32/argv-hazard-audit.ps1",
-    "generated":  "2026-11-26T06:14:51-08:00",
-    "commit":  "65cd6227e6",
+    "generated":  "2026-11-26T12:47:13-08:00",
+    "commit":  "d627874794",
     "uncommitted":  [
-
+                        "scripts/release-notes-author.ps1"
                     ],
     "files":  {
                   "scripts/acceptance-parallel.ps1":  "664d7cc264cd257377d66545ca9960556802361c0ad3c6fab635a67e755c6d96",
@@ -114,7 +114,7 @@
                   "scripts/pr-review.ps1":  "8c817f2422323eb57ba9a7bb52a9fc72fd2a731fa4388f2f3d8116985003078c",
                   "scripts/publish-windows-tag.ps1":  "28b1b5a25a0216a2305278b0bb48d7255813eae8f608b6f333536fee1b0d3b05",
                   "scripts/rdp-perf-probe.ps1":  "b5e70fb1c4b8eb1ae74033ad8131b48e9aa20a3aacc7b4291d355d81c33b866a",
-                  "scripts/release-notes-author.ps1":  "9e5293ccde4efefa2e2371b297321db8b644f9061689d194beedd800f4d9caf3",
+                  "scripts/release-notes-author.ps1":  "e97a7aef2100d202ea627fa9244860eb6d3e9e4fe44ae4ca376c2586a10a854c",
                   "scripts/report-false-positive.ps1":  "67875bcfc4d235afa9a8810294a7ea9d48fc7cb57f69e74c9617970b65d68534",
                   "scripts/resize-sync-onscreen.ps1":  "1877412836c7a5b9505712a9ce5529b08d60b050cbe2a58594aa7c13d42f69f7",
                   "scripts/scrollbar-fade-onscreen.ps1":  "36c30979affd7da2f29934b686a78fa78d1dfdcb15b04ceee8ec0828732bb9fc",

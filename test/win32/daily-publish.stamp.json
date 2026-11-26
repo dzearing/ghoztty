@@ -1,10 +1,10 @@
 {
     "guard":  "daily-publish",
     "script":  "test/win32/daily-publish.ps1",
-    "generated":  "2026-11-23T12:45:21-08:00",
-    "commit":  "723bc2478",
+    "generated":  "2026-11-26T12:39:47-08:00",
+    "commit":  "d627874794",
     "uncommitted":  [
-                        "scripts/daily-publish.ps1",
+                        "scripts/release-notes-author.ps1",
                         "test/win32/daily-publish.ps1"
                     ],
     "files":  {
@@ -12,15 +12,15 @@
                   "scripts/lib/ManualChecks.ps1":  "c13b824504fd874e258e5042e3eb33ed0ebdcdfb56e2671aa911160d2aeabfd4",
                   "scripts/manual-check.ps1":  "9ad7bee0f554618e7ebf1d6c349205ed326315166e4ebfdf280a9e30ed15ca37",
                   "scripts/publish-windows-tag.ps1":  "28b1b5a25a0216a2305278b0bb48d7255813eae8f608b6f333536fee1b0d3b05",
-                  "scripts/release-notes-author.ps1":  "9e5293ccde4efefa2e2371b297321db8b644f9061689d194beedd800f4d9caf3",
-                  "test/win32/daily-publish.ps1":  "ec4ba1160785300cfb8452561edf9306910fa3fc0a677399a33882a4c4275e6c"
+                  "scripts/release-notes-author.ps1":  "e97a7aef2100d202ea627fa9244860eb6d3e9e4fe44ae4ca376c2586a10a854c",
+                  "test/win32/daily-publish.ps1":  "5f9f35a04cd40bd6c5527c1a420d12290d638e07571a1e160df3fb6c852f8f4d"
               },
     "code":  {
                  "scripts/daily-publish.ps1":  "code1:c79847df5820acf00a04aff0243182aff6c0fa0014189faa2df8c2676fc3d2c8",
                  "scripts/lib/ManualChecks.ps1":  "code1:9fd8df1a9083b2e08bc89e10d624cf393b198223107fa87b39307e4daa3300f3",
                  "scripts/manual-check.ps1":  "code1:5a40bd101316e04a67994d103a4142b7c3992a737c126c79f96471dbbe6de838",
                  "scripts/publish-windows-tag.ps1":  "code1:b824548a3fabed0c94dc63c10e35b15f372f9830adbe977c12f4f3e1543bc22f",
-                 "scripts/release-notes-author.ps1":  "code1:1af8bb9a9bb5b75bb284052c454970f46bde8df1834d7cf9edfbf401b869a919",
-                 "test/win32/daily-publish.ps1":  "code1:c6d905d9d1674997f9c67f8e50491377047ab59b82f5bc5e8b62ba939bb6b8d2"
+                 "scripts/release-notes-author.ps1":  "code1:2ee544a259bbd19e234f7ac40a98d854353f4901415e4acfa26b8deacf3a9b02",
+                 "test/win32/daily-publish.ps1":  "code1:85a1e3217f3992a753755282b64df746d6756f0051e41f30610a2c71cbef6304"
              }
 }

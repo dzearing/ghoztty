@@ -1,10 +1,10 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-11-26T11:39:21-08:00",
-    "commit":  "bbff56176c",
+    "generated":  "2026-11-26T12:51:43-08:00",
+    "commit":  "d627874794",
     "uncommitted":  [
-
+                        "test/win32/daily-publish.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "cfa23792d110d499fa4086697daa516d218d0d110e594a7452167a81220ee15e",
@@ -136,7 +136,7 @@
                   "test/win32/crash-report.ps1":  "6025d55f192e5b76edf56c865f4fe57f18dda58b29d1bc73bb637940556dce95",
                   "test/win32/crash-stacks.ps1":  "dd47c1c863fb595f6b170407e6d1f2ce9027bb7d1b35717a4b5e2be1cc0d0980",
                   "test/win32/cursor-blink-redraw.ps1":  "5c7725e905ad660031583cb9a2058be442b6df96c4c7b18f24f4a0be372f4e34",
-                  "test/win32/daily-publish.ps1":  "ec4ba1160785300cfb8452561edf9306910fa3fc0a677399a33882a4c4275e6c",
+                  "test/win32/daily-publish.ps1":  "5f9f35a04cd40bd6c5527c1a420d12290d638e07571a1e160df3fb6c852f8f4d",
                   "test/win32/dark-menus.ps1":  "ff95db79cd0ac8bc9cd9c7def98d112d129127759b3c084a1f5f5e087e3e9502",
                   "test/win32/dashboard-dom.ps1":  "588b973da60dc74921f6acd2e47ff5d2ce448fe06359f6551a16e1b5e4d779cf",
                   "test/win32/dashboard-keepalive.ps1":  "907915acd38d52b16755167f2df7e4383bc5d1cb53a3f8cbd84e419a559c7429",

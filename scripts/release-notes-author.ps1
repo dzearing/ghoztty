@@ -18,6 +18,10 @@
 # So an item is a commit that names a task (T<id>) whose tags include
 # feature / fix / polish / perf / security; infra, test and docs work is the
 # project's own business and is left out. `chore(...)` commits never count.
+# Since T3819 also: only Windows tasks (seat win/any/unmarked - Linux and Mac
+# work is not this platform's news), ONE item per task (its recorded commit),
+# and never a commit that touches only test/docs/scripts/task files or the
+# other frontends, nor a Stamp/Record/File/Close/Note/WIP subject.
 #
 # SCOPE, per release-notes\README.md: a commit that touches src\remote\ (the
 # session-persistence agent) goes to agent\<version>.json, which the
@@ -97,12 +101,71 @@ function ConvertTo-ReleaseNoteText([string]$Subject) {
     return $s
 }
 
-# Commits -> note items. Each commit is @{ Subject; Files }. TagLookup maps a
-# task id to its tags (a scriptblock, so the harness can inject one).
+# The seat out of a task file's frontmatter: `seat: "win"` -> 'win'.
+function Get-TaskFileSeat([string]$Text) {
+    if (-not $Text) { return '' }
+    $m = [regex]::Match($Text, '(?m)^seat:\s*"?([A-Za-z]*)"?')
+    if (-not $m.Success) { return '' }
+    return $m.Groups[1].Value.Trim().ToLowerInvariant()
+}
+# The recorded commits out of a task file's frontmatter: `commits: ["abc123"]`.
+function Get-TaskFileCommits([string]$Text) {
+    if (-not $Text) { return @() }
+    $m = [regex]::Match($Text, '(?m)^commits:\s*\[([^\]]*)\]')
+    if (-not $m.Success) { return @() }
+    return @([regex]::Matches($m.Groups[1].Value, '"([0-9A-Fa-f]{4,40})"') | ForEach-Object { $_.Groups[1].Value.ToLowerInvariant() })
+}
+
+# T3819: whether a task's work belongs in the WINDOWS notes at all. Linux and
+# Mac work ships in its own platform's notes; 'win', 'any' and an unmarked task
+# are this platform's.
+function Test-ReleaseNoteSeat([string]$Seat) {
+    $s = "$Seat".Trim().ToLowerInvariant()
+    return (-not $s -or $s -eq 'win' -or $s -eq 'windows' -or $s -eq 'any' -or $s -eq 'all')
+}
+
+# T3819: whether a commit's files can change what a Windows user sees. A commit
+# that touches only tests, docs, scripts, the notes themselves, task files, CI,
+# or the other two frontends (macos/, src/apprt/gtk/) cannot, whatever task it
+# names: those are the stamp, filing, harness and Linux-build commits that used
+# to fill the notes. A commit with no file list is given the benefit of the doubt.
+$script:InvisiblePathPattern = '^(test|docs|scripts|release-notes|macos|\.github|\.claude)[\\/]|^src[\\/]apprt[\\/]gtk[\\/]|^[^\\/]+\.md$'
+function Test-ReleaseNoteVisibleFiles($Files) {
+    $f = @($Files | Where-Object { "$_".Trim() })
+    if (-not $f.Count) { return $true }
+    return [bool](@($f | Where-Object { "$_" -notmatch $script:InvisiblePathPattern }).Count)
+}
+
+# T3819: subjects that are bookkeeping, not a change: "Stamp ... green",
+# "Record the green runs", "File the user's reports", "Close T1 against ...",
+# "Note ...", and anything marked WIP (prefix, or "(T1, WIP)").
+function Test-ReleaseNoteBookkeepingSubject([string]$Subject) {
+    $s = "$Subject".Trim()
+    if ($s -match '^(Stamp|Record|File|Close|Note|WIP)\b') { return $true }
+    if ($s -match '\(T\d+[^)]*\bWIP\b[^)]*\)\s*$') { return $true }
+    return $false
+}
+
+# Commits -> note items. Each commit is @{ Subject; Files; Sha }. TaskLookup
+# maps a task id to @{ Tags; Seat; Commits } (a scriptblock, so the harness can
+# inject one); the older TagLookup (id -> tags only) still works and implies a
+# Windows task with no recorded commits.
+#
+# ONE ITEM PER TASK (T3819): a task names many commits on its way to done (the
+# fix, its test, a stamp, the close). The item is the commit the task's
+# `commits:` list records, when that commit is in the range and survives the
+# filters above; otherwise the first commit naming it that survives them. A
+# task with no surviving commit in the range says nothing.
 function Select-ReleaseNoteItems {
-    param($Commits, [scriptblock]$TagLookup)
-    $items = New-Object System.Collections.ArrayList
-    $seen = @{}
+    param($Commits, [scriptblock]$TaskLookup, [scriptblock]$TagLookup)
+    if (-not $TaskLookup) {
+        $tl = $TagLookup
+        $TaskLookup = { param($t) [pscustomobject]@{ Tags = @(& $tl $t); Seat = ''; Commits = @() } }.GetNewClosure()
+    }
+    # Pass 1: every candidate commit, grouped by task in range order.
+    $order = New-Object System.Collections.ArrayList
+    $byTask = @{}
+    $info = @{}
     foreach ($c in @($Commits)) {
         if (-not $c) { continue }
         $subject = "$($c.Subject)".Trim()
@@ -111,12 +174,34 @@ function Select-ReleaseNoteItems {
         $m = [regex]::Match($subject, '\((T\d+)[^)]*\)\s*$')
         if (-not $m.Success) { continue }
         $tid = $m.Groups[1].Value
-        $kind = Get-ReleaseNoteKind -Tags @(& $TagLookup $tid)
-        if (-not $kind) { continue }
-        $text = ConvertTo-ReleaseNoteText $subject
+        if (-not $info.ContainsKey($tid)) { $info[$tid] = & $TaskLookup $tid }
+        $ti = $info[$tid]
+        if (-not (Get-ReleaseNoteKind -Tags @($ti.Tags))) { continue }
+        if (-not (Test-ReleaseNoteSeat "$($ti.Seat)")) { continue }
+        if (-not $byTask.ContainsKey($tid)) { $byTask[$tid] = New-Object System.Collections.ArrayList; [void]$order.Add($tid) }
+        [void]$byTask[$tid].Add($c)
+    }
+    # Pass 2: one commit per task.
+    $items = New-Object System.Collections.ArrayList
+    $seen = @{}
+    foreach ($tid in $order) {
+        $ti = $info[$tid]
+        $kind = Get-ReleaseNoteKind -Tags @($ti.Tags)
+        $recorded = @($ti.Commits | Where-Object { "$_".Trim() } | ForEach-Object { "$_".Trim().ToLowerInvariant() })
+        # The filters apply to the recorded commit too: a task whose recorded
+        # sha is a WIP commit is still named by its first real one.
+        $cands = @($byTask[$tid] | Where-Object { -not (Test-ReleaseNoteBookkeepingSubject $_.Subject) -and (Test-ReleaseNoteVisibleFiles $_.Files) })
+        if (-not $cands.Count) { continue }
+        $pick = $cands[0]
+        foreach ($c in $cands) {
+            $sha = "$($c.Sha)".Trim().ToLowerInvariant()
+            if (-not $sha) { continue }
+            if (@($recorded | Where-Object { $sha.StartsWith($_) -or $_.StartsWith($sha) }).Count) { $pick = $c; break }
+        }
+        $text = ConvertTo-ReleaseNoteText "$($pick.Subject)"
         if (-not $text -or $seen.ContainsKey($text)) { continue }
         $seen[$text] = $true
-        $scope = if (@($c.Files | Where-Object { "$_" -match '^src[\\/]remote[\\/]' }).Count) { 'agent' } else { 'client' }
+        $scope = if (@($pick.Files | Where-Object { "$_" -match '^src[\\/]remote[\\/]' }).Count) { 'agent' } else { 'client' }
         [void]$items.Add([pscustomobject]@{ Scope = $scope; Kind = $kind; Text = $text; Task = $tid })
     }
     # Unrolled on purpose: callers wrap the call in @(), and `return ,` would
@@ -192,7 +277,7 @@ try {
     & git -C $Repo rev-parse -q --verify "$Since^{commit}" *> $null
     if ($LASTEXITCODE -ne 0) { Fail "-Since '$Since' is not a commit here" }
 
-    $raw = @(& git -C $Repo log --reverse --no-merges --name-only --format='@@COMMIT@@%s' "$Since..HEAD" 2>$null)
+    $raw = @(& git -C $Repo log --reverse --no-merges --name-only --format='@@COMMIT@@%H %s' "$Since..HEAD" 2>$null)
     if ($LASTEXITCODE -ne 0) { Fail "could not read the log for $Since..HEAD" }
 } finally {
     try { [Console]::OutputEncoding = $prevEnc } catch { }
@@ -202,7 +287,11 @@ $commits = New-Object System.Collections.ArrayList
 $cur = $null
 foreach ($line in $raw) {
     if ("$line".StartsWith('@@COMMIT@@')) {
-        $cur = [pscustomobject]@{ Subject = "$line".Substring(10); Files = (New-Object System.Collections.ArrayList) }
+        $rest = "$line".Substring(10)
+        $sp = $rest.IndexOf(' ')
+        $sha = if ($sp -gt 0) { $rest.Substring(0, $sp) } else { $rest }
+        $subj = if ($sp -gt 0) { $rest.Substring($sp + 1) } else { '' }
+        $cur = [pscustomobject]@{ Sha = $sha; Subject = $subj; Files = (New-Object System.Collections.ArrayList) }
         [void]$commits.Add($cur)
     } elseif ($cur -and "$line".Trim()) {
         [void]$cur.Files.Add("$line".Trim())
@@ -210,17 +299,18 @@ foreach ($line in $raw) {
 }
 
 $tasksDir = Join-Path $Repo 'docs\design\windows-parity-tasks'
-$tagCache = @{}
+$taskCache = @{}
 $lookup = {
     param($tid)
-    if (-not $tagCache.ContainsKey($tid)) {
+    if (-not $taskCache.ContainsKey($tid)) {
         $f = Join-Path $tasksDir "$tid.md"
-        $tagCache[$tid] = if (Test-Path -LiteralPath $f) { @(Get-TaskFileTags ([IO.File]::ReadAllText($f))) } else { @() }
+        $t = if (Test-Path -LiteralPath $f) { [IO.File]::ReadAllText($f) } else { '' }
+        $taskCache[$tid] = [pscustomobject]@{ Tags = @(Get-TaskFileTags $t); Seat = (Get-TaskFileSeat $t); Commits = @(Get-TaskFileCommits $t) }
     }
-    return $tagCache[$tid]
+    return $taskCache[$tid]
 }.GetNewClosure()
 
-$items = @(Select-ReleaseNoteItems -Commits $commits.ToArray() -TagLookup $lookup)
+$items = @(Select-ReleaseNoteItems -Commits $commits.ToArray() -TaskLookup $lookup)
 Write-Host "NOTES RANGE: $Since..HEAD - $($commits.Count) commit(s), $($items.Count) user-facing"
 
 $utf8 = New-Object System.Text.UTF8Encoding($false)
@@ -239,6 +329,7 @@ foreach ($scope in @('client', 'agent')) {
     $what = if ($mine.Count) { "$($mine.Count) item(s)" } else { 'nothing user-facing - says so' }
     if ($DryRun) {
         Write-Host "NOTES DRY RUN: would write $rel ($what)"
+        foreach ($it in $mine) { Write-Host "  NOTES ITEM [$($it.Kind)] $($it.Task): $($it.Text)" }
         continue
     }
     try {
