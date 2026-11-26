@@ -1,15 +1,15 @@
 {
     "guard":  "hidden-new-pane",
     "script":  "test/win32/hidden-new-pane.ps1",
-    "generated":  "2026-11-25T19:11:23-08:00",
-    "commit":  "caa0d1e032",
+    "generated":  "2026-11-26T06:19:17-08:00",
+    "commit":  "65cd6227e6",
     "uncommitted":  [
-                        "src/apprt/win32/occlusion.zig"
+                        "src/apprt/win32/PaneView.zig"
                     ],
     "files":  {
                   "src/apprt/win32/CloseUndo.zig":  "9210f8638e65623f49300a63518ddb622ff3a24f18859497b60be1dae8458159",
                   "src/apprt/win32/occlusion.zig":  "6f49e880e753900a0ef7cc46d71a50237bb9159af49bb2ddf3f66a426c7caa24",
-                  "src/apprt/win32/PaneView.zig":  "66178bd1ff0806c699d541876914c4294a95852e411a03e38771eddd8faeaad7",
+                  "src/apprt/win32/PaneView.zig":  "4abf88b2c82c9fb66ff714134d5ac0e2c186cf6644a9ee1425a9157577e3e63f",
                   "test/win32/hidden-new-pane.ps1":  "5f12c8912a7fded420286713a1349614717b14fd5a56bd4517f10bafe3294ae1"
               },
     "code":  {

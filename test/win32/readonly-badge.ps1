@@ -185,6 +185,49 @@ function Inside($inner, $outer) {
            ($inner.Right -le $outer.Right) -and ($inner.Bottom -le $outer.Bottom)
 }
 
+# T2335: is an unfocused read-only pane's badge DIMMED with it, as Mac's is?
+# Mac's dim `Rectangle` is the pane's last layer, after the ReadonlyBadge in
+# SurfaceView's ZStack. The badge is a popup, above everything inside the
+# pane, so the wash can only cover it as a popup stacked over it. The
+# background desktop cannot photograph a composite, so "dimmed" is read the
+# way pane-banner.ps1 7c reads it: a visible wash popup spans the pane, and
+# EnumWindows (top-to-bottom) lists it ABOVE the badge. Returns the count and
+# the z indexes for the caller to assert and print.
+function Get-BadgeDim([int]$procId, $pane, $badgeWin) {
+    $z = @(Get-TestWindows -ProcessId $procId -Class '*')
+    $washes = @($z | Where-Object {
+            $_.Class -eq 'GhozttyDimOverlay' -and $_.Visible -and
+            [math]::Abs($_.Left - $pane.Left) -le 2 -and [math]::Abs($_.Right - $pane.Right) -le 2 -and
+            $_.Top -le ($pane.Top + 2) -and $_.Bottom -ge ($pane.Bottom - 2) })
+    $hw = @($z | ForEach-Object { $_.Hwnd })
+    $iDim = if ($washes.Count -eq 1) { [array]::IndexOf($hw, $washes[0].Hwnd) } else { -1 }
+    $iBadge = if ($badgeWin) { [array]::IndexOf($hw, $badgeWin.Hwnd) } else { -1 }
+    $hDim = if ($washes.Count -eq 1) { $washes[0].Hwnd } else { 0 }
+    return [pscustomobject]@{ Washes = $washes.Count; IDim = $iDim; IBadge = $iBadge; DimHwnd = $hDim }
+}
+
+# Poll `+list --json` until the leaf at $index (left first) reports focus -
+# a click lands through the T48 deferred-SetFocus path, asynchronously.
+function Wait-FocusedLeaf([int]$index) {
+    for ($t = 0; $t -lt 30; $t++) {
+        $l = @(Get-PaneReadonly)
+        if ($l.Count -gt $index -and $l[$index].Focused) { return }
+        Start-Sleep -Milliseconds 100
+    }
+}
+
+# Poll for the wash over $pane to be stacked above $badgeWin (the layout
+# lands asynchronously), returning the last reading either way.
+function Wait-BadgeDim([int]$procId, $pane, $badgeWin) {
+    $r = $null
+    for ($t = 0; $t -lt 30; $t++) {
+        $r = Get-BadgeDim $procId $pane $badgeWin
+        if ($r.Washes -eq 1 -and $r.IDim -ge 0 -and $r.IBadge -ge 0 -and $r.IDim -lt $r.IBadge) { return $r }
+        Start-Sleep -Milliseconds 100
+    }
+    return $r
+}
+
 Stop-RepoInstances
 
 # Watch the user's desktop for the whole run: nothing we launch may ever take
@@ -208,6 +251,9 @@ try {
         Arguments = @(
             '--session-persistence=false',
             '--background=#101014',
+            # Glass panes never dim (T2281, as on Mac), and E2/I read the
+            # unfocused pane's dim (T2335).
+            '--macos-pane-glass=false',
             '--keybind=ctrl+shift+o=toggle_readonly'
         )
     }
@@ -339,6 +385,31 @@ try {
             # The split moved pane A's right edge; the badge followed it.
             Assert (($paneA.Right - $badge.Right) -eq $wantGap) `
                 "E: badge re-anchored to the pane's new right edge (got $($paneA.Right - $badge.Right))"
+
+            # ---------------------------------------------------------------
+            # E2. T2335: with pane B clicked, read-only pane A is UNFOCUSED,
+            #     so it is dimmed - and its badge must be dimmed with it. (A
+            #     CLI `+split` leaves focus where it was.) Negative control:
+            #     DimOverlay.T2335_NEUTERED = true leaves the wash on the
+            #     pane's visual, under the badge popup, and turns E2 red.
+            # ---------------------------------------------------------------
+            $r = Send-TestMouse -Window $top -Target ([IntPtr]$paneB.Hwnd) `
+                -X ([int](($paneB.Left + $paneB.Right) / 2)) -Y ([int](($paneB.Top + $paneB.Bottom) / 2)) -Button left -Action click
+            Assert $r 'E2: click delivered to pane B'
+            Wait-FocusedLeaf 1
+            $dz = Wait-BadgeDim $app.Pid $paneA $badge
+            Write-Host "INFO  E2 washes over pane A=$($dz.Washes) z index dim=$($dz.IDim) badge=$($dz.IBadge)"
+            $e2Leaves = @(Get-PaneReadonly)
+            Assert ($e2Leaves.Count -eq 2 -and -not $e2Leaves[0].Focused -and $e2Leaves[1].Focused) `
+                "E2: pane B took focus, so read-only pane A is the unfocused one (focused per leaf: $(($e2Leaves | ForEach-Object { $_.Focused }) -join ','))"
+            Assert ($dz.Washes -eq 1) "E2: one dim wash popup spans the unfocused read-only pane ($($dz.Washes))"
+            Assert ($dz.IDim -ge 0 -and $dz.IBadge -ge 0 -and $dz.IDim -lt $dz.IBadge) `
+                "E2: the wash is stacked OVER the badge, so the badge dims with its pane (z index dim=$($dz.IDim) badge=$($dz.IBadge))"
+            if ($dz.Washes -eq 1) {
+                # Over the badge, the wash must still let the badge's click through.
+                $wex = Get-TestWindowStyle -Window ([IntPtr]$dz.DimHwnd) -ExStyle
+                Assert (($wex -band 0x20) -ne 0) 'E2: the wash over the badge is click-through (WS_EX_TRANSPARENT)'
+            }
         }
 
         # -------------------------------------------------------------------
@@ -399,6 +470,62 @@ try {
         'H: +list --json omits `readonly` on every pane once the mode is off'
     $tagged = @(Get-ReadonlyTextLines)
     Assert ($tagged.Count -eq 0) "H: plain +list tags no pane [read-only] once the mode is off ($($tagged.Count))"
+
+    # -----------------------------------------------------------------------
+    # I. T2335: a pane that LEAVES read-only while unfocused takes its wash
+    #    back to the pane's own visual (the popup was only there to cover the
+    #    badge). Pane B goes read-only while focused, pane A is clicked to
+    #    take focus, then B's badge is clicked - a badge click never moves
+    #    focus (MA_NOACTIVATE), so B leaves the mode unfocused.
+    # -----------------------------------------------------------------------
+    if ($panes.Count -eq 2) {
+        $r = Send-TestKeys -Window $top -Target ([IntPtr]$paneB.Hwnd) -Modifiers ctrl, shift -Key O
+        Assert $r 'I: toggle_readonly chord delivered to pane B'
+        $null = Wait-BadgeCount $app.Pid 1
+        $r = Send-TestMouse -Window $top -Target ([IntPtr]$paneA.Hwnd) `
+            -X ([int](($paneA.Left + $paneA.Right) / 2)) -Y ([int](($paneA.Top + $paneA.Bottom) / 2)) -Button left -Action click
+        Assert $r 'I: click delivered to pane A'
+        Wait-FocusedLeaf 0
+        $leaves = @(Get-PaneReadonly)
+        $bLeaf = @($leaves | Where-Object { $_.Readonly })
+        $bFocused = if ($bLeaf.Count -eq 1) { $bLeaf[0].Focused } else { $null }
+        Assert ($bLeaf.Count -eq 1 -and -not $bFocused) `
+            "I1: pane B is read-only and unfocused ($($bLeaf.Count) read-only, focused=$bFocused)"
+        $badges = @(Wait-BadgeCount $app.Pid 1)
+        $bBadge = @($badges | Where-Object { Inside $_ $paneB })
+        Assert ($bBadge.Count -eq 1) "I1: pane B wears its badge ($($bBadge.Count))"
+        if ($bBadge.Count -eq 1) {
+            $dz = Wait-BadgeDim $app.Pid $paneB $bBadge[0]
+            Write-Host "INFO  I1 washes over pane B=$($dz.Washes) z index dim=$($dz.IDim) badge=$($dz.IBadge)"
+            Assert ($dz.Washes -eq 1 -and $dz.IDim -ge 0 -and $dz.IDim -lt $dz.IBadge) `
+                "I1: pane B's wash is stacked OVER its badge (washes=$($dz.Washes) dim=$($dz.IDim) badge=$($dz.IBadge))"
+
+            if (Test-Path $errlog) { Clear-Content $errlog -ErrorAction SilentlyContinue }
+            $tb = $bBadge[0]
+            $r = Send-TestMouse -Window $top -Target ([IntPtr]$tb.Hwnd) `
+                -X ([int](($tb.Left + $tb.Right) / 2)) -Y ([int](($tb.Top + $tb.Bottom) / 2)) -Button left -Action click
+            Assert $r "I2: click delivered to pane B's badge"
+            $badges = @(Wait-BadgeCount $app.Pid 0)
+            Assert ($badges.Count -eq 0) "I2: the click left read-only ($($badges.Count) badge(s) left)"
+            $leaves = @(Get-PaneReadonly)
+            # Leaves come back left first: [0] is pane A, [1] is pane B.
+            Assert ($leaves.Count -eq 2 -and $leaves[0].Focused -and -not $leaves[1].Focused) `
+                'I2: the badge click left focus on pane A, so pane B is still unfocused'
+            $popupLeft = $true
+            for ($k = 0; $k -lt 30 -and $popupLeft; $k++) {
+                $popupLeft = (Get-BadgeDim $app.Pid $paneB $null).Washes -ne 0
+                if ($popupLeft) { Start-Sleep -Milliseconds 100 }
+            }
+            if (Test-Path $errlog) {
+                $toVisual = @(Select-String -Path $errlog -Pattern 'dim overlay path visual=true' -ErrorAction SilentlyContinue).Count
+                Write-Host "INFO  I3 'dim overlay path visual=true' lines since the click: $toVisual"
+                Assert ((-not $popupLeft) -and $toVisual -ge 1) `
+                    "I3: the unfocused pane's wash went back to its own visual once the badge was gone (popup gone=$(-not $popupLeft), log lines=$toVisual)"
+            } else {
+                Assert (-not $popupLeft) 'I3: the wash popup over the unfocused pane is gone once its badge is (no debug log: release build)'
+            }
+        }
+    }
 
     Assert (-not ($app.Process -and $app.Process.HasExited)) 'no crash'
 } catch {

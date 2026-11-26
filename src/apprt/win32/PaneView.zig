@@ -510,6 +510,8 @@ pub fn updateHoverTint(self: *PaneView, want: bool, c: color_math.Rgb, scale: f3
     else
         .{};
     t.update(want, c, shape, scale);
+    // A tint on an unfocused pane goes under its dim, as on Mac (T2335).
+    if (self.surface()) |sf| sf.seatDimOverChrome();
 }
 
 /// A pane's most recent hero-mode thumbnail: a 32-bit DIB plus the pixel size

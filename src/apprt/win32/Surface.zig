@@ -2112,18 +2112,36 @@ pub fn showDimOverlay(self: *Surface, color: u32, alpha: u8, batch: ?*?w32.HDWP)
         // A spanning window already reaches over the band (T2568).
         .in_owner = self.gridBand() > 0,
     } else .{});
+    // A read-only badge needs the wash to be the popup, to stack over it.
+    _ = self.dim_overlay.?.setCoversPopups(self.readonlyBadgeWanted());
     _ = self.dim_overlay.?.show(color, alpha, batch);
     // An elevated pane's wash takes its card's rounded shape (T1831).
     if (self.pane_view) |pv| self.dim_overlay.?.matchOwnerRegion(pv.card_region_key);
 }
 
-/// Stack this pane's dim over its banner strip (T2308): Mac's dim is the
-/// last layer of the pane. Run after the strips are placed, since placing
-/// one can re-seat it.
-pub fn seatDimOverBanner(self: *Surface) void {
+/// Stack this pane's dim over its chrome popups, the way Mac's dim is the
+/// last layer of the pane: the banner strip (T2308), then the read-only
+/// badge, the bell frame and the sidebar-hover tint (T2335) - and the
+/// key-state pill back over the dim, which Mac keeps above it (`.zIndex(1)`).
+/// Run after any of them is placed or shown, since that can re-seat it. A
+/// wash on the pane's visual has nothing to order and pays one test.
+pub fn seatDimOverChrome(self: *Surface) void {
     const d = self.dim_overlay orelse return;
-    const b = self.banner_overlay orelse return;
-    _ = d.seatOver(b.hwnd);
+    if (d.shownPopup() == null) return;
+    if (self.banner_overlay) |b| _ = d.seatOver(b.hwnd);
+    if (@import("DimOverlay.zig").T2335_NEUTERED) return;
+    if (self.readonly_badge) |b| _ = d.seatOver(b.hwnd);
+    if (self.bell_border) |b| _ = d.seatOver(b.hwnd);
+    if (self.pane_view) |pv| {
+        if (pv.hover_tint) |t| _ = d.seatOver(t.hwnd);
+    }
+    if (self.key_state_indicator) |k| _ = d.seatAbove(k.hwnd);
+}
+
+/// The pane shows its read-only badge (T445): a terminal mode, read from the
+/// core surface the badge is driven from.
+fn readonlyBadgeWanted(self: *const Surface) bool {
+    return self.core_surface_ready and self.core_surface.readonly;
 }
 
 /// Hide this pane's dim overlay if it exists.
@@ -2155,6 +2173,8 @@ pub fn updateBellBorder(self: *Surface) void {
     const b = self.bell_border.?;
     if (self.pane_view) |pv| b.matchOwnerRegion(pv.card_region_key);
     b.update(want, self.scale);
+    // A frame shown on an unfocused pane goes under its dim (T2335).
+    self.seatDimOverChrome();
 }
 
 /// Show, reposition or hide this pane's read-only badge to match
@@ -2167,6 +2187,10 @@ pub fn updateBellBorder(self: *Surface) void {
 /// a pane that is not read-only and never has been pays one bool test.
 pub fn updateReadonlyBadge(self: *Surface) void {
     if (!self.core_surface_ready) return;
+    // The badge decides which path the wash is on (T2335): a pane turned
+    // read-only while unfocused moves its wash to the popup, over the badge,
+    // and back to the pane's visual when it leaves the mode.
+    defer self.syncDimToBadge();
     if (!self.core_surface.readonly) {
         if (self.readonly_badge) |b| b.hide();
         return;
@@ -2190,6 +2214,14 @@ pub fn updateReadonlyBadge(self: *Surface) void {
         .b = config.background.b,
     };
     self.readonly_badge.?.update(self.scale, pane_bg);
+}
+
+/// Move a shown dim to the path the read-only badge needs, then stack it
+/// over the pane's chrome (T2335).
+fn syncDimToBadge(self: *Surface) void {
+    const d = self.dim_overlay orelse return;
+    if (d.setCoversPopups(self.readonlyBadgeWanted())) _ = d.reshow();
+    self.seatDimOverChrome();
 }
 
 /// Show, reposition or hide this pane's key-state pill to match
@@ -2225,6 +2257,8 @@ pub fn updateKeyStateIndicator(self: *Surface) void {
         .b = config.background.b,
     };
     self.key_state_indicator.?.update(self.scale, pane_bg, &self.key_state_model);
+    // Mac keeps the pill above the dim (T2335).
+    self.seatDimOverChrome();
 }
 
 /// Re-check the z-order of every layered popup this pane owns and heal any

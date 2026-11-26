@@ -1,8 +1,8 @@
 {
     "guard":  "pane-sidebar-elevated",
     "script":  "test/win32/pane-sidebar-elevated.ps1",
-    "generated":  "2026-11-26T05:20:40-08:00",
-    "commit":  "200c358fe8",
+    "generated":  "2026-11-26T06:11:12-08:00",
+    "commit":  "65cd6227e6",
     "uncommitted":  [
 
                     ],

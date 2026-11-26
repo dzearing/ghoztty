@@ -1,8 +1,8 @@
 {
     "guard":  "pane-sidebar-close",
     "script":  "test/win32/pane-sidebar-close.ps1",
-    "generated":  "2026-11-26T05:20:01-08:00",
-    "commit":  "200c358fe8",
+    "generated":  "2026-11-26T06:08:52-08:00",
+    "commit":  "65cd6227e6",
     "uncommitted":  [
 
                     ],

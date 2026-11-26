@@ -1,8 +1,8 @@
 {
     "guard":  "pane-sidebar-shared",
     "script":  "test/win32/pane-sidebar-shared.ps1",
-    "generated":  "2026-11-26T05:18:48-08:00",
-    "commit":  "200c358fe8",
+    "generated":  "2026-11-26T06:05:00-08:00",
+    "commit":  "65cd6227e6",
     "uncommitted":  [
 
                     ],

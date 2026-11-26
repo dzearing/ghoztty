@@ -73,6 +73,11 @@ pub const DimOverlay = struct {
     /// The banner band above the owner the wash also covers (T2308);
     /// `setBand` feeds it before every `show`.
     band: Band = .{},
+    /// The pane has a chrome popup up that the wash must cover - today the
+    /// read-only badge (T2335). A popup sits above everything inside the
+    /// pane, so a wash on the pane's visual could never dim it: while this
+    /// is set the wash is the popup, stacked over that chrome by `seatOver`.
+    covers_popups: bool = false,
     /// The shape the window region was last cut for; `applyRegion` runs when
     /// it changes.
     shape: Shape = .{},
@@ -196,8 +201,9 @@ pub const DimOverlay = struct {
         self.lab_alpha = alpha;
         if (self.lab_hold != 0) return false;
 
-        // The pane's composition tree, unless a banner band needs the popup.
-        const want_visual = self.band.height <= 0 and
+        // The pane's composition tree, unless a banner band or a chrome
+        // popup the wash must cover needs the popup (T2308, T2335).
+        const want_visual = self.band.height <= 0 and (T2335_NEUTERED or !self.covers_popups) and
             if (self.slot) |s| self.layer.sync(s) else false;
         if (want_visual != self.on_visual) {
             // The wash leaves the old path at once and goes up afresh on the
@@ -400,7 +406,11 @@ pub const DimOverlay = struct {
         // A rebuilt tree (the renderer remade its chain) is a fresh layer
         // under a wash that is still up: attach it again.
         if (!self.shown or !self.layer.attached) {
-            self.layer.setVisible(true);
+            // In FRONT of the pane's other visuals (T2335): Mac's dim is the
+            // pane's last layer, over its bell frame and hover tint, and
+            // `setVisible` would put it at the back - under a bell that
+            // rang before the pane lost focus.
+            if (T2335_NEUTERED) self.layer.setVisible(true) else self.layer.attach(.front);
             self.shown = true;
             changed = true;
             log.info("dim overlay shown as visual alpha={d} pane={d}", .{ alpha, @intFromPtr(self.owner) });
@@ -434,27 +444,42 @@ pub const DimOverlay = struct {
         self.band = band;
     }
 
-    /// Stack the wash over `card` - the pane's banner strip (T2308). Mac's
-    /// dim is the last layer of the pane, and two popups with one owner sit
-    /// in whatever order last moved them (T2261 measured the dim UNDER the
-    /// card), so the order is read and, when wrong, the wash is put directly
-    /// above the card. Returns whether it moved.
+    /// Say whether the pane has a chrome popup up that the wash must cover
+    /// (T2335, `covers_popups`). Returns whether that changed; the caller
+    /// `reshow`s so the wash moves to the path the answer needs.
+    pub fn setCoversPopups(self: *DimOverlay, on: bool) bool {
+        if (self.covers_popups == on) return false;
+        self.covers_popups = on;
+        return true;
+    }
+
+    /// Show a shown wash again with its last colour and alpha (T2335): what
+    /// a change the layout pass did not make - a pane turned read-only while
+    /// unfocused - uses to move the wash between its two paths. A hidden
+    /// wash stays hidden.
+    pub fn reshow(self: *DimOverlay) bool {
+        if (!self.shown) return false;
+        return self.show(self.lab_color, self.lab_alpha, null);
+    }
+
+    /// Stack the wash over `card` - a chrome popup of its pane: the banner
+    /// strip (T2308), the read-only badge, the bell frame or the hover tint
+    /// (T2335). Mac's dim is the last layer of the pane, and two popups with
+    /// one owner sit in whatever order last moved them (T2261 measured the
+    /// dim UNDER the card), so the order is read and, when wrong, the wash is
+    /// put directly above the card. Returns whether it moved. Seating over
+    /// several cards one after another leaves the wash over all of them: a
+    /// seat only ever moves the wash up.
     pub fn seatOver(self: *DimOverlay, card: w32.HWND) bool {
         if (T2308_NEUTERED or !self.shown or self.on_visual) return false;
-        if (w32.IsWindowVisible_(card) == 0) return false;
-        if (w32.isBelowInBand(self.owner, self.hwnd, card)) return false;
-        // Directly beneath whatever is directly above the card (null: the
-        // card is the top window, and so is the wash now).
-        _ = w32.SetWindowPos(
-            self.hwnd,
-            w32.GetWindow(card, w32.GW_HWNDPREV),
-            0,
-            0,
-            0,
-            0,
-            w32.SWP_NOACTIVATE | w32.SWP_NOMOVE | w32.SWP_NOSIZE,
-        );
-        return true;
+        return seatWindowOver(self.owner, self.hwnd, card);
+    }
+
+    /// Stack `win` over the wash (T2335): the key-state pill, which Mac
+    /// keeps above the dim (`.zIndex(1)`). Returns whether it moved.
+    pub fn seatAbove(self: *DimOverlay, win: w32.HWND) bool {
+        if (T2335_NEUTERED or !self.shown or self.on_visual) return false;
+        return seatWindowOver(self.owner, win, self.hwnd);
     }
 
     /// The wash's window region: the owner's card shape (`region_key`,
@@ -551,6 +576,36 @@ fn bandRegion(s: DimOverlay.Shape) ?*anyopaque {
     defer _ = w32.DeleteObject(round);
     _ = w32.CombineRgn(full, full, round, w32.RGN_AND);
     return full;
+}
+
+/// Put `win` directly above `card` when it is below it, both popups of
+/// `owner` (T2308, T2335). A hidden `win` or `card` is left where it is - a
+/// popup's order is re-read every time it is shown. Returns whether it moved.
+pub fn seatWindowOver(owner: w32.HWND, win: w32.HWND, card: w32.HWND) bool {
+    if (w32.IsWindowVisible_(card) == 0 or w32.IsWindowVisible_(win) == 0) return false;
+    if (w32.isBelowInBand(owner, win, card)) return false;
+    // Directly beneath whatever is directly above the card (null: the card
+    // is the top window, and so is `win` now).
+    _ = w32.SetWindowPos(
+        win,
+        w32.GetWindow(card, w32.GW_HWNDPREV),
+        0,
+        0,
+        0,
+        0,
+        w32.SWP_NOACTIVATE | w32.SWP_NOMOVE | w32.SWP_NOSIZE,
+    );
+    return true;
+}
+
+/// Negative control for T2335 (`readonly-badge.ps1` E2 and I). Flipping it
+/// leaves the read-only badge, the bell frame, the hover tint and the
+/// key-state pill in whatever order last moved them against the wash, and
+/// the wash on the pane's visual under a read-only badge, as before T2335.
+pub const T2335_NEUTERED = false;
+
+test "DimOverlay: the T2335 negative control ships clear" {
+    try std.testing.expect(!T2335_NEUTERED);
 }
 
 /// Negative control for T2308 (`pane-banner.ps1` section 7c). Flipping it
@@ -701,6 +756,85 @@ test "DimOverlay: the wash covers the banner band and stacks over the strip (T23
     // A hidden wash never re-stacks.
     d.hide();
     try testing.expect(!d.seatOver(strip));
+}
+
+test "DimOverlay: the wash stacks over every chrome popup and under the key-state pill (T2335)" {
+    const testing = std.testing;
+    const hinstance = w32.GetModuleHandleW(null) orelse return error.SkipZigTest;
+    const class = std.unicode.utf8ToUtf16LeStringLiteral("GhozttyDimChromeTest");
+    const wc = w32.WNDCLASSEXW{
+        .cbSize = @sizeOf(w32.WNDCLASSEXW),
+        .style = 0,
+        .lpfnWndProc = &w32.DefWindowProcW,
+        .cbClsExtra = 0,
+        .cbWndExtra = 0,
+        .hInstance = hinstance,
+        .hIcon = null,
+        .hCursor = null,
+        .hbrBackground = null,
+        .lpszMenuName = null,
+        .lpszClassName = class,
+        .hIconSm = null,
+    };
+    _ = w32.RegisterClassExW(&wc);
+    defer _ = w32.UnregisterClassW(class, hinstance);
+    const title = std.unicode.utf8ToUtf16LeStringLiteral("dim chrome test");
+    const top = w32.CreateWindowExW(0, class, title, w32.WS_POPUP, 0, 0, 600, 400, null, null, hinstance, null) orelse return error.Win32Error;
+    defer _ = w32.DestroyWindow(top);
+    const owner = w32.CreateWindowExW(0, class, title, w32.WS_CHILD | w32.WS_VISIBLE_STYLE, 20, 100, 300, 200, top, null, hinstance, null) orelse return error.Win32Error;
+    const ex = w32.WS_EX_TOOLWINDOW | w32.WS_EX_NOACTIVATE;
+    // The badge, the bell frame and the pill: popups of the same owner.
+    const badge = w32.CreateWindowExW(ex, class, title, w32.WS_POPUP, 0, 0, 1, 1, owner, null, hinstance, null) orelse return error.Win32Error;
+    const bell = w32.CreateWindowExW(ex, class, title, w32.WS_POPUP, 0, 0, 1, 1, owner, null, hinstance, null) orelse return error.Win32Error;
+    const pill = w32.CreateWindowExW(ex, class, title, w32.WS_POPUP, 0, 0, 1, 1, owner, null, hinstance, null) orelse return error.Win32Error;
+
+    const d = try DimOverlay.create(testing.allocator, owner, hinstance, null);
+    defer d.destroy();
+    const color = w32.RGB(16, 16, 20);
+    _ = d.show(color, 77, null);
+    try testing.expect(d.shownPopup() != null);
+
+    // Each shown after the wash, so each sits above it (the defect).
+    const lift = w32.SWP_NOACTIVATE | w32.SWP_NOMOVE | w32.SWP_NOSIZE | w32.SWP_SHOWWINDOW;
+    for ([_]w32.HWND{ pill, badge, bell }) |h| _ = w32.SetWindowPos(h, null, 0, 0, 0, 0, lift);
+    defer for ([_]w32.HWND{ pill, badge, bell }) |h| {
+        _ = w32.ShowWindow(h, w32.SW_HIDE);
+    };
+    try testing.expect(w32.isBelowInBand(owner, badge, d.hwnd));
+    try testing.expect(w32.isBelowInBand(owner, bell, d.hwnd));
+
+    // Seated over one card after another, the wash ends over both: a seat
+    // only moves it up, so the later seat never undoes the earlier.
+    try testing.expect(d.seatOver(badge));
+    try testing.expect(d.seatOver(bell));
+    try testing.expect(w32.isBelowInBand(owner, d.hwnd, badge));
+    try testing.expect(w32.isBelowInBand(owner, d.hwnd, bell));
+    try testing.expect(!d.seatOver(badge));
+
+    // The pill, which was the lowest of the three, goes back over the wash.
+    try testing.expect(w32.isBelowInBand(owner, d.hwnd, pill));
+    try testing.expect(d.seatAbove(pill));
+    try testing.expect(w32.isBelowInBand(owner, pill, d.hwnd));
+    try testing.expect(!d.seatAbove(pill));
+    // ...without taking the badge out from under the wash.
+    try testing.expect(w32.isBelowInBand(owner, d.hwnd, badge));
+
+    // A hidden pill is not moved; its next show re-reads the order.
+    _ = w32.ShowWindow(pill, w32.SW_HIDE);
+    try testing.expect(!d.seatAbove(pill));
+
+    // The cover flag reports a change once, and a reshow keeps a shown wash
+    // up (with no composition tree, on the popup either way).
+    try testing.expect(d.setCoversPopups(true));
+    try testing.expect(!d.setCoversPopups(true));
+    _ = d.reshow();
+    try testing.expect(d.shownPopup() != null);
+    // A hidden wash stays hidden on a reshow, and never re-stacks.
+    d.hide();
+    try testing.expect(!d.reshow());
+    try testing.expect(d.shownPopup() == null);
+    try testing.expect(!d.seatOver(badge));
+    try testing.expect(!d.seatAbove(pill));
 }
 
 var class_registered: bool = false;

@@ -10008,7 +10008,7 @@ fn placeHeldBanners(self: *Window) void {
             if (overlay.placeChange() == .gains) overlay.updatePosition(surface.scale);
         }
     }
-    self.seatDimsOverBanners();
+    self.seatDimsOverChrome();
 }
 
 /// `updateDimOverlays` for a layout pass, clocked as the pass's overlay cost
@@ -10116,7 +10116,7 @@ pub fn updateDimOverlays(self: *Window) void {
     // Pane banners glue to the same layout/visibility/config events (T35).
     self.updatePaneBanners();
     // ...under their pane's dim, the way Mac dims the whole pane (T2308).
-    self.seatDimsOverBanners();
+    self.seatDimsOverChrome();
     // ...and so does the read-only badge (T445).
     self.updateReadonlyBadges();
     // ...and the bell frame (T1919).
@@ -11772,15 +11772,15 @@ pub fn updatePaneBanners(self: *Window) void {
     }
 }
 
-/// Stack every dimmed pane's wash over its banner strip (T2308). Only a
-/// pane with both a shown dim and a banner pays anything, and one already in
-/// order pays a short z-order walk.
-fn seatDimsOverBanners(self: *Window) void {
+/// Stack every dimmed pane's wash over its chrome popups (T2308, T2335).
+/// Only a pane whose wash is the popup pays anything, and one already in
+/// order pays a short z-order walk per shown popup.
+fn seatDimsOverChrome(self: *Window) void {
     for (0..self.tab_count) |tab| {
         var it = self.tab_trees[tab].iterator();
         while (it.next()) |entry| {
             const surface = entry.view.surface() orelse continue;
-            surface.seatDimOverBanner();
+            surface.seatDimOverChrome();
         }
     }
 }
