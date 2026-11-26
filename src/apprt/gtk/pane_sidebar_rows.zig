@@ -100,7 +100,17 @@ pub fn text(p: Pane, home: ?[]const u8, label_buf: *[TEXT_BUF_LEN]u8, sub_buf: *
 pub fn prefsPath(alloc: Allocator, debug: bool, xdg_config_home: ?[]const u8, home: []const u8) Allocator.Error![]u8 {
     // A Linux path, spelled with `/` on every host so the none lane's test
     // reads the same on the Windows box (`std.fs.path.join` would use `\`).
-    const name = if (debug) "pane-sidebar-debug" else "pane-sidebar";
+    return configFile(alloc, if (debug) "pane-sidebar-debug" else "pane-sidebar", xdg_config_home, home);
+}
+
+/// `<config root>/ghoztty/pane-sidebar-order[-debug]` (T3697): the
+/// all-windows list's order, one key per line (win32
+/// `pane_sidebar_window_order` format), beside the flags.
+pub fn orderPath(alloc: Allocator, debug: bool, xdg_config_home: ?[]const u8, home: []const u8) Allocator.Error![]u8 {
+    return configFile(alloc, if (debug) "pane-sidebar-order-debug" else "pane-sidebar-order", xdg_config_home, home);
+}
+
+fn configFile(alloc: Allocator, name: []const u8, xdg_config_home: ?[]const u8, home: []const u8) Allocator.Error![]u8 {
     if (xdg_config_home) |x| if (x.len > 0) return std.fmt.allocPrint(alloc, "{s}/ghoztty/{s}", .{ x, name });
     return std.fmt.allocPrint(alloc, "{s}/.config/ghoztty/{s}", .{ home, name });
 }
@@ -508,6 +518,13 @@ test "T3557: the flags live under the config root, debug apart from release" {
     const c = try prefsPath(alloc, false, "", "/home/ann");
     defer alloc.free(c);
     try testing.expectEqualStrings("/home/ann/.config/ghoztty/pane-sidebar", c);
+    // T3697: the list's order sits beside them.
+    const d = try orderPath(alloc, true, "/x/cfg", "/home/ann");
+    defer alloc.free(d);
+    try testing.expectEqualStrings("/x/cfg/ghoztty/pane-sidebar-order-debug", d);
+    const e = try orderPath(alloc, false, null, "/home/ann");
+    defer alloc.free(e);
+    try testing.expectEqualStrings("/home/ann/.config/ghoztty/pane-sidebar-order", e);
 }
 
 test "T3557: a forced start is not written over the user's own flags" {

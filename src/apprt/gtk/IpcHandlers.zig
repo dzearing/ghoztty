@@ -232,7 +232,7 @@ pub fn handleSeam(app: Context, request: Request) Allocator.Error!server.SeamRep
 /// `pane-sidebar --target=<pane|window> [--search=<text>]
 /// [--search-key=enter|escape] [--hover=<row id>|]
 /// [--click=toggle|scope|add|<row id>|alt:<row id>|fold:<row id>|tool:<button>:<row id>]
-/// [--layout] [--drag=<row id>:<y>]
+/// [--layout] [--lift=<row id>] [--drag=<row id>:<y>]
 /// [--menu=<window row id>] [--menu-pick=create|remove|move:<group>]
 /// [--edit=<text>] [--edit-key=enter|escape]`
 ///
@@ -259,6 +259,13 @@ pub fn handleSeam(app: Context, request: Request) Allocator.Error!server.SeamRep
 /// `top`/`height`. `--drag=<row id>:<y>` lets that row go at `y` of the list
 /// (the coordinates `top` is in) through the live drop's own code - the
 /// harness has no seat to start a pointer drag - and is read the same way.
+///
+/// A window row or a project header (T3697) drags in the expanded
+/// all-windows list: `--lift=<row id>` is the drag's begin (every group, or
+/// every window, folds to its row - read it back with `--layout` once the
+/// list has redrawn), and `--drag=<row id>:<y>` its release at `y`, read
+/// against the rows as then laid out, after which the folds come back.
+/// The reply's `index` is where it landed among its new siblings.
 fn paneSidebar(app: Context, request: Request) Allocator.Error![]u8 {
     var target_arg: ?[]const u8 = null;
     var click_arg: ?[]const u8 = null;
@@ -266,6 +273,7 @@ fn paneSidebar(app: Context, request: Request) Allocator.Error![]u8 {
     var key_arg: ?[]const u8 = null;
     var hover_arg: ?[]const u8 = null;
     var drag_arg: ?[]const u8 = null;
+    var lift_arg: ?[]const u8 = null;
     var menu_arg: ?[]const u8 = null;
     var pick_arg: ?[]const u8 = null;
     var edit_arg: ?[]const u8 = null;
@@ -273,6 +281,7 @@ fn paneSidebar(app: Context, request: Request) Allocator.Error![]u8 {
     var as_laid_out = false;
     for (request.arguments orelse &.{}) |arg| {
         if (std.mem.startsWith(u8, arg, "--drag=")) drag_arg = arg["--drag=".len..];
+        if (std.mem.startsWith(u8, arg, "--lift=")) lift_arg = arg["--lift=".len..];
         if (std.mem.eql(u8, arg, "--layout")) as_laid_out = true;
         if (std.mem.startsWith(u8, arg, "--target=")) target_arg = arg["--target=".len..];
         if (std.mem.startsWith(u8, arg, "--click=")) click_arg = arg["--click=".len..];
@@ -304,11 +313,24 @@ fn paneSidebar(app: Context, request: Request) Allocator.Error![]u8 {
             return server.errorResponse(c_alloc, "--drag=<row id>:<y>", .{});
         const y = std.fmt.parseFloat(f64, d[colon + 1 ..]) catch
             return server.errorResponse(c_alloc, "--drag y '{s}' is not a number", .{d[colon + 1 ..]});
-        const index = sidebar.dropRowAt(d[0..colon], y) orelse
-            return server.errorResponse(c_alloc, "sidebar row '{s}' did not drop (not drawn here, not a pane on screen, or not laid out)", .{d[0..colon]});
+        const id = d[0..colon];
+        const item = std.mem.startsWith(u8, id, "window:") or std.mem.startsWith(u8, id, "project:");
+        const dropped = if (item) sidebar.dropItemAt(id, y) else sidebar.dropRowAt(id, y);
+        // A window or group let go puts its folds back, as the drag's end does.
+        if (item) PaneSidebar.endLift();
+        const index = dropped orelse
+            return server.errorResponse(c_alloc, "sidebar row '{s}' did not drop (not drawn here, not a pane on screen or a window or group of the expanded all-windows list, or not laid out)", .{id});
         const rep = try sidebar.report(arena);
         var out: std.Io.Writer.Allocating = .init(arena);
         std.json.Stringify.value(.{ .success = true, .index = index, .sidebar = rep }, .{}, &out.writer) catch return error.OutOfMemory;
+        return c_alloc.dupe(u8, out.written());
+    }
+    if (lift_arg) |id| {
+        if (!sidebar.liftItem(id))
+            return server.errorResponse(c_alloc, "sidebar row '{s}' did not lift (not a window or group of the expanded all-windows list drawn here, or one is already lifted)", .{id});
+        const rep = try sidebar.report(arena);
+        var out: std.Io.Writer.Allocating = .init(arena);
+        std.json.Stringify.value(.{ .success = true, .sidebar = rep }, .{}, &out.writer) catch return error.OutOfMemory;
         return c_alloc.dupe(u8, out.written());
     }
     if (as_laid_out) {

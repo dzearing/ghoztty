@@ -63,7 +63,18 @@
 //! list: a new pane in Panes, a new window in all windows. The panel's
 //! caption is "Panes" / "All Windows".
 //!
-//! Not here yet: dragging windows and groups, a row dropped into another
+//! In the expanded all-windows list a window row and a project header drag
+//! too (T3697; win32 T2337/T2338): a group among the top level, a window
+//! anywhere - into a group (retitled `<group>: <name>`, pinned) or out of
+//! one. Picking one up folds every group (or every window) to its row, and
+//! letting go puts the folds back. The order is the list's own
+//! (`scope.window_order`, keys = the rows' ids), read over the name order
+//! at every draw and kept in `pane-sidebar-order[-debug]` beside the flags;
+//! its project keys survive a relaunch, its window keys (tab addresses) do
+//! not (T3700). A group move from the menu keeps the list's place (win32
+//! `keepWindowPlace`).
+//!
+//! Not here yet: a row dropped into another
 //! window, and the stash tray (T3607's remainder), and from T3606's
 //! remainder rename in place, the hover tint, the busy sheen, the width grip
 //! and hero-mode suppression.
@@ -88,6 +99,8 @@ const search_cap = @import("../win32/pane_sidebar_search.zig").cap;
 const pane_stash = @import("../win32/pane_stash.zig");
 const add_rules = @import("../win32/pane_sidebar_add.zig");
 const sidebar_order = @import("../win32/pane_sidebar_order.zig");
+const window_order = @import("../win32/pane_sidebar_window_order.zig");
+const shared_mod = @import("../win32/pane_sidebar_shared.zig");
 const rename_rules = @import("../win32/pane_sidebar_rename.zig");
 const row_menu = @import("../win32/pane_sidebar_menu.zig");
 const Application = @import("class/application.zig").Application;
@@ -134,13 +147,70 @@ var orders: rows.Orders = .{};
 const row_mime: [:0]const u8 = "application/x-ghoztty-sidebar-row";
 /// The pane whose row is being dragged (GTK runs one pointer drag at a
 /// time), or empty.
-var row_drag_buf: [64]u8 = undefined;
+var row_drag_buf: [64 + 4 * 64]u8 = undefined;
 var row_drag_len: usize = 0;
+
+/// A window row or project header picked up (T3697): the folds it took, put
+/// back when it is let go (`endLift`).
+const Lift = struct {
+    which: enum { projects, windows },
+    before: shared_mod.KeySet,
+};
+var lift: ?Lift = null;
 
 fn prefsPath(alloc: Allocator) ?[]u8 {
     var home_buf: [std.fs.max_path_bytes]u8 = undefined;
     const home = (homedir.home(&home_buf) catch null) orelse return null;
     return rows.prefsPath(alloc, build_config.is_debug, std.posix.getenv("XDG_CONFIG_HOME"), home) catch null;
+}
+
+fn orderPath(alloc: Allocator) ?[]u8 {
+    var home_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const home = (homedir.home(&home_buf) catch null) orelse return null;
+    return rows.orderPath(alloc, build_config.is_debug, std.posix.getenv("XDG_CONFIG_HOME"), home) catch null;
+}
+
+/// The all-windows list's stored order (T3697), less its window keys: a
+/// window's key is its tab's address, which a relaunch does not keep (T3700).
+fn loadWindowOrder(alloc: Allocator) void {
+    const p = orderPath(alloc) orelse return;
+    defer alloc.free(p);
+    const f = std.fs.cwd().openFile(p, .{}) catch return;
+    defer f.close();
+    const text = f.readToEndAlloc(alloc, 1 << 20) catch return;
+    defer alloc.free(text);
+    var keys: [window_order.max_keys][]const u8 = undefined;
+    const n = window_order.parse(text, &keys);
+    var kept: [window_order.max_keys][]const u8 = undefined;
+    var m: usize = 0;
+    for (keys[0..n]) |k| if (window_order.isProject(k)) {
+        kept[m] = k;
+        m += 1;
+    };
+    _ = scope.setWindowOrder(alloc, kept[0..m]);
+    log.info("pane sidebar window order loaded keys={d} kept={d}", .{ n, m });
+}
+
+/// Store the all-windows list's order. Best-effort.
+fn saveWindowOrder(alloc: Allocator) void {
+    const p = orderPath(alloc) orelse return;
+    defer alloc.free(p);
+    var buf: [window_order.max_keys][]const u8 = undefined;
+    const keys = scope.windowOrder(&buf);
+    if (std.fs.path.dirname(p)) |dir| std.fs.cwd().makePath(dir) catch return;
+    const f = std.fs.cwd().createFile(p, .{ .truncate = true }) catch return;
+    defer f.close();
+    var wbuf: [1024]u8 = undefined;
+    var w = f.writer(&wbuf);
+    window_order.format(&w.interface, keys) catch return;
+    w.interface.flush() catch {};
+}
+
+/// Make `keys` the list's order, stored and drawn in every window.
+fn setWindowOrder(keys: []const []const u8, cause: []const u8) void {
+    if (scope.setWindowOrder(shared_alloc, keys)) saveWindowOrder(shared_alloc);
+    log.info("pane sidebar window order keys={d} cause={s}", .{ keys.len, cause });
+    Window.queueAllSidebarRefresh();
 }
 
 /// Read the persisted flags once per process and start them as
@@ -155,6 +225,7 @@ pub fn loadShared(alloc: Allocator, start: configpkg.Config.MacPaneSidebar) void
     start_state = .init(shared);
     shared_alloc = alloc;
     loaded = true;
+    loadWindowOrder(alloc);
     // The scope the app launches in: the persisted choice (all windows on a
     // first launch), every window folded, no search (Mac 8aefd0c91).
     scope.launchScope(shared.all_windows);
@@ -275,8 +346,11 @@ pub const Row = struct {
     members: []const u64 = &.{},
     /// A pane row's window (its tab, by address): the rows it reorders among.
     tab: usize = 0,
-    /// A pane row drags to reorder (T3607): a pane on screen.
+    /// A pane row drags to reorder (T3607): a pane on screen. A window row
+    /// and a project header of the expanded all-windows list do too (T3697).
     draggable: bool = false,
+    /// A window row's group, a project header's name; owned (T3697).
+    project: ?[]u8 = null,
 };
 
 alloc: Allocator,
@@ -469,6 +543,7 @@ fn clearRows(self: *PaneSidebar) void {
         if (r.subtitle) |s| self.alloc.free(s);
         if (r.tooltip) |t| self.alloc.free(t);
         if (r.members.len > 0) self.alloc.free(r.members);
+        if (r.project) |pj| self.alloc.free(pj);
         self.alloc.destroy(r);
     }
     self.drawn.clearRetainingCapacity();
@@ -671,7 +746,7 @@ fn gatherFor(own: ?*Window, arena: Allocator) Allocator.Error!Gathered {
 pub fn listOrder(arena: Allocator) Allocator.Error![]const FoundTab {
     if (!loaded) return &.{};
     const g = try gatherFor(null, arena);
-    const at = try all.railOrder(arena, g.windows);
+    const at = try all.railOrder(arena, g.windows, &scope);
     const out = try arena.alloc(FoundTab, at.len);
     for (at, out) |i, *o| o.* = g.found[i];
     return out;
@@ -692,7 +767,7 @@ fn refreshAll(self: *PaneSidebar, expanded: bool, home: ?[]const u8) Allocator.E
     if (!expanded) {
         // The panel header's + stands over the tiles (T3695): a new window.
         try self.addRailAdd();
-        for (try all.railOrder(arena, g.windows)) |wi| try self.addWindowTile(g.windows[wi]);
+        for (try all.railOrder(arena, g.windows, &scope)) |wi| try self.addWindowTile(g.windows[wi]);
         return;
     }
 
@@ -706,7 +781,9 @@ fn refreshAll(self: *PaneSidebar, expanded: bool, home: ?[]const u8) Allocator.E
             const w = g.windows[item.window];
             try self.addPaneRow(v, w.own and g.actives[item.window] == v, true, home, item.depth, w.own, w.key);
         },
-        else => try self.addHeadRow(item),
+        // A window row and a project header drag (T3697); the Ungrouped
+        // header stays on top.
+        else => try self.addHeadRow(item, item.kind != .ungrouped),
     };
 }
 
@@ -730,7 +807,8 @@ fn refreshOwn(self: *PaneSidebar, home: ?[]const u8) error{ OutOfMemory, NotList
             const w = g.windows[item.window];
             try self.addPaneRow(v, g.actives[item.window] == v, true, home, item.depth, true, w.key);
         },
-        else => try self.addHeadRow(item),
+        // This window's own list does not reorder the all-windows one.
+        else => try self.addHeadRow(item, false),
     };
 }
 
@@ -957,7 +1035,7 @@ fn textBox(label: [:0]const u8, subtitle: ?[:0]const u8) *wk.GtkWidget {
 /// A header row of the outline: a window (its fold chevron, then its name
 /// and pane count, which raise it), a project or the Ungrouped header (one
 /// button that folds it).
-fn addHeadRow(self: *PaneSidebar, item: all.Item) Allocator.Error!void {
+fn addHeadRow(self: *PaneSidebar, item: all.Item, draggable: bool) Allocator.Error!void {
     const r = try self.alloc.create(Row);
     errdefer self.alloc.destroy(r);
     const kind: RowKind = switch (item.kind) {
@@ -1032,6 +1110,8 @@ fn addHeadRow(self: *PaneSidebar, item: all.Item) Allocator.Error!void {
     }
     const members = try self.alloc.dupe(u64, item.members);
     errdefer self.alloc.free(members);
+    const project: ?[]u8 = if (item.project) |pj| try self.alloc.dupe(u8, pj) else null;
+    errdefer if (project) |pj| self.alloc.free(pj);
 
     r.* = .{
         .sidebar = self,
@@ -1048,8 +1128,15 @@ fn addHeadRow(self: *PaneSidebar, item: all.Item) Allocator.Error!void {
         .tools = rows.headTools(true, kind == .ungrouped),
         .count_widget = count_widget,
         .members = members,
+        .project = project,
+        // Not while its name is being edited: the field takes the pointer.
+        .draggable = draggable and !editing,
     };
     _ = wk.g_signal_connect_data(chevron, "clicked", @ptrCast(&onFoldClicked), r, null, 0);
+    // The whole row is the handle (Mac `PaneSidebarItemDragView`); the
+    // chevron and the hover buttons keep their clicks, since a press that
+    // does not travel is never a drag.
+    if (r.draggable) addRowDragSource(r, row);
     if (kind == .window) {
         // A window row's right-click menu (T3608): Create Group..., Move to
         // Group, Remove from Group.
@@ -1152,11 +1239,12 @@ fn onToolRename(_: *wk.GtkWidget, r: *Row) callconv(.c) void {
 // window row's menu and the Ungrouped header's pencil). The rules are
 // win32's pure `pane_sidebar_menu` / `pane_sidebar_rename`, as on win32.
 //
-// Not ported: the list keeping its place across the move (win32
-// `keepWindowPlace`, Mac `renameWindowKeepingPlace`) - the GTK list has no
-// order of its own for windows and groups yet (dragging them is T3697), so a
-// regrouped window sorts by name as every window does; and a group title
-// outranking a script's later `+rename` (win32's `.user` provenance, T3702).
+// A move keeps the list's place (T3697; win32 `keepWindowPlace`, Mac
+// `renameWindowKeepingPlace`): the list as shown is written into its order
+// first (`window_order.renamingWindow`), so nothing it did not move re-sorts.
+//
+// Not ported: a group title outranking a script's later `+rename` (win32's
+// `.user` provenance, T3702).
 
 const gdk_button_secondary: c_uint = 3;
 const gdk_key_escape: c_uint = 0xff1b;
@@ -1357,6 +1445,29 @@ fn groupUngrouped(self: *PaneSidebar, name: []const u8) void {
 /// False when the window is gone, the name cannot head a group, or nothing
 /// would change.
 fn moveWindowToGroup(key: u64, project: ?[]const u8) bool {
+    // The list as it is shown, read before the retitle: nothing it did not
+    // move re-sorts (win32 `keepWindowPlace`, Mac
+    // `renameWindowKeepingPlace`, T2405).
+    var arena_state = std.heap.ArenaAllocator.init(shared_alloc);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const pinned: ?[]const []const u8 = blk: {
+        const g = gatherFor(null, arena) catch break :blk null;
+        break :blk all.shownOrderKeys(arena, g.windows, &scope) catch null;
+    };
+    if (!retitleIntoGroup(key, project)) return false;
+    const p = pinned orelse return true;
+    const wkey = all.windowOrderKey(arena, key) catch return true;
+    var kb: window_order.Key = .{};
+    var out: [window_order.max_keys][]const u8 = undefined;
+    const n = window_order.renamingWindow(p, wkey, project, &kb, &out);
+    setWindowOrder(out[0..n], "group move");
+    return true;
+}
+
+/// Retitle window `key` into group `project` (null: out of any), its own
+/// name kept and pinned as the user's. False when nothing would change.
+fn retitleIntoGroup(key: u64, project: ?[]const u8) bool {
     var nb: [name_cap]u8 = undefined;
     const title = windowName(key, &nb) orelse return false;
     var gb: [name_cap + 64]u8 = undefined;
@@ -1679,11 +1790,96 @@ fn onRowDragBegin(_: *wk.GtkEventController, _: *wk.GdkDrag, r: *Row) callconv(.
     @memcpy(row_drag_buf[0..n], r.id[0..n]);
     row_drag_len = n;
     log.info("pane sidebar row drag began pane={s}", .{r.id});
+    // A window or a group picked up folds the list to rows (T3697).
+    if (r.kind == .window or r.kind == .project) _ = r.sidebar.liftItem(r.id);
 }
 
 fn onRowDragEnd(_: *wk.GtkEventController, _: *wk.GdkDrag, _: c_int, _: ?*anyopaque) callconv(.c) void {
     if (rowDragged()) |id| log.info("pane sidebar row drag ended pane={s}", .{id});
     row_drag_len = 0;
+    endLift();
+}
+
+/// Whether a dragged row id is a window row's or a project header's.
+fn isItemId(id: []const u8) bool {
+    return std.mem.startsWith(u8, id, window_order.window_prefix) or window_order.isProject(id);
+}
+
+/// Pick up window row or project header `id` (T3697; win32
+/// `maybeStartItemDrag`): every group folds to its header for a group, every
+/// window to its row for a window, so each is one row high and easy to
+/// place; `endLift` puts them back. Only in the expanded all-windows list.
+/// False when `id` is not such a row here, or something is already lifted.
+pub fn liftItem(self: *PaneSidebar, id: []const u8) bool {
+    if (lift != null) return false;
+    const r = self.rowById(id) orelse return false;
+    if ((r.kind != .window and r.kind != .project) or !r.draggable) return false;
+    if (r.kind == .project) {
+        var projects: std.ArrayListUnmanaged(u64) = .empty;
+        defer projects.deinit(self.alloc);
+        for (self.drawn.items) |o| if (o.kind == .project) {
+            projects.append(self.alloc, o.key) catch return false;
+        };
+        lift = .{ .which = .projects, .before = scope.foldProjects(shared_alloc, projects.items) };
+    } else {
+        lift = .{ .which = .windows, .before = scope.foldWindows(shared_alloc) };
+    }
+    log.info("pane sidebar item lifted id={s} folds={s}", .{ id, @tagName(lift.?.which) });
+    Window.queueAllSidebarRefresh();
+    return true;
+}
+
+/// Let go of whatever `liftItem` picked up: its folds come back.
+pub fn endLift() void {
+    var l = lift orelse return;
+    lift = null;
+    scope.restoreFolds(shared_alloc, switch (l.which) {
+        .projects => .projects,
+        .windows => .windows,
+    }, &l.before);
+    log.info("pane sidebar item lift ended", .{});
+    Window.queueAllSidebarRefresh();
+}
+
+/// Window row or project header `id` let go with the pointer at `y` (the
+/// list's coordinates), read against the rows as laid out (`all.dropItem`):
+/// a group among the top level, a window anywhere - into a group or out of
+/// one, retitled to say so. The order changes in every window's list; no
+/// window moves on screen. Returns the index it landed at among its new
+/// siblings, or null when `id` is not such a row here or is not laid out.
+pub fn dropItemAt(self: *PaneSidebar, id: []const u8, y: f64) ?usize {
+    const r = self.rowById(id) orelse return null;
+    if ((r.kind != .window and r.kind != .project) or !r.draggable) return null;
+    var arena_state = std.heap.ArenaAllocator.init(self.alloc);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var laid: std.ArrayListUnmanaged(all.Laid) = .empty;
+    var list_bottom: i32 = 0;
+    for (self.drawn.items) |o| {
+        const b = self.rowBounds(o) orelse continue;
+        const top: i32 = @intFromFloat(@round(b.y));
+        const bottom: i32 = @intFromFloat(@round(b.y + b.h));
+        list_bottom = @max(list_bottom, bottom);
+        const kind: all.Kind = switch (o.kind) {
+            .window => .window,
+            .project => .project,
+            .ungrouped => .ungrouped,
+            else => continue,
+        };
+        laid.append(arena, .{ .kind = kind, .key = o.id, .project = o.project, .top = top, .head_bottom = bottom }) catch return null;
+    }
+    const g = gatherFor(null, arena) catch return null;
+    const existing = all.allOrderKeys(arena, g.windows) catch return null;
+    var cur_buf: [window_order.max_keys][]const u8 = undefined;
+    const cur = scope.windowOrder(&cur_buf);
+    const yi: i32 = @intFromFloat(@round(y));
+    const d = (all.dropItem(arena, laid.items, list_bottom, id, yi, cur, existing) catch return null) orelse return null;
+    log.info("pane sidebar item drop id={s} y={d} index={d} regroup={} to={s}", .{ id, yi, d.index, d.regroup, d.project orelse "" });
+    // The retitle first (it only queues redraws, so the rows `d` borrows
+    // stay put); `setWindowOrder` copies the keys before it frees `cur`.
+    if (d.regroup) _ = retitleIntoGroup(r.key, d.project);
+    setWindowOrder(d.order, "drag");
+    return d.index;
 }
 
 fn onListAccept(_: *wk.GtkEventController, _: *wk.GdkDrop, _: *PaneSidebar) callconv(.c) c_int {
@@ -1705,7 +1901,7 @@ fn onListDrop(_: *wk.GtkEventController, drop: *wk.GdkDrop, _: f64, y: f64, self
     var buf: [64]u8 = undefined;
     const own = buf[0..id.len];
     @memcpy(own, id);
-    const moved = self.dropRowAt(own, y) != null;
+    const moved = (if (isItemId(own)) self.dropItemAt(own, y) else self.dropRowAt(own, y)) != null;
     wk.gdk_drop_finish(drop, if (moved) wk.gdk_action_move else 0);
     return @intFromBool(moved);
 }
