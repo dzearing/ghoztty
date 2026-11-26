@@ -1,0 +1,9 @@
+{
+  "version": "1.56.38",
+  "sections": [
+    { "title": "This release",
+      "items": [
+        { "text": "No user-visible changes in this release: it carries reliability, test and tooling work behind the scenes." }
+      ] }
+  ]
+}
