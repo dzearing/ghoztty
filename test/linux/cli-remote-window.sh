@@ -13,7 +13,9 @@
 # of test/win32/ipc-relay.ps1), a device enrolled on it, and a ghoztty-agent in
 # --relay mode - so the window's panes ride the relayed agent, +list names the
 # machine by --name or by device id, a split and a new tab stay on it, and
-# +close ends its sessions. Section Z (T3671) quits the app and relaunches it:
+# +close ends its sessions. Section H (T3669) writes a per-host defaults row
+# for the TCP machine: a new window takes its shell and cwd, a split and a new
+# tab its shell only, and explicit flags win. Section Z (T3671) quits the app and relaunches it:
 # a relay window comes back, re-attached to the same far shell, under the same
 # name; one closed on purpose does not. It needs `go`
 # (scripts/linux/setup-distro.sh installs it). Run it ONLY through the wrapper:
@@ -27,7 +29,8 @@
 # NEGATIVE=1 dials a port nothing listens on for the main window, which must
 # FAIL R1. NEGATIVE=relay dials a device the relay never enrolled for the relay
 # window, which must FAIL Y5. NEGATIVE=restore relaunches with no relay
-# credential, which must FAIL Z6.
+# credential, which must FAIL Z6. NEGATIVE=hostdefaults keys the per-host
+# defaults row (section H, T3669) on a port nobody dials, which must FAIL H2.
 #
 # Output: one PASS/FAIL line per check, then 'CLI REMOTE WINDOW: ALL PASS' or
 # 'CLI REMOTE WINDOW: <n> FAILURE(S)'. Exit 0 only on ALL PASS.
@@ -75,6 +78,10 @@ export SHELL=/bin/sh
 export GHOSTTY_ACCOUNT_STORE="$HL_RUNTIME/no-account.dat"
 export GHOSTTY_ACCOUNT_KEYRING=off
 unset GHOSTTY_RELAY_TOKEN
+# Per-host defaults (T3669): absent until section H writes it, so every
+# window before H opens in the agent's own default shell and cwd.
+export GHOSTTY_HOST_DEFAULTS="$HL_RUNTIME/host-defaults.json"
+rm -f "$GHOSTTY_HOST_DEFAULTS"
 hl_launch APP "$app" --gtk-single-instance=false --session-persistence=false \
     --keybind=ctrl+shift+t=new_tab -e /bin/sh -c 'PS1="hl$ " exec /bin/sh -i'
 hl_wait_for 30 test -S "$sock"
@@ -251,6 +258,66 @@ cli +list --json > /dev/null 2>&1
 hl_check "C3 the app still answers" $?
 grep -q 'no pane rides it any more' "$APP_LOG"
 hl_check "C4 the last pane off rem's link closed the connection" $? "$(grep -m3 'gtk_remote' "$APP_LOG" | tr '\n' ' ')"
+
+# --- H: per-host shell and cwd defaults (T3669) --------------------------------------
+# The store Settings > Remote Machines' Host Settings... writes, keyed host:port
+# for a direct dial (win32 host_defaults, Mac Machine.settingsKey). A NEW window
+# takes the machine's default shell AND cwd; a tab or split on it takes the
+# default SHELL only and keeps its parent's cwd (win32 buildRemoteInherit, Mac
+# newSplit); an explicit --shell / --working-directory always wins. The shell
+# is a wrapper that marks its environment, so each pane's /proc says which
+# shell started it. NEGATIVE=hostdefaults keys the row on a port nobody dials,
+# which must FAIL H2.
+hddir=$(mktemp -d /tmp/remhd.XXXXXX)
+hdsplit=$(mktemp -d /tmp/remhds.XXXXXX)
+hdother=$(mktemp -d /tmp/remhdo.XXXXXX)
+hdsh="$HL_RUNTIME/hd-shell"
+printf '#!/bin/sh\nHD_SHELL_MARK=t3669 exec /bin/sh -i\n' > "$hdsh"
+chmod +x "$hdsh"
+hd_port=$port
+[ "${NEGATIVE:-0}" = hostdefaults ] && { hd_port=$dead_port; echo "  NEGATIVE CONTROL: the host-defaults row names a port nobody dials - this run MUST fail"; }
+printf '{"hosts":[{"key":"127.0.0.1:%s","working_directory":"%s","shell":"%s"}]}\n' \
+    "$hd_port" "$hddir" "$hdsh" > "$GHOSTTY_HOST_DEFAULTS"
+marked() { tr '\0' '\n' < "/proc/$1/environ" 2>/dev/null | grep -qx 'HD_SHELL_MARK=t3669'; }
+cwd_of() { readlink "/proc/$1/cwd" 2>/dev/null; }
+out=$(cli +new-remote-window --host=127.0.0.1 --port="$port" --name=hd 2>&1); rc=$?
+hl_wait_for 15 pane_pid hd > /dev/null
+hpid=$(pane_pid hd)
+[ $rc = 0 ] && [ -n "$hpid" ] && is_ancestor "$RAGENT" "$hpid"
+hl_check "H1 a remote window hd opens on the TCP agent with a host-defaults row present" $? "rc=$rc out=$out pane=$hpid agent=$RAGENT"
+hd_window_ok() { marked "$hpid" && [ "$(cwd_of "$hpid")" = "$hddir" ]; }
+hl_wait_for 5 hd_window_ok
+hl_check "H2 hd's pane runs the host's default shell in the host's default cwd" $? "marked=$(marked "$hpid" && echo y) cwd=$(cwd_of "$hpid") want=$hddir file=$(cat "$GHOSTTY_HOST_DEFAULTS")"
+out=$(cli +new-remote-window --host=127.0.0.1 --port="$port" --name=hdx --shell=/bin/sh --working-directory="$hdother" 2>&1); rc=$?
+hl_wait_for 15 pane_pid hdx > /dev/null
+xpid=$(pane_pid hdx)
+xwin_ok() { [ -n "$xpid" ] && ! marked "$xpid" && [ "$(cwd_of "$xpid")" = "$hdother" ]; }
+[ $rc = 0 ] && hl_wait_for 5 xwin_ok
+hl_check "H3 explicit --shell and --working-directory win over the host defaults" $? "rc=$rc out=$out pane=$xpid marked=$(marked "$xpid" && echo y) cwd=$(cwd_of "$xpid") want=$hdother"
+hid=$(win id hd)
+cli +send-keys --target="$hid" "cd $hdsplit" Enter > /dev/null 2>&1
+hd_moved() { [ "$(cwd_of "$hpid")" = "$hdsplit" ]; }
+hl_wait_for 10 hd_moved
+hl_check "H4 hd's pane moved to $hdsplit" $? "cwd=$(cwd_of "$hpid")"
+out=$(cli +split --target="$hid" --name=hds 2>&1); rc=$?
+hl_wait_for 15 pane_pid hd hds > /dev/null
+hspid=$(pane_pid hd hds)
+hd_split_ok() { [ -n "$hspid" ] && is_ancestor "$RAGENT" "$hspid" && marked "$hspid" && [ "$(cwd_of "$hspid")" = "$hdsplit" ]; }
+[ $rc = 0 ] && hl_wait_for 5 hd_split_ok
+hl_check "H5 a split of hd takes the host's default shell but its parent's cwd, not the host's" $? "rc=$rc out=$out split=$hspid marked=$(marked "$hspid" && echo y) cwd=$(cwd_of "$hspid") want=$hdsplit"
+out=$(press "$hid" ctrl+shift+t)
+hl_wait_for 10 ntabs_is hd 2
+hl_wait_for 15 last_pid hd > /dev/null
+htpid=$(last_pid hd)
+hd_tab_ok() { [ -n "$htpid" ] && is_ancestor "$RAGENT" "$htpid" && marked "$htpid" && [ "$(cwd_of "$htpid")" = "$hdsplit" ]; }
+hl_wait_for 5 hd_tab_ok
+hl_check "H6 a new tab in hd takes the host's default shell but the pressed pane's cwd" $? "out=$out tabs=$(win ntabs hd) tab=$htpid marked=$(marked "$htpid" && echo y) cwd=$(cwd_of "$htpid") want=$hdsplit"
+cli +close --target=hd > /dev/null 2>&1
+cli +close --target=hdx > /dev/null 2>&1
+rm -f "$GHOSTTY_HOST_DEFAULTS"
+hd_gone() { ! has_window hd && ! has_window hdx; }
+hl_wait_for 10 hd_gone
+hl_check "H7 hd and hdx close; the store is gone again for the relay sections" $?
 
 # --- Y: a REAL relay dial end to end (T3670) ----------------------------------------
 # test/win32/ipc-relay.ps1's world, in Linux: the relay from relay/ with

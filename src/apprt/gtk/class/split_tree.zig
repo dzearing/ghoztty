@@ -41,6 +41,7 @@ const pane_sidebar_rows = @import("../pane_sidebar_rows.zig");
 const homedir = @import("../../../os/homedir.zig");
 const wk = @import("../webkit.zig");
 const PaneDragGhost = @import("../PaneDragGhost.zig");
+const RemoteLink = @import("../RemoteLink.zig");
 
 const log = std.log.scoped(.gtk_ghostty_split_tree);
 
@@ -2103,9 +2104,16 @@ pub const SplitTree = extern struct {
                         break :c null;
                     };
                 };
+                // T3669: and in the machine's default SHELL - never its
+                // default cwd, which would pull the split away from where
+                // its parent is (win32 `buildRemoteInherit`).
+                const shell = link.machine.hostDefaultShell();
+                defer if (shell) |v| RemoteLink.freeOwned(v);
+                if (shell) |v| log.info("remote split: host default shell={s}", .{v});
                 surface.adoptRemote(.{
                     .link = link,
                     .working_directory = cwd,
+                    .shell = shell,
                     .command = overrides.remote_command,
                 });
             };

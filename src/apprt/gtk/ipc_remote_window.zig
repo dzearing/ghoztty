@@ -31,6 +31,7 @@ const nonEmpty = server.nonEmpty;
 const verb_args = apprt.ipc.args;
 
 const ipc_remote_dial = @import("../win32/ipc_remote_dial.zig");
+const host_defaults = @import("../win32/host_defaults.zig");
 const relay_account = @import("../../remote/relay_account.zig");
 const tcp_dial = @import("../../remote/tcp_dial.zig");
 const relay_dial = @import("../../remote/relay_dial.zig");
@@ -223,7 +224,27 @@ pub fn open(app: *Application, remote: RemoteLink.Open, activate: bool) *Window 
 /// window - its entry in the relaunch record (T3671, `RelayWindows.record`),
 /// after the name and title so the entry carries both. A window whose first
 /// pane did not take the link records nothing.
-pub fn openWith(app: *Application, remote: RemoteLink.Open, activate: bool, r: RelayWindows.Record) *Window {
+pub fn openWith(app: *Application, remote_: RemoteLink.Open, activate: bool, r: RelayWindows.Record) *Window {
+    // Per-host defaults (T3669, win32 `openDialedWindow`'s T174, Mac
+    // `Machine.applyOpenDefaults`): a NEW remote window takes the machine's
+    // stored cwd and shell; an explicit value (the verb's flags, or
+    // `--from-focused`'s inheritance) always wins. Only an OPEN: an ATTACH
+    // (a relay window brought back, T3671) resumes a session whose shell and
+    // cwd were fixed when it was first opened. `defaults` outlives the
+    // Surface.new that copies its strings.
+    var remote = remote_;
+    var defaults: host_defaults.Resolved = .{};
+    if (remote.session_id == null) {
+        defaults = remote.link.machine.hostDefaults();
+        if (remote.working_directory == null) remote.working_directory = defaults.workingDirectory();
+        if (remote.shell == null) remote.shell = defaults.shell();
+        if (defaults.workingDirectory() != null or defaults.shell() != null)
+            log.info("remote window: host defaults for {s} cwd={s} shell={s}", .{
+                remote.link.machine.displayName(),
+                defaults.workingDirectory() orelse "-",
+                defaults.shell() orelse "-",
+            });
+    }
     RemoteLink.pending_open = remote;
     const window = app.newWindowForIpc(null, null, &.{}, null, activate);
     RemoteLink.pending_open = null;

@@ -23,6 +23,7 @@ const Allocator = std.mem.Allocator;
 const tcp_dial = @import("../../remote/tcp_dial.zig");
 const relay_dial = @import("../../remote/relay_dial.zig");
 const connection = @import("../../remote/connection.zig");
+const host_defaults = @import("../win32/host_defaults.zig");
 
 const log = std.log.scoped(.gtk_remote);
 
@@ -76,6 +77,37 @@ pub const Machine = union(enum) {
         };
     }
 
+    /// This machine's key in the per-host defaults store (T3669, win32
+    /// `RemoteMachine.hostDefaultsKey`, Mac `Machine.settingsKey`): the
+    /// relay DEVICE ID (stable across renames), else `host:port`. The same
+    /// key Settings > Remote Machines' Host Settings... writes. Borrows.
+    pub fn hostDefaultsKey(self: Machine) host_defaults.Key {
+        return switch (self) {
+            .tcp => |t| .{ .tcp = .{ .host = t.host, .port = t.port } },
+            .relay => |r| .{ .relay = r.device },
+        };
+    }
+
+    /// The machine's stored per-host defaults (T3669). A missing store, row
+    /// or usable key leaves both empty, i.e. "the remote's own default".
+    pub fn hostDefaults(self: Machine) host_defaults.Resolved {
+        var r: host_defaults.Resolved = .{};
+        host_defaults.lookup(alloc, self.hostDefaultsKey(), &r);
+        return r;
+    }
+
+    /// The machine's stored default SHELL alone, as an owned copy on the C
+    /// allocator (free with `freeOwned`), or null. What a new tab or split
+    /// on the machine takes (T3669): a fresh session on the same machine gets
+    /// the per-host shell but NOT the per-host cwd, which would pull it away
+    /// from where its parent is (win32 `buildRemoteInherit`, Mac
+    /// `BaseTerminalController.newSplit`).
+    pub fn hostDefaultShell(self: Machine) ?[]u8 {
+        const r = self.hostDefaults();
+        const s = r.shell() orelse return null;
+        return alloc.dupe(u8, s) catch null;
+    }
+
     fn dupe(self: Machine, a: Allocator) Allocator.Error!Machine {
         switch (self) {
             .tcp => |t| return .{ .tcp = .{ .host = try a.dupe(u8, t.host), .port = t.port } },
@@ -92,6 +124,11 @@ pub const Machine = union(enum) {
         }
     }
 };
+
+/// Free a string `Machine.hostDefaultShell` returned.
+pub fn freeOwned(s: []u8) void {
+    alloc.free(s);
+}
 
 /// One dialed machine and the panes riding it.
 pub const Link = struct {

@@ -661,9 +661,13 @@ pub const Window = extern struct {
         /// The remote cwd the query returned, owned by the link's
         /// connection allocator.
         cwd: ?[]u8 = null,
+        /// The machine's per-host default shell (T3669), owned
+        /// (`RemoteLink.freeOwned`).
+        shell: ?[]u8 = null,
 
         fn deinit(self: *RemoteTabInherit) void {
             if (self.cwd) |c| self.open.link.conn().alloc.free(c);
+            if (self.shell) |v| RemoteLink.freeOwned(v);
         }
     };
 
@@ -689,7 +693,14 @@ pub const Window = extern struct {
                 result.open.working_directory = result.cwd;
             }
         }
-        log.info("new tab in a remote window: opening on {s}", .{link.machine.displayName()});
+        // T3669: the tab's fresh session takes the machine's default SHELL;
+        // its cwd stays the inherited one above (win32 `buildRemoteInherit`).
+        result.shell = link.machine.hostDefaultShell();
+        result.open.shell = result.shell;
+        log.info("new tab in a remote window: opening on {s} shell={s}", .{
+            link.machine.displayName(),
+            result.shell orelse "-",
+        });
         return result;
     }
 
