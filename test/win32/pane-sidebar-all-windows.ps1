@@ -872,8 +872,11 @@ try {
 
     "== 9: with animations off, the switch and the folds just land (T1880)"
     Start-Sleep -Milliseconds 500
-    Set-Content -Path $script:seam -Value '1' -NoNewline -Encoding ascii
+    # Mark BEFORE the seam flips (T2443): the app's 250 ms visibility poll
+    # reads the seam too, and under load it logged the line in the gap between
+    # the write and a late mark, where the wait below never looks.
     $mark = Get-LogCount
+    Set-Content -Path $script:seam -Value '1' -NoNewline -Encoding ascii
     [void][SidebarSessionPost]::PostMessageW($top, [uint32]0x02B1, [IntPtr]0, [IntPtr]::Zero)
     Assert "setup: the effects went off (log)" ($null -ne (Wait-Log 'low-power: visual effects off' $mark 6000))
     Start-Sleep -Milliseconds 800
