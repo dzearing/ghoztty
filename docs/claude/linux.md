@@ -3239,6 +3239,39 @@ K: an unlocked gnome-keyring (extracted, secret-store.sh's recipe) - no file,
 no sentence, Sign Out clears it. `NEGATIVE=1` runs a keyring in phase A too
 and must fail A5/A6.
 
+- **Signing out revokes THIS machine** (T3676; win32 T1421/T1424-T1426, Mac
+  `RelayAccount.signOut`). The revocation, its retry and the re-enroll are
+  all shared core - `relay_signin.signOut` (whoami, then
+  `POST /v1/agent/deenroll` with relay.env's own credential, the machine's
+  relay name recorded in `suspended-enrollment.json` BEFORE the POST),
+  `relay_revoke_pending` (the armed retry, 0/5/15/60 s... backoff, and the
+  agent's `revoke_watch`), `relay_suspend` (the sign-in restore) - so the
+  GTK half is three affordances: a `.not_revoked` outcome (the user stays
+  SIGNED IN) raises an `AdwAlertDialog` in win32's words
+  (`relay_account_text.not_revoked_title/body`) with **Stay Signed In**
+  (the default and Escape) and destructive **Sign Out Anyway**, which runs
+  `signOut(.force)`; the signed-out row reads `pendingRevocationText`
+  ("This machine is still connected to <owner> — still removing it.")
+  while `pending-revoke.json` is usable, re-read on open, after every
+  operation and on the 5 s poll; and the app's startup calls
+  `relay_suspend.launchAsync` (signed out: finish an armed revocation;
+  signed in: give the machine back), as win32's `App` does. Seam: state
+  `account_confirm` ({heading, body} or null) and `account_confirm_answer`,
+  op `account-confirm --value=anyway|stay` (works with the chooser closed).
+  Closing the relay windows on sign-out is T3817.
+
+```powershell
+powershell -NoProfile -File scripts\linux\wsl-run.ps1 -CommandFile test\linux\chooser-signout-revoke.sh
+```
+
+Ends `CHOOSER SIGNOUT REVOKE: ALL PASS` (23 checks, about 1 minute warm). A
+python relay answers whoami/deenroll/devices as well; its `nodeenroll` mode
+503s the de-enroll. R1-R6 the failed sign-out and its question, R7-R9 Sign
+Out Anyway, R10-R11 the relay back (the retry lands, the row's sentence
+goes), R12-R13 the same account's sign-in re-enrolls under the old name,
+R14-R16 a revocation a quit run left armed is finished by the next launch.
+`NEGATIVE=1` lets the relay de-enroll in `nodeenroll` too: 13 failures.
+
 ## The relay account store: keyring, else a private file (T3341)
 
 The Linux row of Keychain -> DPAPI: `src/remote/relay_account.zig` keeps the
