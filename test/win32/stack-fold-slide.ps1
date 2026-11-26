@@ -89,6 +89,10 @@
 #       a visual in s2's own tree, hidden with s2's window; the opening glide
 #       puts it on its popup instead and the landing takes it back (T2749),
 #       read from the app's `banner path visual=` line.
+#   F21) the handover (T2301): the fold's last `strip face handover` line -
+#       where the face lands the strip's name against where the strip at rest
+#       paints it (`strip_face.handoverGap`) - is within 1 px both ways, in
+#       every style, stepped or declared. Its band edges are reported.
 #   F17) opening carried (T2458): unfolding, s2's pane is placed at its new
 #       size while hidden and its card is drawn by its face alone - the live
 #       window is off show on every frame, the card shows no content until the
@@ -776,6 +780,21 @@ try {
         if ($Tree) {
             $fvRest = Get-FaceVisual 0 (Get-LogLength)
             Assert ($fvRest.Shown -ge 1 -and $fvRest.Shown -eq $fvRest.Hidden) "F12: folded and at rest, the face's visual is down too (up $($fvRest.Shown), down $($fvRest.Hidden))"
+        }
+        # F21 (T2301): the face hands its name over to the strip at rest with
+        # no jump - the last `strip face handover` line of the fold (a declared
+        # face's landing, or the last full-strength stepped frame) measures it.
+        $hand = @($foldLines | Where-Object { $_ -match 'strip face handover ' } | ForEach-Object {
+            if ($_ -match 'axis=(\w+) style=(\w+) name_dx=(-?\d+) name_dy=(-?\d+) band_dl=(-?\d+) band_dt=(-?\d+) band_dr=(-?\d+) band_db=(-?\d+)') {
+                [pscustomobject]@{ Axis = $Matches[1]; Dx = [int]$Matches[3]; Dy = [int]$Matches[4]; Band = "$($Matches[5]),$($Matches[6]),$($Matches[7]),$($Matches[8])" }
+            }
+        })
+        if ($hand.Count -ge 1) {
+            $last = $hand[$hand.Count - 1]
+            Say ("      handover ({0} lines) axis={1} name dx={2} dy={3} band edges l,t,r,b={4}" -f $hand.Count, $last.Axis, $last.Dx, $last.Dy, $last.Band)
+            Assert ([math]::Abs($last.Dx) -le 1 -and [math]::Abs($last.Dy) -le 1) "F21: folding, the face lands the strip's name where the strip at rest paints it (off by $($last.Dx),$($last.Dy) px)"
+        } else {
+            Assert $false "F21: folding, the face logged where it hands its name over to the strip (no strip face handover line)"
         }
 
         # F4: the T2124 layout at rest.

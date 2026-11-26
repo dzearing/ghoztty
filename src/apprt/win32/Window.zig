@@ -11063,6 +11063,17 @@ fn paintStripFace(self: *Window, view: *PaneView) bool {
         const ink = pane_stack_strip.inkRgb(strip_rgb, color_math.isLight(bg), false);
         self.paintStripLabel(painting.dc, view, .{ .left = 0, .top = 0, .right = w, .bottom = ht }, axis, font, ink);
     }
+    // At full strength the face is the strip about to take over (T2301).
+    if (!opening and alpha == 255) {
+        const fl: f32 = @floatFromInt(vis.left);
+        const ft: f32 = @floatFromInt(vis.top);
+        self.logStripHandover(pane_stack_grid.viewId(view), axis, fl, ft, w, ht, .{
+            .l = fl,
+            .t = ft,
+            .r = @as(f32, @floatFromInt(vis.right)),
+            .b = @as(f32, @floatFromInt(vis.bottom)),
+        });
+    }
     _ = w32.GdiFlush();
     if (stackTraceOn()) _ = w32.QueryPerformanceCounter(&tp[2]);
     // The carried frame over the band and its name - the name shows through
@@ -11301,6 +11312,7 @@ fn declareStripFace(
     from.name_y = n0.y;
     to.name_x = n1.x;
     to.name_y = n1.y;
+    if (!opening) self.logStripHandover(id, axis, n1.x, n1.y, nw, nh, to_box);
 
     const dist = comp_tree.FacePose.distance(from, to);
     const tau_s = slide.tau_ms / 1000.0;
@@ -11586,6 +11598,31 @@ fn declareMovingStrip(self: *Window, view: *PaneView) bool {
         f.still.?.left, f.still.?.top, f.still.?.right, f.still.?.bottom,
     });
     return true;
+}
+
+/// The `strip face handover` oracle line (T2301): where a folding card's
+/// face lands its name and band against where the strip at rest paints them,
+/// so the handover can be checked off the input desktop. The name lands with
+/// its picture (`nw` x `nh`) at `nx`, `ny`; the band lands on `to_box`. The
+/// strip at rest is its laid tab, its name over the part of it that shows.
+fn logStripHandover(self: *Window, id: pane_stack_grid.Id, axis: pane_stack_layout.Direction, nx: f32, ny: f32, nw: i32, nh: i32, to_box: anytype) void {
+    var g = self.stackGrid() orelse return;
+    defer g.deinit();
+    const p = g.placement(id) orelse return;
+    const t = p.tab orelse return;
+    const tab: pane_stack_strip.Rect = .{ .left = t.left, .top = t.top, .right = t.right, .bottom = t.bottom };
+    const rest = pane_stack_strip.visiblePart(tab, p.tab_axis orelse axis, p.strip_leads orelse true, p.strip_tuck);
+    const px: i32 = @intFromFloat(@round(nx));
+    const py: i32 = @intFromFloat(@round(ny));
+    const gap = strip_face.handoverGap(axis, .{ .left = px, .top = py, .right = px + nw, .bottom = py + nh }, rest, self.scale);
+    const bl: i32 = @intFromFloat(@round(to_box.l));
+    const bt: i32 = @intFromFloat(@round(to_box.t));
+    const br: i32 = @intFromFloat(@round(to_box.r));
+    const bb: i32 = @intFromFloat(@round(to_box.b));
+    log.info("strip face handover axis={s} style={s} name_dx={d} name_dy={d} band_dl={d} band_dt={d} band_dr={d} band_db={d}", .{
+        @tagName(axis),                     @tagName(self.paneStyle()), gap.dx,          gap.dy,
+        bl - tab.left,                      bt - tab.top,               br - tab.right, bb - tab.bottom,
+    });
 }
 
 /// Where the desk paints tucked card `id`'s strip (T2825): `shownStripTab`,

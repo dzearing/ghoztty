@@ -929,6 +929,38 @@ test "nameOffset: the name rides the face's centre across its narrowing side (T2
     try testing.expectEqual(@as(f32, 20), c.y + 150);
 }
 
+/// How far the strip's name jumps when a folding card's face hands over to
+/// the strip at rest (T2301), in pixels: the name as the face lands it (its
+/// picture `pic` - client pixels, laid out as `paintStripLabel` lays a name
+/// over a rect that size) against the name the resting strip paints over
+/// `rest` (its `visiblePart`). Both are read at `labelOrigin`'s anchor for a
+/// short name - across a tall strip its centre, down it the centre or the
+/// inset; along a short one the inset, down it the centre - so the gap is
+/// the same for any name that is not cut. 0, 0 is no jump.
+pub fn handoverGap(axis: Direction, pic: pane_stack_strip.Rect, rest: pane_stack_strip.Rect, scale: f32) struct { dx: i32, dy: i32 } {
+    const a = pane_stack_strip.labelOrigin(pic, axis, 0, 0, scale);
+    const b = pane_stack_strip.labelOrigin(rest, axis, 0, 0, scale);
+    return .{ .dx = a.x - b.x, .dy = a.y - b.y };
+}
+
+test "handoverGap: a face landing on the strip's own rect hands over with no jump (T2301)" {
+    const R = pane_stack_strip.Rect;
+    // A tall strip: the face's picture on the strip exactly.
+    const same = handoverGap(.horizontal, R{ .left = 10, .top = 40, .right = 46, .bottom = 640 }, R{ .left = 10, .top = 40, .right = 46, .bottom = 640 }, 1);
+    try testing.expectEqual(@as(i32, 0), same.dx);
+    try testing.expectEqual(@as(i32, 0), same.dy);
+    // Landed on a card inset 6 px each side and 30 px down (a header): the
+    // name is centred across the same strip, and 15 px lower down it.
+    const inset = handoverGap(.horizontal, R{ .left = 16, .top = 70, .right = 40, .bottom = 634 }, R{ .left = 10, .top = 40, .right = 46, .bottom = 640 }, 1);
+    try testing.expectEqual(@as(i32, 0), inset.dx);
+    try testing.expectEqual(@as(i32, 12), inset.dy);
+    // A short strip: the name starts after the inset, so a 6 px card margin
+    // is a 6 px jump along it.
+    const short = handoverGap(.vertical, R{ .left = 16, .top = 6, .right = 634, .bottom = 30 }, R{ .left = 10, .top = 0, .right = 640, .bottom = 36 }, 1);
+    try testing.expectEqual(@as(i32, 6), short.dx);
+    try testing.expectEqual(@as(i32, 0), short.dy);
+}
+
 /// A name drawn white on black (GDI, ClearType or not) made into `ink` at
 /// the coverage it drew, premultiplied (T2778): the name's own picture,
 /// clear wherever no text is, laid over the band by the compositor.

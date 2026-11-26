@@ -40814,3 +40814,8 @@ WebKitGTK's script message carries no frame, and a page-world handler is visible
 - What: re-checked the card. Every review area (chrome, type, sidebar, splits, motion, Settings, scale, themes) is judged side by side on the user's real WSLg display through open.ps1, which the card itself rules out of a lane. Landed the one lane-runnable criterion: docs/claude/linux.md now opens with the quality-bar note (Mac on a real screen, not headless green; real-screen half NOT RUN until the user asks).
 - Parked: blocked-on user, `unblock-do` holds the open.ps1 build. No code changed.
 - Filed: none.
+
+## 2026-11-26 01:10 lane b - T2301 done: the folding face's name handover is measured, and it does not jump
+- What: the eyes-only card got a geometry oracle instead of waiting for eyes. `strip_face.handoverGap` (labelOrigin anchors, unit-tested) compares where a folding card's face lands the strip's name against where the strip at rest paints it; `Window.logStripHandover` writes it as `strip face handover ...` on both the declared (tree) and stepped paths; `stack-fold-slide.ps1` F21 fails on more than 1 px.
+- Evidence: flat 0,0 px (band 0,0,0,0) ALL PASS 48; elevated/glass 0,0 px (band 1,1,-1,-1, the card outline ring) ALL PASS 44; -Tree flat 0,0 / elevated 1,0 (F14/F19 red there = filed T2817, already red before). Composite by eye NOT RUN (user present).
+- Filed: T3794 (P3, parked for the user): eye check that the 1 px outline ring does not flash at the handover in elevated/glass.
