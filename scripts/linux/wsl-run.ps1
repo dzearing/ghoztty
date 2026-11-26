@@ -372,7 +372,14 @@ try {
             $prelude = $prelude -replace 'export GHOZTTY_WSL_JOBS=\d+', "export GHOZTTY_WSL_JOBS=$jobs"
         }
         $file = Join-Path $tmpDir ("step-{0}-{1}.sh" -f $PID, $i)
-        [System.IO.File]::WriteAllText($file, ($prelude + "`n" + $s + "`n"), $utf8)
+        # Every step reaches bash with LF endings, however it arrived. A
+        # multi-line -Step built from a here-string in a .ps1 carries the
+        # checkout's CRLF (core.autocrlf on this box), and bash then reads
+        # `then\r` and dies with "syntax error near unexpected token `fi'" -
+        # scripts\linux\open.ps1 failed exactly so. -CommandFile was already
+        # normalized; this covers -Step and the prelude too.
+        $body = ($prelude + "`n" + $s + "`n") -replace "`r`n", "`n" -replace "`r", "`n"
+        [System.IO.File]::WriteAllText($file, $body, $utf8)
         Write-Host ("WSL-RUN step {0}/{1} distro={2} repo={3} jobs={4} free={5:N1}GB: {6}" -f $i, $steps.Count, $Distro, $Repo, $jobs, $free, $s)
         & wsl.exe -d $Distro -- bash (ConvertTo-WslPath $file)
         $rc = $LASTEXITCODE

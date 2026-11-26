@@ -59,12 +59,21 @@ if ($Build) {
 $step = @"
 if [ ! -x $bin ]; then echo 'OPEN FAILED no Linux build at $bin (run with -Build)'; exit 1; fi
 cd "`$HOME"
+# WSLg's Wayland socket lives in /mnt/wslg/runtime-dir, and root's
+# XDG_RUNTIME_DIR (/run/user/0) has no link to it, so GDK fell back to X11
+# (XWayland). There Mesa's d3d12 driver cannot attach X11 shared memory
+# ("MESA: error: Failed to attach to x11 shm"), so no frame ever reached the
+# screen: the window was see-through while the app's own render was fine
+# (user report 2026-11-25, T3783). Point it at the socket by absolute path.
+wl=`$XDG_RUNTIME_DIR/`${WAYLAND_DISPLAY:-wayland-0}
+if [ ! -S "`$wl" ] && [ -S /mnt/wslg/runtime-dir/wayland-0 ]; then export WAYLAND_DISPLAY=/mnt/wslg/runtime-dir/wayland-0; fi
 LD_LIBRARY_PATH=$tree/zig-out/lib setsid nohup $bin > $log 2>&1 < /dev/null &
 pid=`$!
 sleep 5
 if kill -0 `$pid 2>/dev/null; then
   echo "OPEN running pid=`$pid build=`$(date -r $bin '+%Y-%m-%d %H:%M') log=$log"
   grep -m1 'GALLIUM_DRIVER' $log || true
+  grep -m1 'windowing protocol' $log || true
 else
   echo 'OPEN FAILED the app exited at startup; last lines of its log:'; tail -15 $log; exit 1
 fi
