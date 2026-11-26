@@ -21,6 +21,7 @@
 #
 # NEGATIVE=1 runs the same steps in `separate` mode, where nothing is parked
 # and a resize of one window never reaches another: it must FAIL from Y1 on.
+# Measured: 7 failures (Y1, Y3-Y5, Y7, Y9, Y10).
 #
 # Oracles: the debug-only `workspaces` seam (`grids`: each pane's
 # "<cols>x<rows>" by pane id, null before its terminal started), the `window-size` seam

@@ -2274,7 +2274,7 @@ never counts.
   show maps a GtkWindow of its own (a second window appears - T3652 keeps one).
 - **Known gaps, filed on their cards**: a workspace parked from birth has no
   running terminal until first shown (the core surface starts on the GLArea's
-  first resize, which needs a mapped allocation - T3650); the toplevel's own
+  first resize, which needs a mapped allocation - T3786); the toplevel's own
   close button acts for the toplevel's own workspace (T3652); the desk is the
   toplevel workspace's (T3651).
 - **Seam**: debug-only `hl_ipc workspaces [--show=<pane|window>]` - `mode`,
@@ -2335,9 +2335,41 @@ powershell -NoProfile -File scripts\linux\wsl-run.ps1 -Step 'NEGATIVE=1 bash tes
 
 Ends `WINDOW WORKSPACE SWITCH: ALL PASS` (27 checks, about a minute).
 `NEGATIVE=1` runs it in `separate` mode and must fail from S1 on (20
-failures). Still to come: parked layout (T3650), the shade fade (T3651),
+failures). Still to come: the shade fade (T3651),
 closing (T3652), the CLI (T3653), rolled-up activity (T3654), persistence
 (T3655).
+
+### Parked layout (T3650)
+
+A parked workspace's content is out of every window, so no window lays it
+out. `Workspaces.layoutParked` measures and allocates its content root by hand
+at the size of the content on show, then hands every STARTED terminal in it
+its new size (`Surface.layoutParked`, the same `sizeCallback` a GL resize
+makes) at the shared window's pixel scale - the active pane's GL pixels over
+its allocation (`Surface.pixelScale`, Mac `SurfaceView.backingSize`). It runs:
+
+- when a workspace opens parked (`why=birth`);
+- `workspace_host.resize_settle_ms` (0.3s) after the toplevel's GdkSurface
+  stops changing size (`Workspaces.toplevelResized`, from
+  `Window.propGdkSurfaceDims`; `why=resize`);
+- on a tree change in a parked workspace (`Workspaces.treeChanged`, from
+  `Window.tabSplitTreeChanged`), on a LOW-priority idle so it follows the split
+  tree's own widget rebuild, which runs on a default idle (`why=tree`).
+
+Log: `workspace: parked window=<w> laid out at <W>x<H> scale=<s> why=<...>
+panes=<n> resized=<m>`. When shown, the GL area's own resize then carries the
+same pixel size, so the grid does not move. **Gap**: a terminal MADE while
+parked (born parked, or a `+split` into a parked workspace) has no GL context
+and starts on first show (T3786). The `workspaces` seam's per-workspace
+`grids` (`[{pane, grid: "<cols>x<rows>" | null}]`) is the oracle.
+
+```powershell
+powershell -NoProfile -File scripts\linux\wsl-run.ps1 -CommandFile test\linux\window-workspace-layout.sh
+powershell -NoProfile -File scripts\linux\wsl-run.ps1 -Step 'NEGATIVE=1 bash test/linux/window-workspace-layout.sh'
+```
+
+Ends `WINDOW WORKSPACE LAYOUT: ALL PASS` (15 checks, about a minute);
+`NEGATIVE=1` (separate mode) fails 7.
 
 The launch latch's own test:
 
