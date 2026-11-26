@@ -136,8 +136,7 @@ hl_check "K6 showing $first again puts its content back in its own toplevel and 
 # ---- 6. closes keep every workspace whole (the experience is T3652) --------
 o=$(cli +close --target=two --force 2>&1); rc=$?
 hl_check "K7a +close --force on the parked two succeeds" $rc "$o"
-hl_wait_for 10 wsis 1 'len(d["order"])'
-wsis "('$first', '$first')" 'd["active"], d["content"]'
+hl_wait_for 10 wsis 1 'len(d["order"])' && wsis "('$first', '$first')" 'd["active"], d["content"]'
 hl_check "K7 a parked workspace closes in place; $first is untouched" $? "$(cat "$XDG_RUNTIME_DIR/ws-last" 2>/dev/null)"
 alive "$APP"; hl_check "K7b the app is alive" $?
 
@@ -162,7 +161,7 @@ hl_wait_for 10 wsis "(1, 'four', 'four', 'four', True)" 'len(d["order"]), d["top
 hl_check "K8d the toplevel's own workspace closing hands four a window of its own, whole" $? "$(cat "$XDG_RUNTIME_DIR/ws-last" 2>/dev/null)"
 alive "$APP"; hl_check "K8e the app is alive" $?
 
-grep 'workspace:' "$APP_LOG" | tail -12
+grep -E 'workspace:|close request|closing|close' "$APP_LOG" | tail -30
 stop_app "$APP"
 
 # ---- 7. negative control: separate mode makes no workspaces ----------------
