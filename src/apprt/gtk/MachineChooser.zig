@@ -183,10 +183,10 @@ fn onClosed(_: *wk.GtkWidget, self: *MachineChooser) callconv(.c) void {
     c_alloc.destroy(self);
 }
 
-fn setText(lbl: *wk.GtkWidget, text: []const u8) void {
+fn setText(l: *wk.GtkWidget, text: []const u8) void {
     var zb: [1024]u8 = undefined;
     const z = std.fmt.bufPrintZ(&zb, "{s}", .{text}) catch return;
-    wk.gtk_label_set_text(lbl, z.ptr);
+    wk.gtk_label_set_text(l, z.ptr);
 }
 
 fn setTip(w: *wk.GtkWidget, text: []const u8) void {
@@ -195,7 +195,7 @@ fn setTip(w: *wk.GtkWidget, text: []const u8) void {
     wk.gtk_widget_set_tooltip_text(w, z.ptr);
 }
 
-fn label(text: [*:0]const u8, xalign: f32) *wk.GtkWidget {
+fn mkLabel(text: [*:0]const u8, xalign: f32) *wk.GtkWidget {
     const l = wk.gtk_label_new(text);
     wk.gtk_label_set_xalign(l, xalign);
     wk.gtk_label_set_ellipsize(l, wk.ellipsize_end);
@@ -214,7 +214,7 @@ fn build(app: *Application, parent: *Window) MachineChooser {
 
     const outer = wk.gtk_box_new(wk.orientation_vertical, 0);
     // The account row (Mac `accountRow`).
-    const account_label = label("Not signed in", 0);
+    const account_label = mkLabel("Not signed in", 0);
     wk.gtk_widget_add_css_class(account_label, "dim-label");
     wk.gtk_widget_set_margin_start(account_label, 16);
     wk.gtk_widget_set_margin_end(account_label, 16);
@@ -246,9 +246,9 @@ fn build(app: *Application, parent: *Window) MachineChooser {
     const head = wk.gtk_box_new(wk.orientation_horizontal, 8);
     const titles = wk.gtk_box_new(wk.orientation_vertical, 2);
     wk.gtk_widget_set_hexpand(titles, 1);
-    const detail_title = label("", 0);
+    const detail_title = mkLabel("", 0);
     wk.gtk_widget_add_css_class(detail_title, "title-2");
-    const detail_subtitle = label("", 0);
+    const detail_subtitle = mkLabel("", 0);
     wk.gtk_widget_add_css_class(detail_subtitle, "dim-label");
     wk.gtk_box_append(titles, detail_title);
     wk.gtk_box_append(titles, detail_subtitle);
@@ -262,7 +262,7 @@ fn build(app: *Application, parent: *Window) MachineChooser {
     wk.gtk_box_append(head, new_window_btn);
     wk.gtk_box_append(detail, head);
 
-    const state_label = label("", 0.5);
+    const state_label = mkLabel("", 0.5);
     wk.gtk_widget_add_css_class(state_label, "dim-label");
     wk.gtk_widget_set_margin_top(state_label, 24);
     wk.gtk_box_append(detail, state_label);
@@ -426,9 +426,9 @@ fn drawMachines(self: *MachineChooser) void {
         wk.gtk_box_append(box, dot);
         const texts = wk.gtk_box_new(wk.orientation_vertical, 0);
         var zb: [256]u8 = undefined;
-        const t = label((std.fmt.bufPrintZ(&zb, "{s}", .{rt.title}) catch "?").ptr, 0);
+        const t = mkLabel((std.fmt.bufPrintZ(&zb, "{s}", .{rt.title}) catch "?").ptr, 0);
         var sb: [256]u8 = undefined;
-        const s = label((std.fmt.bufPrintZ(&sb, "{s}", .{rt.subtitle}) catch "").ptr, 0);
+        const s = mkLabel((std.fmt.bufPrintZ(&sb, "{s}", .{rt.subtitle}) catch "").ptr, 0);
         wk.gtk_widget_add_css_class(s, "dim-label");
         wk.gtk_widget_add_css_class(s, "caption");
         wk.gtk_box_append(texts, t);
