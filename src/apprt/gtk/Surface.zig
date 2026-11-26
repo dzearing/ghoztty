@@ -27,6 +27,12 @@ pub fn core(self: *Self) *CoreSurface {
     return self.surface.core().?;
 }
 
+/// The renderer asks, from its own thread, for its frames to be released on
+/// the main thread (T3645; `OpenGL.queueAppThreadRelease`).
+pub fn queueFrameRelease(self: *Self) void {
+    self.surface.queueFrameRelease();
+}
+
 pub fn rtApp(self: *Self) *ApprtApp {
     _ = self;
     return Application.default().rt();

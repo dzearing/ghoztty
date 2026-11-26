@@ -636,6 +636,11 @@ pub const Surface = extern struct {
         /// once when it shows. The core starts out assuming it is seen.
         seen: bool = true,
 
+        /// A frame release the render thread asked for is waiting on the
+        /// main loop (T3645, `queueFrameRelease`). Set from the render
+        /// thread, cleared on the main thread.
+        frame_release_queued: std.atomic.Value(bool) = .init(false),
+
         /// The default size for a window that embeds this surface.
         default_size: ?*Size = null,
 
@@ -1726,6 +1731,44 @@ pub const Surface = extern struct {
 
     fn surfaceMapChanged(_: *gtk.Widget, self: *Self) callconv(.c) void {
         self.syncSeen();
+    }
+
+    /// The renderer's frames have drawn nothing for a while, or the pane
+    /// went unseen, and they can give back their render targets and font
+    /// atlas copies (T3645; docs/reference/memory.md "Panes that are not
+    /// drawing give back their frames"). Called on the RENDER thread, which
+    /// has no GL context on GTK, so the release runs on the main loop with
+    /// this pane's GtkGLArea current. One queued at a time; the surface is
+    /// kept alive until it has run.
+    pub fn queueFrameRelease(self: *Self) void {
+        const priv = self.private();
+        if (priv.frame_release_queued.swap(true, .acq_rel)) return;
+        _ = self.ref();
+        _ = glib.idleAdd(frameReleaseIdle, self);
+    }
+
+    fn frameReleaseIdle(ud: ?*anyopaque) callconv(.c) c_int {
+        const self: *Self = @ptrCast(@alignCast(ud orelse return 0));
+        defer self.unref();
+        const priv = self.private();
+        priv.frame_release_queued.store(false, .release);
+        const surface = priv.core_surface orelse return 0;
+        // Unrealized, the GL resources are already gone with the context.
+        if (priv.gl_area.as(gtk.Widget).getRealized() == 0) return 0;
+        priv.gl_area.makeCurrent();
+        if (priv.gl_area.getError()) |err| {
+            log.warn("frame release: could not make the GL context current: {s}", .{err.f_message orelse "(no message)"});
+            return 0;
+        }
+        surface.renderer.releaseQueuedFrames();
+        return 0;
+    }
+
+    /// What this pane's frames hold right now (T3645), for the debug
+    /// `pane-seen` seam.
+    pub fn frameMemory(self: *Self) ?renderer.Renderer.FrameMemory {
+        const surface = self.private().core_surface orelse return null;
+        return surface.renderer.frameMemory();
     }
 
     pub fn rt(self: *Self) *ApprtSurface {

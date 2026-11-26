@@ -1609,7 +1609,14 @@ fn compLeaveHelper(self: *OpenGL) void {
 /// `Surface.window_hidden`. A stack card whose strip face carries its frame
 /// keeps its target. Never while the device is lost - the targets are dead
 /// with it and the rebuild owns them.
+///
+/// GTK (T3645): the apprt says hidden only when the pane cannot be seen
+/// (`Surface.syncSeen`: a background tab, a pane behind a stacked strip, a
+/// minimized or suspended window). What GTK shows is the GtkGLArea's own
+/// texture, which the frames' targets only blit into, so no picture goes
+/// with them; the release runs on the main thread (`queueAppThreadRelease`).
 pub fn releaseHiddenTargetsNow(self: *const OpenGL) bool {
+    if (comptime apprt.runtime == apprt.gtk) return !self.device.lost;
     if (comptime apprt.runtime != apprt.win32) return false;
     if (self.device.lost) return false;
     return self.rt_surface.windowHidden();
@@ -1622,10 +1629,24 @@ pub fn releaseHiddenTargetsNow(self: *const OpenGL) bool {
 /// a driver ever shows the release on screen). Nothing is presented by the
 /// release, so the window keeps showing the last frame; the next frame draws
 /// in full (`hiddenTargetsReleased` forgot the target a re-present would use).
+///
+/// GTK too (T3645), on the same terms: the GtkGLArea keeps showing its own
+/// texture until the next render, which draws in full on GTK anyway.
 pub fn releaseIdleTargetsNow(self: *const OpenGL) bool {
-    if (comptime apprt.runtime != apprt.win32) return false;
+    if (comptime apprt.runtime != apprt.win32 and apprt.runtime != apprt.gtk) return false;
     if (self.device.lost) return false;
     return idleReleaseEnabled();
+}
+
+/// GTK (T3645): the release frees GL names, and only the main thread has a
+/// GL context there (frames are drawn through the pane's GtkGLArea; see
+/// `threadEnter`). So the render thread asks the apprt to run
+/// `Renderer.releaseQueuedFrames` on the main thread with the area's context
+/// current, and does nothing itself. True when it was handed over.
+pub fn queueAppThreadRelease(self: *const OpenGL) bool {
+    if (comptime apprt.runtime != apprt.gtk) return false;
+    self.rt_surface.queueFrameRelease();
+    return true;
 }
 
 pub const idle_release_knob = "GHOZTTY_IDLE_FRAME_RELEASE";

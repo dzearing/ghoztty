@@ -1500,6 +1500,47 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                 if (!ok) return;
             }
 
+            // GTK (T3645): this is the render thread, which has no GL context
+            // there - the frames are drawn on the main thread through the
+            // pane's GtkGLArea. The apprt runs `releaseQueuedFrames` there
+            // with that area's context current instead.
+            if (comptime @hasDecl(GraphicsAPI, "queueAppThreadRelease")) {
+                if (self.api.queueAppThreadRelease()) return;
+            }
+
+            self.releaseFramesNow(reason);
+        }
+
+        /// The release `releaseFrameResources` handed to the app thread
+        /// (GTK, T3645), run there with the pane's GL context current. It
+        /// decides again rather than trusting the ask, because the pane may
+        /// have drawn or been shown since: hidden if it still is, idle if it
+        /// has still drawn nothing for `idle_release_ns`, and otherwise
+        /// nothing - the render thread's idle timer is re-armed to count from
+        /// the frame that got in between.
+        pub fn releaseQueuedFrames(self: *Self) void {
+            const reason: ReleaseReason = reason: {
+                self.draw_mutex.lock();
+                defer self.draw_mutex.unlock();
+                if (self.frames_released or self.swap_chain.defunct) return;
+                if (!self.visible) break :reason .hidden;
+                const last = self.last_draw_time orelse break :reason .idle;
+                const now = std.time.Instant.now() catch break :reason .idle;
+                if (now.since(last) >= idle_release_ns) break :reason .idle;
+                if (self.idle_arm) |arm| arm.notify() catch |err| {
+                    log.warn("error arming idle release err={}", .{err});
+                };
+                return;
+            };
+            self.releaseFramesNow(reason);
+        }
+
+        /// The release itself, on the thread whose GL context (or device)
+        /// owns the frames: see `releaseFrameResources`.
+        fn releaseFramesNow(self: *Self, reason: ReleaseReason) void {
+            const outlives = comptime @hasDecl(GraphicsAPI, "presented_target_outlives_frame");
+            const redraws = comptime @hasDecl(GraphicsAPI, "releaseHiddenTargetsNow");
+
             self.draw_mutex.lock();
             defer self.draw_mutex.unlock();
             if (self.swap_chain.defunct) return;

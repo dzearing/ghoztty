@@ -2261,6 +2261,20 @@ fn paneSeenSeam(app: Context, request: Request) Allocator.Error![]u8 {
                 try j.write(p.surface.isSeen());
                 try j.objectField("mapped");
                 try j.write(p.surface.as(gtk.Widget).getMapped() != 0);
+                // A terminal pane's frames (T3645): what their render
+                // targets and font atlas copies hold, and whether they have
+                // been given back since the last draw.
+                if (p.surface.frameMemory()) |fm| {
+                    try j.objectField("frames");
+                    try j.beginObject();
+                    try j.objectField("target_bytes");
+                    try j.write(fm.target_bytes);
+                    try j.objectField("atlas_bytes");
+                    try j.write(fm.atlas_bytes);
+                    try j.objectField("released");
+                    try j.write(fm.released);
+                    try j.endObject();
+                }
                 // A viewer pane (T3643): whether it is on show, whether its
                 // web view is mapped (what WebKit reads as the page being
                 // visible), and its working-tree poll's counters.
