@@ -3003,7 +3003,7 @@ refusal is made before any dial, and the relay wins when both are given.
   remote pane moved into a local window records no session id. Relay windows
   coming back at relaunch are T3671; Close vs
   Disconnect is T3563 (below); the chooser is T3674 (below), the pill and
-  reconnect ladder T3675.
+  reconnect ladder T3675 (below).
 
 Acceptance, against a loopback agent started with `--listen 127.0.0.1:<port>
 --headless` (the Linux half of `test/win32/ipc-remote.ps1`) and, in section Y
@@ -3076,6 +3076,67 @@ powershell -NoProfile -File scripts\linux\wsl-run.ps1 -CommandFile test\linux\cl
 Ends `CLI REMOTE DISCONNECT: ALL PASS`; the oracle is the remote shell's pid
 (alive after Disconnect, past the 1 s undo window; gone after Close).
 `NEGATIVE=1` answers Close where it means Disconnect and must fail D4.
+
+## The connection pill and reconnect (T3675)
+
+Mac's `MachinePillView` and WP-D1 ladder; win32's `remote_pill.zig`
+(words) and `remote_reconnect.zig` (decisions), both shared, over
+`src/apprt/gtk/RemoteReconnect.zig` (the driver) and `RemotePill.zig` (the
+widgets).
+
+- **The ladder lives on the link** (`RemoteLink.Link.reconnect`), not on a
+  window: GTK panes hold the link and can span windows, so one dial has one
+  ladder and every window showing a pane on it paints the same pill. A
+  link-state observer (installed on a pane's adoption, again after every swap)
+  queues one `g_idle_add`; a 250 ms GLib timer runs only while a link is
+  retrying, waiting on the slow re-dial, or a dial is out.
+- **Schedule**: a drop of a link with a session to re-attach dials at 1/2/4/8/15
+  s ("Reconnecting... n/5"), then every 45 s in the background (red
+  "Reconnect", `self_healable: true`). A link that comes back on its own at any
+  point recovers with no swap. Session gone (the agent restarted), signed out,
+  evicted, or three swaps that die inside 10 s: terminal (`self_healable:
+  false`). A protocol skew: "Version mismatch", terminal.
+- **The swap**: a worker dials (TCP, or the relay with the account's bearer,
+  else the one the window was dialed with) and asks for the roster; on the GTK
+  thread the link takes the new transport FIRST, every pane riding it is
+  replaced in its slot (`SplitTree.replaceSurface`: same pane id, name, title,
+  banner, tint, focus) re-ATTACHing its session by id, the old pane is
+  `spareSession`d (it DETACHes), and only then is the old transport shut down -
+  kept, never freed (`Link.replaceTransport`).
+- **The pill**: a button at the start of the header bar's end box AND of the tab
+  bar's (`titlebar-style = tabs` hides the header bar): a dot (libadwaita
+  `success` / `warning`) or the refresh glyph, the machine's name, the status
+  appended (D93). Broken: `destructive-action`. Tooltip is win32's sentence. A
+  click on a broken pill reconnects now, from any disconnected tier, with no
+  backoff; when the far sessions are gone a click keeps the layout and opens a
+  fresh shell in every pane (T611). A click on a working pill opens the Remote
+  Activity Monitor on Mac and Windows; GTK has none yet (T3818), so it logs.
+- **`+list`**: `connection` is the ladder's state (`attempt` while
+  reconnecting, `self_healable`, `reason: "incompatible"`), not the raw socket.
+- Log lines: `remote reconnect: <machine> dropped; attempt n/5 in <ms>[
+  (manual)]`, `dialing`, `is back on a fresh transport (<a> pane(s)
+  re-attached, <f> opened fresh)`, `link recovered on its own`, `exhausted its
+  fast ladder`, `is terminal after attempt <n> (<outcome>)`.
+- Not yet: the pill does not follow a remote pane dragged INTO a local window
+  until that window's tree next changes (every tree change repaints it).
+
+Seam (DEBUG-ONLY, `src/apprt/gtk/ipc_remote_pill.zig`): `remote-pill
+--target=<window|pane> [--op=state|click]`; the reply is the header-bar pill as
+drawn (`visible`, `name`, `status`, `mark` dot|refresh, `dot_class`,
+`action`, `tooltip`), `last_click`, and the `+list` `connection` object.
+
+```powershell
+powershell -NoProfile -File scripts\linux\wsl-run.ps1 -CommandFile test\linux\remote-reconnect.sh
+```
+
+Ends `REMOTE RECONNECT: ALL PASS` (20 checks, about 2 minutes warm). The app
+dials the agent through a python TCP relay the script owns, so killing the
+relay cuts the link while the shells live on: P1 the pill names the machine (a
+local window has none), P2 amber and counting, P3 the relay back and the SAME
+shell pids re-attached and drivable, P4 past the fast ladder the red Reconnect
+and a click that dials at once, P5 an agent restarted without its sessions goes
+terminal and a click brings the two-pane layout back with fresh shells.
+`NEGATIVE=1` never restarts the relay in P3 and must fail P3.
 
 ## The machine chooser: browse, resume, end (T3674)
 
