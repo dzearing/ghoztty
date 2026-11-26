@@ -229,7 +229,7 @@ pub fn handleSeam(app: Context, request: Request) Allocator.Error!server.SeamRep
 
 /// `pane-sidebar --target=<pane|window> [--search=<text>]
 /// [--search-key=enter|escape] [--hover=<row id>|]
-/// [--click=toggle|scope|add|<row id>|fold:<row id>|tool:<button>:<row id>]
+/// [--click=toggle|scope|add|<row id>|alt:<row id>|fold:<row id>|tool:<button>:<row id>]
 /// [--layout] [--drag=<row id>:<y>]
 /// [--menu=<window row id>] [--menu-pick=create|remove|move:<group>]
 /// [--edit=<text>] [--edit-key=enter|escape]`
@@ -347,6 +347,10 @@ fn paneSidebar(app: Context, request: Request) Allocator.Error![]u8 {
                 return server.errorResponse(c_alloc, "no sidebar button '{s}'", .{rest[0..colon]});
             if (!sidebar.clickTool(tool, rest[colon + 1 ..]))
                 return server.errorResponse(c_alloc, "no '{s}' button on sidebar row '{s}'", .{ rest[0..colon], rest[colon + 1 ..] });
+        } else if (std.mem.startsWith(u8, click, "alt:")) {
+            // An Alt-click on a pane row (T3667): a stashed one swaps in.
+            if (!sidebar.altClickRow(click["alt:".len..]))
+                return server.errorResponse(c_alloc, "no sidebar pane row for '{s}'", .{click["alt:".len..]});
         } else if (!sidebar.clickRow(click)) {
             return server.errorResponse(c_alloc, "no sidebar row for '{s}'", .{click});
         }

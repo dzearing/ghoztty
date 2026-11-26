@@ -19,7 +19,9 @@
 //! image comes back at best fit, a diff re-runs in that directory and a file
 //! deleted meanwhile shows the viewer's own error card. At quit each pane's screen is
 //! snapshotted too, so a re-attached pane paints its last frame at once while
-//! the agent gap-fills from the snapshot's offset.
+//! the agent gap-fills from the snapshot's offset. A stashed pane (T3596)
+//! records its place in its tab's stash (`stash_index`, 0 = top; T3667,
+//! win32 T1838), and the relaunch stashes it again in that order.
 //!
 //! In single-window mode (T3655) each workspace is one window entry, listed
 //! in the workspaces' order (on show first) at the shared window's size, and
@@ -57,6 +59,7 @@ const gtk = @import("gtk");
 
 const build_config = @import("../../build_config.zig");
 const schema = @import("../win32/session_layout.zig");
+const pane_stash = @import("../win32/pane_stash.zig");
 const agent_lineage = @import("../../remote/agent_lineage.zig");
 const connection = @import("../../remote/connection.zig");
 
@@ -180,7 +183,7 @@ fn captureWindow(
         const tree = tab.getSplitTree().getTree() orelse continue;
         const nodes = try arena.alloc(schema.Node, tree.nodes.len);
         for (tree.nodes, nodes) |src, *dst| dst.* = switch (src) {
-            .leaf => |s| .{ .leaf = try captureLeaf(arena, s, snapshots, budget) },
+            .leaf => |s| .{ .leaf = try captureLeaf(arena, tree, s, snapshots, budget) },
             .split => |sp| .{ .split = .{
                 .layout = @tagName(sp.layout),
                 .ratio = @floatCast(sp.ratio),
@@ -233,11 +236,14 @@ fn captureWindow(
 
 fn captureLeaf(
     arena: Allocator,
+    tree: *const Surface.Tree,
     surface: *Surface,
     snapshots: bool,
     budget: *schema.SnapshotBudget,
 ) Allocator.Error!schema.Leaf {
     const name: ?[]const u8 = if (surface.ipcName()) |n| try arena.dupe(u8, n) else null;
+    // Its place in the tab's stash (T3667, win32 T1838): null on screen.
+    const stash_index = pane_stash.recordedIndex(tree.*, surface);
     if (surface.getViewer()) |viewer| return .{
         .kind = schema.kind_viewer,
         .viewer_location = try arena.dupe(u8, viewer.currentLocation()),
@@ -245,6 +251,7 @@ fn captureLeaf(
         .viewer_origin_directory = if (viewer.originDirectory()) |d| try arena.dupe(u8, d) else null,
         .ipc_name = name,
         .pane_id = try arena.dupe(u8, surface.paneId()),
+        .stash_index = stash_index,
     };
 
     var leaf: schema.Leaf = .{
@@ -254,6 +261,7 @@ fn captureLeaf(
         .pane_id = try arena.dupe(u8, surface.paneId()),
         .ipc_name = name,
         .working_directory = if (surface.getPwd()) |p| try arena.dupe(u8, p) else null,
+        .stash_index = stash_index,
     };
     if (surface.titleOverride()) |t| {
         leaf.title = try arena.dupe(u8, t);
@@ -474,6 +482,9 @@ fn restoreWindow(app: *Application, ctx: *Ctx, win: schema.Window) bool {
         const anchor = tree.getActiveSurface() orelse continue;
         buildSubtree(ctx, tree, tab.nodes, 0, anchor, 0) catch |err|
             log.warn("session layout: a tab's split tree is corrupt err={}; kept what was built", .{err});
+        // Its stashed panes leave the layout again, in their recorded order
+        // (T3667, win32 T1838), before the focus below is chosen.
+        restoreStash(tree, tab.nodes);
         // Its collapsed rows come back, and the caret goes to the pane it
         // was in - never a blade (T3627, Mac `restoredFocusTarget`).
         if (tab.pane_stack) |ps| tree.adoptStackPersisted(ps);
@@ -535,6 +546,31 @@ fn buildSubtree(
     Surface.pending_restore = null;
     try buildSubtree(ctx, tree, nodes, sp.left, anchor, depth + 1);
     try buildSubtree(ctx, tree, nodes, sp.right, new_pane, depth + 1);
+}
+
+/// Re-stash the panes the manifest recorded stashed in this tab (T3667,
+/// win32 `pane_stash.applyRecorded`). Every restored pane keeps its recorded
+/// pane id, so a recorded leaf is found by it; one that is missing (a
+/// corrupt tree kept only part) is skipped.
+fn restoreStash(tree: anytype, nodes: []const schema.Node) void {
+    const built = tree.getTree() orelse return;
+    var recorded: [pane_stash.max_reorder]pane_stash.Recorded(Surface) = undefined;
+    var n: usize = 0;
+    for (nodes) |node| {
+        const lf = node.leaf orelse continue;
+        const index = lf.stash_index orelse continue;
+        const id = lf.pane_id orelse continue;
+        if (n == recorded.len) break;
+        var it = built.iterator();
+        while (it.next()) |entry| {
+            if (!std.mem.eql(u8, entry.view.paneId(), id)) continue;
+            recorded[n] = .{ .view = entry.view, .index = index };
+            n += 1;
+            break;
+        }
+    }
+    if (n == 0) return;
+    tree.adoptRecordedStash(recorded[0..n]);
 }
 
 /// The size a restored window opens at (T3549; `rules.restoreSize`), as the

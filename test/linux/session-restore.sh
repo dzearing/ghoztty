@@ -181,6 +181,26 @@ desk_px() {
 }
 desk_before=$(desk_px "$(hand_pane)")
 wa_desk=$(desk_px "$(leaf_field pa id)")
+# T3667: pb is stashed (out of the layout, still a leaf). The manifest records
+# its place in the stash, and every relaunch below must stash it again.
+cli +stash --target=pb > /dev/null 2>&1
+stash_recorded() { [ "$(manifest_q 'sorted((l.get("ipc_name"), l.get("stash_index")) for l in leaves if l.get("ipc_name") in ("pa", "pb", "pc"))')" = "[('pa', None), ('pb', 0), ('pc', None)]" ]; }
+hl_wait_for 10 stash_recorded
+hl_check "RS1 the manifest records stashed pb at stash_index 0, and none for pa and pc" $? "$(manifest_q '[(l.get("ipc_name"), l.get("stash_index")) for l in leaves]')"
+# stashed_now: the names +list reports stashed, sorted.
+stashed_now() {
+    cli +list --json 2>/dev/null | python3 -c '
+import json, sys
+d = json.load(sys.stdin)["data"]
+def walk(n):
+    if n["type"] == "split":
+        yield from walk(n["left"]); yield from walk(n["right"])
+    else:
+        yield n["terminal"]
+print(" ".join(sorted(l.get("name") or "-" for w in d["windows"] for t in w["tabs"] for l in walk(t["splits"]) if l.get("stashed"))))
+' 2>/dev/null
+}
+pb_stashed() { [ "$(stashed_now)" = pb ]; }
 before=$(shape)
 wins_before=$(printf '%s\n' "$before" | grep -c .)
 listA=$(leaf_field pa pid); listB0=$(leaf_field pb pid); listC=$(leaf_field pc pid)
@@ -207,6 +227,21 @@ hl_wait_for 10 read_pa
 hl_check "R8b pa's restored screen still shows what it printed before the crash" $? "$(cli +read --name=pa --lines=8 2>&1 | tr '\n' '|' | head -c 300)"
 grep -q 'session layout: restored 2 of 2 window(s), 4 pane(s) re-attached' "$APP2_LOG"
 hl_check "R9 the app logs that it re-attached all four panes" $? "$(grep -m1 'session layout: restored' "$APP2_LOG")"
+# wa_stage: the pane ids wa's stage lays out, sorted ("single" for one pane).
+wa_stage() {
+    hl_ipc pane-stack "--target=$(leaf_field pa id)" 2>/dev/null | python3 -c '
+import json, sys
+d = json.loads(sys.stdin.read() or "{}")
+st = d.get("stage")
+print("single" if st is None else " ".join(sorted(p["pane"] for p in st.get("panes", []))))
+' 2>/dev/null
+}
+want_stage=$(printf '%s\n' "$(leaf_field pa id)" "$(leaf_field pc id)" | sort | tr '\n' ' ' | sed 's/ $//')
+pb_off_stage() { [ "$(wa_stage)" = "$want_stage" ]; }
+hl_wait_for 10 pb_stashed && hl_wait_for 10 pb_off_stage
+hl_check "RS2 after the crash relaunch pb is stashed again: +list says so, and wa's stage lays out only pa and pc" $? "stashed=[$(stashed_now)] stage=[$(wa_stage)] want=[$want_stage]"
+grep -q 'session layout re-stashed 1 pane(s) visible=2' "$APP2_LOG"
+hl_check "RS3 the relaunch logs re-stashing pb in wa's tab" $? "$(grep -m1 're-stashed' "$APP2_LOG")"
 [ "$(leaf_field pa banner)" = "$banA_nl" ] && [ "$(leaf_field pb banner)" = "$banB" ] && [ "$(leaf_field pc banner)" = None ]
 hl_check "RB2 the relaunch puts pa's and pb's banners back, and pc stays bannerless" $? "pa=$(leaf_field pa banner) pb=$(leaf_field pb banner) pc=$(leaf_field pc banner)"
 hl_wait_for 5 tints_listed
@@ -274,6 +309,8 @@ sleep 1
 hl_check "RB3 pb's fresh shell keeps pb's own banner; the session-gone notice did not take its slot" $? "pb=$(leaf_field pb banner)"
 [ "$(leaf_field pb background_tint)" = '#106030' ]
 hl_check "RT4 pb's fresh shell keeps pb's tint" $? "pb=$(leaf_field pb background_tint)"
+hl_wait_for 10 pb_stashed
+hl_check "RS4 pb's fresh shell comes back stashed too (the quit's manifest kept its stash)" $? "stashed=[$(stashed_now)]"
 shot="$HL_RUNTIME/wa-window.png"
 wa_size() { hl_screenshot wa "$shot" --window > /dev/null 2>&1 && hl_png_stats "$shot" | awk '{ sub("w=","",$1); sub("h=","",$2); print $1, $2 }'; }
 size_ok() {
@@ -327,6 +364,8 @@ hl_check "R17b after an agent restart pa comes back as a relaunched shell under 
     "agent $old_agent->$new_agent pid $listA->$relA id=$(leaf_field pa id) want=$idA"
 [ "$(shape | grep -c .)" = 2 ] && [ "$(live_leaves)" = 4 ]
 hl_check "R17c every window and pane is back after the agent restart" $? "$(shape | tr '\n' '|')"
+hl_wait_for 10 pb_stashed
+hl_check "RS5 after the agent restart pb is still stashed" $? "stashed=[$(stashed_now)]"
 read_pa_any() { cli +read --name=pa --lines=60 2>/dev/null | grep -Eq 'ready-pa'; }
 hl_wait_for 10 read_pa_any
 hl_check "R17d the relaunched pa replays the history it had" $? "$(cli +read --name=pa --lines=10 2>&1 | tr '\n' '|' | head -c 400)"

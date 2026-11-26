@@ -2256,8 +2256,32 @@ pub const SplitTree = extern struct {
             .up, .down => .vertical,
         };
 
+        const alloc = Application.default().allocator();
+        if (pane_stash.stashedCount(old_tree.*) > 0) {
+            // Resize what is on screen (T3667, win32 `nearestShowingSplit`):
+            // the nearest divider the user can SEE moves, measured against
+            // the arrangement on show. A split a stash collapsed has no
+            // divider; moving it would only shift the slot a stashed pane
+            // comes back to. Its ratios are lifted back onto the full tree,
+            // so every collapsed split keeps its own.
+            var vis = try pane_stash.visibleClone(old_tree.*, alloc);
+            defer vis.deinit();
+            const from_view = old_tree.nodes[active.idx()].leaf;
+            var it = vis.iterator();
+            const from = while (it.next()) |entry| {
+                if (entry.view == from_view) break entry.handle;
+            } else return false;
+            var resized = try vis.resize(alloc, from, layout, @floatCast(ratio));
+            defer resized.deinit();
+            var new_tree = try old_tree.clone(alloc);
+            defer new_tree.deinit();
+            pane_stash.liftRatios(&new_tree, resized);
+            self.setTree(&new_tree);
+            return true;
+        }
+
         var new_tree = try old_tree.resize(
-            Application.default().allocator(),
+            alloc,
             active,
             layout,
             @floatCast(ratio),
@@ -2535,6 +2559,58 @@ pub const SplitTree = extern struct {
         const tree = self.getTree() orelse return false;
         const top = pane_stash.topStashed(tree.*) orelse return false;
         return self.restoreSurface(top, true);
+    }
+
+    /// A relaunch's stash (T3667, win32 T1838 `pane_stash.applyRecorded`):
+    /// the restored panes the manifest recorded stashed leave the layout
+    /// again, the recorded top on top. A manifest whose stash would hide
+    /// every pane still shows one (`normalize`). When the pane that holds
+    /// the caret is one of them, it goes to the first pane on show; the
+    /// tab's saved focus history (`adoptStackPersisted`) refines it after.
+    /// Reorders `recorded`.
+    pub fn adoptRecordedStash(self: *Self, recorded: []pane_stash.Recorded(Surface)) void {
+        const tree = self.getTree() orelse return;
+        if (recorded.len == 0) return;
+        _ = pane_stash.applyRecorded(tree, recorded);
+        const active = self.getActiveSurface();
+        if (active == null or pane_stash.isStashed(active.?)) {
+            if (pane_stash.keepOrFirstVisible(tree.*, null)) |v| self.private().last_focused.set(v);
+        }
+        self.stashChanged();
+        log.info("session layout re-stashed {d} pane(s) visible={d}", .{
+            pane_stash.stashedCount(self.getTree().?.*),
+            pane_stash.visibleLeafCount(self.getTree().?.*),
+        });
+    }
+
+    /// The sidebar's Alt-click on a stashed row (T3667, win32
+    /// `paneSidebarExchange` T1845, Mac `exchangeStashedPane`): `surface`
+    /// takes the focused pane's slot, and the focused pane takes `surface`'s
+    /// place in the stash - the same position in its order, not the top.
+    /// With nothing to swap with (the focused pane is `surface`, or there is
+    /// none) it is an ordinary restore, as the Mac's guard falls back to.
+    /// Focus moves to the pane swapped in. False when `surface` is not in
+    /// this tree.
+    pub fn exchangeStashed(self: *Self, surface: *Surface) bool {
+        const tree = self.getTree() orelse return false;
+        if (!pane_stash.contains(tree.*, surface)) return false;
+        const focused = self.getActiveSurface();
+        if (!pane_stash.isStashed(surface) or focused == null or focused.? == surface or
+            pane_stash.isStashed(focused.?))
+            return self.restoreSurface(surface, true);
+        var new_tree = pane_stash.exchange(tree.*, Application.default().allocator(), surface, focused.?) catch |err| {
+            log.warn("stashed pane exchange failed: {}; restoring instead", .{err});
+            return self.restoreSurface(surface, true);
+        };
+        defer new_tree.deinit();
+        self.setTree(&new_tree);
+        self.focusSurface(surface);
+        log.info("exchanged stashed pane={s} for pane={s} visible={d}", .{
+            surface.paneId(),
+            focused.?.paneId(),
+            pane_stash.visibleLeafCount(self.getTree().?.*),
+        });
+        return true;
     }
 
     /// The stash moved but the tree did not: re-set it, so every listener of
@@ -2825,7 +2901,34 @@ pub const SplitTree = extern struct {
         _ = parameter_;
 
         const old_tree = self.getTree() orelse return;
-        var new_tree = old_tree.equalize(Application.default().allocator()) catch |err| {
+        const alloc = Application.default().allocator();
+        if (pane_stash.stashedCount(old_tree.*) > 0) {
+            // Even out what is ON SCREEN (T3667, win32 `equalizeSplitsOnly`,
+            // Mac `applyingToVisible`): the shared `equalize` weighs every
+            // leaf, so a stashed pane would still claim its share. Equalize
+            // the visible arrangement and lift its ratios back; collapsed
+            // splits keep theirs, so a restored pane returns at its size.
+            var vis = pane_stash.visibleClone(old_tree.*, alloc) catch |err| {
+                log.warn("unable to equalize tree: {}", .{err});
+                return;
+            };
+            defer vis.deinit();
+            var eq = vis.equalize(alloc) catch |err| {
+                log.warn("unable to equalize tree: {}", .{err});
+                return;
+            };
+            defer eq.deinit();
+            var new_tree = old_tree.clone(alloc) catch |err| {
+                log.warn("unable to equalize tree: {}", .{err});
+                return;
+            };
+            defer new_tree.deinit();
+            pane_stash.liftRatios(&new_tree, eq);
+            self.setTree(&new_tree);
+            log.info("equalized the panes on show, stashed ones keep their slots", .{});
+            return;
+        }
+        var new_tree = old_tree.equalize(alloc) catch |err| {
             log.warn("unable to equalize tree: {}", .{err});
             return;
         };
@@ -2836,7 +2939,17 @@ pub const SplitTree = extern struct {
     pub fn swapSplit(self: *Self, to: Surface.Tree.Goto) bool {
         const tree = self.getTree() orelse return false;
         const active = self.getActiveSurfaceHandle() orelse return false;
-        const target = if (tree.goto(
+        // Over the panes on screen (T3667, win32 `swapSplit`'s
+        // `gotoVisible`): a swap with a stashed pane would put the focused
+        // pane out of sight and bring the stashed one back in its place.
+        const target = if (pane_stash.stashedCount(tree.*) > 0) target: {
+            const from = tree.nodes[active.idx()].leaf;
+            const dest = gotoVisible(tree, from, to) orelse return false;
+            var it = tree.iterator();
+            break :target while (it.next()) |entry| {
+                if (entry.view == dest) break entry.handle;
+            } else return false;
+        } else if (tree.goto(
             Application.default().allocator(),
             active,
             to,

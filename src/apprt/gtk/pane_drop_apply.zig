@@ -27,6 +27,7 @@ const pane_gap = @import("../win32/pane_gap.zig");
 const pane_layout = @import("../win32/pane_layout.zig");
 const pane_id = @import("../ipc/pane_id.zig");
 const pane_relocate = @import("../win32/pane_relocate.zig");
+const pane_stash = @import("../win32/pane_stash.zig");
 
 /// The ratio a split or top-level drop gives the two sides: halves, as
 /// win32's `drop_highlight.insert_ratio` and the Mac's drop do.
@@ -63,7 +64,7 @@ pub fn apply(
 
     if (pane_layout.Move.of(target)) |move| {
         var shape: pane_layout.Shape = .{};
-        const root = shape.fromTree(Tree, tree, idOf, never(Tree.View));
+        const root = shape.fromTree(Tree, tree, idOf, stashed(Tree.View));
         if (shape.wouldLeaveInPlace(root, dragged, move)) return .in_place;
     }
 
@@ -101,7 +102,7 @@ pub fn apply(
                 Tree,
                 &rest,
                 idOf,
-                never(Tree.View),
+                stashed(Tree.View),
                 s.layout,
                 s.before,
                 s.after,
@@ -191,7 +192,7 @@ pub fn applyArriving(
                 Tree,
                 dest,
                 idOf,
-                never(Tree.View),
+                stashed(Tree.View),
                 s.layout,
                 s.before,
                 s.after,
@@ -288,11 +289,14 @@ pub fn dividers(
     return out[0..n];
 }
 
-/// GTK has no stashed panes yet (T3596), so no leaf is hidden.
-fn never(comptime View: type) fn (*View) bool {
+/// The leaves a drop does not see: stashed panes (T3596; T3667, win32
+/// `paneViewStashed`). They are in the tree but not on screen, so "would
+/// this drop change anything" and "which gap is this" are answered over
+/// the arrangement on show.
+fn stashed(comptime View: type) fn (*View) bool {
     return struct {
-        fn f(_: *View) bool {
-            return false;
+        fn f(v: *View) bool {
+            return pane_stash.isStashed(v);
         }
     }.f;
 }
@@ -312,6 +316,7 @@ const SplitTree = @import("../../datastruct/split_tree.zig").SplitTree;
 
 const TestView = struct {
     id: []const u8,
+    stash_seq: u64 = 0,
 
     pub fn ref(self: *TestView, _: Allocator) Allocator.Error!*TestView {
         return self;
@@ -390,6 +395,23 @@ test "a swap exchanges two panes in place" {
         },
         else => return error.TestUnexpectedResult,
     }
+}
+
+test "T3667: a drop is judged over the panes on show, a stashed one unseen" {
+    // H(a, H(b, c)) with b stashed shows a | c. Dropping c to the right of a
+    // changes nothing anyone can see: no drop. With b on show it is a move.
+    var views = [_]TestView{ .{ .id = "a" }, .{ .id = "b" }, .{ .id = "c" } };
+    var tree = try threeAcross(&views);
+    defer tree.deinit();
+    const target: pane_drop.Target = .{ .split = .{ .window = 1, .pane = "a", .side = .right } };
+    var shown = try apply(TestTree, testing.allocator, &tree, testId, "c", target);
+    switch (shown) {
+        .moved => |*t| t.deinit(),
+        else => return error.TestUnexpectedResult,
+    }
+    pane_stash.mark(&views[1]);
+    const hidden = try apply(TestTree, testing.allocator, &tree, testId, "c", target);
+    try testing.expect(hidden == .in_place);
 }
 
 test "a top-level drop spans the whole side of the window" {

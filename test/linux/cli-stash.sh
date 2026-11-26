@@ -7,7 +7,12 @@
 # it left; focus moves only with --focus. Both are idempotent, a window always
 # shows one pane, and the refusals are Mac's sentences (win32 T1827). Also the
 # Ctrl+Shift+M stash chord, a sidebar click on a stashed row, and a close that
-# leaves only stashed panes. Run it ONLY through the wrapper:
+# leaves only stashed panes. T3667: a keyboard resize, equalize and swap_split
+# act on the panes on show (a collapsed split keeps its ratio, a stashed pane
+# is never a swap partner), and an Alt-click on a stashed row swaps it with
+# the focused pane. (The relaunch keeping a stash is session-restore.sh's RS
+# checks; a pane drop's stash-aware judgement is a none-lane unit test in
+# gtk/pane_drop_apply.zig.) Run it ONLY through the wrapper:
 #
 #   powershell -NoProfile -File scripts\linux\wsl-run.ps1 -CommandFile test\linux\cli-stash.sh
 #
@@ -41,6 +46,8 @@ cli() { env -u GHOZTTY_IPC_SOCKET -u GHOZTTY_PANE_ID "$app" "$@"; }
 
 export SHELL=/bin/sh
 hl_launch APP "$app" --gtk-single-instance=false --session-persistence=false \
+    --keybind=ctrl+alt+shift+l=resize_split:right,40 --keybind=ctrl+alt+shift+e=equalize_splits \
+    --keybind=ctrl+alt+shift+h=swap_split:left \
     -e /bin/sh -c 'PS1="hl$ " exec /bin/sh -i'
 hl_wait_for 30 test -S "$sock"
 f3=$?
@@ -233,6 +240,54 @@ hl_wait_for 10 gone_a
 hl_wait_for 10 stashed_is sw "b"
 [ $s = 0 ] && stashed_is sw "b" && has_window sw && focused_is sw d
 hl_check "X1 closing the only pane on screen brings back the top of the stash (d), focused" $? "$(dump)"
+
+# --- spatial verbs over what is on show (T3667) -------------------------------
+# sv: p | q | r as H50(p,H50(q,r)), then q stashed - on show: p | r, the
+# inner split collapsed into r. Every verb below must act on p | r and leave
+# the collapsed split (q's slot) as it was.
+cli +new-window --target=sv --name=p > /dev/null 2>&1
+hl_wait_for 15 has_window sv
+cli +split --target=sv --name=q > /dev/null 2>&1
+cli +split --pane=q --name=r > /dev/null 2>&1
+hl_wait_for 15 shape_is sv "H50(p,H50(q,r))"
+hl_check "V0 window sv holds p | q | r" $? "$(lst shape sv)"
+idp=$(lst id sv p); idq=$(lst id sv q); idr=$(lst id sv r)
+cli +stash --target=q > /dev/null 2>&1
+hl_wait_for 10 stashed_is sv "q"
+hl_check "V1 q is stashed: p | r on show" $? "$(lst shape sv) stashed=[$(lst stashed sv)]"
+sb "$idp" "$idr" > /dev/null
+hl_wait_for 10 focused_is sv r
+hl_check "V2 a click on r's row focuses r" $? "focused=$(lst focused sv)"
+# A resize from r: the divider on show is p|r (the root). The collapsed q|r
+# split is r's NEAREST horizontal split, and moving it would change nothing
+# anyone sees.
+root_grew() { lst shape sv | grep -qE '^H(5[1-9]|[6-9][0-9])\(p,H50\(q,r\)\)$'; }
+hl_ipc press-key "--target=$idr" "--key=ctrl+alt+shift+l" > /dev/null 2>&1
+hl_wait_for 10 root_grew
+hl_check "V3 a keyboard resize moves the divider on show (p|r), not q's collapsed split" $? "$(lst shape sv)"
+# Equalize: p | r even out to 50; a stashed q claims no share (an equalize of
+# all three would put the root at 33), and its own split keeps its 50.
+hl_ipc press-key "--target=$idr" "--key=ctrl+alt+shift+e" > /dev/null 2>&1
+hl_wait_for 10 shape_is sv "H50(p,H50(q,r))"
+hl_check "V4 equalize evens out p | r only (root back to 50, not 33)" $? "$(lst shape sv)"
+# Swap left from r: its neighbour on show is p, not the stashed q.
+hl_ipc press-key "--target=$idr" "--key=ctrl+alt+shift+h" > /dev/null 2>&1
+hl_wait_for 10 shape_is sv "H50(r,H50(q,p))"
+s=$?
+[ $s = 0 ] && stashed_is sv "q" && focused_is sv r
+hl_check "V5 swap_split swaps r with p on show; q stays stashed in its slot, r keeps focus" $? "$(lst shape sv) stashed=[$(lst stashed sv)] focused=$(lst focused sv)"
+# Alt-click q's stashed row: q takes the focused r's slot, r takes q's place
+# in the stash.
+sb "$idp" "alt:$idq" > /dev/null
+hl_wait_for 10 shape_is sv "H50(q,H50(r,p))"
+s=$?
+hl_wait_for 10 focused_is sv q
+[ $s = 0 ] && stashed_is sv "r" && focused_is sv q
+hl_check "A1 an Alt-click on q's stashed row swaps it with the focused r: q on show, focused, r stashed" $? "$(lst shape sv) stashed=[$(lst stashed sv)] focused=$(lst focused sv)"
+sb "$idp" "alt:$idp" > /dev/null
+hl_wait_for 10 focused_is sv p
+stashed_is sv "r" && focused_is sv p && shape_is sv "H50(q,H50(r,p))"
+hl_check "A2 an Alt-click on a row on show is a plain click (focus, no swap)" $? "$(lst shape sv) stashed=[$(lst stashed sv)] focused=$(lst focused sv)"
 
 grep -q "IPC: stashed 'b'" "$APP_LOG" && grep -q "IPC: restored 'c'" "$APP_LOG"
 hl_check "L1 the app logs each stash and restore" $? "$(grep -c 'IPC: ' "$APP_LOG")"

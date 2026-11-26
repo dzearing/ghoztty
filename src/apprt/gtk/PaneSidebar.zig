@@ -70,6 +70,7 @@ const Allocator = std.mem.Allocator;
 const glib = @import("glib");
 const gobject = @import("gobject");
 const gtk = @import("gtk");
+const gdk = @import("gdk");
 
 const build_config = @import("../../build_config.zig");
 const configpkg = @import("../../config.zig");
@@ -1015,7 +1016,7 @@ fn addWindowTile(self: *PaneSidebar, w: all.Window) Allocator.Error!void {
 
 fn onRowClicked(_: *wk.GtkWidget, r: *Row) callconv(.c) void {
     switch (r.kind) {
-        .pane => _ = r.sidebar.focusPane(r.id),
+        .pane => _ = r.sidebar.activatePane(r.id, altHeld()),
         .window, .tile => _ = raiseWindow(r.key),
         .project, .ungrouped => toggleFold(r.kind, r.key),
     }
@@ -1866,10 +1867,34 @@ pub fn clickFold(self: *PaneSidebar, id: []const u8) bool {
     return true;
 }
 
+/// A row's Alt-click, by id (the seam; T3667).
+pub fn altClickRow(self: *PaneSidebar, id: []const u8) bool {
+    const r = self.rowById(id) orelse return false;
+    if (r.kind != .pane) return false;
+    return self.activatePane(r.id, true);
+}
+
+/// Whether Alt is held on the keyboard right now: what makes a row's click
+/// an Alt-click (a button's `clicked` carries no event state in GTK4).
+fn altHeld() bool {
+    const display = gdk.Display.getDefault() orelse return false;
+    const seat = display.getDefaultSeat() orelse return false;
+    const keyboard = seat.getKeyboard() orelse return false;
+    return keyboard.getModifierState().alt_mask;
+}
+
 /// Focus the pane with this id: in this window's active tab, or - from the
 /// all-windows list - in any window, selecting its tab and raising its
 /// window. False when no window holds it.
 pub fn focusPane(self: *PaneSidebar, pane_id: []const u8) bool {
+    return self.activatePane(pane_id, false);
+}
+
+/// `focusPane`, or with `exchange` the Alt-click (T3667, win32
+/// `paneSidebarExchange` T1845, Mac `exchangeStashedPane`): a stashed pane
+/// of the tab on show takes the focused pane's slot, and the focused pane
+/// takes its place in the stash. Anywhere else an Alt-click is a click.
+fn activatePane(self: *PaneSidebar, pane_id: []const u8, exchange: bool) bool {
     var node: ?*glib.List = Application.default().as(gtk.Application).getWindows();
     while (node) |n| {
         node = n.f_next;
@@ -1887,9 +1912,12 @@ pub fn focusPane(self: *PaneSidebar, pane_id: []const u8) bool {
             while (it.next()) |entry| {
                 if (!std.mem.eql(u8, entry.view.paneId(), pane_id)) continue;
                 const here = win == self.window and tab_view.getSelectedPage() == page;
-                log.info("pane sidebar row clicked pane={s} other_window={} stashed={}", .{ pane_id, !here, pane_stash.isStashed(entry.view) });
-                // A stashed pane's row restores it to its slot, focused (T3596).
-                if (pane_stash.isStashed(entry.view))
+                log.info("pane sidebar row clicked pane={s} other_window={} stashed={} alt={}", .{ pane_id, !here, pane_stash.isStashed(entry.view), exchange });
+                // A stashed pane's row restores it to its slot, focused (T3596);
+                // Alt swaps it with the focused pane instead (T3667).
+                if (exchange and here and pane_stash.isStashed(entry.view))
+                    _ = tab.getSplitTree().exchangeStashed(entry.view)
+                else if (pane_stash.isStashed(entry.view))
                     _ = tab.getSplitTree().restoreSurface(entry.view, true)
                 else
                     tab.getSplitTree().focusSurface(entry.view);
