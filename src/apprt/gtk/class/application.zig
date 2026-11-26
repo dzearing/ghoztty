@@ -558,6 +558,33 @@ pub const Application = extern struct {
         priv.custom_css_providers.deinit(alloc);
     }
 
+    /// T3689: name every terminal surface still alive when the run loop has
+    /// ended. A surface's core is freed in its GObject `finalize`, so one
+    /// whose last reference is still held here keeps its font grid, and core
+    /// `App.deinit` asserts on it (a debug build aborts with 134). Returns
+    /// how many there were; logs each one with what holds it.
+    pub fn reportSurfaceSurvivors(self: *Self) usize {
+        const surfaces = self.private().core_app.surfaces.items;
+        if (surfaces.len == 0) return 0;
+        log.warn("quit: {d} surface(s) still alive after the run loop ended (T3689)", .{surfaces.len});
+        for (surfaces) |rt| {
+            const s = rt.gobj();
+            const w = s.as(gtk.Widget);
+            log.warn(
+                "quit: survivor pane={s} refs={d} parent={} root={} realized={} title={s}",
+                .{
+                    s.paneId(),
+                    s.as(gobject.Object).f_ref_count,
+                    w.getParent() != null,
+                    w.getRoot() != null,
+                    w.getRealized() != 0,
+                    s.getTitle() orelse "",
+                },
+            );
+        }
+        return surfaces.len;
+    }
+
     /// The global allocator that all other classes should use by
     /// calling `Application.default().allocator()`. Zig code should prefer
     /// this wherever possible so we get leak detection in debug/tests.

@@ -74,6 +74,7 @@ pub fn terminate(self: *App) void {
     // We force deinitialize the app. We don't unref because other things
     // tend to have a reference at this point, so this just forces the
     // disposal now.
+    _ = self.app.reportSurfaceSurvivors();
     self.app.deinit();
 }
 

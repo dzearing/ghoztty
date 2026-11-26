@@ -52,6 +52,7 @@ exit_code() {
     wait "$1" 2>/dev/null; rc=$?
 }
 # crash_of <log>: the first lines of a crash in an app log, for a FAIL detail.
+survivors() { grep -E 'quit: .*(survivor|still alive)' "$1" 2>/dev/null | sed 's/.*quit: //' | tr '\n' ' ' | head -c 600; }
 crash_of() { grep -m1 -B4 -A24 -E 'panic|Segmentation fault|reached unreachable|SIGABRT|Abort' "$1" 2>/dev/null | grep -v -E 'debug\(|program destroyed|EGL context' | tr '\n' ' ' | head -c 3000; }
 vfield() {
     hl_ipc version 2>/dev/null | python3 -c '
@@ -134,11 +135,11 @@ hl_check "H13 ... and is still the app (pid $APP)" $?
 # ---- 4. Switch: the running build quits, this launch takes over -------------
 hl_launch SW env "${OTHER[@]}" GHOZTTY_HANDOFF_PROMPT=switch "$app" --gtk-single-instance=false
 exit_code "$APP" 20
-# "Quits" and not "exits 0": a debug GTK app can still abort in core
-# App.deinit on its way out (a surface outlives the quit) - T3689, which owns
-# making this check `[ "$rc" = 0 ]`. The rc and any panic stay in the detail.
-[ "$rc" != 124 ]
-hl_check "H14 Switch: the running build quits" $? "rc=$rc${rc:+ }$( [ "$rc" = 0 ] || echo "(T3689) $(crash_of "$APP_LOG" | head -c 300)")"
+# Exit 0, not merely gone: a debug GTK app aborts (134) in core App.deinit
+# when a surface outlives the quit (T3689). The detail names any survivor the
+# app logged at terminate, and the panic.
+[ "$rc" = 0 ]
+hl_check "H14 Switch: the running build quits and exits 0" $? "rc=$rc $(survivors "$APP_LOG") $( [ "$rc" = 0 ] || crash_of "$APP_LOG" | head -c 300)"
 grep -q 'handoff-quit: quitting so the launch of 9.9.9-other' "$APP_LOG"
 hl_check "H15 ... because the launch asked (its log names the launching build)" $? "$(grep -m1 'handoff' "$APP_LOG")"
 sw_serving() { [ "$(vfield pid)" = "$SW" ]; }
