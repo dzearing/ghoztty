@@ -1,8 +1,8 @@
 {
     "guard":  "arp-version",
     "script":  "test/win32/arp-version.ps1",
-    "generated":  "2026-11-04T17:12:33-08:00",
-    "commit":  "b7f014d30",
+    "generated":  "2026-11-26T12:57:41-08:00",
+    "commit":  "8e18356d40",
     "uncommitted":  [
 
                     ],
@@ -10,5 +10,10 @@
                   "scripts/arp-version-check.ps1":  "5b54ae7cb88d3517dc9c5d250e95c44d7a02a34fdc31ac57656d09b17d088615",
                   "scripts/lib/ArpVersion.ps1":  "dbeb04f3e14abfdef93e62eb5863b58f6f57bbba814b80607cd2e0194922e9e6",
                   "test/win32/arp-version.ps1":  "3f483140196d74ac80c620bbde5f25e6bdb07cfa0e7891c50a5bd6e0dea73d51"
-              }
+              },
+    "code":  {
+                 "scripts/arp-version-check.ps1":  "code1:eb63987bc4dda8ecd31180d57696783488750ddd768e3d2f8a5cb81ad025b66e",
+                 "scripts/lib/ArpVersion.ps1":  "code1:b380bd4dc6031f019f516ad35a6266dacb33489e617aa69dffb9e58aacf6ab11",
+                 "test/win32/arp-version.ps1":  "code1:f61b8bd2e686f479fd2cf7d4b339dced7fb3c4ef9f2adff5674053b819d1fdc1"
+             }
 }

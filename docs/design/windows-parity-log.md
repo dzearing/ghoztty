@@ -40950,3 +40950,7 @@ WebKitGTK's script message carries no frame, and a page-world handler is visible
 - What: `scripts/release-notes-author.ps1` took every non-chore commit naming a fix/feature-tagged task, so What's New filled with Linux-seat work, `.sh` test edits, Stamp/File/WIP commits. It now skips non-Windows seats (win/any/unmarked kept), picks one commit per task (the recorded `commits:` sha when in range), and drops commits touching only test/docs/scripts/release-notes/macos/.github/src/apprt/gtk or root *.md, plus Stamp/Record/File/Close/Note/WIP subjects. `-DryRun` now prints each item.
 - Evidence: daily-publish.ps1 ALL PASS (284; new S4b with positive control: the old rule took all 8 synthetic commits). Dry run at win-v1.56.32: 2 items (T3766, T3768) vs the 12 shipped; win-v1.56.26..37: 22 items, no Linux/test/bookkeeping. argv-hazard/self-spawn/unroll-count/unwired-hook audits and the harness floor green.
 - Filed: none.
+## 2026-11-26 13:02 lane a - T2362 closed (already fixed): the Apps & Features version check passes on this box again
+- What: arp-version.ps1 section C had been red because dead Ghoztty rows for the 1.43.8/1.43.9 product codes had no cached package. T2679's orphan sweep (bce5d7188) removed them. The box now lists one product, 1.56.37 / 26.11.26618, and it agrees with its cached package. No code change.
+- Evidence: arp-version.ps1 ALL PASS (23), stamped. self-spawn-audit and unwired-hook-audit ALL PASS (they were due from the lane-l GTK edits).
+- Filed: none.
