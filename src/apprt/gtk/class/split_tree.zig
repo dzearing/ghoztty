@@ -2643,14 +2643,6 @@ pub const SplitTree = extern struct {
         }
     };
 
-    /// The pane with this pane id in the tree, or null.
-    fn surfaceById(self: *Self, id: []const u8) ?*Surface {
-        const tree = self.getTree() orelse return null;
-        var it = tree.iterator();
-        while (it.next()) |entry| if (std.mem.eql(u8, entry.view.paneId(), id)) return entry.view;
-        return null;
-    }
-
     fn applyRecordedStash(self: *Self, entries: []const PendingStash.Entry) void {
         const tree = self.getTree() orelse return;
         var recorded: [pane_stash.max_reorder]pane_stash.Recorded(Surface) = undefined;
