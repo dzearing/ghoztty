@@ -2080,8 +2080,8 @@ Both are re-read each time their page is SHOWN (`setPage`), as Mac's
   over the network - and `relay_directory.listDevices`) lands through
   `g_idle_add`, tagged with the showing's generation so a late reply for an
   older showing or a closed window is dropped. A 401 empties the rows and
-  deletes the cache. Mac's "New Remote Window..." button waits for the GTK
-  chooser (T3674).
+  deletes the cache. Mac's "New Remote Window..." sits on the account row and
+  opens the machine chooser over the front terminal window (T3674, below).
 - **Host Settings...** is `src/apprt/gtk/HostSettingsDialog.zig`, an
   `AdwAlertDialog` with Mac's title, body, two fields ("Remote default"
   placeholders) and the shell presets behind a drop-down; Save writes
@@ -3001,8 +3001,8 @@ refusal is made before any dial, and the relay wins when both are given.
 - **Not in the layout file**: `SessionLayout` skips remote windows, and a
   remote pane moved into a local window records no session id. Relay windows
   coming back at relaunch are T3671; Close vs
-  Disconnect is T3563 (below); the chooser is T3674, the pill and reconnect
-  ladder T3675.
+  Disconnect is T3563 (below); the chooser is T3674 (below), the pill and
+  reconnect ladder T3675.
 
 Acceptance, against a loopback agent started with `--listen 127.0.0.1:<port>
 --headless` (the Linux half of `test/win32/ipc-remote.ps1`) and, in section Y
@@ -3056,8 +3056,8 @@ spares, the one machine to name, the widened gate and the detach pin.
   the far session keeps running. Only panes on a remote link are pinned. An
   undo that puts the pane or tab back clears the pin, so a later close ends
   the session again.
-- Nothing on Linux can resume a disconnected session yet: that is the
-  chooser, T3674.
+- A disconnected session is resumed from the machine chooser (T3674,
+  below).
 
 Acceptance, against a loopback TCP agent, driven through the DEBUG-ONLY
 `close-dialog --target= [--op=pane|tab|window] [--answer=disconnect|close|cancel]`
@@ -3075,6 +3075,69 @@ powershell -NoProfile -File scripts\linux\wsl-run.ps1 -CommandFile test\linux\cl
 Ends `CLI REMOTE DISCONNECT: ALL PASS`; the oracle is the remote shell's pid
 (alive after Disconnect, past the 1 s undo window; gone after Close).
 `NEGATIVE=1` answers Close where it means Disconnect and must fail D4.
+
+## The machine chooser: browse, resume, end (T3674)
+
+`src/apprt/gtk/MachineChooser.zig` - Mac's `MachineChooserView`, win32's
+`MachineChooser.zig` - as an `AdwDialog` (840x540): the account line, Local
+then the account's relay devices on the left, the selected machine's detail
+and roster on the right. The words and rules are win32's pure modules
+(`chooser_rows`, `chooser_sessions`, `chooser_session_sort`, `chooser_help`,
+`chooser_refresh`), glued in `machine_chooser_rules.zig` (none lane), so the
+three seats say the same thing. Local's detail title is "This Computer"
+(Mac "This Mac", Windows "This PC").
+
+- **Opened by** Ctrl+Shift+N - the window's capture-phase key controller asks
+  `Window.chooserChord`, which is win32's `window_chord.classify`, so the
+  chord shadows `ctrl+shift+n -> new_window` whatever holds the keyboard and
+  Ctrl+N stays a local window - the window menu's "New Remote Window…"
+  (`win.new-remote-window`) and Settings > Remote Machines' button. One at a
+  time; a second open re-presents it.
+- **Never waits on the network to open**: devices come from `machine_cache`
+  (shared with Settings) as "Checking status", then one `listDevices` on a
+  worker, re-run every `chooser_refresh.poll_ms` (5 s) while open; a failure
+  keeps the list that is true (`chooser_refresh.Misses`), a 401 empties it.
+- **The roster**: selecting a machine fetches `LIST_SESSIONS` on a worker -
+  Local on the shared local-agent connection (nothing when
+  `session-persistence = false`; showing it never starts an agent then), a
+  relay machine dialed per fetch - and refreshes it in place on the same 5 s
+  beat, so a session a Disconnect just left appears. Rows are
+  `isActionable` only (running, and not held by someone else's viewer),
+  labelled by `chooser_sessions.label` and sorted by name then id.
+- **Resume / Show / End**: a session one of our panes holds
+  (`IpcHandlers.paneHoldingSession`, keyed by device for a relay) is **Show**,
+  which focuses that pane; any other is **Resume**, which opens a window
+  ATTACHed to it - relay through the one open tail
+  (`ipc_remote_window.openWith` with the session id, so it is recorded for
+  relaunch), Local through `Surface.pending_restore`. Either closes the
+  chooser. **End** sends `CLOSE_SESSION` then refetches; the chooser stays.
+- **New Window** opens on the selected machine (a relay one gets its per-host
+  defaults through `openWith`); **Host Settings...** (relay rows) is the
+  T3635 editor. Every control carries Mac's `.help` sentence.
+- Not yet: the warm connection pool and pushed roster (T3806), CPU meters and
+  sort headers (T3807), Restore All (T3808), Rename / Remove / See Activity
+  (T3809), keyboard navigation and the filter (T3810), the account row's
+  Sign In (T3575).
+
+Seam (DEBUG-ONLY, `src/apprt/gtk/ipc_machine_chooser.zig`): `machine-chooser
+--op=open|chord --key=<ctrl+shift+n|ctrl+n|ctrl+alt+shift+n>|state|select
+--value=<id>|new-window|resume --value=<session>|end --value=<session>|
+host-settings|sort --value=name|cpu|close`; every button op emits that
+button's `clicked`, every reply is the chooser as drawn (machines, detail,
+tooltips, roster state, rows) plus `last`, what it last did (kept after it
+closes).
+
+```powershell
+powershell -NoProfile -File scripts\linux\wsl-run.ps1 -CommandFile test\linux\machine-chooser.sh
+```
+
+Ends `MACHINE CHOOSER: ALL PASS` (36 checks, a real relay built from
+`relay/` as in `cli-remote-window.sh` section Y, about 1 minute warm): the
+chord, the list and detail, New Window on the relayed agent, Disconnect then
+Resume of the SAME far shell, Show without a second attach, End, and a local
+session a SIGKILLed app left behind resumed. A local session's roster `pid` is
+the top of its process tree, so the test matches a local shell by ancestry.
+`NEGATIVE=1` presses New Window where Resume is meant and must fail R4.
 
 ## The relay account store: keyring, else a private file (T3341)
 
