@@ -2471,7 +2471,7 @@ fn paneSeenSeam(app: Context, request: Request) Allocator.Error![]u8 {
     defer out.deinit();
     var jws: std.json.Stringify = .{ .writer = &out.writer };
     (struct {
-        fn write(j: *std.json.Stringify, a: Context, w: *Window, rep: window_seen.Toplevel, reset_draw: bool) !void {
+        fn write(j: *std.json.Stringify, a: Context, w: *Window, rep: window_seen.Toplevel, reset: bool) !void {
             try j.beginObject();
             try j.objectField("success");
             try j.write(true);
@@ -2524,7 +2524,7 @@ fn paneSeenSeam(app: Context, request: Request) Allocator.Error![]u8 {
                     try j.endObject();
                     // What its draws and resizes cost (T3792), in us;
                     // `--reset-draw` starts a fresh measurement.
-                    const ds = p.surface.drawStats(reset_draw);
+                    const ds = p.surface.drawStats(reset);
                     try j.objectField("draw");
                     try j.beginObject();
                     inline for (.{ "draws", "resizes", "resize_gaps" }) |name| {
