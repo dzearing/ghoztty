@@ -14,6 +14,8 @@
 //!   --op=end --value=<session>    click that session's End
 //!   --op=host-settings            click Host Settings...
 //!   --op=sort --value=name|cpu    click a column
+//!   --op=account                  click the account row's button (Sign in
+//!                                 with Google... or Sign Out, T3575)
 //!   --op=close                    close it
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -85,6 +87,12 @@ pub fn seam(app: *Application, request: Request) Allocator.Error![]u8 {
             const v = value orelse "name";
             c.sortBy(if (std.mem.eql(u8, v, "cpu")) .cpu else .name);
             did = true;
+        } else if (std.mem.eql(u8, op, "account")) {
+            // A hidden or insensitive button is not pressable by a person
+            // either: `did` says whether the click could land.
+            const b = c.accountButton();
+            did = wk.gtk_widget_get_visible(b) != 0 and wk.gtk_widget_get_sensitive(b) != 0;
+            if (did.?) MachineChooser.click(b);
         } else if (std.mem.eql(u8, op, "close")) {
             c.close();
             did = true;
@@ -130,6 +138,24 @@ fn write(j: *std.json.Stringify, did: ?bool) !void {
         try j.write(text(c.accountLabel()));
         try j.objectField("account_tooltip");
         try j.write(tip(c.accountLabel()));
+        try j.objectField("account_visible");
+        try j.write(wk.gtk_widget_get_visible(c.accountLabel()) != 0);
+        const ab = c.accountButton();
+        try j.objectField("account_button");
+        if (wk.gtk_widget_get_visible(ab) != 0)
+            try j.write(if (wk.gtk_button_get_label(ab)) |l| std.mem.sliceTo(l, 0) else "")
+        else
+            try j.write(null);
+        try j.objectField("account_button_sensitive");
+        try j.write(wk.gtk_widget_get_sensitive(ab) != 0);
+        try j.objectField("account_busy");
+        try j.write(@tagName(MachineChooser.accountBusy()));
+        const sl = c.accountStoreLabel();
+        try j.objectField("account_store_note");
+        try j.write(if (wk.gtk_widget_get_visible(sl) != 0) text(sl) else null);
+        const ml = c.accountMsgLabel();
+        try j.objectField("account_message");
+        try j.write(if (wk.gtk_widget_get_visible(ml) != 0) text(ml) else null);
         try j.objectField("machines");
         try j.beginArray();
         for (c.machineList()) |m| {

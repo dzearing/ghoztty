@@ -22,8 +22,15 @@
 //! connection; a relay machine is dialed per fetch. Not here yet, each a
 //! card of its own: the warm per-machine connection pool and the pushed
 //! roster (win32 T461/T710), per-session CPU meters (T462), Restore All
-//! (T335), See Activity, rename and remove, the account row's Sign In
-//! (T3575).
+//! (T335), See Activity, rename and remove.
+//!
+//! **The account row signs in and out** (T3575): Sign in with Google...
+//! runs `relay_signin.signIn` on a worker (it waits on the browser for
+//! minutes) and lands through `g_idle_add`; the store is the state, so a
+//! chooser closed meanwhile is fine and the next one reads it. A sign-in
+//! replays the relay-window record (`RelayWindows.start`). On Linux the row
+//! also says when the sign-in is kept in a private file because no keyring
+//! runs (the WSL default).
 //!
 //! One chooser at a time; GTK main thread only, except the job bodies, which
 //! touch no GTK state and land back through `g_idle_add`, tagged with a
@@ -54,6 +61,8 @@ const IpcHandlers = @import("IpcHandlers.zig");
 const Application = @import("class/application.zig").Application;
 const Window = @import("class/window.zig").Window;
 const Surface = @import("class/surface.zig").Surface;
+const RelayWindows = @import("RelayWindows.zig");
+const homedir = @import("../../os/homedir.zig");
 
 const log = std.log.scoped(.gtk_chooser);
 
@@ -70,6 +79,12 @@ app: *Application,
 parent: *Window,
 dialog: *wk.GtkWidget,
 account_label: *wk.GtkWidget,
+/// Sign in with Google... / Sign Out (T3575).
+account_btn: *wk.GtkWidget,
+/// "No keyring is running, so ..." under a stored account kept in the file.
+account_store: *wk.GtkWidget,
+/// The last account operation's sentence (a failed sign-in, a sign-out).
+account_msg: *wk.GtkWidget,
 machine_list: *wk.GtkWidget,
 detail_title: *wk.GtkWidget,
 detail_subtitle: *wk.GtkWidget,
@@ -88,6 +103,15 @@ arena: std.heap.ArenaAllocator,
 machines: std.ArrayListUnmanaged(rules.Machine) = .empty,
 email: ?[]const u8 = null,
 account: live.Account = .signed_out,
+/// This build carries a Google OAuth client id (Sign In can work).
+configured: bool = true,
+/// The account store's path, and whether the stored account is in the
+/// 0600 file rather than a keyring (T3575's Linux-only line).
+store_path: ?[]const u8 = null,
+stored_in_file: bool = false,
+store_note_buf: [std.fs.max_path_bytes + 128]u8 = undefined,
+/// The button signs out (an account is stored) rather than in.
+account_signs_out: bool = false,
 /// The selected machine's id, kept across a rebuild (`rules.reselect`).
 sel_buf: [128]u8 = undefined,
 sel_len: usize = 0,
@@ -213,14 +237,35 @@ fn build(app: *Application, parent: *Window) MachineChooser {
     wk.adw_toolbar_view_add_top_bar(toolbar, wk.adw_header_bar_new());
 
     const outer = wk.gtk_box_new(wk.orientation_vertical, 0);
-    // The account row (Mac `accountRow`).
-    const account_label = mkLabel("Not signed in", 0);
-    wk.gtk_widget_add_css_class(account_label, "dim-label");
-    wk.gtk_widget_set_margin_start(account_label, 16);
-    wk.gtk_widget_set_margin_end(account_label, 16);
-    wk.gtk_widget_set_margin_top(account_label, 8);
-    wk.gtk_widget_set_margin_bottom(account_label, 8);
-    wk.gtk_box_append(outer, account_label);
+    // The account row (Mac `accountRow`): the email (and, on Linux, where
+    // the sign-in is kept) on the left, Sign In / Sign Out on the right.
+    const account_row = wk.gtk_box_new(wk.orientation_horizontal, 12);
+    wk.gtk_widget_set_margin_start(account_row, 16);
+    wk.gtk_widget_set_margin_end(account_row, 16);
+    wk.gtk_widget_set_margin_top(account_row, 8);
+    wk.gtk_widget_set_margin_bottom(account_row, 8);
+    const account_text = wk.gtk_box_new(wk.orientation_vertical, 2);
+    wk.gtk_widget_set_hexpand(account_text, 1);
+    wk.gtk_widget_set_valign(account_text, 3); // GTK_ALIGN_CENTER
+    const account_label = mkLabel("", 0);
+    const account_store = mkLabel("", 0);
+    wk.gtk_widget_add_css_class(account_store, "dim-label");
+    wk.gtk_widget_add_css_class(account_store, "caption");
+    wk.gtk_label_set_wrap(account_store, 1);
+    wk.gtk_label_set_ellipsize(account_store, 0); // wrap, never cut the path
+    const account_msg = mkLabel("", 0);
+    wk.gtk_widget_add_css_class(account_msg, "dim-label");
+    wk.gtk_widget_add_css_class(account_msg, "caption");
+    wk.gtk_label_set_wrap(account_msg, 1);
+    wk.gtk_label_set_ellipsize(account_msg, 0);
+    wk.gtk_box_append(account_text, account_label);
+    wk.gtk_box_append(account_text, account_store);
+    wk.gtk_box_append(account_text, account_msg);
+    wk.gtk_box_append(account_row, account_text);
+    const account_btn = wk.gtk_button_new_with_label("Sign in with Google\u{2026}");
+    wk.gtk_widget_set_valign(account_btn, 3);
+    wk.gtk_box_append(account_row, account_btn);
+    wk.gtk_box_append(outer, account_row);
     wk.gtk_box_append(outer, wk.gtk_separator_new(wk.orientation_horizontal));
 
     const paned = wk.gtk_paned_new(wk.orientation_horizontal);
@@ -285,6 +330,9 @@ fn build(app: *Application, parent: *Window) MachineChooser {
         .parent = parent,
         .dialog = dialog,
         .account_label = account_label,
+        .account_btn = account_btn,
+        .account_store = account_store,
+        .account_msg = account_msg,
         .machine_list = machine_list,
         .detail_title = detail_title,
         .detail_subtitle = detail_subtitle,
@@ -302,6 +350,7 @@ fn connectOnce(self: *MachineChooser) void {
     _ = wk.g_signal_connect_data(self.machine_list, "row-selected", @ptrCast(&onMachineSelected), self, null, 0);
     _ = wk.g_signal_connect_data(self.new_window_btn, "clicked", @ptrCast(&onNewWindow), self, null, 0);
     _ = wk.g_signal_connect_data(self.host_btn, "clicked", @ptrCast(&onHostSettings), self, null, 0);
+    _ = wk.g_signal_connect_data(self.account_btn, "clicked", @ptrCast(&onAccountButton), self, null, 0);
 }
 
 fn noteLast(self: *MachineChooser, comptime fmt: []const u8, args: anytype) void {
@@ -325,12 +374,8 @@ pub fn last(self: *const MachineChooser) []const u8 {
 fn reload(self: *MachineChooser) void {
     self.connectOnce();
     const a = self.arena.allocator();
-    self.email = relay_signin.signedInEmail(a);
-    const signed_in = signedIn(a);
-    self.account = if (signed_in)
-        .signed_in
-    else if (relay_signin.isConfigured(a)) .signed_out else .unconfigured;
-    self.drawAccount();
+    self.readAccount();
+    const signed_in = self.account == .signed_in;
 
     var devices: std.ArrayList(DeviceRow) = .empty;
     if (signed_in) if (machine_cache.load(c_alloc, self.email orelse "")) |cached| {
@@ -359,13 +404,176 @@ fn envToken() bool {
     return tok.len > 0;
 }
 
+/// Re-read the account from the store (open, and after a sign-in or out).
+fn readAccount(self: *MachineChooser) void {
+    const a = self.arena.allocator();
+    self.email = relay_signin.signedInEmail(a);
+    self.configured = relay_signin.isConfigured(a);
+    self.account = if (signedIn(a))
+        .signed_in
+    else if (self.configured) .signed_out else .unconfigured;
+    self.store_path = relay_account.accountPath(a) catch null;
+    self.stored_in_file = false;
+    if (self.email != null) if (self.store_path) |p| {
+        self.stored_in_file = relay_account.location(a, p) == .file;
+    };
+    self.drawAccount();
+}
+
 fn drawAccount(self: *MachineChooser) void {
     var tb: [200]u8 = undefined;
-    setText(self.account_label, live.accountTitle(&tb, self.account, self.email));
-    if (self.account == .signed_in) if (self.email) |e| {
+    const v = rules.accountView(&tb, .{
+        .email = self.email,
+        .env_token = envToken(),
+        .configured = self.configured,
+        .busy = account_busy,
+    });
+    setText(self.account_label, v.status);
+    wk.gtk_widget_set_visible(self.account_label, @intFromBool(v.status.len > 0));
+    if (self.email) |e| {
         var hb: [chooser_help.max_len]u8 = undefined;
         setTip(self.account_label, chooser_help.signedIn(&hb, e));
+    } else wk.gtk_widget_set_tooltip_text(self.account_label, null);
+
+    if (v.button) |b| {
+        var zb: [64]u8 = undefined;
+        const z = std.fmt.bufPrintZ(&zb, "{s}", .{b}) catch "";
+        wk.gtk_button_set_label(self.account_btn, z.ptr);
+    }
+    wk.gtk_widget_set_visible(self.account_btn, @intFromBool(v.button != null));
+    wk.gtk_widget_set_sensitive(self.account_btn, @intFromBool(v.sensitive));
+    self.account_signs_out = v.signs_out;
+    // An unconfigured build has no button; the remedy goes where a person
+    // looks for one (win32's footer hint).
+    if (!self.configured and self.email == null)
+        setTip(self.account_label, rules.relay_account_text.unconfigured_hint);
+
+    const note: []const u8 = if (self.stored_in_file and account_busy == .none) blk: {
+        var home_buf: [std.fs.max_path_bytes]u8 = undefined;
+        const home = homedir.home(&home_buf) catch null;
+        break :blk rules.storeNote(&self.store_note_buf, self.store_path orelse "", home);
+    } else "";
+    setText(self.account_store, note);
+    wk.gtk_widget_set_visible(self.account_store, @intFromBool(note.len > 0));
+    const msg = account_msg_buf[0..account_msg_len];
+    setText(self.account_msg, msg);
+    wk.gtk_widget_set_visible(self.account_msg, @intFromBool(msg.len > 0));
+}
+
+// ---------------------------------------------------------------------
+// Sign in / sign out (a worker; win32 `RelayAccountRow`)
+// ---------------------------------------------------------------------
+
+/// The operation in flight, app-wide: the chooser can close and reopen
+/// while a browser sign-in is still waiting, and the reopened one must show
+/// it rather than offer a second flow. GTK thread only.
+var account_busy: rules.Busy = .none;
+/// The last operation's sentence, kept for the next chooser too.
+var account_msg_buf: [256]u8 = undefined;
+var account_msg_len: usize = 0;
+
+fn setAccountMsg(s: []const u8) void {
+    const n = @min(s.len, account_msg_buf.len);
+    @memcpy(account_msg_buf[0..n], s[0..n]);
+    account_msg_len = n;
+}
+
+const AccountJob = struct {
+    kind: rules.Busy,
+    ok: bool = false,
+    machine: relay_signin.MachineOutcome = .nothing_to_revoke,
+    message_buf: [256]u8 = undefined,
+    message_len: usize = 0,
+};
+
+fn onAccountButton(_: *wk.GtkWidget, self: *MachineChooser) callconv(.c) void {
+    if (account_busy != .none) return;
+    const kind: rules.Busy = if (self.account_signs_out) .sign_out else .sign_in;
+    if (kind == .sign_in and !self.configured) return;
+    const job = c_alloc.create(AccountJob) catch return;
+    job.* = .{ .kind = kind };
+    const t = std.Thread.spawn(.{}, runAccount, .{job}) catch |err| {
+        log.warn("machine chooser: account worker did not start err={}", .{err});
+        c_alloc.destroy(job);
+        return;
     };
+    t.detach();
+    account_busy = kind;
+    setAccountMsg("");
+    self.noteLast("{s}", .{if (kind == .sign_in) "sign-in started" else "sign-out started"});
+    self.drawAccount();
+}
+
+/// Worker thread: the blocking flow. Touches no GTK state.
+fn runAccount(job: *AccountJob) void {
+    defer _ = wk.g_idle_add(&onAccountDone, job);
+    var arena_state = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    var msg: []const u8 = "";
+    switch (job.kind) {
+        .sign_in => if (relay_signin.signIn(a, .{})) |_| {
+            job.ok = true;
+        } else |err| {
+            log.warn("machine chooser: sign-in failed err={}", .{err});
+            msg = relay_signin.errorMessage(err);
+        },
+        .sign_out => {
+            const out = relay_signin.signOut(a, .revoke);
+            job.ok = out.signedOut();
+            job.machine = out.machine;
+            msg = rules.relay_account_text.signOutMessage(out);
+        },
+        .none => {},
+    }
+    const n = @min(msg.len, job.message_buf.len);
+    @memcpy(job.message_buf[0..n], msg[0..n]);
+    job.message_len = n;
+}
+
+/// GTK thread: the store already changed; tell the open chooser (if any)
+/// and bring the account's windows back after a sign-in.
+fn onAccountDone(ud: ?*anyopaque) callconv(.c) c_int {
+    const job: *AccountJob = @ptrCast(@alignCast(ud orelse return 0));
+    defer c_alloc.destroy(job);
+    account_busy = .none;
+    setAccountMsg(job.message_buf[0..job.message_len]);
+    log.info("machine chooser: {s} {s}", .{ @tagName(job.kind), if (job.ok) "ok" else "failed" });
+    if (open_chooser) |self| {
+        self.noteLast("{s} {s}", .{ @tagName(job.kind), if (job.ok) "ok" else "failed" });
+        self.readAccount();
+        if (job.ok) switch (job.kind) {
+            .sign_in => {
+                self.misses = .{};
+                self.startDirectory();
+            },
+            .sign_out => if (self.account != .signed_in) self.setMachines(&.{}),
+            .none => {},
+        };
+    }
+    // The record keeps every relay window a signed-out launch could not
+    // bring back; the sign-in is when they can (win32 T3389's replay).
+    if (job.ok and job.kind == .sign_in) {
+        if (RelayWindows.start(Application.default()))
+            log.info("machine chooser: sign-in is replaying the relay window record", .{});
+    }
+    return 0;
+}
+
+pub fn accountButton(self: *const MachineChooser) *wk.GtkWidget {
+    return self.account_btn;
+}
+
+pub fn accountStoreLabel(self: *const MachineChooser) *wk.GtkWidget {
+    return self.account_store;
+}
+
+pub fn accountMsgLabel(self: *const MachineChooser) *wk.GtkWidget {
+    return self.account_msg;
+}
+
+pub fn accountBusy() rules.Busy {
+    return account_busy;
 }
 
 const DeviceRow = struct {

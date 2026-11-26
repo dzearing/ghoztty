@@ -948,6 +948,10 @@ test {
     // word for word (T1633), same no-OS-imports deal.
     _ = @import("win32/chooser_help.zig");
 
+    // Pure relay-account row words (T141), shared by the win32 and GTK
+    // machine choosers since T3575, same no-OS-imports deal.
+    _ = @import("win32/relay_account_text.zig");
+
     // Pure win32 machine-chooser per-machine session counts — what each machine
     // row's count capsule says, keyed by machine and kept across selection
     // changes the way Mac caches a roster per machine (T1745), same

@@ -255,11 +255,22 @@ const Job = struct {
 /// Snapshot every recorded relay window and start the worker. Returns false
 /// when there is nothing to restore or the worker could not start (every
 /// entry is then released, still recorded, for the next launch).
+///
+/// Runs at launch and again after a sign-in (T3575, win32's
+/// `replayRecordForSignIn`): a launch while signed out keeps every entry
+/// ("kept for later"), and the sign-in is when they can come back. The
+/// windows open right now are skipped, so a replay never opens a second
+/// window over one that is already here (at launch the list is empty).
 pub fn start(app: *Application) bool {
     _ = app;
     const m = &(manifest orelse return false);
     if (m.count() == 0) return false;
-    const entries = m.snapshotForRestore(alloc, &.{}) catch |err| {
+    var open_ids: std.ArrayList([]const u8) = .empty;
+    defer open_ids.deinit(alloc);
+    // Slices into `open_windows` itself, which nothing mutates before the
+    // snapshot copies what it keeps.
+    for (open_windows.items) |*o| open_ids.append(alloc, &o.id) catch return false;
+    const entries = m.snapshotForRestore(alloc, open_ids.items) catch |err| {
         log.warn("relay window restore: snapshot failed err={}", .{err});
         return false;
     };

@@ -181,6 +181,92 @@ pub fn failureState(err: anyerror) chooser_sessions.State {
 
 const dial_failure = @import("../win32/dial_failure.zig");
 
+// ---------------------------------------------------------------------
+// The account row (T3575): win32's words (`relay_account_text`), Mac's
+// composition - the email over Sign Out, or the Sign in with Google button
+// alone - plus one sentence only Linux needs: where the sign-in is kept.
+// ---------------------------------------------------------------------
+
+pub const relay_account_text = @import("../win32/relay_account_text.zig");
+
+/// Which account operation is running, if any.
+pub const Busy = enum { none, sign_in, sign_out };
+
+pub const AccountInput = struct {
+    /// The stored account's email; null when nothing is stored.
+    email: ?[]const u8 = null,
+    /// A `GHOSTTY_RELAY_TOKEN` stands in for an account (a developer's).
+    env_token: bool = false,
+    /// This build carries a Google OAuth client id.
+    configured: bool = true,
+    busy: Busy = .none,
+};
+
+pub const AccountView = struct {
+    /// The row's line; "" draws no line (Mac's signed-out row is the button
+    /// alone, win32 T316).
+    status: []const u8,
+    /// The button's caption; null hides it (an unconfigured build has
+    /// nothing to press, win32 T747).
+    button: ?[]const u8,
+    sensitive: bool,
+    /// Sign Out when an account is stored; else Sign In.
+    signs_out: bool,
+};
+
+pub fn accountView(buf: []u8, in: AccountInput) AccountView {
+    const email = nonEmpty(in.email);
+    const stored = email != null;
+    if (in.busy != .none) return .{
+        .status = if (in.busy == .sign_in)
+            relay_account_text.statusText(email, true, in.configured, "")
+        else
+            "Signing out\u{2026}",
+        .button = if (in.busy == .sign_in)
+            relay_account_text.buttonLabel(false, true)
+        else
+            relay_account_text.buttonLabel(true, false),
+        .sensitive = false,
+        .signs_out = in.busy == .sign_out,
+    };
+    const status: []const u8 = if (email) |e|
+        (std.fmt.bufPrint(buf, "Signed in as {s}", .{e}) catch e)
+    else if (in.env_token)
+        "Signed in as your account"
+    else
+        relay_account_text.statusText(null, false, in.configured, "");
+    // Sign Out needs no client id; Sign In does.
+    const button: ?[]const u8 = if (stored)
+        relay_account_text.buttonLabel(true, false)
+    else if (in.configured)
+        relay_account_text.buttonLabel(false, false)
+    else
+        null;
+    return .{ .status = status, .button = button, .sensitive = true, .signs_out = stored };
+}
+
+/// The line under a stored account when it lives in the 0600 file rather
+/// than a keyring (`relay_account.location() == .file`). WSL runs no keyring
+/// daemon, so this is the WSL default; the Mac (Keychain) and Windows
+/// (DPAPI) rows never need it. `path` is shown under `~` when it is in
+/// `home`.
+pub fn storeNote(buf: []u8, path: []const u8, home: ?[]const u8) []const u8 {
+    var shown = path;
+    var tilde = false;
+    if (nonEmpty(home)) |h| {
+        const hh = std.mem.trimRight(u8, h, "/");
+        if (hh.len > 0 and path.len > hh.len + 1 and std.mem.startsWith(u8, path, hh) and path[hh.len] == '/') {
+            shown = path[hh.len + 1 ..];
+            tilde = true;
+        }
+    }
+    return std.fmt.bufPrint(
+        buf,
+        "No keyring is running, so your sign-in is kept in a private file only you can read ({s}{s}).",
+        .{ if (tilde) "~/" else "", shown },
+    ) catch "No keyring is running, so your sign-in is kept in a private file only you can read.";
+}
+
 fn nonEmpty(v: ?[]const u8) ?[]const u8 {
     const s = v orelse return null;
     return if (s.len == 0) null else s;
@@ -272,4 +358,66 @@ test "placeholder: a state's sentence, the empty sentence, or rows" {
     try testing.expectEqual(@as(?[]const u8, null), placeholder(.loaded, 3));
     try testing.expectEqualStrings(chooser_sessions.unauthorized_text, placeholder(failureState(error.Unauthorized), 0).?);
     try testing.expectEqual(chooser_sessions.State.failed, failureState(error.ConnectionRefused));
+}
+
+test "accountView: Mac's composition - email over Sign Out, or the button alone" {
+    var buf: [200]u8 = undefined;
+    const in_ = accountView(&buf, .{ .email = "me@example.com" });
+    try testing.expectEqualStrings("Signed in as me@example.com", in_.status);
+    try testing.expectEqualStrings("Sign Out", in_.button.?);
+    try testing.expect(in_.signs_out and in_.sensitive);
+
+    const out = accountView(&buf, .{});
+    try testing.expectEqualStrings("", out.status);
+    try testing.expectEqualStrings("Sign in with Google\u{2026}", out.button.?);
+    try testing.expect(!out.signs_out and out.sensitive);
+
+    // An empty stored email reads as nothing stored.
+    try testing.expect(!accountView(&buf, .{ .email = "" }).signs_out);
+}
+
+test "accountView: an env token is an account with nothing to sign out of" {
+    var buf: [200]u8 = undefined;
+    const v = accountView(&buf, .{ .env_token = true });
+    try testing.expectEqualStrings("Signed in as your account", v.status);
+    try testing.expectEqualStrings("Sign in with Google\u{2026}", v.button.?);
+    try testing.expect(!v.signs_out);
+}
+
+test "accountView: an unconfigured build has no Sign In button, but keeps Sign Out" {
+    var buf: [200]u8 = undefined;
+    const v = accountView(&buf, .{ .configured = false });
+    try testing.expectEqualStrings(relay_account_text.unconfigured_status, v.status);
+    try testing.expect(v.button == null);
+    const s = accountView(&buf, .{ .configured = false, .email = "me@example.com" });
+    try testing.expectEqualStrings("Sign Out", s.button.?);
+}
+
+test "accountView: busy rows say what is happening and cannot be pressed again" {
+    var buf: [200]u8 = undefined;
+    const i = accountView(&buf, .{ .busy = .sign_in });
+    try testing.expectEqualStrings(relay_account_text.statusText(null, true, true, ""), i.status);
+    try testing.expectEqualStrings("Signing in\u{2026}", i.button.?);
+    try testing.expect(!i.sensitive);
+    const o = accountView(&buf, .{ .busy = .sign_out, .email = "me@example.com" });
+    try testing.expectEqualStrings("Signing out\u{2026}", o.status);
+    try testing.expect(!o.sensitive and o.signs_out);
+}
+
+test "storeNote: names the private file, under ~ when it is in home" {
+    var buf: [300]u8 = undefined;
+    try testing.expectEqualStrings(
+        "No keyring is running, so your sign-in is kept in a private file only you can read (~/.local/share/ghoztty/account.dat).",
+        storeNote(&buf, "/home/me/.local/share/ghoztty/account.dat", "/home/me/"),
+    );
+    // Outside home (a GHOSTTY_ACCOUNT_STORE override): the full path.
+    try testing.expectEqualStrings(
+        "No keyring is running, so your sign-in is kept in a private file only you can read (/tmp/x/a.dat).",
+        storeNote(&buf, "/tmp/x/a.dat", "/home/me"),
+    );
+    // A sibling that merely shares the prefix is not under home.
+    try testing.expect(std.mem.indexOf(u8, storeNote(&buf, "/home/meg/a.dat", "/home/me"), "(/home/meg/a.dat)") != null);
+    // Too small a buffer still says the fact.
+    var small: [8]u8 = undefined;
+    try testing.expect(std.mem.indexOf(u8, storeNote(&small, "/a", null), "private file") != null);
 }
