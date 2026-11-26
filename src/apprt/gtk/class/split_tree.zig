@@ -2564,17 +2564,112 @@ pub const SplitTree = extern struct {
     /// A relaunch's stash (T3667, win32 T1838 `pane_stash.applyRecorded`):
     /// the restored panes the manifest recorded stashed leave the layout
     /// again, the recorded top on top. A manifest whose stash would hide
-    /// every pane still shows one (`normalize`). When the pane that holds
-    /// the caret is one of them, it goes to the first pane on show; the
-    /// tab's saved focus history (`adoptStackPersisted`) refines it after.
-    /// Reorders `recorded`.
-    pub fn adoptRecordedStash(self: *Self, recorded: []pane_stash.Recorded(Surface)) void {
-        const tree = self.getTree() orelse return;
+    /// every pane still shows one (`normalize`).
+    ///
+    /// Not at once: a GTK terminal starts when its GL area is first realized
+    /// (`initSurface`), and a stashed pane gets no card, so a pane stashed
+    /// before it was ever on screen would never start its shell or re-attach
+    /// its session. So the stash waits until every recorded pane has started
+    /// (a few frames after the restore built them), then applies in one go;
+    /// past `PendingStash.max_ticks` it applies anyway, and a pane that had
+    /// not started then starts when it is restored.
+    pub fn adoptRecordedStash(self: *Self, recorded: []const pane_stash.Recorded(Surface)) void {
         if (recorded.len == 0) return;
-        _ = pane_stash.applyRecorded(tree, recorded);
-        const active = self.getActiveSurface();
-        if (active == null or pane_stash.isStashed(active.?)) {
-            if (pane_stash.keepOrFirstVisible(tree.*, null)) |v| self.private().last_focused.set(v);
+        const alloc = Application.default().allocator();
+        const p = PendingStash.create(alloc, self, recorded) catch |err| {
+            log.warn("session layout stash not restored: {}", .{err});
+            return;
+        };
+        _ = glib.timeoutAdd(PendingStash.tick_ms, PendingStash.tick, p);
+    }
+
+    /// A relaunch's stash waiting for its panes to start (`adoptRecordedStash`).
+    /// Holds a reference to the split tree, and the panes by id, so a pane
+    /// closed meanwhile is simply skipped.
+    const PendingStash = struct {
+        split: *Self,
+        entries: []Entry,
+        ticks: u32 = 0,
+
+        const Entry = struct { id: []u8, index: u32 };
+        const tick_ms: c_uint = 50;
+        const max_ticks: u32 = 200; // 10 s
+
+        fn create(alloc: Allocator, split: *Self, recorded: []const pane_stash.Recorded(Surface)) Allocator.Error!*PendingStash {
+            const entries = try alloc.alloc(Entry, recorded.len);
+            var n: usize = 0;
+            errdefer {
+                for (entries[0..n]) |e| alloc.free(e.id);
+                alloc.free(entries);
+            }
+            for (recorded) |r| {
+                entries[n] = .{ .id = try alloc.dupe(u8, r.view.paneId()), .index = r.index };
+                n += 1;
+            }
+            const p = try alloc.create(PendingStash);
+            p.* = .{ .split = split, .entries = entries };
+            _ = split.as(gobject.Object).ref();
+            return p;
+        }
+
+        fn destroy(p: *PendingStash) void {
+            const alloc = Application.default().allocator();
+            p.split.as(gobject.Object).unref();
+            for (p.entries) |e| alloc.free(e.id);
+            alloc.free(p.entries);
+            alloc.destroy(p);
+        }
+
+        fn started(s: *Surface) bool {
+            return s.core() != null or s.getViewer() != null;
+        }
+
+        fn tick(ud: ?*anyopaque) callconv(.c) c_int {
+            const p: *PendingStash = @ptrCast(@alignCast(ud orelse return 0));
+            p.ticks += 1;
+            if (p.split.getTree() == null) {
+                p.destroy();
+                return 0;
+            }
+            const waiting = for (p.entries) |e| {
+                const v = p.split.surfaceById(e.id) orelse continue;
+                if (!started(v)) break true;
+            } else false;
+            if (waiting and p.ticks < max_ticks) return 1;
+            if (waiting) log.warn("session layout stash applied before every stashed pane started", .{});
+            p.split.applyRecordedStash(p.entries);
+            p.destroy();
+            return 0;
+        }
+    };
+
+    /// The pane with this pane id in the tree, or null.
+    fn surfaceById(self: *Self, id: []const u8) ?*Surface {
+        const tree = self.getTree() orelse return null;
+        var it = tree.iterator();
+        while (it.next()) |entry| if (std.mem.eql(u8, entry.view.paneId(), id)) return entry.view;
+        return null;
+    }
+
+    fn applyRecordedStash(self: *Self, entries: []const PendingStash.Entry) void {
+        const tree = self.getTree() orelse return;
+        var recorded: [pane_stash.max_reorder]pane_stash.Recorded(Surface) = undefined;
+        var n: usize = 0;
+        for (entries) |e| {
+            if (n == recorded.len) break;
+            const v = self.surfaceById(e.id) orelse continue;
+            recorded[n] = .{ .view = v, .index = e.index };
+            n += 1;
+        }
+        if (n == 0) return;
+        _ = pane_stash.applyRecorded(tree, recorded[0..n]);
+        // The caret leaves a pane that just left the layout: to the one
+        // focused last in the tab's saved history, else the first on show.
+        if (self.getActiveSurface() == null) {
+            if (self.private().stacks != null) self.focusRestoredPane();
+            if (self.getActiveSurface() == null) {
+                if (pane_stash.keepOrFirstVisible(tree.*, null)) |v| self.private().last_focused.set(v);
+            }
         }
         self.stashChanged();
         log.info("session layout re-stashed {d} pane(s) visible={d}", .{

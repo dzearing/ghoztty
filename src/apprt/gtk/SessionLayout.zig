@@ -483,7 +483,7 @@ fn restoreWindow(app: *Application, ctx: *Ctx, win: schema.Window) bool {
         buildSubtree(ctx, tree, tab.nodes, 0, anchor, 0) catch |err|
             log.warn("session layout: a tab's split tree is corrupt err={}; kept what was built", .{err});
         // Its stashed panes leave the layout again, in their recorded order
-        // (T3667, win32 T1838), before the focus below is chosen.
+        // (T3667, win32 T1838), once their terminals have started.
         restoreStash(tree, tab.nodes);
         // Its collapsed rows come back, and the caret goes to the pane it
         // was in - never a blade (T3627, Mac `restoredFocusTarget`).
