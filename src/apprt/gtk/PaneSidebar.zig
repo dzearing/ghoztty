@@ -1713,7 +1713,7 @@ fn findPane(pane_id: []const u8) ?FoundPane {
     return null;
 }
 
-const FoundTab = struct { win: *Window, tab: *Tab };
+pub const FoundTab = struct { win: *Window, tab: *Tab };
 
 /// The window (a tab) with this key, or null when it is gone.
 fn findTab(key: u64) ?FoundTab {
