@@ -101,5 +101,15 @@ hl_check "F3 the core's resize work stays inside a frame (worst ${rmax}us, budge
 [ "${dmax:-999999}" -lt "$BUDGET_US" ] 2>/dev/null
 hl_check "F4 no draw during the drag overruns a frame (worst ${dmax}us, mean ${dmean}us, budget ${BUDGET_US}us)" $?
 
+# F5: the person's real-screen reader (open.ps1 -DrawStats) reads this same
+# block - proven here against the harness app (Debug builds only: it names
+# ~/ghoztty-l/zig-out, open.ps1's build).
+if [ "$OPT" = Debug ]; then
+    ds_out=$(bash scripts/linux/draw-stats.sh 2>&1)
+    printf '%s\n' "$ds_out" | grep -q '^DRAW STATS read (1 pane(s))' &&
+        printf '%s\n' "$ds_out" | grep -q '^DRAW STATS pane=.* draws n=[1-9]'
+    hl_check "F5 scripts/linux/draw-stats.sh reads the open app's draw block" $? "$(printf '%s' "$ds_out" | tr '\n' '|')"
+fi
+
 rm -rf "$hl_home"
 hl_finish "$L"

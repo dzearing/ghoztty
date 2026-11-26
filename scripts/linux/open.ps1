@@ -3,6 +3,8 @@
 #   powershell -NoProfile -File scripts\linux\open.ps1            # launch the latest lane-l build
 #   powershell -NoProfile -File scripts\linux\open.ps1 -Build     # rebuild it first (lane l's tree)
 #   powershell -NoProfile -File scripts\linux\open.ps1 -Stop      # close every window it opened
+#   powershell -NoProfile -File scripts\linux\open.ps1 -DrawStats -Reset   # T3792: zero the frame counters,
+#   powershell -NoProfile -File scripts\linux\open.ps1 -DrawStats          # drag the edge, then read them
 #
 # Why this exists (user, 2026-11-24: "why havent we opened the linux version
 # yet? can't we automate that"). Every Linux test runs in a private headless
@@ -26,12 +28,14 @@
 # The floor is 8 GB, not wsl-run's 16: launching the app is not a zig build.
 # -Build uses the 16 GB floor, since that IS one.
 
-$Build = $false; $Stop = $false
+$Build = $false; $Stop = $false; $DrawStats = $false; $Reset = $false
 foreach ($a in $args) {
     switch -Regex ($a) {
         '^-Build$' { $Build = $true; break }
         '^-Stop$' { $Stop = $true; break }
-        default { Write-Host "open.ps1: unknown argument '$a' (use -Build or -Stop)"; exit 2 }
+        '^-DrawStats$' { $DrawStats = $true; break }
+        '^-Reset$' { $Reset = $true; break }
+        default { Write-Host "open.ps1: unknown argument '$a' (use -Build, -Stop or -DrawStats [-Reset])"; exit 2 }
     }
 }
 
@@ -43,6 +47,14 @@ $log = '/tmp/ghoztty-open.log'
 if ($Stop) {
     # Only our build's processes, by full path - never a bare 'ghoztty'.
     & $wslRun -AllowAnyLane -KeepRunning -NoLease -Repo mnt -MinFreeGB 1 -Step "pkill -f '^$bin( |$)' && echo 'OPEN stopped the Linux Ghoztty' || echo 'OPEN no Linux Ghoztty was running'"
+    exit $LASTEXITCODE
+}
+
+if ($DrawStats) {
+    # T3792: what the open app's frames and resizes cost on the real screen.
+    # -Reset first, drag the window edge for a few seconds, then read.
+    $arg = if ($Reset) { ' --reset' } else { '' }
+    & $wslRun -AllowAnyLane -KeepRunning -NoLease -Repo mnt -MinFreeGB 1 -Step "bash scripts/linux/draw-stats.sh$arg"
     exit $LASTEXITCODE
 }
 
