@@ -1,12 +1,10 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-11-25T21:43:36-08:00",
-    "commit":  "169fd8fa7c",
+    "generated":  "2026-11-25T22:13:07-08:00",
+    "commit":  "aadf6d5bb6",
     "uncommitted":  [
-                        "test/win32/chrome-merged-row.ps1",
-                        "test/win32/lib/ChromeGeometry.ps1",
-                        "test/win32/new-tab-shell.ps1"
+
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "cfa23792d110d499fa4086697daa516d218d0d110e594a7452167a81220ee15e",
@@ -552,7 +550,7 @@
                   "test/win32/settings-advanced.ps1":  "163e889110586bcab9f17f189fc06e6e0c16bb733e35a734c65f157a4e81ab1f",
                   "test/win32/settings-open-latency.ps1":  "2d89e51886b2d7042ec60cb6e3835ef66b809e9c6aa9c3a5bd951d38fd0c4f72",
                   "test/win32/settings-remote-machines.ps1":  "a16e827b8c1836eb395c408b47a29c7ea0687b5cdaf877b5c58297dfca52b44c",
-                  "test/win32/settings-window.ps1":  "e05a291834278ec2c4aafdd208c900f7508cd19e36574832ad5a580e0cf2b18b",
+                  "test/win32/settings-window.ps1":  "abc135aeb74d2db7e66d5691044d43412a820a044d0b1b5e811880c09b9739fc",
                   "test/win32/setup-front-door.ps1":  "adf700c80246004738d8717e9cc25c7be3b4c4e32ecf3354cfb977d9fc72d13b",
                   "test/win32/share-machine.ps1":  "34e40c8ca85c443766d887410f57d43e8e2085a3a0cd8b71bdfdc2f64df792cc",
                   "test/win32/ship-workflow.ps1":  "7bf70cc43ea794bd74bf0805a941d717b21105f67302ea654794cebdd6195ac6",
