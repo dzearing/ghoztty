@@ -975,6 +975,8 @@ fn workspacesSeam(app: Context, request: Request) Allocator.Error![]u8 {
         /// Its OWN GtkWindow is mapped (only the toplevel's ever is).
         mapped: bool,
         panes: usize,
+        /// Its tab count: a new tab is a new workspace (T3649), so 1.
+        tabs: usize,
         owner_ok: bool,
     };
     const snap = Workspaces.snapshot();
@@ -1002,6 +1004,7 @@ fn workspacesSeam(app: Context, request: Request) Allocator.Error![]u8 {
             .seen = w.isSeen(),
             .mapped = w.as(gtk.Widget).getMapped() != 0,
             .panes = panes,
+            .tabs = n,
             .owner_ok = owner_ok,
         });
     }
@@ -1017,6 +1020,16 @@ fn workspacesSeam(app: Context, request: Request) Allocator.Error![]u8 {
         (if (t.as(gtk.Window).getTitle()) |c| std.mem.span(c) else null)
     else
         null;
+    // T3649: the workspace whose pane has the toplevel's keyboard focus,
+    // and the all-windows list's order (what goto_tab / goto_window walk).
+    const focus_window: ?[]const u8 = focus: {
+        const t = snap.toplevel orelse break :focus null;
+        const f = t.as(gtk.Window).getFocus() orelse break :focus null;
+        const owner = ext.getAncestor(Window, f) orelse break :focus null;
+        break :focus windowName(app, owner);
+    };
+    var list_names: std.ArrayListUnmanaged(?[]const u8) = .empty;
+    for (try @import("PaneSidebar.zig").listOrder(arena)) |f| try list_names.append(arena, windowName(app, f.win));
 
     var out: std.Io.Writer.Allocating = .init(c_alloc);
     defer out.deinit();
@@ -1030,6 +1043,8 @@ fn workspacesSeam(app: Context, request: Request) Allocator.Error![]u8 {
             .active = if (snap.active) |a| windowName(app, a) else null,
             .content = content_name,
             .shown = shown,
+            .focus_window = focus_window,
+            .list = list_names.items,
             .order = rows.items,
         },
     }, .{}, &out.writer) catch return error.OutOfMemory;
@@ -3068,8 +3083,11 @@ pub fn focusTarget(target: Target) void {
     if (target.surface()) |s| {
         if (tabOf(window, s)) |tab| tab.getSplitTree().focusSurface(s);
         s.present();
-    } else window.as(gtk.Window).present();
-    watchActivation(window);
+    } else window.bringForward();
+    // In single-window mode the window the compositor activates is the
+    // shared toplevel, never a workspace's own (T3649).
+    const Workspaces = @import("Workspaces.zig");
+    watchActivation(if (Workspaces.manages(window)) Workspaces.physical() orelse window else window);
 }
 
 /// The note a `--focus` reply carries when the request cannot be expected to

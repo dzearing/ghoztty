@@ -87,6 +87,7 @@ const Application = @import("class/application.zig").Application;
 const Window = @import("class/window.zig").Window;
 const Surface = @import("class/surface.zig").Surface;
 const Tab = @import("class/tab.zig").Tab;
+const Workspaces = @import("Workspaces.zig");
 
 const log = std.log.scoped(.gtk_pane_sidebar);
 
@@ -572,12 +573,20 @@ const Gathered = struct {
     windows: []all.Window,
     surfaces: []const []const *Surface,
     actives: []const ?*Surface,
+    /// Each list window's GTK window and tab, parallel to `windows`.
+    found: []const FoundTab,
 };
 
 fn gather(self: *PaneSidebar, arena: Allocator) Allocator.Error!Gathered {
+    return gatherFor(self.window, arena);
+}
+
+/// `gather` with `own` as the window the list is drawn in (null: none is).
+fn gatherFor(own: ?*Window, arena: Allocator) Allocator.Error!Gathered {
     var windows: std.ArrayListUnmanaged(all.Window) = .empty;
     var surfaces: std.ArrayListUnmanaged([]const *Surface) = .empty;
     var actives: std.ArrayListUnmanaged(?*Surface) = .empty;
+    var found: std.ArrayListUnmanaged(FoundTab) = .empty;
     var live: std.AutoHashMapUnmanaged(usize, void) = .empty;
 
     var node: ?*glib.List = Application.default().as(gtk.Application).getWindows();
@@ -618,11 +627,12 @@ fn gather(self: *PaneSidebar, arena: Allocator) Allocator.Error!Gathered {
                 )),
                 .key = key,
                 .opened = seq,
-                .own = win == self.window and selected == page,
+                .own = if (own) |o| win == o and selected == page else false,
                 .panes = panes,
             });
             try surfaces.append(arena, leaves.items);
             try actives.append(arena, active);
+            try found.append(arena, .{ .win = win, .tab = tab });
         }
     }
 
@@ -632,7 +642,20 @@ fn gather(self: *PaneSidebar, arena: Allocator) Allocator.Error!Gathered {
     while (it.next()) |k| if (!live.contains(k.*)) try stale.append(arena, k.*);
     for (stale.items) |k| _ = opened.remove(k);
 
-    return .{ .windows = windows.items, .surfaces = surfaces.items, .actives = actives.items };
+    return .{ .windows = windows.items, .surfaces = surfaces.items, .actives = actives.items, .found = found.items };
+}
+
+/// The all-windows list's windows (GTK window + tab) in the list's order,
+/// headers left out (`all.railOrder`, the order the outline draws them in):
+/// what goto_tab and goto_window walk in single-window mode (T3649; Mac
+/// `TerminalController.sidebarOrder`, win32 `PaneSidebar.allWindowsOrder`).
+pub fn listOrder(arena: Allocator) Allocator.Error![]const FoundTab {
+    if (!loaded) return &.{};
+    const g = try gatherFor(null, arena);
+    const at = try all.railOrder(arena, g.windows);
+    const out = try arena.alloc(FoundTab, at.len);
+    for (at, out) |i, *o| o.* = g.found[i];
+    return out;
 }
 
 /// The all-windows list: the outline (expanded) or a tile per window (the
@@ -1871,8 +1894,14 @@ pub fn focusPane(self: *PaneSidebar, pane_id: []const u8) bool {
                 else
                     tab.getSplitTree().focusSurface(entry.view);
                 // Another window's (or tab's) pane: its own present request
-                // selects its tab and raises its window.
-                if (!here) entry.view.present();
+                // selects its tab and raises its window - in single-window
+                // mode, puts its workspace on show, a turn later (T3649).
+                if (!here) {
+                    if (Workspaces.applies(win) and win != self.window)
+                        raiseLater(.{ .pane = pane_id })
+                    else
+                        entry.view.present();
+                }
                 return true;
             }
         }
@@ -1880,8 +1909,55 @@ pub fn focusPane(self: *PaneSidebar, pane_id: []const u8) bool {
     return false;
 }
 
+/// A switch the all-windows list asked for, run on the next idle turn
+/// (T3649, win32 `showWorkspaceLater`): in single-window mode the hand-off
+/// takes the clicked sidebar's own workspace out of the window, in the
+/// middle of the click's signal. The latest request wins; what it names is
+/// looked up again when it runs, never trusted.
+const PendingRaise = union(enum) { tab: u64, pane: []const u8 };
+var pending_raise_kind: enum { none, tab, pane } = .none;
+var pending_raise_tab: u64 = 0;
+var pending_raise_pane: [64]u8 = undefined;
+var pending_raise_pane_len: usize = 0;
+
+fn raiseLater(req: PendingRaise) void {
+    const first = pending_raise_kind == .none;
+    switch (req) {
+        .tab => |k| {
+            pending_raise_kind = .tab;
+            pending_raise_tab = k;
+        },
+        .pane => |id| {
+            const n = @min(id.len, pending_raise_pane.len);
+            @memcpy(pending_raise_pane[0..n], id[0..n]);
+            pending_raise_pane_len = n;
+            pending_raise_kind = .pane;
+        },
+    }
+    if (first) _ = wk.g_idle_add(@ptrCast(&onRaiseIdle), null);
+}
+
+fn onRaiseIdle(_: ?*anyopaque) callconv(.c) c_int {
+    const kind = pending_raise_kind;
+    pending_raise_kind = .none;
+    switch (kind) {
+        .none => {},
+        .tab => if (findTab(pending_raise_tab)) |f| {
+            log.info("workspace switch from the sidebar key={x}", .{pending_raise_tab});
+            f.win.getTabView().setSelectedPage(f.win.getTabView().getPage(f.tab.as(gtk.Widget)));
+            f.win.bringForward();
+        },
+        .pane => if (findPane(pending_raise_pane[0..pending_raise_pane_len])) |f| {
+            log.info("workspace switch from the sidebar pane={s}", .{pending_raise_pane[0..pending_raise_pane_len]});
+            f.surface.present();
+        },
+    }
+    return 0; // G_SOURCE_REMOVE
+}
+
 /// Bring the window (tab) with this key forward: select its tab and raise
-/// its window. False when it is gone.
+/// its window - in single-window mode, put its workspace on show (Mac
+/// `bringForward`), a turn later. False when it is gone.
 fn raiseWindow(key: u64) bool {
     var node: ?*glib.List = Application.default().as(gtk.Application).getWindows();
     while (node) |n| {
@@ -1897,6 +1973,10 @@ fn raiseWindow(key: u64) bool {
             const tab = gobject.ext.cast(Tab, page.getChild()) orelse continue;
             if (@intFromPtr(tab) != key) continue;
             log.info("pane sidebar window clicked key={x}", .{key});
+            if (Workspaces.applies(win)) {
+                raiseLater(.{ .tab = key });
+                return true;
+            }
             tab_view.setSelectedPage(page);
             win.as(gtk.Window).present();
             return true;

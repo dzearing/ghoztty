@@ -1469,7 +1469,10 @@ pub const Window = extern struct {
     }
 
     fn rearrangeKeyPressed(_: *wk.GtkEventController, keyval: c_uint, _: c_uint, state: c_uint, self: *Self) callconv(.c) c_int {
-        return @intFromBool(self.rearrangeKey(keyval, state));
+        // The controller is on the GtkWindow: in single-window mode that is
+        // the shared toplevel, and the key is for the workspace on show in
+        // it, not the toplevel's own (T3649).
+        return @intFromBool(Workspaces.keyTarget(self).rearrangeKey(keyval, state));
     }
 
     // ---- Pane drops on the tab bar, and the tab dwell (T3615) -----------------
@@ -1517,7 +1520,9 @@ pub const Window = extern struct {
     pub fn finishArrival(self: *Self, moved: []const *Surface, source_mode: bool) void {
         for (moved) |s| s.clearDetachPin();
         if (source_mode and !self.rearrangeMode()) self.setRearrangeMode(true);
-        self.as(gtk.Window).present();
+        // A pane popped out to a new window: in single-window mode a new
+        // workspace, on show (T3649).
+        self.bringForward();
     }
 
     /// The selected tab's position, or null with none.
@@ -2937,6 +2942,20 @@ pub const Window = extern struct {
         self.contentRoot().insertActionGroup("win", null);
     }
 
+    /// "Go to this window" (Mac `bringForward`, T3649): a sidebar click,
+    /// `--focus`, a pane's present request, goto_window. In single-window
+    /// mode it puts this workspace on show in the shared toplevel (admitting
+    /// a window built outside `initAndShowWindow` - a tab or pane dragged
+    /// out - as a new workspace first); otherwise it presents this window.
+    pub fn bringForward(self: *Self) void {
+        if (Workspaces.applies(self)) {
+            if (!Workspaces.manages(self)) {
+                if (Workspaces.present(self, true)) return;
+            } else if (Workspaces.show(self, true)) return;
+        }
+        self.as(gtk.Window).present();
+    }
+
     /// Whether this workspace's content is held out of every window.
     pub fn isContentHeld(self: *Self) bool {
         return self.private().held_content != null;
@@ -2985,8 +3004,10 @@ pub const Window = extern struct {
             },
         );
 
-        // We have to show it otherwise it'll just be hidden.
-        gtk.Window.present(win.as(gtk.Window));
+        // We have to show it otherwise it'll just be hidden. In
+        // single-window mode a tab dragged out is a new workspace, on show
+        // (T3649).
+        win.bringForward();
 
         // Get our tab view
         return win.private().tab_view;
@@ -3098,11 +3119,11 @@ pub const Window = extern struct {
         const page = tab_view.getPage(tab.as(gtk.Widget));
         tab_view.setSelectedPage(page);
 
-        // Grab focus
+        // Bring the window to the front - in single-window mode, its
+        // workspace on show (T3649) - then focus the pane, which a parked
+        // workspace's pane could not take out of every window.
+        self.bringForward();
         surface.grabFocus();
-
-        // Bring the window to the front.
-        self.as(gtk.Window).present();
     }
 
     fn surfaceToggleFullscreen(

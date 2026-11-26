@@ -44,6 +44,7 @@ const Config = @import("config.zig").Config;
 const Surface = @import("surface.zig").Surface;
 const SplitTree = @import("split_tree.zig").SplitTree;
 const Window = @import("window.zig").Window;
+const Workspaces = @import("../Workspaces.zig");
 const Tab = @import("tab.zig").Tab;
 const CloseConfirmationDialog = @import("close_confirmation_dialog.zig").CloseConfirmationDialog;
 const ConfigErrorsDialog = @import("config_errors_dialog.zig").ConfigErrorsDialog;
@@ -1172,6 +1173,7 @@ pub const Application = extern struct {
         switch (action) {
             .new_tab => {
                 const w = window orelse return false;
+                if (Workspaces.newTabIsWindow(w, hostTerminal(surface))) return true;
                 w.newTab(hostTerminal(surface));
                 return true;
             },
@@ -1182,6 +1184,13 @@ pub const Application = extern struct {
             ) != 0,
             inline .previous_tab, .next_tab, .last_tab, .goto_tab => |v, tag| {
                 const w = window orelse return false;
+                if (Workspaces.gotoTab(w, switch (tag) {
+                    .previous_tab => -1,
+                    .next_tab => -2,
+                    .last_tab => -3,
+                    .goto_tab => @intCast(v),
+                    else => comptime unreachable,
+                })) return true;
                 return w.selectTab(switch (tag) {
                     .previous_tab => .previous,
                     .next_tab => .next,
@@ -2676,6 +2685,9 @@ const Action = struct {
                     return false;
                 };
 
+                // Single-window mode: the workspaces are the tabs (T3649).
+                if (Workspaces.gotoTab(window, @intFromEnum(tab))) return true;
+
                 return window.selectTab(switch (tab) {
                     .previous => .previous,
                     .next => .next,
@@ -2687,6 +2699,11 @@ const Action = struct {
     }
 
     pub fn gotoWindow(direction: apprt.action.GotoWindow) bool {
+        // Single-window mode: one along the pane sidebar's all-windows list,
+        // its workspace put on show (T3649). Only one toplevel is mapped,
+        // so the walk below would find nowhere to go.
+        if (Workspaces.gotoWindow(direction == .next)) return true;
+
         const glist = gtk.Window.listToplevels();
         defer glist.free();
 
@@ -2866,6 +2883,8 @@ const Action = struct {
                     log.warn("surface is not in a window, ignoring new_tab", .{});
                     return false;
                 };
+                // Single-window mode: a new tab is a new workspace (T3649).
+                if (Workspaces.newTabIsWindow(window, core)) return true;
                 window.newTab(core);
                 return true;
             },

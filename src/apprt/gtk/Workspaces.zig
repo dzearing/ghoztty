@@ -44,6 +44,8 @@ const wk = @import("webkit.zig");
 const Application = @import("class/application.zig").Application;
 const window_mode = @import("../win32/window_mode.zig");
 const workspace_host = @import("../win32/workspace_host.zig");
+const window_order = @import("../win32/pane_sidebar_window_order.zig");
+const PaneSidebar = @import("PaneSidebar.zig");
 
 const log = std.log.scoped(.gtk_workspaces);
 
@@ -218,8 +220,90 @@ fn handOff(from: *Window, to: *Window) void {
     if (to.currentTitle()) |title| t.as(gtk.Window).setTitle(title);
     from.syncSeen();
     to.syncSeen();
+    // Focus goes back where it was in `to` (Mac adoptWindow): the focused
+    // pane of `from` left the window with its content, so nothing would
+    // have it otherwise.
+    if (to.getActiveSurface()) |s| s.grabFocus();
     t.queueSidebarRefresh();
+    to.queueSidebarRefresh();
     log.info("workspace: show window={s} (from {s})", .{ name(to), name(from) });
+}
+
+/// The workspace a controller on `win`'s own GtkWindow acts for: in single
+/// mode the toplevel's controllers see keys for the workspace on show in it
+/// (T3649), not for the toplevel's own workspace.
+pub fn keyTarget(win: *Window) *Window {
+    if (toplevel == win) if (host.active) |a| return a;
+    return win;
+}
+
+/// `goto_tab` in single mode (T3649; Mac `onGotoTab` over `sidebarOrder`,
+/// win32 `gotoWorkspaceTab`): there are no tabs - a new tab is a new
+/// workspace - so previous/next/last/N walk the windows of the pane
+/// sidebar's all-windows list, and going to one puts its workspace on show.
+/// `raw` is `apprt.action.GotoTab`'s value. False when `win` is no workspace
+/// (the caller selects a tab as before) or there is nowhere else to go.
+pub fn gotoTab(win: *Window, raw: c_int) bool {
+    if (!applies(win) or !host.manages(win)) return false;
+    var arena_state = std.heap.ArenaAllocator.init(Application.default().allocator());
+    defer arena_state.deinit();
+    const list = PaneSidebar.listOrder(arena_state.allocator()) catch return false;
+    const at = indexOf(list, win);
+    const to = window_order.gotoTab(list.len, at, raw) orelse {
+        log.info("goto_tab {d} over workspaces: nowhere else to go ({d} listed)", .{ raw, list.len });
+        return false;
+    };
+    log.info("goto_tab {d} over workspaces: {d} -> {d} of {d} window={s}", .{ raw, at orelse list.len, to, list.len, name(list[to].win) });
+    goTo(list[to]);
+    return true;
+}
+
+/// `goto_window` in single mode (T3649; Mac `gotoWindow` over
+/// `sidebarOrder`): one along the all-windows list, wrapping. False when
+/// single mode is not in force (the caller walks the toplevels as before).
+pub fn gotoWindow(next: bool) bool {
+    if (window_mode.current() != .single) return false;
+    const a = host.active orelse return false;
+    var arena_state = std.heap.ArenaAllocator.init(Application.default().allocator());
+    defer arena_state.deinit();
+    const list = PaneSidebar.listOrder(arena_state.allocator()) catch return false;
+    const at = indexOf(list, a);
+    const to = window_order.stepped(list.len, at, if (next) .next else .previous) orelse {
+        log.info("goto_window over workspaces: nowhere else to go ({d} listed)", .{list.len});
+        return false;
+    };
+    log.info("goto_window {s} over workspaces: {d} -> {d} of {d} window={s}", .{ if (next) "next" else "previous", at orelse list.len, to, list.len, name(list[to].win) });
+    goTo(list[to]);
+    return true;
+}
+
+/// The list entry of the workspace on show's selected tab, else its first.
+fn indexOf(list: []const PaneSidebar.FoundTab, win: *Window) ?usize {
+    const sel = win.getSelectedTab();
+    var first: ?usize = null;
+    for (list, 0..) |f, i| {
+        if (f.win != win) continue;
+        if (sel) |s| if (s == f.tab) return i;
+        if (first == null) first = i;
+    }
+    return first;
+}
+
+fn goTo(f: PaneSidebar.FoundTab) void {
+    const tv = f.win.getTabView();
+    tv.setSelectedPage(tv.getPage(f.tab.as(gtk.Widget)));
+    f.win.bringForward();
+}
+
+/// A new tab in single mode is a new workspace (T3649; Mac
+/// `TerminalController.newTab`): opened exactly as Ctrl+Shift+N opens one
+/// from `parent`, on show. False when `win` is no workspace: the caller
+/// opens a tab as before.
+pub fn newTabIsWindow(win: *Window, parent: anytype) bool {
+    if (!applies(win)) return false;
+    log.info("new_tab in single-window mode opens a workspace (from window={s})", .{name(win)});
+    _ = Application.default().newWindowFromSidebar(parent, null);
+    return true;
 }
 
 /// `win` is being disposed. Its content must never go down with a toplevel
