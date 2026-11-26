@@ -1,8 +1,8 @@
 {
     "guard":  "unwired-hook",
     "script":  "test/win32/unwired-hook-audit.ps1",
-    "generated":  "2026-11-25T22:40:58-08:00",
-    "commit":  "49e3e290d0",
+    "generated":  "2026-11-25T22:41:58-08:00",
+    "commit":  "3efaf91618",
     "uncommitted":  [
 
                     ],
@@ -1709,7 +1709,7 @@
                   "test/win32/sprite-testdata.ps1":  "79914472fe57b285f38ca6e0740a22e4975c142ccd15fe554b9b3b0835033d21",
                   "test/win32/stack-caret-on-show.ps1":  "70db1bcbb5a17f5e0819d05b500a247ed314f385d7ef752d37f7450866d95541",
                   "test/win32/stack-collapse-carry.ps1":  "2fb0e9c3403e77a583f2eee95338ea9b0cbd9005eff39ca7dd278e5e202b713c",
-                  "test/win32/stack-collapse-drag.ps1":  "3920e3507becefdfffe664522336401ed45fe9c6b0006b85494d199f0cad090f",
+                  "test/win32/stack-collapse-drag.ps1":  "361cdf30d5cc7152c6ea7457809cef559f7b831ff0bf3e1ec7fae84ff37a54fb",
                   "test/win32/stack-fold-slide.ps1":  "e663a7f1cafad809988faf665a58dd7e40797e46dbada6dab251cff39986655f",
                   "test/win32/stale-build-notify.ps1":  "4ab2898604ac45d3a62e7f78232a6e6a02081d7fee27716f1975831fda65d4a1",
                   "test/win32/startup-failure.ps1":  "17e72b90d659b5f98d19e3f18aa7aca5d9ba87004f41a10016ba96f08ca015ea",

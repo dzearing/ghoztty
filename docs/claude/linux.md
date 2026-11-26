@@ -2268,15 +2268,12 @@ never counts.
 - **Leaving.** The content root's `win` group references its Window, a cycle
   that keeps a destroyed workspace from disposing, and GTK clears a destroyed
   window's `application` with no notify. So a workspace leaves the host on the
-  application's `window-removed` (`Window.leaveWorkspace`). Until T3652 a
-  close is only kept SAFE: a parked one closes in place, the one on show hands
-  the toplevel back, and when the toplevel's own workspace closes the one on
-  show maps a GtkWindow of its own (a second window appears - T3652 keeps one).
-- **Known gaps, filed on their cards**: a workspace parked from birth has no
+  application's `window-removed` (`Window.leaveWorkspace`). The close
+  experience is the next section (T3652).
+- **Known gap, filed on its card**: a workspace parked from birth has no
   running terminal until first shown (the core surface starts on the GLArea's
-  first resize, which needs a mapped allocation - T3786); the toplevel's own
-  close button acts for the toplevel's own workspace (T3652); the desk is the
-  toplevel workspace's (T3651).
+  first resize, which needs a mapped allocation - T3786). A test that needs a
+  busy parked workspace starts it on show and parks it after.
 - **Seam**: debug-only `hl_ipc workspaces [--show=<pane|window>]` - `mode`,
   `toplevel`, `active`, `content` (whose content root IS the toplevel's
   content: the hand-off's oracle), `toplevel_title`, `focus_window` (the
@@ -2289,8 +2286,37 @@ never counts.
 powershell -NoProfile -File scripts\linux\wsl-run.ps1 -CommandFile test\linux\window-workspaces.sh
 ```
 
-Ends `WINDOW WORKSPACES: ALL PASS` (28 checks, about a minute). K9 is the negative control: the key
+Ends `WINDOW WORKSPACES: ALL PASS` (43 checks, about two minutes). K9 is the negative control: the key
 unset makes no workspaces.
+
+### Closing (T3652)
+
+- **The one on show** hands the window to the workspace shown before it
+  (`Host.close` -> `hand_to`, then `Workspaces.adopt`: content, title, the
+  T3651 shade fade, focus, sidebar). **A parked one** closes in place. **The
+  last one** closes the window.
+- **The toplevel's own workspace closing never makes a second window.** GTK
+  cannot hand a GtkWindow from one `Window` to another, so `Workspaces.retire`
+  closes the WORKSPACE and `Window.becomeFrame` ends what made it one (tabs,
+  undo entries, sidebar, relay record, IPC name); its GtkWindow stays mapped
+  as the FRAME the others show in (`isFrame`; the seam's `toplevel` reads null
+  and `toplevel_frame` true). Every window walk skips a frame. The last
+  workspace's close destroys it on the next idle (log `workspace: the last
+  workspace closed; the shared window closes`).
+- **Every close-for-good goes through `Window.closeNow`** (retire, else
+  destroy) and **every close that may ask through `Window.requestClose`**. The
+  toplevel's own close-request (headerbar x, compositor close) is routed to
+  the workspace on show (`closeRequestTarget`); `win.close`, a last pane
+  going and the seam ask for the workspace's OWN close, never routed.
+- **A close that asks** puts a parked workspace on show first and presents
+  the Close Window? dialog inside the toplevel (`dialogParent`);
+  `openDialog` looks in `dialogHost` (the toplevel for the workspace on show,
+  nothing for a parked one or a frame).
+- Undo of a workspace close is T3790, after window-close undo (T3665).
+- Seam: `workspaces` has `toplevel_frame`, `gtk_windows` and
+  `mapped_windows` (the "one window" oracle); `close-dialog --target=<w>
+  --op=frame` presses the toplevel's close button, `--op=window` the
+  target's own close.
 
 ### Switching and every open path (T3649)
 
@@ -2335,9 +2361,8 @@ powershell -NoProfile -File scripts\linux\wsl-run.ps1 -Step 'NEGATIVE=1 bash tes
 
 Ends `WINDOW WORKSPACE SWITCH: ALL PASS` (27 checks, about a minute).
 `NEGATIVE=1` runs it in `separate` mode and must fail from S1 on (20
-failures). Still to come: the shade fade (T3651),
-closing (T3652), the CLI (T3653), rolled-up activity (T3654), persistence
-(T3655).
+failures). Still to come: the CLI (T3653), rolled-up activity (T3654),
+persistence (T3655), undo of a workspace close (T3790).
 
 ### Parked layout (T3650)
 
