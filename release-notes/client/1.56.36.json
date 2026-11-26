@@ -1,0 +1,20 @@
+{
+  "version": "1.56.36",
+  "sections": [
+    { "title": "New",
+      "items": [
+        { "text": "A closed Linux window can be undone from any other window." },
+        { "text": "Linux keeps stashed panes hidden across a relaunch, and resize, equalize, swap and drops skip them." },
+        { "text": "On Linux, remote windows, tabs and splits use the machine's Host Settings shell and folder, as on the Mac." }
+      ] },
+    { "title": "Fixes",
+      "items": [
+        { "text": "A split or new tab of a WSL pane starts in that pane's folder when WSL is the default shell." }
+      ] },
+    { "title": "Improvements",
+      "items": [
+        { "text": "The rail reuses each resting tile's glassy rim instead of redrawing it pixel by pixel on every paint." },
+        { "text": "A pane sidebar scroll step is measured on Windows in Mac's 40-window scene, and costs about 4 ms." }
+      ] }
+  ]
+}
