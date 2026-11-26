@@ -168,6 +168,7 @@ pill() { hl_ipc remote-pill "--target=$1" "${2:---op=state}" 2>&1; }
 field() { printf '%s' "$1" | python3 -c '
 import json, sys
 v = json.load(sys.stdin)
+v = v.get("data", v) if isinstance(v, dict) else v
 for k in sys.argv[1].split("."):
     v = v.get(k) if isinstance(v, dict) else None
 print("" if v is None else (str(v).lower() if isinstance(v, bool) else v))' "$2" 2>/dev/null; }
