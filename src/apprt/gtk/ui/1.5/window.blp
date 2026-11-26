@@ -317,6 +317,14 @@ menu main_menu {
   }
 
   section {
+    // Shown only while a newer background process waits for the sessions
+    // to close (T3691): its action is enabled exactly then.
+    item {
+      label: _("Background Update Ready…");
+      action: "app.install-agent-update";
+      hidden-when: "action-disabled";
+    }
+
     item {
       label: _("Keyboard Shortcuts");
       action: "app.show-keyboard-shortcuts";

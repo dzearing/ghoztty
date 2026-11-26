@@ -17,6 +17,9 @@ const Window = @import("window.zig").Window;
 const Surface = @import("surface.zig").Surface;
 const Tab = @import("tab.zig").Tab;
 const Config = @import("config.zig").Config;
+const AgentUpgrade = @import("../AgentUpgrade.zig");
+const agent_upgrade = @import("../../win32/agent_upgrade.zig");
+const agent_upgrade_rules = @import("../agent_upgrade_rules.zig");
 
 const log = std.log.scoped(.gtk_ghostty_command_palette);
 
@@ -142,6 +145,14 @@ pub const CommandPalette = extern struct {
     // Signal Handlers
 
     fn propConfig(self: *CommandPalette, _: *gobject.ParamSpec, _: ?*anyopaque) callconv(.c) void {
+        self.rebuild();
+    }
+
+    /// Refill the list from the config, the open surfaces, and the app state
+    /// rows (T3691). Run when the config changes and each time the palette
+    /// opens, so a row that depends on state (the waiting background update)
+    /// is current when the user looks.
+    fn rebuild(self: *CommandPalette) void {
         const priv = self.private();
 
         const config = priv.config orelse {
@@ -164,6 +175,7 @@ pub const CommandPalette = extern struct {
         };
 
         self.collectRegularCommands(config, &commands, alloc);
+        collectStateCommands(config, &commands, alloc);
 
         // Sort commands
         std.mem.sort(*Command, commands.items, {}, struct {
@@ -204,6 +216,23 @@ pub const CommandPalette = extern struct {
                 continue;
             };
         }
+    }
+
+    /// Rows that exist only while some app state holds (T3691): today the
+    /// waiting background-process update (win32's `install_agent_update`,
+    /// listed only while `agent_update_pending`).
+    fn collectStateCommands(config: *Config, commands: *std.ArrayList(*Command), alloc: Allocator) void {
+        if (AgentUpgrade.pendingUpdate(Application.default()) == null) return;
+        const cmd = Command.newAppAction(
+            config,
+            agent_upgrade.pending_palette_name,
+            "A newer background process is waiting for your sessions to close",
+            agent_upgrade_rules.install_action_detailed,
+        );
+        commands.append(alloc, cmd) catch |err| {
+            cmd.unref();
+            log.warn("failed to add command to list: {}", .{err});
+        };
     }
 
     /// Check if an action is supported on GTK.
@@ -270,11 +299,11 @@ pub const CommandPalette = extern struct {
 
         // Titles are equal - use sort_key as tie-breaker if both are jump commands
         const a_sort_key = switch (a.private().data) {
-            .regular => return false,
+            .regular, .app_action => return false,
             .jump => |*ja| ja.sort_key,
         };
         const b_sort_key = switch (b.private().data) {
-            .regular => return false,
+            .regular, .app_action => return false,
             .jump => |*jb| jb.sort_key,
         };
 
@@ -318,6 +347,9 @@ pub const CommandPalette = extern struct {
             return;
         }
 
+        // State rows (T3691) are read as the palette opens.
+        self.rebuild();
+
         // Show the dialog
         priv.dialog.present(window.as(gtk.Widget));
 
@@ -341,6 +373,15 @@ pub const CommandPalette = extern struct {
         self.close();
 
         const cmd = gobject.ext.cast(Command, object_ orelse return) orelse return;
+
+        // An app-state row runs its GAction on the application (T3691).
+        if (cmd.getAppAction()) |name| {
+            const dot = std.mem.indexOfScalar(u8, name, '.') orelse return;
+            var buf: [128]u8 = undefined;
+            const bare = std.fmt.bufPrintZ(&buf, "{s}", .{name[dot + 1 ..]}) catch return;
+            Application.default().as(gio.ActionGroup).activateAction(bare.ptr, null);
+            return;
+        }
 
         // Handle jump commands differently
         if (cmd.isJump()) {
@@ -581,6 +622,16 @@ const Command = extern struct {
         pub const CommandData = union(enum) {
             regular: RegularData,
             jump: JumpData,
+            app_action: AppActionData,
+        };
+
+        /// A row that runs an application GAction (T3691). Strings are
+        /// static.
+        pub const AppActionData = struct {
+            title: [:0]const u8,
+            description: [:0]const u8,
+            /// Detailed name, `app.<name>`; also the row's action key.
+            action: [:0]const u8,
         };
 
         pub const RegularData = struct {
@@ -613,6 +664,24 @@ const Command = extern struct {
         };
 
         return self;
+    }
+
+    /// A row that runs the application action `action` (`app.<name>`) when
+    /// chosen (T3691). The strings must be static.
+    pub fn newAppAction(config: *Config, title: [:0]const u8, description: [:0]const u8, action: [:0]const u8) *Self {
+        const self = gobject.ext.newInstance(Self, .{
+            .config = config,
+        });
+        self.private().data = .{ .app_action = .{ .title = title, .description = description, .action = action } };
+        return self;
+    }
+
+    /// The `app.<name>` action an app-state row runs, else null.
+    pub fn getAppAction(self: *Self) ?[:0]const u8 {
+        return switch (self.private().data) {
+            .app_action => |a| a.action,
+            else => null,
+        };
     }
 
     /// Create a new jump command that focuses a specific surface.
@@ -651,7 +720,7 @@ const Command = extern struct {
         }
 
         switch (priv.data) {
-            .regular => {},
+            .regular, .app_action => {},
             .jump => |*j| {
                 j.surface.set(null);
             },
@@ -682,6 +751,7 @@ const Command = extern struct {
         const regular = switch (priv.data) {
             .regular => |*r| r,
             .jump => return null,
+            .app_action => |a| return a.action,
         };
 
         if (regular.action_key) |action_key| return action_key;
@@ -701,7 +771,8 @@ const Command = extern struct {
 
         const regular = switch (priv.data) {
             .regular => |*r| r,
-            .jump => return null,
+            // No keybind: an app-state row has no accelerator to show.
+            .jump, .app_action => return null,
         };
 
         if (regular.action) |action| return action;
@@ -725,6 +796,7 @@ const Command = extern struct {
         const priv = self.private();
 
         switch (priv.data) {
+            .app_action => |a| return a.title,
             .regular => |*r| return r.command.title,
             .jump => |*j| {
                 if (j.title) |title| return title;
@@ -751,6 +823,7 @@ const Command = extern struct {
         const priv = self.private();
 
         switch (priv.data) {
+            .app_action => |a| return a.description,
             .regular => |*r| return r.command.description,
             .jump => |*j| {
                 if (j.description) |desc| return desc;
@@ -782,7 +855,7 @@ const Command = extern struct {
         const priv = self.private();
         return switch (priv.data) {
             .regular => |*r| r.command.action,
-            .jump => null,
+            .jump, .app_action => null,
         };
     }
 
@@ -797,7 +870,7 @@ const Command = extern struct {
     pub fn getJumpSurface(self: *Self) ?*Surface {
         const priv = self.private();
         return switch (priv.data) {
-            .regular => null,
+            .regular, .app_action => null,
             .jump => |*j| j.surface.get(),
         };
     }

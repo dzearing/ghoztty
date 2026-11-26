@@ -36,6 +36,7 @@ const PaneSidebar = @import("../PaneSidebar.zig");
 const BannerEditor = @import("../BannerEditor.zig");
 const AgentRecovery = @import("../AgentRecovery.zig");
 const AgentUpgrade = @import("../AgentUpgrade.zig");
+const agent_upgrade_rules = @import("../agent_upgrade_rules.zig");
 const launch_handoff = @import("../launch_handoff.zig");
 const ApprtApp = @import("../App.zig");
 const Common = @import("../class.zig").Common;
@@ -2071,9 +2072,13 @@ pub const Application = extern struct {
             .init("quit", actionQuit, null),
             .init("reload-config", actionReloadConfig, null),
             .init("show-keyboard-shortcuts", actionShowKeyboardShortcuts, null),
+            .init(agent_upgrade_rules.install_action, actionInstallAgentUpdate, null),
         };
 
         ext.actions.add(Self, self, &actions);
+        // Disabled (so its menu row is hidden) until a check finds an
+        // update waiting (T3691).
+        AgentUpgrade.syncAction(self);
     }
 
     /// Setup our global shortcuts.
@@ -2350,6 +2355,16 @@ pub const Application = extern struct {
         priv.core_app.performAction(self.rt(), .show_keyboard_shortcuts) catch |err| {
             log.warn("error showing keyboard shortcuts err={}", .{err});
         };
+    }
+
+    /// The main menu's "Background Update Ready…" and the palette's "Install
+    /// Background Process Update…" (T3691).
+    fn actionInstallAgentUpdate(
+        _: *gio.SimpleAction,
+        _: ?*glib.Variant,
+        self: *Self,
+    ) callconv(.c) void {
+        AgentUpgrade.offerUpdate(self);
     }
 
     fn actionQuit(

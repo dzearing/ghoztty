@@ -11,6 +11,12 @@
 # scripted through GHOZTTY_TEST_AGENT_SKEW_ANSWER, the debug seam that also
 # records the dialog (GHOZTTY_TEST_AGENT_SKEW_DIALOG).
 #
+# T3691 (U30-U48): the deferred case is visible - the main menu's
+# "Background Update Ready…" row and the palette's "Install Background Process
+# Update…" entry appear while it waits, read through the main-menu and
+# command-palette seams; the opt-in dialog is scripted the same way
+# (GHOZTTY_TEST_AGENT_UPDATE_DIALOG / _ANSWER).
+#
 # Run it ONLY through the wrapper, from this box:
 #
 #   powershell -NoProfile -File scripts\linux\wsl-run.ps1 -CommandFile test\linux\agent-upgrade.sh
@@ -67,9 +73,30 @@ stop_app() {
     rm -f "${XDG_CONFIG_HOME:?}"/ghoztty/session-layout-debug*.json
 }
 STALE=20991231-test-newer
+jget() { printf '%s' "$1" | python3 -I -c 'import json,sys; r=json.load(sys.stdin); d=r.get("data",r); v=eval(sys.argv[1]); print(json.dumps(v) if isinstance(v,(dict,list,bool)) or v is None else v)' "$2" 2>/dev/null; }
+ROW='Background Update Ready…'
+PAL='Install Background Process Update…'
+# row_enabled <pane>: the main menu's update row's enabled state (true/false),
+# or <no item>. The row is hidden-when action-disabled, so true = on screen.
+row_enabled() { jget "$(hl_ipc main-menu --target="$1")" "next((i[\"enabled\"] for i in d[\"items\"] if i[\"label\"]==\"$ROW\"), \"<no item>\")"; }
+row_action() { jget "$(hl_ipc main-menu --target="$1")" "next((i[\"action\"] for i in d[\"items\"] if i[\"label\"]==\"$ROW\"), \"<no item>\")"; }
+# pal_lists <pane>: the palette, opened and searched, settles and shows the row.
+pal_lists() {
+    local o
+    o=$(hl_ipc command-palette --target="$1" --op=open --query='background process')
+    o=$(hl_ipc command-palette --target="$1")
+    [ "$(jget "$o" 'd["pending"]')" = false ] && [ "$(jget "$o" "any(r[\"title\"]==\"$PAL\" for r in d[\"rows\"])")" = true ]
+}
+pal_settled_without() {
+    local o
+    o=$(hl_ipc command-palette --target="$1" --op=open --query='background process')
+    o=$(hl_ipc command-palette --target="$1")
+    [ "$(jget "$o" 'd["pending"]')" = false ] && [ "$(jget "$o" "any(r[\"title\"]==\"$PAL\" for r in d[\"rows\"])")" = false ]
+}
+udlg="$HL_RUNTIME/update-dialog.txt"; : > "$udlg"
 
 # ---- 1. stale build, a live session: left strictly alone (T1056) ----------
-hl_launch APP env GHOZTTY_AGENT_BUNDLED_VERSION=$STALE "$app" --gtk-single-instance=false --initial-window=false --quit-after-last-window-closed=false
+hl_launch APP env GHOZTTY_AGENT_BUNDLED_VERSION=$STALE GHOZTTY_TEST_AGENT_UPDATE_DIALOG="$udlg" GHOZTTY_TEST_AGENT_UPDATE_ANSWER=later "$app" --gtk-single-instance=false --initial-window=false --quit-after-last-window-closed=false
 hl_wait_for 30 serving
 hl_check "U2 the app serves its socket" $?
 cli +new-window --target=wu --name=pa --command="echo ready-pa" > /dev/null 2>&1
@@ -87,6 +114,26 @@ sleep 1
 hl_check "U6 the agent and pa's shell are untouched" $? "agent=$(hl_agent_pid) want=$agent1"
 ! grep -q 'local agent refreshed' "$APP_LOG"
 hl_check "U7 no refresh happened while a session was live" $?
+
+# ---- 1b. ...but the wait is visible, and Later keeps it (T3691) ------------
+grep -q 'agent update affordance: shown (when_idle)' "$APP_LOG"
+hl_check "U30 the deferral puts the waiting-update affordance up" $? "$(grep 'affordance' "$APP_LOG" | tr '\n' '|')"
+a=$(row_action pa); e=$(row_enabled pa)
+[ "$a" = app.install-agent-update ] && [ "$e" = true ]
+hl_check "U31 the main menu shows '$ROW' (on app.install-agent-update, enabled)" $? "action=$a enabled=$e"
+hl_wait_for 5 pal_lists pa
+hl_check "U32 the command palette lists '$PAL'" $?
+hl_ipc command-palette --target=pa --op=close > /dev/null
+o=$(hl_ipc main-menu --target=pa "--activate=$ROW")
+hl_wait_for 10 grep -q '^shown ' "$udlg"
+hl_check "U33 choosing the row asks first" $? "activated=$(jget "$o" 'd["activated"]') dlg=$(cat "$udlg")"
+grep -q '^shown Install the background process update now?|Later,Restart Now|.*nothing you have open is interrupted.*ends your 1 open terminal session .*Your windows stay open' "$udlg"
+hl_check "U34 the dialog leads with 'waiting is free', Later first, names the 1 session it ends" $? "$(cat "$udlg")"
+hl_wait_for 10 logged "$APP_LOG" 'agent update offer: user chose Later; the update keeps waiting'
+hl_check "U35 Later is logged" $?
+sleep 1
+[ "$(hl_agent_pid)" = "$agent1" ] && on_agent "$agent1" pa && [ "$(row_enabled pa)" = true ]
+hl_check "U36 after Later the agent and pa are untouched and the row stays" $? "agent=$(hl_agent_pid) want=$agent1 row=$(row_enabled pa)"
 
 # ---- 2. the last window closes: idle, so the agent is refreshed ------------
 cli +close --target=pa > /dev/null 2>&1
@@ -107,6 +154,8 @@ hl_wait_for 20 on_agent "$agent2" pb
 hl_check "U12 a new pane rides the refreshed agent" $? "pb=$(leaf_field pb pid) agent=$agent2"
 kill -0 "$APP" 2>/dev/null
 hl_check "U13 the app stayed up" $?
+grep -q 'agent update affordance: cleared' "$APP_LOG"
+hl_check "U37 the refresh takes the waiting-update affordance down" $? "$(grep 'affordance' "$APP_LOG" | tr '\n' '|')"
 
 # Capture the agent's exact launch so the skew phases can start one by hand.
 mapfile -d '' agent_argv < "/proc/$agent2/cmdline"
@@ -123,7 +172,45 @@ hl_check "U14 an agent of the bundled build is left alone (current)" $? \
     "$(grep -m3 'agent upgrade\|bundled agent build' "$APP2_LOG" | tr '\n' '|')"
 ! grep -q 'refreshed\|agent restart' "$APP2_LOG"
 hl_check "U15 ... and nothing was restarted" $?
+e=$(row_enabled pc)
+[ "$e" = false ]
+hl_check "U38 with nothing waiting the update row is hidden (action disabled)" $? "enabled=$e"
+hl_wait_for 5 pal_settled_without pc
+hl_check "U39 ... and the palette does not list '$PAL'" $?
+hl_ipc command-palette --target=pc --op=close > /dev/null
+! grep -q 'agent update affordance' "$APP2_LOG"
+hl_check "U40 ... and no affordance was ever shown" $?
 stop_app "$APP2"
+hl_stop_agent
+
+# ---- 3b. stale with a live session, the user installs now (T3691) ----------
+: > "$udlg"
+hl_launch APP6 env GHOZTTY_AGENT_BUNDLED_VERSION=$STALE GHOZTTY_TEST_AGENT_UPDATE_DIALOG="$udlg" GHOZTTY_TEST_AGENT_UPDATE_ANSWER=restart "$app" --gtk-single-instance=false --initial-window=false --quit-after-last-window-closed=false
+hl_wait_for 30 serving
+cli +new-window --target=wi --name=pi --command="echo ready-pi" > /dev/null 2>&1
+hl_wait_for 20 hl_agent_pid
+agent6=$(hl_agent_pid)
+hl_wait_for 20 on_agent "$agent6" pi
+hl_wait_for 15 logged "$APP6_LOG" 'agent update affordance: shown'
+hl_check "U41 a fresh launch over a stale agent with a live session shows the affordance" $? "$(grep -m3 'agent upgrade\|affordance' "$APP6_LOG" | tr '\n' '|')"
+hl_wait_for 5 pal_lists pi
+hl_check "U42 the palette lists '$PAL'" $?
+o=$(hl_ipc command-palette --target=pi --op=run "--title=$PAL")
+hl_wait_for 10 grep -q '^shown Install the background process update now?' "$udlg"
+hl_check "U43 running the palette entry asks the same question" $? "ran=$(jget "$o" 'd["ran"]') dlg=$(cat "$udlg")"
+hl_wait_for 15 logged "$APP6_LOG" 'local agent restarted onto the bundled build at the user'
+hl_check "U44 Restart Now restarts the agent" $? "$(grep 'agent update\|agent upgrade\|recovery' "$APP6_LOG" | tail -6 | tr '\n' '|')"
+hl_wait_for 10 sh -c "! kill -0 $agent6 2>/dev/null"
+hl_check "U45 the stale agent process is gone" $?
+agent7=$(hl_agent_pid)
+hl_wait_for 20 on_agent "$agent7" pi
+hl_check "U46 pi is rebuilt in place on the new agent (window kept)" $? "agent $agent6 -> $agent7 pi=$(leaf_field pi pid)"
+e=$(row_enabled pi)
+[ "$e" = false ] && logged "$APP6_LOG" 'agent update affordance: cleared'
+hl_check "U47 the row is gone once the update is installed" $? "enabled=$e"
+kill -0 "$APP6" 2>/dev/null
+hl_check "U48 the app stayed up" $?
+stop_app "$APP6"
 hl_stop_agent
 
 # start_agent <proto>: the agent, launched exactly as the app launches it,

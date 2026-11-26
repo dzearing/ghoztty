@@ -16,6 +16,13 @@
 //!    its sessions cannot be reached to save them. App older: the user is
 //!    told the app is out of date, and nothing is touched.
 //!
+//! The leave-alone case is not invisible (T3691, win32's T1068): while an
+//! update waits, `app.install-agent-update` is enabled, which shows the main
+//! menu's "Background Update Ready…" row and the palette's "Install Background
+//! Process Update…" entry. Choosing either re-checks, then asks (Later is the
+//! default) before restarting the agent and rebuilding the panes in place.
+//! Log lines: `agent update affordance: shown|cleared`, `agent update offer: ...`.
+//!
 //! Every DECISION is win32's pure `agent_upgrade.zig`; `agent_upgrade_rules`
 //! maps it onto this app. Log lines (the acceptance reads them):
 //! `agent upgrade check: <reason> ...`, `local agent refreshed ...`,
@@ -51,6 +58,119 @@ var declined = false;
 var dialog_up = false;
 /// The app-older notice is sent once per run.
 var app_older_told = false;
+/// A newer agent build is installed and waiting (T3691; win32's
+/// `agent_update_pending`, T1068): the last settling check found a stale agent
+/// it left alone for live sessions. Drives `app.install-agent-update`'s
+/// enabled state, which shows the main-menu row and the palette entry.
+var pending: ?agent_upgrade.Pending = null;
+var install_dialog_up = false;
+
+/// The waiting update, or null. Read by the palette when it opens.
+pub fn pendingUpdate(app: *Application) ?agent_upgrade.Pending {
+    const cfg = app.getConfig();
+    defer cfg.unref();
+    if (!cfg.get().@"session-persistence") return null;
+    return pending;
+}
+
+/// Show or retire the row. Logged on a CHANGE only (win32's wording), so the
+/// line marks the moment it appeared or went away.
+fn setPending(app: *Application, p: ?agent_upgrade.Pending) void {
+    if (pending == p) return;
+    pending = p;
+    if (p) |v| {
+        log.info("agent update affordance: shown ({s}); a newer background process is waiting", .{@tagName(v)});
+    } else {
+        log.info("agent update affordance: cleared", .{});
+    }
+    syncAction(app);
+}
+
+/// Match `app.install-agent-update`'s enabled state to the waiting update.
+/// Called once at startup (disabled) and on every change.
+pub fn syncAction(app: *Application) void {
+    const action = app.as(gio.ActionMap).lookupAction(rules.install_action) orelse return;
+    const simple = gobject.ext.cast(gio.SimpleAction, action) orelse return;
+    simple.setEnabled(@intFromBool(pending != null));
+}
+
+/// The row or the palette entry was chosen (win32's `offerAgentUpdate`). The
+/// check runs again first - the row reflects the LAST check, and the sessions
+/// may all have closed since, in which case the re-check refreshes silently
+/// and no dialog is needed. Otherwise ask, Later the default; on Restart Now
+/// the agent is restarted and every pane rebuilt in place.
+pub fn offerUpdate(app: *Application) void {
+    if (install_dialog_up) return;
+    check(app, "menu: background update");
+    const p = pendingUpdate(app) orelse {
+        log.info("agent update offer: nothing waiting any more (the re-check settled it)", .{});
+        return;
+    };
+    const la = &app.rt().local_agent;
+    const live: ?usize = if (sessionMix(la)) |m| m.live else null;
+    log.info("agent update offer: asking (pending={s} live={?d})", .{ @tagName(p), live });
+
+    var text_buf: [1024]u8 = undefined;
+    const text = rules.installNowTextInPlace(&text_buf, p, live);
+    if (text.len == 0) return;
+    var text_z: [1100]u8 = undefined;
+    const detail = std.fmt.bufPrintZ(&text_z, "{s}", .{text}) catch return;
+
+    var labels: [rules.install_buttons.len + 1]?[*:0]const u8 = undefined;
+    inline for (rules.install_buttons, 0..) |l, i| labels[i] = l.ptr;
+    labels[rules.install_buttons.len] = null;
+
+    const dialog = gobject.ext.newInstance(gtk.AlertDialog, .{});
+    defer dialog.unref();
+    dialog.setMessage(agent_upgrade.install_now_title);
+    dialog.setDetail(detail.ptr);
+    dialog.setModal(1);
+    dialog.setButtons(@ptrCast(&labels));
+    dialog.setDefaultButton(@intCast(rules.skew_default_index));
+    dialog.setCancelButton(@intCast(rules.skew_cancel_index));
+
+    const parent = app.as(gtk.Application).getActiveWindow();
+    const cancellable = gio.Cancellable.new();
+    defer cancellable.unref();
+    install_dialog_up = true;
+    dialog.choose(parent, cancellable, installDialogDone, null);
+    dialogSeam(
+        &install_scripted,
+        "GHOZTTY_TEST_AGENT_UPDATE_DIALOG",
+        "GHOZTTY_TEST_AGENT_UPDATE_ANSWER",
+        agent_upgrade.install_now_title,
+        &rules.install_buttons,
+        text,
+        cancellable,
+    );
+}
+
+var install_scripted: ?rules.Answer = null;
+
+fn installDialogDone(source: ?*gobject.Object, result: *gio.AsyncResult, _: ?*anyopaque) callconv(.c) void {
+    install_dialog_up = false;
+    const dialog: *gtk.AlertDialog = @ptrCast(@alignCast(source orelse return));
+    var err: ?*glib.Error = null;
+    const index = dialog.chooseFinish(result, &err);
+    var chosen: ?usize = null;
+    if (err) |e| e.free() else if (index >= 0) chosen = @intCast(index);
+    const answer = if (install_scripted) |s| s else rules.answerFor(chosen);
+    install_scripted = null;
+    const app = Application.default();
+    switch (answer) {
+        .later => log.info("agent update offer: user chose Later; the update keeps waiting", .{}),
+        .restart => {
+            log.warn("agent update offer: user chose to install now, restarting the background process", .{});
+            const la = &app.rt().local_agent;
+            _ = la.restartForUpgrade();
+            AgentRecovery.recover(app, "agent update (installed now)");
+            if (la.hasSharedConnection()) {
+                setPending(app, null);
+                log.info("local agent restarted onto the bundled build at the user's request", .{});
+            } else log.warn("agent update offer: no agent came up after the restart", .{});
+        },
+    }
+}
 
 /// Hook the launch check onto the local agent's first resolve. Idempotent.
 pub fn start(app: *Application) void {
@@ -140,6 +260,7 @@ pub fn check(app: *Application, reason: []const u8) void {
         mix.live,
         reason,
     });
+    setPending(app, rules.nextPending(pending, decision.reason));
 
     switch (rules.planFor(decision, false)) {
         .nothing => {},
@@ -236,32 +357,49 @@ fn askRestart(app: *Application, peer: ?u16) void {
     dialog_up = true;
     log.info("agent upgrade: showing mandatory protocol-skew confirmation; waiting for the user", .{});
     dialog.choose(parent, cancellable, dialogDone, null);
-    testSeam(text, cancellable);
+    dialogSeam(
+        &scripted,
+        "GHOZTTY_TEST_AGENT_SKEW_DIALOG",
+        "GHOZTTY_TEST_AGENT_SKEW_ANSWER",
+        agent_upgrade.skew_confirm_title,
+        &rules.skew_buttons,
+        text,
+        cancellable,
+    );
 }
 
 /// Debug-only: a headless run cannot click. Record that the dialog is up
-/// (title, buttons, text on one line) to `GHOZTTY_TEST_AGENT_SKEW_DIALOG`,
-/// then end it through its cancellable and answer for the user from
-/// `GHOZTTY_TEST_AGENT_SKEW_ANSWER` (`restart`, else Later).
+/// (title, buttons, text on one line) to the file `$<file_env>`, then end it
+/// through its cancellable and answer for the user from `$<answer_env>`
+/// (`restart`, else Later) through `answer_out`, set before the cancel since
+/// the dialog's callback reads it.
 var scripted: ?rules.Answer = null;
 
-fn testSeam(text: []const u8, cancellable: *gio.Cancellable) void {
+fn dialogSeam(
+    answer_out: *?rules.Answer,
+    comptime file_env: []const u8,
+    comptime answer_env: []const u8,
+    title: []const u8,
+    buttons: []const [:0]const u8,
+    text: []const u8,
+    cancellable: *gio.Cancellable,
+) void {
     if (comptime builtin.mode != .Debug) return;
-    const path = std.posix.getenv("GHOZTTY_TEST_AGENT_SKEW_DIALOG") orelse return;
+    const path = std.posix.getenv(file_env) orelse return;
     if (std.fs.cwd().createFile(path, .{ .truncate = false })) |file| {
         defer file.close();
         file.seekFromEnd(0) catch {};
         var buf: [2048]u8 = undefined;
         var w = file.writer(&buf);
         const out = &w.interface;
-        out.print("shown {s}|", .{agent_upgrade.skew_confirm_title}) catch {};
-        inline for (rules.skew_buttons, 0..) |l, i| out.print("{s}{s}", .{ if (i == 0) "" else ",", l }) catch {};
+        out.print("shown {s}|", .{title}) catch {};
+        for (buttons, 0..) |l, i| out.print("{s}{s}", .{ if (i == 0) "" else ",", l }) catch {};
         out.writeAll("|") catch {};
         for (text) |c| out.writeByte(if (c == '\n') ' ' else c) catch {};
         out.writeAll("\n") catch {};
         out.flush() catch {};
     } else |_| {}
-    scripted = rules.scriptedAnswer(std.posix.getenv("GHOZTTY_TEST_AGENT_SKEW_ANSWER"));
+    answer_out.* = rules.scriptedAnswer(std.posix.getenv(answer_env));
     cancellable.cancel();
 }
 
@@ -301,6 +439,8 @@ fn notifyAppOlder(app: *Application, peer: ?u16) void {
     log.warn("agent upgrade: app-older notice (agent protocol {?d}, this app {d}); sessions are not being kept", .{ peer, protocol.proto_version });
     const n = gio.Notification.new(agent_upgrade.app_older_notice_title);
     defer n.unref();
-    n.setBody(agent_upgrade.app_older_notice_body);
+    // Linux's own body: win32's promises a click-to-update this toast has no
+    // updater behind (T3691).
+    n.setBody(rules.app_older_body_linux);
     app.as(gio.Application).sendNotification("ghoztty-agent-app-older", n);
 }

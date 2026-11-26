@@ -91,6 +91,56 @@ pub fn scriptedAnswer(v: ?[]const u8) Answer {
 /// (another install's agent still holding the guard) must not loop.
 pub const max_attempts: usize = 2;
 
+// -----------------------------------------------------------------------------
+// The waiting-update row (T3691; win32's T1068)
+// -----------------------------------------------------------------------------
+
+/// The GAction behind the main menu's "Background Update Ready…" row and the
+/// palette's "Install Background Process Update…" entry. Enabled only while an
+/// update waits; the menu row is `hidden-when: action-disabled`.
+pub const install_action = "install-agent-update";
+pub const install_action_detailed = "app." ++ install_action;
+
+/// What the row shows after a check that `settlesPending`: the waiting update,
+/// or null (row hidden). A check that does not settle it leaves `current`.
+pub fn nextPending(current: ?agent_upgrade.Pending, reason: agent_upgrade.Reason) ?agent_upgrade.Pending {
+    if (!agent_upgrade.settlesPending(reason)) return current;
+    return agent_upgrade.pendingFor(reason);
+}
+
+/// The opt-in dialog's body on Linux. win32's `installNowText` leads the same
+/// way (waiting is free) but then says the APP restarts: on Windows the row's
+/// OK relaunches Ghoztty with its agent. The GTK app restarts only the agent
+/// and rebuilds every pane in place (the AgentRecovery path the skew Restart
+/// uses), so its windows stay - and the text says what actually happens.
+pub fn installNowTextInPlace(buf: []u8, pending: agent_upgrade.Pending, live_sessions: ?usize) []const u8 {
+    const lead = "A newer version of Ghoztty\u{2019}s background terminal process is installed. ";
+    const when = switch (pending) {
+        .when_idle => "It takes over on its own once all your terminal sessions have closed",
+        .draining => "It takes over on its own as your older terminal sessions close",
+    };
+    const mid = ", so nothing you have open is interrupted.\n\n" ++
+        "Installing it now restarts the background process and ends ";
+    const tail = " and the programs running in them. Your windows stay open, and each pane starts again.";
+    if (live_sessions) |n| {
+        return std.fmt.bufPrint(buf, "{s}{s}{s}your {d} open terminal session{s}{s}", .{
+            lead, when, mid, n, if (n == 1) "" else "s", tail,
+        }) catch buf[0..0];
+    }
+    return std.fmt.bufPrint(buf, "{s}{s}{s}every open terminal session{s}", .{ lead, when, mid, tail }) catch buf[0..0];
+}
+
+/// The install dialog's buttons: the skew dialog's, Later first and default.
+pub const install_buttons = skew_buttons;
+
+/// The app-older notice's body on Linux. win32's ends "Click to update
+/// Ghoztty", which its toast acts on; Linux has no updater for a click to
+/// start, so the body names the step the user takes instead and the
+/// notification carries no click promise.
+pub const app_older_body_linux =
+    "The background process holding your terminal sessions is newer than " ++
+    "this copy, so sessions are not being kept.\nInstall the latest Ghoztty to keep them.";
+
 const testing = std.testing;
 
 test "planFor: a stale idle agent refreshes; a live one is left alone (T3600)" {
@@ -144,6 +194,54 @@ test "skew dialog: Later is the default and the cancel; only the Restart button 
     try testing.expectEqual(Answer.later, answerFor(0));
     try testing.expectEqual(Answer.restart, answerFor(1));
     try testing.expectEqual(Answer.later, answerFor(7));
+}
+
+test "nextPending: a deferred stale agent puts the row up; a settling check takes it down (T3691)" {
+    const live = agent_upgrade.evaluate("1.0.0+aaa", "1.0.1+bbb", 2, .{});
+    try testing.expectEqual(agent_upgrade.Pending.when_idle, nextPending(null, live.reason).?);
+    const current = agent_upgrade.evaluate("1.0.1+bbb", "1.0.1+bbb", 2, .{});
+    try testing.expectEqual(@as(?agent_upgrade.Pending, null), nextPending(.when_idle, current.reason));
+    const idle = agent_upgrade.evaluate("1.0.0+aaa", "1.0.1+bbb", 0, .{});
+    try testing.expectEqual(@as(?agent_upgrade.Pending, null), nextPending(.when_idle, idle.reason));
+}
+
+test "nextPending: an unknown bundled build or a skew never clears the row (negative control)" {
+    const unknown = agent_upgrade.evaluate("1.0.0+aaa", null, 2, .{});
+    try testing.expectEqual(agent_upgrade.Pending.when_idle, nextPending(.when_idle, unknown.reason).?);
+    const skew = agent_upgrade.evaluateSkew(4, 5);
+    try testing.expectEqual(agent_upgrade.Pending.when_idle, nextPending(.when_idle, skew.reason).?);
+    try testing.expectEqual(@as(?agent_upgrade.Pending, null), nextPending(null, skew.reason));
+}
+
+test "installNowTextInPlace: waiting is free first, then what ends, and the windows stay (T3691)" {
+    var buf: [1024]u8 = undefined;
+    const one = installNowTextInPlace(&buf, .when_idle, 1);
+    try testing.expect(std.mem.indexOf(u8, one, "your 1 open terminal session and") != null);
+    const free = std.mem.indexOf(u8, one, "nothing you have open is interrupted").?;
+    const cost = std.mem.indexOf(u8, one, "ends your").?;
+    try testing.expect(free < cost);
+    try testing.expect(std.mem.indexOf(u8, one, "Your windows stay open") != null);
+    // Not win32's promise: the GTK app is never relaunched for this.
+    try testing.expect(std.mem.indexOf(u8, one, "restarts Ghoztty") == null);
+
+    const many = installNowTextInPlace(&buf, .draining, 3);
+    try testing.expect(std.mem.indexOf(u8, many, "your 3 open terminal sessions and") != null);
+    try testing.expect(std.mem.indexOf(u8, many, "as your older terminal sessions close") != null);
+    const unknown = installNowTextInPlace(&buf, .when_idle, null);
+    try testing.expect(std.mem.indexOf(u8, unknown, "every open terminal session") != null);
+}
+
+test "install dialog: Later is the default; the labels are win32's" {
+    try testing.expectEqualStrings(agent_upgrade.install_now_cancel, install_buttons[skew_default_index]);
+    try testing.expectEqualStrings(agent_upgrade.install_now_ok, install_buttons[1]);
+    try testing.expectEqualStrings("app.install-agent-update", install_action_detailed);
+}
+
+test "app_older_body_linux: no click promise, the step the user can take" {
+    try testing.expect(std.mem.indexOf(u8, app_older_body_linux, "Click") == null);
+    try testing.expect(std.mem.indexOf(u8, app_older_body_linux, "Install the latest Ghoztty") != null);
+    try testing.expect(std.mem.indexOf(u8, app_older_body_linux, "protocol") == null);
+    try testing.expect(app_older_body_linux.len < 256);
 }
 
 test "scriptedAnswer: only an explicit restart restarts" {

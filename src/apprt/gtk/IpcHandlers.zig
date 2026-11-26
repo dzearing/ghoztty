@@ -1234,7 +1234,28 @@ fn seamWindow(arena: Allocator, app: Context, target_arg: ?[]const u8, verb: []c
     };
 }
 
-const MenuEntry = struct { label: []const u8, action: ?[]const u8, section: usize };
+/// `enabled` is the item's action state as the open menu reads it: a
+/// `hidden-when: action-disabled` row (T3691's Background Update Ready…) is
+/// on screen exactly when it is true. Null for an item with no `app.`/`win.`
+/// action.
+const MenuEntry = struct { label: []const u8, action: ?[]const u8, section: usize, enabled: ?bool = null };
+
+fn menuActionEnabled(window: *Window, detailed: []const u8) ?bool {
+    var buf: [128]u8 = undefined;
+    if (std.mem.startsWith(u8, detailed, "app.")) {
+        const name = std.fmt.bufPrintZ(&buf, "{s}", .{detailed["app.".len..]}) catch return null;
+        const group = Application.default().as(gio.ActionGroup);
+        if (group.hasAction(name.ptr) == 0) return null;
+        return group.getActionEnabled(name.ptr) != 0;
+    }
+    if (std.mem.startsWith(u8, detailed, "win.")) {
+        const name = std.fmt.bufPrintZ(&buf, "{s}", .{detailed["win.".len..]}) catch return null;
+        const group = window.as(gio.ActionGroup);
+        if (group.hasAction(name.ptr) == 0) return null;
+        return group.getActionEnabled(name.ptr) != 0;
+    }
+    return null;
+}
 
 /// Every item of `menu`, sections flattened in order (`section` counts them).
 fn collectMenu(arena: Allocator, menu: *gio.MenuModel, out: *std.ArrayList(MenuEntry), section: *usize) Allocator.Error!void {
@@ -1283,6 +1304,9 @@ fn mainMenuSeam(app: Context, request: Request) Allocator.Error![]u8 {
     var items: std.ArrayList(MenuEntry) = .{};
     var section: usize = 0;
     try collectMenu(arena, window.seamMainMenu(), &items, &section);
+    for (items.items) |*it| {
+        if (it.action) |a| it.enabled = menuActionEnabled(window, a);
+    }
 
     var activated: ?bool = null;
     if (activate_arg) |want| {
