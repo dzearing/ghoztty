@@ -8511,6 +8511,21 @@ $GuardTable = @(
             'test\win32\pane-sidebar-motion-cost.ps1'
         )
     },
+    # What a scroll step costs (T2332, Mac 321e61d7c's other two numbers): 40
+    # windows of two panes, every one unfolded on the all-windows list, a
+    # dozen busy - a wheel step's full-column paint stays under Mac's pre-fix
+    # 31 ms, and the app at rest is nowhere near a busy core.
+    [pscustomobject]@{
+        Name   = 'pane-sidebar-scroll-cost'
+        Script = 'test\win32\pane-sidebar-scroll-cost.ps1'
+        Stamp  = 'test\win32\pane-sidebar-scroll-cost.stamp.json'
+        Covers = @(
+            'src\apprt\win32\PaneSidebar.zig',
+            'src\apprt\win32\pane_sidebar_scroll.zig',
+            'src\apprt\win32\pane_sidebar_outline.zig',
+            'test\win32\pane-sidebar-scroll-cost.ps1'
+        )
+    },
     # Each pane's own hue in the sidebar (T2278): the icons are drawn in it,
     # and hovering a row tints that pane - a popup glued to the pane, cut to
     # its card, faded back out on leave. The colours, pixels and curves are

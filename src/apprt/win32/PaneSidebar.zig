@@ -690,6 +690,10 @@ metrics: pane_sidebar.TextMetrics = .{ .title_h = 19, .caption_h = 16 },
 // itself on the first tick after it did not.
 paint_marks: motion.Marks = .{},
 paint_ms: u64 = 0,
+/// A scroll step is waiting for its paint (T2332): the next WM_PAINT times
+/// itself and logs `pane sidebar scroll paint us=`, the cost Mac 321e61d7c
+/// measured (31-50 ms a step before its fix, ~8 ms after).
+scroll_paint_pending: bool = false,
 paint_motion: bool = true,
 /// The busy sheen moves (T2909): `paint_motion` in the window in use only.
 /// Every other window draws its busy pills still - the glint off, drift and
@@ -2066,6 +2070,7 @@ fn scrollTo(self: *PaneSidebar, want: i32) void {
     // is where every other takes up when it is next activated.
     if (self.all_windows) shared.recordScroll(shared_mod.Surface.of(self.mode == .expanded), l.scroll);
     _ = w32.InvalidateRect(self.hwnd, null, 0);
+    self.scroll_paint_pending = true;
     self.syncTips();
     log.info("pane sidebar scroll surface=rail offset={d}/{d}", .{ l.scroll, l.max_scroll });
     self.logOutline();
@@ -7172,7 +7177,16 @@ fn wndProc(hwnd: w32.HWND, msg: u32, wparam: usize, lparam: isize) callconv(.win
                 self.paint_live = true;
                 defer self.paint_live = false;
                 self.paint_full = ps.rcPaint.left <= r.left and ps.rcPaint.top <= r.top and ps.rcPaint.right >= r.right and ps.rcPaint.bottom >= r.bottom;
+                const timed = self.scroll_paint_pending;
+                self.scroll_paint_pending = false;
+                const t0 = if (timed) std.time.Instant.now() catch null else null;
                 self.paintBuffered(hdc, r.right - r.left, r.bottom - r.top, ps.rcPaint);
+                if (t0) |start| if (std.time.Instant.now()) |end| {
+                    const l = self.currentLayout();
+                    log.info("pane sidebar scroll paint us={d} full={} mode={s} items={d} offset={d}/{d}", .{
+                        end.since(start) / std.time.ns_per_us, self.paint_full, @tagName(l.mode), l.count, l.scroll, l.max_scroll,
+                    });
+                } else |_| {};
             }
             // A lost device takes the tree with it (T2765); whatever hangs
             // on it comes back on the rebuilt one.
