@@ -70,12 +70,12 @@ hl_check "B5 no label the window shows is bold (the Mac's chrome has none)" $? "
 css="$cfg_dir/heavy.css"
 printf 'windowtitle .title { font-weight: 800; }\n' > "$css"
 printf 'gtk-custom-css = %s\n' "$css" >> "$dev"
-rl=$(cli +reload 2>&1)
+rl=$(cli +reload --config 2>&1)
 heavy() { [ "$(lw 'len(title) >= 1 and all(l["weight"] == 800 for l in title)' --target="$pane")" = True ]; }
 hl_wait_for 10 heavy
 hl_check "B6 control: gtk-custom-css asking for 800 moves the title to 800" $? "title=$(lw '[(l["text"], l["weight"]) for l in title]' --target="$pane") reload=[$rl] log=[$(grep -m3 -i 'custom-css\|custom css' "$APP_LOG" | tr '\n' ' ')]"
 printf '# label weights\n' > "$dev"
-cli +reload > /dev/null 2>&1
+cli +reload --config > /dev/null 2>&1
 semi() { [ "$(lw 'len(title) >= 1 and all(l["weight"] == 600 for l in title)' --target="$pane")" = True ]; }
 hl_wait_for 10 semi
 hl_check "B7 control: with the custom CSS gone the title is back at 600" $?
