@@ -1,8 +1,8 @@
 {
     "guard":  "unwired-hook",
     "script":  "test/win32/unwired-hook-audit.ps1",
-    "generated":  "2026-11-25T23:17:22-08:00",
-    "commit":  "9d5c962203",
+    "generated":  "2026-11-26T00:10:45-08:00",
+    "commit":  "d14502ef67",
     "uncommitted":  [
 
                     ],
@@ -1543,7 +1543,7 @@
                   "test/win32/opacity-reload.ps1":  "b79367eddf623fd7c5907d0eafccc471acae34b4d0bd1eede04277cdb400eeef",
                   "test/win32/orphan-endpoint.ps1":  "e9a11e77194463cb49f7a34ee7fdcc52f81c26f37728aa23003be8565c8a760b",
                   "test/win32/orphan-notify.ps1":  "a8c7962850f4bdf5c8c5f8c09b20930b57e88264dedfa13a3bd47e69aaf2bf55",
-                  "test/win32/overlay-zorder.ps1":  "76c45c89ee49d5e8b2ad2548a974932237dcdbb5bb3089fc89f6d2c15b8c7da6",
+                  "test/win32/overlay-zorder.ps1":  "46858ec79bf526f2ff623b0abc99165810f01973cecea9320f07e1a312165203",
                   "test/win32/palette-close-crash.ps1":  "c4da5e073557f044caeb352dea0605783436f0eddd82039ecdcaa3bbe1a1c639",
                   "test/win32/palette-grid-size.ps1":  "503b63cbcb1bc6763c2d2800245923385ce4a4b5bb5a8e1649e5ddfe48f265b1",
                   "test/win32/palette-jump.ps1":  "ee11e403b39036691fbaf1f12aab1820f9a98ca96fc0d9a04f94e50200c1d7a7",
