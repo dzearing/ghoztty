@@ -2046,6 +2046,8 @@ pub const Window = extern struct {
                 .{err},
             );
         };
+        // T3650: parked workspaces follow the shared window once it settles.
+        Workspaces.toplevelResized(self);
     }
 
     fn propFullscreened(
@@ -3195,6 +3197,8 @@ pub const Window = extern struct {
         self.queueSidebarRefresh();
         // A closed busy pane takes its state with it (T3561).
         self.syncActivity();
+        // T3650: a parked workspace's content is laid out at once.
+        Workspaces.treeChanged(self);
     }
 
     fn actionAbout(

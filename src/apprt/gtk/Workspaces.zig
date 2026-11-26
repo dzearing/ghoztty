@@ -30,7 +30,13 @@
 //! `gotoTab` / `gotoWindow` walk the list's order; a new tab, a tab or pane
 //! dragged out, and every new-window path open a workspace.
 //!
-//! Not here (their own cards): parked layout at the toplevel's size (T3650), the shade fade
+//! Parked layout (T3650): a parked workspace is laid out by hand at the size
+//! of the content on show - when it parks, 0.3s after the toplevel's resize
+//! settles, and at once on a tree change - and its started terminals take the
+//! new size at the shared window's pixel scale, so a switch never changes a
+//! grid. A terminal made while parked starts on first show (T3786).
+//!
+//! Not here (their own cards): the shade fade
 //! (T3651), closing semantics and the toplevel's close button (T3652), the
 //! CLI (T3653), rolled-up activity (T3654), persistence (T3655). Until T3652
 //! a workspace close is only made SAFE here (`forget`): its content never
@@ -40,10 +46,12 @@ const Workspaces = @This();
 const std = @import("std");
 const adw = @import("adw");
 const gio = @import("gio");
+const glib = @import("glib");
 const gobject = @import("gobject");
 const gtk = @import("gtk");
 
 const Window = @import("class/window.zig").Window;
+const Tab = @import("class/tab.zig").Tab;
 const wk = @import("webkit.zig");
 const Application = @import("class/application.zig").Application;
 const window_mode = @import("../win32/window_mode.zig");
@@ -139,6 +147,7 @@ pub fn present(win: *Window, activate: bool) bool {
         .stay_parked => {
             log.info("workspace: window={s} opened parked", .{name(win)});
             win.syncSeen();
+            layoutParked(win, "birth");
         },
         .promote_background, .own_window_background => {
             // Nothing has the window: this one loads it, in the background.
@@ -231,6 +240,96 @@ fn handOff(from: *Window, to: *Window) void {
     t.queueSidebarRefresh();
     to.queueSidebarRefresh();
     log.info("workspace: show window={s} (from {s})", .{ name(to), name(from) });
+}
+
+// ---- Parked layout (T3650) ---------------------------------------------
+
+/// A pending settled-resize pass over every parked workspace.
+var resize_timer: ?c_uint = null;
+/// Parked workspaces whose tree changed, laid out on the next low idle.
+var tree_idle: ?c_uint = null;
+
+/// Lay `win`'s parked content out at the shared window's size (T3650; Mac
+/// `prepareParkedContent` / `layoutParkedContent`, win32 T3193): no window
+/// lays it out, so the content root is measured and allocated by hand at
+/// the size of the content on show, and every started terminal in it takes
+/// its new size at the shared window's pixel scale (Mac
+/// `SurfaceView.backingSize`). So a switch never changes a parked grid, and
+/// the shell saw a resize while it was parked. No-op unless parked.
+pub fn layoutParked(win: *Window, why: []const u8) void {
+    if (!host.isParked(win) or !win.isContentHeld()) return;
+    const a = host.active orelse return;
+    if (a == win) return;
+    const live = a.contentRoot().as(gtk.Widget);
+    const w = live.getWidth();
+    const h = live.getHeight();
+    if (w <= 0 or h <= 0) return;
+    const scale: f64 = scale: {
+        if (a.getActiveSurface()) |s| if (s.pixelScale()) |v| break :scale v;
+        break :scale @floatFromInt(@max(live.getScaleFactor(), 1));
+    };
+
+    const root = win.contentRoot();
+    var min: c_int = 0;
+    var nat: c_int = 0;
+    root.measure(.horizontal, -1, &min, &nat, null, null);
+    root.measure(.vertical, w, &min, &nat, null, null);
+    root.allocate(w, h, -1, null);
+
+    var panes: usize = 0;
+    var resized: usize = 0;
+    const tab_view = win.getTabView();
+    const n: usize = @intCast(@max(tab_view.getNPages(), 0));
+    for (0..n) |i| {
+        const page = tab_view.getNthPage(@intCast(i));
+        const tab = gobject.ext.cast(Tab, page.getChild()) orelse continue;
+        const tree = tab.getSurfaceTree() orelse continue;
+        var it = tree.iterator();
+        while (it.next()) |entry| {
+            panes += 1;
+            if (entry.view.layoutParked(scale)) resized += 1;
+        }
+    }
+    log.info("workspace: parked window={s} laid out at {d}x{d} scale={d:.2} why={s} panes={d} resized={d}", .{
+        name(win), w, h, scale, why, panes, resized,
+    });
+}
+
+/// Every parked workspace, at the shared window's size.
+fn layoutAllParked(why: []const u8) void {
+    var buf: [64]*Window = undefined;
+    for (host.parkedInto(&buf)) |w| layoutParked(w, why);
+}
+
+/// The toplevel's surface changed size (`Window.propGdkSurfaceDims`):
+/// once the resize has settled (Mac `windowDidResize`, 0.3s) every parked
+/// workspace is laid out at the new size, so each is ready when shown.
+pub fn toplevelResized(win: *Window) void {
+    if (toplevel != win) return;
+    if (resize_timer) |t| _ = glib.Source.remove(t);
+    resize_timer = glib.timeoutAdd(workspace_host.resize_settle_ms, resizeSettled, null);
+}
+
+fn resizeSettled(_: ?*anyopaque) callconv(.c) c_int {
+    resize_timer = null;
+    layoutAllParked("resize");
+    return 0;
+}
+
+/// A tab's split tree changed in `win` (`Window.tabSplitTreeChanged`): a
+/// parked workspace's content is laid out at once (Mac
+/// `layoutParkedContent`) - no window will - after the split tree's own
+/// widget rebuild, which runs on a default idle.
+pub fn treeChanged(win: *Window) void {
+    if (!host.isParked(win)) return;
+    if (tree_idle != null) return;
+    tree_idle = glib.idleAddFull(glib.PRIORITY_LOW, treeSettled, null, null);
+}
+
+fn treeSettled(_: ?*anyopaque) callconv(.c) c_int {
+    tree_idle = null;
+    layoutAllParked("tree");
+    return 0;
 }
 
 /// The workspace a controller on `win`'s own GtkWindow acts for: in single

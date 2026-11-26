@@ -3197,6 +3197,52 @@ pub const Surface = extern struct {
         return self.private().size_changes;
     }
 
+    /// Device pixels per layout pixel in the window this terminal was last
+    /// drawn in: its GL area's last pixel size over its allocation. Null
+    /// before it was ever sized (T3650: a parked workspace keeps the scale
+    /// of the shared window, Mac `SurfaceView.backingSize`).
+    pub fn pixelScale(self: *Self) ?f64 {
+        const priv = self.private();
+        const w = priv.gl_area.as(gtk.Widget).getWidth();
+        if (w <= 0 or priv.size.width == 0) return null;
+        return @as(f64, @floatFromInt(priv.size.width)) / @as(f64, @floatFromInt(w));
+    }
+
+    /// The terminal's grid (columns, rows), or null before it started.
+    pub fn gridSize(self: *Self) ?struct { cols: u32, rows: u32 } {
+        const core_surface = self.core() orelse return null;
+        const g = core_surface.size.grid();
+        return .{ .cols = g.columns, .rows = g.rows };
+    }
+
+    /// A parked workspace was just laid out by hand (T3650,
+    /// `Workspaces.layoutParked`): no window draws it, so the GL area never
+    /// emits `resize`. Give the terminal its new size from the allocation
+    /// it was just given, at `scale` device pixels per layout pixel, the way
+    /// `glareaResize` would - so the grid is already right when it is shown
+    /// and the shell saw the change while parked. True when it changed.
+    pub fn layoutParked(self: *Self, scale: f64) bool {
+        const priv = self.private();
+        const widget = priv.gl_area.as(gtk.Widget);
+        const w = widget.getWidth();
+        const h = widget.getHeight();
+        if (w <= 0 or h <= 0) return false;
+        const new_size: apprt.SurfaceSize = .{
+            .width = @intFromFloat(@round(@as(f64, @floatFromInt(w)) * scale)),
+            .height = @intFromFloat(@round(@as(f64, @floatFromInt(h)) * scale)),
+        };
+        if (priv.size.eql(&new_size)) return false;
+        // Not started (parked from birth, T3786): the size waits for the
+        // first real resize, which also starts the terminal.
+        const core_surface = priv.core_surface orelse return false;
+        priv.size = new_size;
+        priv.size_changes +%= 1;
+        core_surface.sizeCallback(new_size) catch |err| {
+            log.warn("error in parked size callback err={}", .{err});
+        };
+        return true;
+    }
+
     /// Ghoztty's stable pane id (T3335), minted once per surface.
     pub fn paneId(self: *Self) []const u8 {
         return &self.private().pane_id;
