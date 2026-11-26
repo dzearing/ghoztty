@@ -40,6 +40,7 @@ const gobject = @import("gobject");
 const gtk = @import("gtk");
 
 const Window = @import("class/window.zig").Window;
+const wk = @import("webkit.zig");
 const Application = @import("class/application.zig").Application;
 const window_mode = @import("../win32/window_mode.zig");
 const workspace_host = @import("../win32/workspace_host.zig");
@@ -153,12 +154,13 @@ var watching = false;
 fn watchRemovals() void {
     if (watching) return;
     watching = true;
-    _ = gtk.Application.signals.@"window-removed".connect(
-        Application.default().as(gtk.Application),
-        ?*anyopaque,
-        windowRemoved,
+    _ = wk.g_signal_connect_data(
+        @ptrCast(Application.default()),
+        "window-removed",
+        @ptrCast(&windowRemoved),
         null,
-        .{},
+        null,
+        0,
     );
 }
 
