@@ -2092,22 +2092,36 @@ are the GTK half.
   window is seen. `Surface.syncSeen` tells the core on a change only
   (`occlusionCallback`): the renderer skips building frames and catches up
   once on show; the terminal, `+set-state`, notifications and `+list` never
-  pause. A viewer pane is not touched here (T3643 owes its polls the window
-  half).
+  pause.
+- **A viewer pane (T3643)** has no core to tell; `Surface.syncSeen` pushes
+  the window half into it instead (`Viewer.setWindowSeen`), because its box
+  stays MAPPED in a minimized or suspended window. `Viewer.isOnShow` (box
+  mapped and window seen) gates the `git-status:` poll (`ViewerDiff.onPollTick`
+  skips the tick) and the file watcher's render (owed until shown). Hidden,
+  the web view is unmapped with `gtk_widget_set_child_visible` (no relayout):
+  WebKit then reads the page as hidden and holds a GIF on its frame, whatever
+  the compositor told it about the toplevel. On show, one catch-up: an owed
+  save renders and a working-tree diff asks git at once (`ViewerDiff.catchUp`,
+  also run when a background tab's viewer maps). Logs: `viewer: pane=<id>
+  window seen=<bool>`, `viewer diff: pane=<id> shown again; catching up`.
 - **Titles**: a hidden window holds a new title (`Window.syncTitle`) and
   lands it on show, or 5 s after the last landing; its first title always
   lands. `+list` and the sidebar read `Window.currentTitle()`, held or not.
 - **Seam**: debug-only `hl_ipc pane-seen --target=<pane|window>
   [--toplevel=minimized|suspended|shown|real]` - the window's `seen`,
   `reported` toplevel bits, `title`/`held_title`, and each pane's
-  `seen`/`mapped`. `--toplevel` stands in for the compositor (headless Weston
+  `seen`/`mapped` - plus, for a viewer pane, `viewer`: `on_show`,
+  `page_mapped` (the web view), `polling`, `skipped_polls`, `catch_ups`,
+  `git` (processes run). `--toplevel` stands in for the compositor (headless Weston
   never minimizes).
 
 ```powershell
 powershell -NoProfile -File scripts\linux\wsl-run.ps1 -CommandFile test\linux\background-windows.sh
 ```
 
-Ends `BACKGROUND WINDOWS: ALL PASS` (16 checks). Measured: a pane redrawing a
+Ends `BACKGROUND WINDOWS: ALL PASS` (24 checks; V1-V8 a `git-status:` viewer
+in a minimized and a suspended window: no git runs while hidden, one
+catch-up on show). Measured: a pane redrawing a
 full screen every 10 ms cost 9-10 CPU ticks over 4 s in a background tab
 against 209-242 on screen. `NEGATIVE=1` keeps that pane on screen for the
 "hidden" sample and must fail B4 alone.

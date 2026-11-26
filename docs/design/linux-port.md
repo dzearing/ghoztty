@@ -112,7 +112,7 @@ first commit on `main`), so `next` takes them in that order within the P2 band:
 | terminal-resize | L11f T3568 (done: divider drag, banner fold; + prompt-redraw hold and window-edge drag T3630 done; explicit bash command integration T3758) |
 | settings | L11g T3569 (done: the window, All Settings; + curated pages T3631 done, lists T3632 done, font picker T3765 done (Windows T3766), config file/backups/undo T3633 done, file mode T3634, Sessions & Remote T3635 done, themes + preview T3636 done, color wells + folder picker T3759, search across pages T3760) |
 | keyboard-shortcuts | L11h T3570 (done: Ctrl+Shift+/, menu, palette, live catalog, search, Run, cheat sheet; + Run on hover T3639, menu/palette check T3640) |
-| background-windows | L11i T3571 (done: hidden panes stop building frames and catch up on show, held window title; + viewer polls/animations in a minimized window T3643) |
+| background-windows | L11i T3571 (done: hidden panes stop building frames and catch up on show, held window title; + viewer panes: the git-status poll skips and the page unmaps in a minimized/suspended window, one catch-up on show, T3643 done) |
 | memory | L11j T3572 (done: pane/tab/window/viewer teardown measured, nothing leaks; + hidden/idle panes give back their frames T3645, agent per-session growth T3646) |
 | window-modes | L11k T3573 (done: the launch latch; + foundation T3648, switching T3649, parked layout T3650, shade fade T3651, closing T3652, CLI T3653, activity T3654, persistence T3655) |
 
