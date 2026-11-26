@@ -412,6 +412,16 @@ pub const Window = extern struct {
             workspace_qdata_key,
             self,
         );
+        // A destroyed GtkWindow is released by its application, and that is
+        // the moment a workspace leaves the host: dispose may never come
+        // while its content root's `win` group still references it.
+        _ = gobject.Object.signals.notify.connect(
+            self,
+            *Self,
+            propApplication,
+            self,
+            .{ .detail = "application" },
+        );
 
         // T3571: a window that is hidden (a quick terminal put away) or shown
         // again recomputes whether its panes can be seen.
@@ -2147,8 +2157,7 @@ pub const Window = extern struct {
         // T3648: before anything else, every workspace's content is back in
         // a window of its own, so none goes down with a toplevel it was
         // borrowing and this one's template disposes its own content.
-        Workspaces.forget(self);
-        if (priv.held_content) |_| self.releaseContentInto(self);
+        self.leaveWorkspace();
 
         // T3384: nothing can put this window's closed panes back now.
         CloseUndo.dropWindow(self);
@@ -2925,6 +2934,21 @@ pub const Window = extern struct {
         priv.held_content = null;
         into.as(adw.ApplicationWindow).setContent(root);
         root.as(gobject.Object).unref();
+    }
+
+    /// The workspace is gone (its GtkWindow released by the application, or
+    /// disposed): out of the host, every content back in a window of its
+    /// own, and the content root's `win` group - which references this
+    /// Window, a cycle through its own content - dropped. Idempotent.
+    pub fn leaveWorkspace(self: *Self) void {
+        if (!Workspaces.manages(self) and self.private().held_content == null) return;
+        Workspaces.forget(self);
+        self.releaseContent();
+        self.contentRoot().insertActionGroup("win", null);
+    }
+
+    fn propApplication(_: *Self, _: *gobject.ParamSpec, self: *Self) callconv(.c) void {
+        if (self.as(gtk.Window).getApplication() == null) self.leaveWorkspace();
     }
 
     /// Whether this workspace's content is held out of every window.
