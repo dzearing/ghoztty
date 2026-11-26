@@ -1,14 +1,14 @@
 {
     "guard":  "session-persistence",
     "script":  "test/win32/session-persistence.ps1",
-    "generated":  "2026-11-23T20:25:26-08:00",
-    "commit":  "4f8d6a3de",
+    "generated":  "2026-11-25T17:44:36-08:00",
+    "commit":  "6b74c8f9f",
     "uncommitted":  [
-                        "test/win32/session-persistence.ps1"
+
                     ],
     "files":  {
                   "src/apprt/win32/session_layout.zig":  "23de7c84c9bda3017a52911fb9743e5f963978426160938e66f3aa079aa70e2b",
-                  "src/remote/agent/session.zig":  "cc987315e33593e6efb528499f62b2a391b74336f1d4b6710a46402d0e9b3adc",
+                  "src/remote/agent/session.zig":  "52403ca5ed4bf2427c2b95f894ec01d43315b4325f513f86f29699848a3ea6b7",
                   "src/termio/Remote.zig":  "161d0bdcc1bd8719c5e08ee43cf5840fe97d3f133800cb5bc66b75da7e866a68",
                   "test/win32/session-persistence.ps1":  "51a7c24d49223245e258d954a5095445d320c668c9977d80430312346405fbb5"
               },
