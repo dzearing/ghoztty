@@ -1,14 +1,14 @@
 {
     "guard":  "idle-frame-release",
     "script":  "test/win32/idle-frame-release.ps1",
-    "generated":  "2026-11-25T07:11:10-08:00",
-    "commit":  "dc203a61a",
+    "generated":  "2026-11-25T17:08:56-08:00",
+    "commit":  "9fa54655b",
     "uncommitted":  [
-                        "src/renderer/OpenGL.zig"
+
                     ],
     "files":  {
-                  "src/renderer/generic.zig":  "ca6734949bf21501fd37edef2a27aa71a878efb88f276f2b96e08da68335c6ff",
-                  "src/renderer/OpenGL.zig":  "7395312f580b5cc14915e52ff15b6f78a28bae78f493dceb7fa92dbd0be8f36e",
+                  "src/renderer/generic.zig":  "eb9a343b976acb8d37d0d999cb2de3d23826c28b443d926f90a1c1db01d5af62",
+                  "src/renderer/OpenGL.zig":  "2a040e0c74a16e7f1b0e01f1b71d50134214cdb19ba54d39cffdf3a372abd6f8",
                   "src/renderer/Thread.zig":  "8f1ce8a9434e86e8a06d046e9d61dabad2c634af095211dc5eeda8474a37291f",
                   "test/win32/idle-frame-release.ps1":  "94842e0a82e2b05b34e93a8011484044506ef1133db76b84898343d1055155bb",
                   "test/win32/lib/ProcessMemory.ps1":  "50851e95a87f0ade1d2b60c89ec4bb94e145286ed765cb5fbe99f38513080ba7"

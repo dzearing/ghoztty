@@ -1,8 +1,8 @@
 {
     "guard":  "seam-audit",
     "script":  "test/win32/seam-audit.ps1",
-    "generated":  "2026-11-25T15:39:53-08:00",
-    "commit":  "f066635bf",
+    "generated":  "2026-11-25T17:11:19-08:00",
+    "commit":  "9fa54655b",
     "uncommitted":  [
 
                     ],
@@ -656,7 +656,7 @@
                   "src/renderer/comp_overlay.zig":  "22569d60e55bac7587b94b18bb1ce1136a539a5518ef051254aa06a65c15b209",
                   "src/renderer/comp_tree.zig":  "796b0cb57c6c43a027e070605dcd3c2d1ca2bfa37be914b5fbbceda43dc02876",
                   "src/renderer/cursor.zig":  "1cec4ef3e7be9cdd649c7e121052ee3e77e645c4f8093b73c97e3d8fe5ed1c3f",
-                  "src/renderer/generic.zig":  "ca6734949bf21501fd37edef2a27aa71a878efb88f276f2b96e08da68335c6ff",
+                  "src/renderer/generic.zig":  "eb9a343b976acb8d37d0d999cb2de3d23826c28b443d926f90a1c1db01d5af62",
                   "src/renderer/gl_comp_present.zig":  "2682728e659969af8e077c7c938152d93f340d5d814bb3bfba127dabee56126b",
                   "src/renderer/gl_loader.zig":  "9a92b476463d9e027dc3b104a7309fc97386c6a555482f494714a67f507fa89a",
                   "src/renderer/gl_report.zig":  "cab949c5e9d9586daef1261de0090f4cd58a53dee78ef01022aa478d1ce3f51e",
@@ -667,7 +667,7 @@
                   "src/renderer/low_power.zig":  "561c61649c3385011078e4c7646604e1f28b70e3cd6889967b8d997e8788e8cb",
                   "src/renderer/message.zig":  "ea7a01ec29b0fc5ba99beccb00b090a6d910dbcc23575796c2a840d5a32d11e7",
                   "src/renderer/Metal.zig":  "281fbaffd863a3ee8f36f0654796757459620fadde62965f6c896f2151366937",
-                  "src/renderer/OpenGL.zig":  "7395312f580b5cc14915e52ff15b6f78a28bae78f493dceb7fa92dbd0be8f36e",
+                  "src/renderer/OpenGL.zig":  "2a040e0c74a16e7f1b0e01f1b71d50134214cdb19ba54d39cffdf3a372abd6f8",
                   "src/renderer/Options.zig":  "884d0510167fbc720bde36b502c75ff9ed4b5fcce47a07c8c3b74cbc490ed6fd",
                   "src/renderer/Overlay.zig":  "7cbdcee4452a18989936b19ad73484a64182d9660bd25dc95997ec18edec109e",
                   "src/renderer/present_stamps.zig":  "f670a3172195b42b3f3620f043ba9ecae4e6fa4aab76a9997bc16ca441d18c5f",

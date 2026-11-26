@@ -2157,8 +2157,34 @@ scratch command file that exports them and then holds the script's text.
 Measured 2026-11-24: nothing in the app leaks per close. The app's memory
 climbs ~15 MB over the first ten cycles and then holds (allocator and GTK
 caches), hence the warm-up. The agent climbs ~40-50 KB per closed session,
-linearly (T3646). A hidden pane does NOT yet give back its frames on GTK -
-the shared release is win32-only (T3645).
+linearly (T3646).
+
+## Panes that are not drawing give back their frames (T3645)
+
+`docs/reference/memory.md`'s release, GTK half. A terminal pane that has drawn
+nothing for 3 s (idle) or that `Surface.syncSeen` says nobody can see (hidden)
+shrinks its swap-chain targets to 1x1 and drops its font atlas copies
+(`generic.Renderer.releaseFrameResources`). The render thread decides, but it
+has no GL context on GTK, so it hands the release to the main loop
+(`OpenGL.queueAppThreadRelease` -> `Surface.queueFrameRelease`, one idle at a
+time), which makes the pane's GtkGLArea current and runs
+`Renderer.releaseQueuedFrames` - deciding again, since the pane may have drawn
+or been shown in between. No picture goes with it: GTK shows the GLArea's own
+texture, and every GTK render is a full draw. Logs: `released idle|hidden
+render targets (WxH) targets=<KB> atlases=<KB>`, `redrawing after a(n)
+idle|hidden release`. `GHOZTTY_IDLE_FRAME_RELEASE=0` turns the idle half off.
+The `pane-seen` seam reports each terminal pane's `frames`: `target_bytes`,
+`atlas_bytes`, `released`.
+
+```powershell
+powershell -NoProfile -File scripts\linux\wsl-run.ps1 -CommandFile test\linux\frame-release.sh
+```
+
+Ends `FRAME RELEASE: ALL PASS` (10 checks, about a minute). `NEGATIVE=1`
+turns the idle release off and must fail R1 and R2 alone. **Open (T3775):** on
+Mesa llvmpipe the app's private memory does not drop after a release (the
+target-sized mappings stay, with `MALLOC_MMAP_THRESHOLD_` pinned too), while a
+closed pane's do go; something in Mesa's context state still references them.
 
 ## Window modes: the launch latch (T3573)
 
