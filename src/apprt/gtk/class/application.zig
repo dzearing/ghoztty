@@ -684,6 +684,14 @@ pub const Application = extern struct {
             _ = RelayWindows.start(self);
         }
 
+        // T3676 (win32 App's T1424/T1425 call): settle what the last
+        // sign-out left behind. Signed out, it finishes the revocation a
+        // "Sign Out Anyway" armed; signed in, it gives a machine the account
+        // signed out of back to it. Small local reads when there is nothing
+        // to do, and off this thread the moment there is.
+        if (self.as(gio.Application).getIsRemote() == 0)
+            @import("../../../remote/relay_suspend.zig").launchAsync(std.heap.c_allocator);
+
         // T3400: a dead or unreachable local agent is recovered in place -
         // its panes rebuilt on a fresh agent - instead of left frozen.
         if (self.as(gio.Application).getIsRemote() == 0) AgentRecovery.start(self);

@@ -200,6 +200,9 @@ pub const AccountInput = struct {
     /// This build carries a Google OAuth client id.
     configured: bool = true,
     busy: Busy = .none,
+    /// The signed-out row's "still removing it" sentence while a forced
+    /// sign-out's revocation is owed (`pendingRevocationText`, T3676), or "".
+    pending: []const u8 = "",
 };
 
 pub const AccountView = struct {
@@ -234,7 +237,7 @@ pub fn accountView(buf: []u8, in: AccountInput) AccountView {
     else if (in.env_token)
         "Signed in as your account"
     else
-        relay_account_text.statusText(null, false, in.configured, "");
+        relay_account_text.statusText(null, false, in.configured, in.pending);
     // Sign Out needs no client id; Sign In does.
     const button: ?[]const u8 = if (stored)
         relay_account_text.buttonLabel(true, false)
@@ -402,6 +405,25 @@ test "accountView: busy rows say what is happening and cannot be pressed again" 
     const o = accountView(&buf, .{ .busy = .sign_out, .email = "me@example.com" });
     try testing.expectEqualStrings("Signing out\u{2026}", o.status);
     try testing.expect(!o.sensitive and o.signs_out);
+}
+
+test "accountView: a signed-out row says a forced sign-out is still removing this machine (T3676)" {
+    var buf: [200]u8 = undefined;
+    var pb: [256]u8 = undefined;
+    const pending = relay_account_text.pendingRevocationText(&pb, "me@example.com");
+    const v = accountView(&buf, .{ .pending = pending });
+    try testing.expectEqualStrings(pending, v.status);
+    try testing.expectEqualStrings("Sign in with Google\u{2026}", v.button.?);
+    // Mac shows it only under a live Sign In: an unconfigured build keeps
+    // its setup pointer, and a signed-in row its email.
+    try testing.expectEqualStrings(
+        relay_account_text.unconfigured_status,
+        accountView(&buf, .{ .pending = pending, .configured = false }).status,
+    );
+    try testing.expectEqualStrings(
+        "Signed in as me@example.com",
+        accountView(&buf, .{ .pending = pending, .email = "me@example.com" }).status,
+    );
 }
 
 test "storeNote: names the private file, under ~ when it is in home" {

@@ -16,6 +16,10 @@
 //!   --op=sort --value=name|cpu    click a column
 //!   --op=account                  click the account row's button (Sign in
 //!                                 with Google... or Sign Out, T3575)
+//!   --op=account-confirm --value=anyway|stay
+//!                                 answer the "Sign Out Anyway" confirmation a
+//!                                 sign-out that could not revoke this machine
+//!                                 raises (T3676), as its button would
 //!   --op=close                    close it
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -64,6 +68,15 @@ pub fn seam(app: *Application, request: Request) Allocator.Error![]u8 {
         else
             return server.errorResponse(c_alloc, "--key '{s}' is not a chord this seam knows", .{k});
         did = w.chooserChord(if (state & shift != 0) n else 'n', state);
+    } else if (std.mem.eql(u8, op, "account-confirm")) {
+        // The confirmation outlives a closed chooser, so this needs none.
+        const v = value orelse return server.errorResponse(c_alloc, "--value=anyway|stay is required for --op=account-confirm", .{});
+        did = if (std.mem.eql(u8, v, "anyway"))
+            MachineChooser.answerForced("anyway")
+        else if (std.mem.eql(u8, v, "stay"))
+            MachineChooser.answerForced("stay")
+        else
+            return server.errorResponse(c_alloc, "--value '{s}' is not anyway or stay", .{v});
     } else if (!std.mem.eql(u8, op, "state")) {
         const c = MachineChooser.current() orelse
             return server.errorResponse(c_alloc, "machine-chooser: the chooser is not open", .{});
@@ -133,6 +146,19 @@ fn write(j: *std.json.Stringify, did: ?bool) !void {
     try j.write(c_opt != null);
     try j.objectField("last");
     try j.write(if (c_opt) |c| c.last() else MachineChooser.lastAction());
+    try j.objectField("account_busy");
+    try j.write(@tagName(MachineChooser.accountBusy()));
+    try j.objectField("account_confirm");
+    if (MachineChooser.forcedConfirm()) |d| {
+        try j.beginObject();
+        try j.objectField("heading");
+        try j.write(std.mem.span(wk.adw_alert_dialog_get_heading(d) orelse ""));
+        try j.objectField("body");
+        try j.write(std.mem.span(wk.adw_alert_dialog_get_body(d) orelse ""));
+        try j.endObject();
+    } else try j.write(null);
+    try j.objectField("account_confirm_answer");
+    try j.write(MachineChooser.forcedAnswer());
     if (c_opt) |c| {
         try j.objectField("account");
         try j.write(text(c.accountLabel()));
@@ -148,8 +174,6 @@ fn write(j: *std.json.Stringify, did: ?bool) !void {
             try j.write(null);
         try j.objectField("account_button_sensitive");
         try j.write(wk.gtk_widget_get_sensitive(ab) != 0);
-        try j.objectField("account_busy");
-        try j.write(@tagName(MachineChooser.accountBusy()));
         const sl = c.accountStoreLabel();
         try j.objectField("account_store_note");
         try j.write(if (wk.gtk_widget_get_visible(sl) != 0) text(sl) else null);

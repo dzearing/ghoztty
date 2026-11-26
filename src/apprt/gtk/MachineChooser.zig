@@ -52,6 +52,7 @@ const live = @import("../win32/settings_live.zig");
 const relay_directory = @import("../../remote/relay_directory.zig");
 const relay_signin = @import("../../remote/relay_signin.zig");
 const relay_account = @import("../../remote/relay_account.zig");
+const relay_revoke_pending = @import("../../remote/relay_revoke_pending.zig");
 const relay_dial = @import("../../remote/relay_dial.zig");
 const connection = @import("../../remote/connection.zig");
 const ipc_remote_window = @import("ipc_remote_window.zig");
@@ -112,6 +113,10 @@ stored_in_file: bool = false,
 store_note_buf: [std.fs.max_path_bytes + 128]u8 = undefined,
 /// The button signs out (an account is stored) rather than in.
 account_signs_out: bool = false,
+/// The signed-out row's "still removing it" sentence while a forced
+/// sign-out's revocation is owed (T3676; win32 `syncPendingRevocation`).
+pending_buf: [256]u8 = undefined,
+pending_len: usize = 0,
 /// The selected machine's id, kept across a rebuild (`rules.reselect`).
 sel_buf: [128]u8 = undefined,
 sel_len: usize = 0,
@@ -417,7 +422,29 @@ fn readAccount(self: *MachineChooser) void {
     if (self.email != null) if (self.store_path) |p| {
         self.stored_in_file = relay_account.location(a, p) == .file;
     };
+    _ = self.syncPendingRevocation();
     self.drawAccount();
+}
+
+/// Re-read the pending-revocation record into the row's sentence (T3676,
+/// win32 `MachineChooser.syncPendingRevocation`). Returns whether it
+/// changed, so a poll tick that finds nothing new redraws nothing. A record
+/// `usable` would discard is a revocation nobody is still performing, so it
+/// says nothing. A small local read: GTK-thread safe.
+fn syncPendingRevocation(self: *MachineChooser) bool {
+    var next_buf: [256]u8 = undefined;
+    var next: []const u8 = "";
+    if (relay_revoke_pending.load(c_alloc)) |loaded_| {
+        var loaded = loaded_;
+        defer loaded.deinit();
+        const rec = loaded.value();
+        if (relay_revoke_pending.usable(rec))
+            next = rules.relay_account_text.pendingRevocationText(&next_buf, rec.account_email);
+    }
+    if (std.mem.eql(u8, next, self.pending_buf[0..self.pending_len])) return false;
+    @memcpy(self.pending_buf[0..next.len], next);
+    self.pending_len = next.len;
+    return true;
 }
 
 fn drawAccount(self: *MachineChooser) void {
@@ -427,6 +454,7 @@ fn drawAccount(self: *MachineChooser) void {
         .env_token = envToken(),
         .configured = self.configured,
         .busy = account_busy,
+        .pending = self.pending_buf[0..self.pending_len],
     });
     setText(self.account_label, v.status);
     wk.gtk_widget_set_visible(self.account_label, @intFromBool(v.status.len > 0));
@@ -480,6 +508,8 @@ fn setAccountMsg(s: []const u8) void {
 
 const AccountJob = struct {
     kind: rules.Busy,
+    /// `.force` is the "Sign Out Anyway" the confirmation offers (T3676).
+    mode: relay_signin.SignOutMode = .revoke,
     ok: bool = false,
     machine: relay_signin.MachineOutcome = .nothing_to_revoke,
     message_buf: [256]u8 = undefined,
@@ -490,18 +520,94 @@ fn onAccountButton(_: *wk.GtkWidget, self: *MachineChooser) callconv(.c) void {
     if (account_busy != .none) return;
     const kind: rules.Busy = if (self.account_signs_out) .sign_out else .sign_in;
     if (kind == .sign_in and !self.configured) return;
-    const job = c_alloc.create(AccountJob) catch return;
-    job.* = .{ .kind = kind };
+    if (!startAccount(kind, .revoke)) return;
+    self.noteLast("{s}", .{if (kind == .sign_in) "sign-in started" else "sign-out started"});
+    self.drawAccount();
+}
+
+/// Start an account operation on a worker. GTK thread only; false when one
+/// is already running or the worker did not start.
+fn startAccount(kind: rules.Busy, mode: relay_signin.SignOutMode) bool {
+    if (account_busy != .none) return false;
+    const job = c_alloc.create(AccountJob) catch return false;
+    job.* = .{ .kind = kind, .mode = mode };
     const t = std.Thread.spawn(.{}, runAccount, .{job}) catch |err| {
         log.warn("machine chooser: account worker did not start err={}", .{err});
         c_alloc.destroy(job);
-        return;
+        return false;
     };
     t.detach();
     account_busy = kind;
     setAccountMsg("");
-    self.noteLast("{s}", .{if (kind == .sign_in) "sign-in started" else "sign-out started"});
-    self.drawAccount();
+    return true;
+}
+
+// ---- "Sign Out Anyway" (T3676; win32 `MachineChooser.offerForcedSignOut`) ----
+
+/// The open confirmation, for the seam. GTK thread only.
+var forced_confirm: ?*wk.GtkWidget = null;
+/// What the last confirmation was answered with (`anyway` / `stay`), for
+/// the seam; "" while none has been.
+var forced_answer_buf: [16]u8 = undefined;
+var forced_answer_len: usize = 0;
+
+pub fn forcedConfirm() ?*wk.GtkWidget {
+    return forced_confirm;
+}
+
+pub fn forcedAnswer() []const u8 {
+    return forced_answer_buf[0..forced_answer_len];
+}
+
+/// A sign-out that could not revoke this machine left the user SIGNED IN:
+/// say so and offer the way past it, rather than land them back on a row
+/// that still shows their email with no explanation. Asked after the row
+/// has been redrawn to its still-signed-in state, so the user sees the true
+/// state behind the dialog. Enter keeps them signed in - the machine stays
+/// reachable either way, so the default must not be the one that says so.
+fn offerForcedSignOut(parent: *wk.GtkWidget) void {
+    if (forced_confirm != null) return;
+    const d = wk.adw_alert_dialog_new(
+        rules.relay_account_text.not_revoked_title,
+        rules.relay_account_text.not_revoked_body,
+    );
+    wk.adw_alert_dialog_add_response(d, "stay", "Stay Signed In");
+    wk.adw_alert_dialog_add_response(d, "anyway", "Sign Out Anyway");
+    wk.adw_alert_dialog_set_response_appearance(d, "anyway", wk.adw_response_destructive);
+    wk.adw_alert_dialog_set_default_response(d, "stay");
+    wk.adw_alert_dialog_set_close_response(d, "stay");
+    _ = wk.g_signal_connect_data(d, "response", @ptrCast(&onForcedResponse), null, null, 0);
+    _ = wk.g_signal_connect_data(d, "closed", @ptrCast(&onForcedClosed), null, null, 0);
+    forced_confirm = d;
+    forced_answer_len = 0;
+    log.info("machine chooser: offering Sign Out Anyway", .{});
+    wk.adw_dialog_present(d, parent);
+}
+
+/// Answer the confirmation as its button would (the seam), then close it.
+pub fn answerForced(response: [:0]const u8) bool {
+    const d = forced_confirm orelse return false;
+    wk.g_signal_emit_by_name(@ptrCast(d), "response", response.ptr);
+    wk.adw_dialog_force_close(d);
+    return true;
+}
+
+fn onForcedResponse(_: *wk.GtkWidget, response: [*:0]const u8, _: ?*anyopaque) callconv(.c) void {
+    const r = std.mem.span(response);
+    const n = @min(r.len, forced_answer_buf.len);
+    @memcpy(forced_answer_buf[0..n], r[0..n]);
+    forced_answer_len = n;
+    log.info("machine chooser: Sign Out Anyway answered {s}", .{r});
+    if (!std.mem.eql(u8, r, "anyway")) return;
+    if (!startAccount(.sign_out, .force)) return;
+    if (open_chooser) |c| {
+        c.noteLast("forced sign-out started", .{});
+        c.drawAccount();
+    }
+}
+
+fn onForcedClosed(_: *wk.GtkWidget, _: ?*anyopaque) callconv(.c) void {
+    forced_confirm = null;
 }
 
 /// Worker thread: the blocking flow. Touches no GTK state.
@@ -519,7 +625,7 @@ fn runAccount(job: *AccountJob) void {
             msg = relay_signin.errorMessage(err);
         },
         .sign_out => {
-            const out = relay_signin.signOut(a, .revoke);
+            const out = relay_signin.signOut(a, job.mode);
             job.ok = out.signedOut();
             job.machine = out.machine;
             msg = rules.relay_account_text.signOutMessage(out);
@@ -552,6 +658,10 @@ fn onAccountDone(ud: ?*anyopaque) callconv(.c) c_int {
             .sign_out => if (self.account != .signed_in) self.setMachines(&.{}),
             .none => {},
         };
+        // T3676: a sign-out that could not revoke this machine kept the user
+        // signed in; the row now says so, and this offers the way past it.
+        if (job.kind == .sign_out and job.machine == .not_revoked)
+            offerForcedSignOut(@ptrCast(self.parent));
     }
     // The record keeps every relay window a signed-out launch could not
     // bring back; the sign-in is when they can (win32 T3389's replay).
@@ -805,6 +915,9 @@ fn onDirectory(ud: ?*anyopaque) callconv(.c) c_int {
 fn onPoll(ud: ?*anyopaque) callconv(.c) c_int {
     const self: *MachineChooser = @ptrCast(@alignCast(ud orelse return 0));
     if (open_chooser != self) return 0;
+    // The armed revocation completes in the background (T3676); the row's
+    // "still removing it" goes the moment it does.
+    if (self.syncPendingRevocation()) self.drawAccount();
     switch (chooser_refresh.tick(self.account == .signed_in, self.dir_inflight)) {
         .fetch => self.startDirectory(),
         .skip_signed_out, .skip_inflight => {},
