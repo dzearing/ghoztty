@@ -211,14 +211,23 @@ hl_check "D9b and no other window's" $? "$(field wa '[x["pane"] for x in p]')"
 is wb 'order(["'"$a"'", "'"$b"'", "'"$c"'"])' "['$c', '$b', '$a']"
 hl_check "D9c every window's list shows it" $? "$(field wb '[x["pane"] for x in p]')"
 
-# Let go over the other window's rows, it stays in its own window's list.
+# Let go over the other window's rows, it stays in its own window: below its
+# window's rows is that window's tray (T3698, win32 `trayTop`: the outline's
+# tray begins right under the window's last row on screen), so it stashes there.
 hl_wait_for 10 laid wa "$a" "$b" "$c" "$f" "$e"
 y=$(ylow wa "$e")
 idx=$(drop wa "$c" "$y")
+hl_wait_for 10 lst_is 'stashed("wa")' "['$c']"
+hl_check "D10 let go below another window's rows it goes into its own window's tray" $? "index=$idx stashed=$(lst 'stashed("wa")') list=$(field wa '[x["pane"] for x in p]')"
 hl_wait_for 10 is wa 'order(["'"$a"'", "'"$b"'", "'"$c"'"])' "['$b', '$a', '$c']"
-hl_check "D10 let go below another window's rows it lands last in its own" $? "index=$idx list=$(field wa '[x["pane"] for x in p]')"
-lst_is '(ids("wa"), ids("wb"))' "(['$a', '$b', '$c'], ['$f', '$e'])"
+hl_check "D10a last in its own window's rows" $? "list=$(field wa '[x["pane"] for x in p]')"
+lst_is '(ids("wa"), ids("wb"), stashed("wb"))' "(['$a', '$b', '$c'], ['$f', '$e'], [])"
 hl_check "D10b and no pane changes window" $? "$(lst '(ids("wa"), ids("wb"))')"
+# Back out of the tray: let go low on a (above where the tray begins).
+hl_wait_for 10 laid wa "$a" "$b" "$c" "$f" "$e"
+idx=$(drop wa "$c" "$(ylow wa "$a")")
+hl_wait_for 10 lst_is 'stashed("wa")' "[]"
+hl_check "D10c let go back among its window's rows on screen it is restored, last" $? "index=$idx stashed=$(lst 'stashed("wa")') list=$(field wa '[x["pane"] for x in p]')"
 
 sb wa --click=scope > /dev/null
 hl_wait_for 10 is wa '(s["all_windows"], [x["pane"] for x in p])' "(False, ['$b', '$a', '$c'])"
