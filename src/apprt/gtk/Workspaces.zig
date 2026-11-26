@@ -52,8 +52,12 @@
 //! otherwise go is kept, emptied, and closed with the last workspace.
 //! Undo of a workspace close waits on GTK window-close undo (T3665).
 //!
-//! Not here (their own cards): the CLI (T3653), rolled-up activity (T3654),
-//! persistence (T3655).
+//! Activity (T3654): state never pauses. The shared window's activity is the
+//! most urgent of every workspace's (`refreshActivity`), a parked workspace
+//! that starts waiting on a question marks the toplevel urgent
+//! (`attentionWindow`), and the title suffix stays the workspace on show's.
+//!
+//! Not here (their own cards): the CLI (T3653), persistence (T3655).
 const Workspaces = @This();
 
 const std = @import("std");
@@ -142,6 +146,7 @@ pub fn present(win: *Window, activate: bool) bool {
         return false;
     };
     win.adoptWinActionsOnContent();
+    defer refreshActivity();
 
     if (!parked) {
         load(win);
@@ -477,6 +482,8 @@ pub fn retire(win: *Window) bool {
     if (toplevel != win or !host.manages(win) or win.isFrame()) return false;
     if (host.count() < 2) return false;
     if (Application.default().isQuitting()) return false;
+    // It leaves the host here, not in `forget` (T3654).
+    defer refreshActivity();
     switch (host.close(win)) {
         .hand_to => |next| {
             win.holdContent();
@@ -528,6 +535,8 @@ fn destroyFrame(data: ?*anyopaque) callconv(.c) c_int {
 pub fn forget(win: *Window) void {
     if (!host.manages(win)) return;
     defer dropFrameIfEmpty();
+    // Its activity leaves the roll-up with it (T3654).
+    defer refreshActivity();
     const quitting = Application.default().isQuitting();
     const t = toplevel;
     const was_active = if (host.active) |a| a == win else false;
@@ -581,6 +590,45 @@ fn closeInHost(win: *Window) void {
         .close_window => _ = host.windowDidClose(win, true),
         .hand_to, .in_place, .not_managed => {},
     }
+}
+
+// ---- Rolled-up activity (T3654) ------------------------------------------
+
+/// The shared window's activity: the most urgent of EVERY workspace's, parked
+/// ones included (Mac `WorkspaceHost.refreshWindowActivity`, the window's
+/// `AXWindowActivityState`; win32 T3186). The title suffix stays the
+/// workspace on show's own (`Window.syncTitle`).
+var rolled: workspace_host.Activity = .idle;
+
+pub fn activity() workspace_host.Activity {
+    return rolled;
+}
+
+/// Recompute the roll-up: on every activity change of a workspace, parked or
+/// not, and whenever a workspace comes or goes. Logs a move, the oracle for
+/// window-workspace-activity.sh.
+pub fn refreshActivity() void {
+    const now = host.rolledUpActivity({}, workspaceActivity);
+    if (now == rolled) return;
+    rolled = now;
+    log.info("window activity rolled up state={s} workspaces={d}", .{ @tagName(now), host.count() });
+}
+
+fn workspaceActivity(_: void, w: *Window) workspace_host.Activity {
+    return switch (w.activityAggregate()) {
+        .idle => .idle,
+        .busy => .busy,
+        .needs_input => .needs_input,
+    };
+}
+
+/// The GtkWindow an attention request from `win` marks urgent: its own, or -
+/// for any workspace - the shared toplevel, the only one the person can see
+/// (Mac: a parked workspace's `requestUserAttention` is the app's; win32
+/// `attentionHwnd`). Null when no workspace has the window yet.
+pub fn attentionWindow(win: *Window) ?*Window {
+    if (!host.manages(win)) return win;
+    return toplevel;
 }
 
 /// The window's workspace name for logs.

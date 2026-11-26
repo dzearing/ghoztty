@@ -39,6 +39,7 @@ const pane_drop_apply = @import("../pane_drop_apply.zig");
 const wk = @import("../webkit.zig");
 const window_activity = @import("../window_activity.zig");
 const window_seen = @import("../window_seen.zig");
+const activity_attention = @import("../../win32/activity_attention.zig");
 const pane_style = @import("../pane_style.zig");
 const color_math = @import("../../win32/color_math.zig");
 const RemoteLink = @import("../RemoteLink.zig");
@@ -288,6 +289,11 @@ pub const Window = extern struct {
         /// When a title was last set on the window (monotonic ms), or null
         /// before the first: a hidden window's first title always lands.
         title_landed_ms: ?i64 = null,
+
+        /// This window's last-seen activity aggregate, reduced to whether it
+        /// waits on a question (T3654, win32 T2907): a move INTO
+        /// `needs_input` asks for attention once. Moves while parked too.
+        activity_attention: activity_attention.Tracker = .{},
 
         /// The pane sidebar (T3557): the column before the tabs that lists
         /// the active tab's panes. Owned; its widgets belong to the tree.
@@ -2958,7 +2964,37 @@ pub const Window = extern struct {
                 i, @tagName(now), marks.loading, marks.attention,
             });
         }
+        // State never pauses (T3654): a parked workspace still asks for
+        // attention, and the shared window rolls every workspace up.
+        self.noteActivityAttention(self.activityAggregate());
+        if (Workspaces.manages(self)) Workspaces.refreshActivity();
         self.syncTitle();
+    }
+
+    /// Ask for attention when this window's aggregate moves INTO
+    /// `needs_input` while the window the person sees is in the background
+    /// (Mac `setupActivityStatePublisher` -> `requestUserAttention`, win32
+    /// T2907's taskbar flash; here the urgency the bell's `attention` feature
+    /// sets, cleared when that window is activated). A parked workspace asks
+    /// on the shared toplevel (T3654): on Mac its window is nil, so never
+    /// key. Logs every move into or out of `needs_input`.
+    fn noteActivityAttention(self: *Self, aggregate: window_activity.State) void {
+        const priv = self.private();
+        const needs_input = aggregate == .needs_input;
+        if (needs_input == priv.activity_attention.needs_input) return;
+        const target = Workspaces.attentionWindow(self);
+        const active = if (target) |t| t.as(gtk.Window).isActive() != 0 else false;
+        const urgent = priv.activity_attention.observe(needs_input, active) and target != null;
+        if (urgent) target.?.winproto().setUrgent(true) catch |err| {
+            log.warn("winproto failed to set urgency={}", .{err});
+        };
+        log.info("activity attention needs_input={} active={} urgent={} parked={} target={s}", .{
+            needs_input,
+            active,
+            urgent,
+            Workspaces.isParked(self),
+            if (target) |t| (t.ipcName() orelse "?") else "none",
+        });
     }
 
     /// Set the window title: the pinned title (T3370), else the selected

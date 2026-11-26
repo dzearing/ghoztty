@@ -984,6 +984,8 @@ fn workspacesSeam(app: Context, request: Request) Allocator.Error![]u8 {
         grids: []const Grid,
         /// T3651: the seed of its own gradient (0: the ocean).
         desk_seed: u64,
+        /// T3654: its own panes' most urgent state, parked or not.
+        activity: []const u8,
     };
     const snap = Workspaces.snapshot();
     var rows: std.ArrayListUnmanaged(Row) = .empty;
@@ -1022,6 +1024,7 @@ fn workspacesSeam(app: Context, request: Request) Allocator.Error![]u8 {
             .owner_ok = owner_ok,
             .grids = grids.items,
             .desk_seed = w.deskSeed(),
+            .activity = @tagName(w.activityAggregate()),
         });
     }
 
@@ -1076,6 +1079,9 @@ fn workspacesSeam(app: Context, request: Request) Allocator.Error![]u8 {
             .gtk_windows = counts.all,
             .mapped_windows = counts.mapped,
             .toplevel_title = toplevel_title,
+            // T3654: the shared window's activity, the most urgent of
+            // every workspace's (`Workspaces.refreshActivity`).
+            .activity = @tagName(Workspaces.activity()),
             .active = if (snap.active) |a| windowName(app, a) else null,
             .content = content_name,
             .shown = shown,
