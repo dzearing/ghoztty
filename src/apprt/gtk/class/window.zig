@@ -412,16 +412,6 @@ pub const Window = extern struct {
             workspace_qdata_key,
             self,
         );
-        // A destroyed GtkWindow is released by its application, and that is
-        // the moment a workspace leaves the host: dispose may never come
-        // while its content root's `win` group still references it.
-        _ = gobject.Object.signals.notify.connect(
-            self,
-            *Self,
-            propApplication,
-            self,
-            .{ .detail = "application" },
-        );
 
         // T3571: a window that is hidden (a quick terminal put away) or shown
         // again recomputes whether its panes can be seen.
@@ -2945,10 +2935,6 @@ pub const Window = extern struct {
         Workspaces.forget(self);
         self.releaseContent();
         self.contentRoot().insertActionGroup("win", null);
-    }
-
-    fn propApplication(_: *Self, _: *gobject.ParamSpec, self: *Self) callconv(.c) void {
-        if (self.as(gtk.Window).getApplication() == null) self.leaveWorkspace();
     }
 
     /// Whether this workspace's content is held out of every window.

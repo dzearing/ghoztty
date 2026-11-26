@@ -106,6 +106,7 @@ pub fn toplevelSeenChanged(win: *Window) void {
 pub fn present(win: *Window, activate: bool) bool {
     if (!applies(win)) return false;
     if (host.manages(win)) return false;
+    watchRemovals();
     const alloc = Application.default().allocator();
     const parked = host.startsParked();
     host.admit(alloc, win, parked) catch |err| {
@@ -141,6 +142,29 @@ pub fn present(win: *Window, activate: bool) bool {
         },
     }
     return true;
+}
+
+var watching = false;
+
+/// A destroyed GtkWindow is released by its application, and that is the
+/// moment a workspace leaves the host (`Window.leaveWorkspace`): dispose
+/// may never come while its content root's `win` group still references
+/// it, and GTK clears the window's `application` without a notify.
+fn watchRemovals() void {
+    if (watching) return;
+    watching = true;
+    _ = gtk.Application.signals.@"window-removed".connect(
+        Application.default().as(gtk.Application),
+        ?*anyopaque,
+        windowRemoved,
+        null,
+        .{},
+    );
+}
+
+fn windowRemoved(_: *gtk.Application, w: *gtk.Window, _: ?*anyopaque) callconv(.c) void {
+    const win = gobject.ext.cast(Window, w) orelse return;
+    win.leaveWorkspace();
 }
 
 /// `win` is the workspace whose own GtkWindow is the toplevel.
