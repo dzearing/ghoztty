@@ -40971,3 +40971,7 @@ WebKitGTK's script message carries no frame, and a page-world handler is visible
 - What: re-verified before building. T2017 (5c7ae7d276) already strips the app's own conditional top rows (pending update / background update) before comparing the menu with its model, which was the menu-bar half of this card. No code change; the leak's source stays on T3610.
 - Evidence: leaked update-offer-debug.txt (9.9.9, rewritten 2026-11-24 20:33) still present; direct menu-bar.ps1 run on a fresh Debug build = ALL PASS (108), with the row reported as a box-state NOTE.
 - Filed: none (noted on T3610 that a harness is still leaking the offer).
+## 2026-11-26 14:15 lane b - T2420: the sidebar glide's gutter check stops flaking under load
+- What: pane-sidebar-glide.ps1's gutter sampler read the column and the pane through two separate child-window enumerations, so the glide moved between the reads and a sweep's load turned that into 3 px "gaps". It now reads both rects by handle back to back, with the column read on both sides of the pane (the app moves the grid first, the column after it in the same step). Threshold unchanged (2 px, 5 of 6).
+- Evidence: alone ALL PASS 48, gaps all 0/-1; 3 of 3 ALL PASS beside 4 busy loops, every sample 0. Under 32 busy loops the gap is a real 3-10 px on both reads - still caught, filed.
+- Filed: T3831 (P3: under full CPU saturation the column trails the grid 3-10 px and the rail draws twice).

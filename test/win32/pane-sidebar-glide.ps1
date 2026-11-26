@@ -151,12 +151,25 @@ function Wait-GlideDone([int]$From, [int]$Ms) {
 # One motion holds it at every frame; two easings side by side (the column on
 # its own curve) drift tens of pixels apart. A sample can fall between the
 # grid's step and the column's in one tick, so five of six must hold (2 px).
+# T2420: each sample reads the two rects by handle, back to back, with the
+# column read on BOTH sides of the pane: the app moves the grid first and the
+# column after it in the same step, so a read landing inside that step sees
+# the grid new and the column old. The second column read sees it caught up;
+# a column on its own easing is tens of pixels off on both. Before this the
+# two reads were each a whole child-window enumeration, and under a sweep's
+# load the glide moved 3 px between them (gaps 0,3,0,0,3,1).
 function Get-GutterSamples($top, $lead, [int]$Rest) {
     $gaps = @()
+    $sbH = [IntPtr](Get-Sidebar $top).Hwnd
+    $pH = [IntPtr]$lead
     for ($i = 0; $i -lt 6; $i++) {
-        $c = Get-Sidebar $top
-        $p = Get-Pane $top $lead
-        if ($null -ne $c -and $null -ne $p) { $gaps += ($p.Left - $c.Right) }
+        $c1 = Get-TestWindowRect -Window $sbH
+        $p = Get-TestWindowRect -Window $pH
+        $c2 = Get-TestWindowRect -Window $sbH
+        if ($c1.Width -gt 0 -and $p.Width -gt 0) {
+            $g1 = $p.Left - $c1.Right; $g2 = $p.Left - $c2.Right
+            $gaps += $(if ([math]::Abs($g2 - $Rest) -lt [math]::Abs($g1 - $Rest)) { $g2 } else { $g1 })
+        }
         Start-Sleep -Milliseconds 40
     }
     $held = @($gaps | Where-Object { [math]::Abs($_ - $Rest) -le 2 }).Count

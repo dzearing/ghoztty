@@ -1,8 +1,8 @@
 {
     "guard":  "unwired-hook",
     "script":  "test/win32/unwired-hook-audit.ps1",
-    "generated":  "2026-11-26T13:32:42-08:00",
-    "commit":  "3d09a5346e",
+    "generated":  "2026-11-26T14:03:52-08:00",
+    "commit":  "9c7d2b6b8f",
     "uncommitted":  [
 
                     ],
@@ -980,7 +980,7 @@
                   "src/remote/agent/handoff.zig":  "3ffbc1ebd2a6752ac58994f16796eeb21c70bea19b48f75eb8c9571b5e988469",
                   "src/remote/agent/heap_stats.zig":  "1a2c1fd5f8e2a796428fb817d59ad96f287f6fff2b6887e47522ee63547e4294",
                   "src/remote/agent/holder_adopt.zig":  "364d11b359dad4497047e51922c728a816e34c9aa24e15e198927ab4acba261b",
-                  "src/remote/agent/keepalive.zig":  "08ce019b6d8998aa52868e0101bb1b6549fd8560ed337329ddf420362ff7c5f6",
+                  "src/remote/agent/keepalive.zig":  "b4444bb09e5b39ac697f978df7f1723ffdc5d991c7e0f806f841a72405ddd7fc",
                   "src/remote/agent/layout_meta.zig":  "7541949239eed45aec6cd00297fa95e56239239e8aab33600439f258f81a00be",
                   "src/remote/agent/link_control.zig":  "8a0fb05ef020d3b2ae734aaa9489547cde0cb9e5e7f2c0bdf6d2782b3274c09c",
                   "src/remote/agent/main.zig":  "4cb6ca98810decfeae4c6a47e9d3b0afd616f7772e850beb6dc7eb622106a404",
@@ -1581,7 +1581,7 @@
                   "test/win32/pane-sidebar-drag.ps1":  "0787d30978a219fb443eb8199282475fea7867c50e65f446af3cad0f4e4ccad6",
                   "test/win32/pane-sidebar-elevated.ps1":  "77decaf8df557213aed7abeb46669903ab1b45bf6e9aed12df6764a34e14fd2b",
                   "test/win32/pane-sidebar-foreign-drag.ps1":  "41896d62e9125f29db942863219ea8c7ed996119e9fb003f3067ee1d31a5f379",
-                  "test/win32/pane-sidebar-glide.ps1":  "9099e4690e8119f75ab7689f339d28c151b527152d26329c5d2bb537ad5a978c",
+                  "test/win32/pane-sidebar-glide.ps1":  "5ff3d389705d26a274510dcf78f1cf2ebc3b5a27947f0c2745964563d7259b99",
                   "test/win32/pane-sidebar-hover-resync.ps1":  "a05c2b4894385ba80ac8343db8817baf84fb27cabef9dd769164ebc54e27e551",
                   "test/win32/pane-sidebar-hue.ps1":  "661c963a69bf741e1c3030d49ae248108567b4d47590b52d97d3439e1c61df28",
                   "test/win32/pane-sidebar-motion-cost.ps1":  "39ed18d7a1201e444fee8a1b9e6d454ca72d9fb7bacfb6c2d8c22283f65e1277",
