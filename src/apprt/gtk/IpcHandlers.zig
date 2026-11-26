@@ -3031,7 +3031,7 @@ pub const Target = union(enum) {
     window: *Window,
     pane: PaneAt,
 
-    fn window_(self: Target) *Window {
+    pub fn window_(self: Target) *Window {
         return switch (self) {
             .window => |w| w,
             .pane => |p| p.window,
