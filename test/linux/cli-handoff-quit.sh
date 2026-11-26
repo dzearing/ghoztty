@@ -125,8 +125,12 @@ other='{"version":"9.9.9-other","commit":"0000000","exe":"/opt/other/ghoztty"}'
 r=$(handoff "$other")
 printf '%s' "$r" | grep -q '"success":true'
 hl_check "Q10 another build's handoff-quit is answered success before the app goes" $? "$r"
-hl_wait_for 10 sh -c "! kill -0 $APP 2>/dev/null"
-hl_check "Q11 the app exits on its own within 10 s" $?
+rc=124
+hl_wait_for 10 sh -c "! kill -0 $APP 2>/dev/null" && { wait "$APP" 2>/dev/null; rc=$?; }
+# Exit 0, not merely gone: a pane that outlives the quit aborts a debug build
+# in core App.deinit (134, T3689); the app logs any survivor at terminate.
+[ "$rc" = 0 ]
+hl_check "Q11 the app exits 0 on its own within 10 s" $? "rc=$rc $(grep -E 'quit: .*(survivor|still alive)' "$APP_LOG" | sed 's/.*quit: //' | tr '\n' ' ' | head -c 600)"
 grep -q 'handoff-quit: quitting so the launch of 9.9.9-other (/opt/other/ghoztty) can take over (persistence=true)' "$APP_LOG"
 hl_check "Q12 the app logged why it quit, naming the launching build" $? "$(grep -m2 'handoff' "$APP_LOG" | tr '\n' ' ')"
 b1=$(cat "$beat" 2>/dev/null); sleep 1; b2=$(cat "$beat" 2>/dev/null)
