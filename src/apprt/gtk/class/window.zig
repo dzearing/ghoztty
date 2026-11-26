@@ -42,6 +42,7 @@ const window_seen = @import("../window_seen.zig");
 const pane_style = @import("../pane_style.zig");
 const color_math = @import("../../win32/color_math.zig");
 const RemoteLink = @import("../RemoteLink.zig");
+const Workspaces = @import("../Workspaces.zig");
 
 const log = std.log.scoped(.gtk_ghostty_window);
 
@@ -49,6 +50,15 @@ pub const Window = extern struct {
     const Self = @This();
     parent_instance: Parent,
     pub const Parent = adw.ApplicationWindow;
+
+    /// The qdata key a workspace's content root carries, naming the `Window`
+    /// it belongs to (T3648). `ext.getAncestor(Window, ...)` reads it before
+    /// the widget tree, so in single-window mode a pane answers the
+    /// workspace it is in - on show in the shared toplevel, or parked out of
+    /// every window - and never the toplevel's own workspace (Mac
+    /// `BaseTerminalController.owner(of:)`).
+    pub const workspace_qdata_key: [:0]const u8 = "ghoztty-workspace";
+
     pub const getGObjectType = gobject.ext.defineClass(Self, .{
         .name = "GhosttyWindow",
         .instanceInit = &init,
@@ -256,6 +266,10 @@ pub const Window = extern struct {
         /// never minimizes or suspends a window.
         toplevel_override: ?window_seen.Toplevel = null,
 
+        /// Single-window mode (T3648): this workspace's content root while
+        /// it is out of every window (parked), held by this reference.
+        held_content: ?*gtk.Widget = null,
+
         /// A title composed while the window was hidden and not yet set on
         /// it (T3571): it lands when the window shows, or when
         /// `held_title_timer` fires. Owned.
@@ -390,6 +404,14 @@ pub const Window = extern struct {
 
         // Initialize our actions
         self.initActionMap();
+
+        // T3648: the content root names its workspace, so every lookup from
+        // a widget inside it reaches this Window wherever the content is.
+        gobject.Object.setData(
+            self.contentRoot().as(gobject.Object),
+            workspace_qdata_key,
+            self,
+        );
 
         // T3571: a window that is hidden (a quick terminal put away) or shown
         // again recomputes whether its panes can be seen.
@@ -2122,6 +2144,12 @@ pub const Window = extern struct {
     fn dispose(self: *Self) callconv(.c) void {
         const priv = self.private();
 
+        // T3648: before anything else, every workspace's content is back in
+        // a window of its own, so none goes down with a toplevel it was
+        // borrowing and this one's template disposes its own content.
+        Workspaces.forget(self);
+        if (priv.held_content) |_| self.releaseContentInto(self);
+
         // T3384: nothing can put this window's closed panes back now.
         CloseUndo.dropWindow(self);
 
@@ -2715,7 +2743,18 @@ pub const Window = extern struct {
     fn landTitle(self: *Self, title: [:0]const u8) void {
         const priv = self.private();
         self.dropHeldTitle();
+        // T3648: the shared toplevel's own workspace, parked, must not title
+        // the window another workspace is on show in: its title stays held
+        // (what `+list` reads) until it is on show again.
+        if (Workspaces.physical() == self and Workspaces.isParked(self)) {
+            priv.held_title = Application.default().allocator().dupeZ(u8, title) catch null;
+            return;
+        }
         self.as(gtk.Window).setTitle(title);
+        // T3648: the workspace on show titles the shared toplevel too.
+        if (Workspaces.active() == self) if (Workspaces.physical()) |t| {
+            if (t != self) t.as(gtk.Window).setTitle(title);
+        };
         priv.title_landed_ms = nowMs();
     }
 
@@ -2792,8 +2831,11 @@ pub const Window = extern struct {
     /// every pane in it and land any held title (T3571).
     pub fn syncSeen(self: *Self) void {
         const priv = self.private();
-        const mapped = self.as(gtk.Widget).getMapped() != 0;
-        const state = self.toplevelState();
+        // T3648: a workspace is seen through the shared toplevel while on
+        // show, and never while parked (parked counts as hidden).
+        const through = Workspaces.seenThrough(self);
+        const mapped = if (through) |w| w.as(gtk.Widget).getMapped() != 0 else false;
+        const state = if (through) |w| w.toplevelState() else window_seen.Toplevel{};
         const now = window_seen.windowSeen(mapped, state);
         if (now == priv.seen) return;
         priv.seen = now;
@@ -2823,10 +2865,71 @@ pub const Window = extern struct {
         self: *Self,
     ) callconv(.c) void {
         self.syncSeen();
+        Workspaces.toplevelSeenChanged(self);
     }
 
     fn windowMapChanged(_: *gtk.Widget, self: *Self) callconv(.c) void {
         self.syncSeen();
+        Workspaces.toplevelSeenChanged(self);
+    }
+
+    // ---- Single-window mode (T3648) ---------------------------------------
+
+    /// This workspace's content: the template's root, the `Adw.TabOverview`
+    /// holding the header bar, tab bar, sidebar and tabs.
+    pub fn contentRoot(self: *Self) *gtk.Widget {
+        return self.private().tab_overview.as(gtk.Widget);
+    }
+
+    /// The workspace's `win` actions on its content root, so menus,
+    /// accelerators and the palette reach it inside the shared toplevel
+    /// (whose own `win` group is the toplevel's own workspace's).
+    pub fn adoptWinActionsOnContent(self: *Self) void {
+        self.contentRoot().insertActionGroup("win", self.as(gio.ActionGroup));
+    }
+
+    /// Take this workspace's content out of whichever window holds it (its
+    /// own or the shared toplevel), kept whole by this workspace's own
+    /// reference: it is parked. No-op while already held.
+    pub fn holdContent(self: *Self) void {
+        const priv = self.private();
+        if (priv.held_content != null) return;
+        const root = self.contentRoot();
+        _ = root.as(gobject.Object).ref();
+        priv.held_content = root;
+        if (root.getRoot()) |r| {
+            if (gobject.ext.cast(adw.ApplicationWindow, r)) |holder| {
+                if (holder.getContent() == root) holder.setContent(null);
+            }
+        }
+        if (root.getParent() != null) root.unparent();
+    }
+
+    /// `holdContent` from the toplevel `from` (the same act; named for the
+    /// hand-off's reading).
+    pub fn holdContentFrom(self: *Self, from: *Self) void {
+        _ = from;
+        self.holdContent();
+    }
+
+    /// Put this workspace's held content back into its own window.
+    pub fn releaseContent(self: *Self) void {
+        self.releaseContentInto(self);
+    }
+
+    /// Put this workspace's held content into `into` (its own window, or
+    /// the shared toplevel), dropping the hold. No-op when not held.
+    pub fn releaseContentInto(self: *Self, into: *Self) void {
+        const priv = self.private();
+        const root = priv.held_content orelse return;
+        priv.held_content = null;
+        into.as(adw.ApplicationWindow).setContent(root);
+        root.as(gobject.Object).unref();
+    }
+
+    /// Whether this workspace's content is held out of every window.
+    pub fn isContentHeld(self: *Self) bool {
+        return self.private().held_content != null;
     }
 
     fn tabViewPageDetached(

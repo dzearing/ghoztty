@@ -1,0 +1,274 @@
+//! Single-window mode on GTK, the foundation (T3648; Mac `WorkspaceHost`,
+//! win32 T3181/T3191/T3192). Spec: docs/reference/window-modes.md.
+//!
+//! In `single` mode (latched at launch, T3573) the person sees ONE toplevel.
+//! Every window the app opens is a WORKSPACE of it, and every workspace keeps
+//! its own `Window` GObject - tabs, split trees, sidebar, config binding,
+//! IPC name, title. Only the toplevel is shared:
+//!
+//! - The toplevel is the GtkWindow of the first workspace that loaded it
+//!   (`toplevel`). It is the only workspace window ever mapped.
+//! - A workspace's CONTENT is its template's root, the `Adw.TabOverview`
+//!   (`Window.contentRoot`). On show it is the toplevel's content; parked,
+//!   it is out of every window, held by the workspace's own reference
+//!   (`Window.holdContent`). The template bindings inside it keep pointing at
+//!   its own `Window`, so titles and config stay right with no rebinding.
+//! - Every widget-to-window lookup (`ext.getAncestor(Window, ...)`) asks the
+//!   content root which workspace it belongs to (`Window.workspace_qdata_key`)
+//!   before the widget tree, so a pane in a workspace on show answers its own
+//!   workspace, not the toplevel's (Mac `owner(of:)`).
+//! - The workspace's `win` actions are inserted on its content root, so its
+//!   menus, accelerators and the palette reach the workspace on show.
+//! - Membership and every decision come from win32's pure
+//!   `workspace_host.zig` `Host(*Window)`, so the policy is one function on
+//!   both frontends and is unit-tested in every lane.
+//! - Parked counts as hidden: a parked workspace's `Window.syncSeen` reads
+//!   unseen and its content is unmapped, so its terminals build no frames.
+//!
+//! Not here (their own cards): the sidebar switch and every open path
+//! (T3649), parked layout at the toplevel's size (T3650), the shade fade
+//! (T3651), closing semantics and the toplevel's close button (T3652), the
+//! CLI (T3653), rolled-up activity (T3654), persistence (T3655). Until T3652
+//! a workspace close is only made SAFE here (`forget`): its content never
+//! goes down with a toplevel it was borrowing.
+const Workspaces = @This();
+
+const std = @import("std");
+const adw = @import("adw");
+const gio = @import("gio");
+const gobject = @import("gobject");
+const gtk = @import("gtk");
+
+const Window = @import("class/window.zig").Window;
+const Application = @import("class/application.zig").Application;
+const window_mode = @import("../win32/window_mode.zig");
+const workspace_host = @import("../win32/workspace_host.zig");
+
+const log = std.log.scoped(.gtk_workspaces);
+
+pub const Host = workspace_host.Host(*Window);
+
+/// Every workspace and who is on show. One per app.
+var host: Host = .{};
+
+/// The GtkWindow the person sees: the workspace that loaded it. Null before
+/// the first single-mode window and after the last one closed.
+var toplevel: ?*Window = null;
+
+/// Whether `win` is (or would be) a workspace: single mode, and never the
+/// quick terminal.
+pub fn applies(win: *Window) bool {
+    return window_mode.current() == .single and !win.isQuickTerminal();
+}
+
+pub fn manages(win: *Window) bool {
+    return host.manages(win);
+}
+
+pub fn isParked(win: *Window) bool {
+    return host.isParked(win);
+}
+
+pub fn active() ?*Window {
+    return host.active;
+}
+
+pub fn physical() ?*Window {
+    return toplevel;
+}
+
+/// Every workspace, the one on show first, then most recently shown first.
+pub fn order() []const *Window {
+    return host.order.items;
+}
+
+/// The window whose map state and toplevel bits decide whether `win` can
+/// be seen: the toplevel for the workspace on show, null for a parked one
+/// (parked counts as hidden), and `win` itself when it is no workspace.
+pub fn seenThrough(win: *Window) ?*Window {
+    if (!host.manages(win)) return win;
+    if (host.isParked(win)) return null;
+    return toplevel orelse win;
+}
+
+/// The toplevel's map or toplevel state changed: the workspace on show is
+/// seen (or not) through it.
+pub fn toplevelSeenChanged(win: *Window) void {
+    if (toplevel != win) return;
+    const a = host.active orelse return;
+    if (a != win) a.syncSeen();
+}
+
+/// A new window's first presentation (`Application.initAndShowWindow`).
+/// True when this module presented it (or parked it) and the caller must not;
+/// false when the caller presents it as an ordinary window (separate mode,
+/// the quick terminal, or the workspace that loads the toplevel).
+pub fn present(win: *Window, activate: bool) bool {
+    if (!applies(win)) return false;
+    if (host.manages(win)) return false;
+    const alloc = Application.default().allocator();
+    const parked = host.startsParked();
+    host.admit(alloc, win, parked) catch |err| {
+        log.warn("workspace: could not admit window={s} err={}; it opens as a window", .{ name(win), err });
+        return false;
+    };
+    win.adoptWinActionsOnContent();
+
+    if (!parked) {
+        load(win);
+        log.info("workspace: window={s} loads the shared window", .{name(win)});
+        return false;
+    }
+
+    // Out of its own GtkWindow, held by its own reference: it never maps.
+    win.holdContent();
+    switch (host.present(win, activate)) {
+        .not_managed => unreachable,
+        .show => {
+            log.info("workspace: window={s} opened on show", .{name(win)});
+            show(win, activate);
+        },
+        .stay_parked => {
+            log.info("workspace: window={s} opened parked", .{name(win)});
+            win.syncSeen();
+        },
+        .promote_background, .own_window_background => {
+            // Nothing has the window: this one loads it, in the background.
+            win.releaseContent();
+            load(win);
+            log.info("workspace: window={s} loads the shared window (none had it)", .{name(win)});
+            return false;
+        },
+    }
+    return true;
+}
+
+/// `win` is the workspace whose own GtkWindow is the toplevel.
+fn load(win: *Window) void {
+    toplevel = win;
+    host.didLoadWindow(win);
+}
+
+/// Put `win` on show (Mac `WorkspaceHost.show`): the workspace on show
+/// surrenders the toplevel's content, `win` adopts it. No widget is rebuilt
+/// and no process touched. `raise` presents the toplevel afterwards. False
+/// when `win` is not a workspace or nothing could take it.
+pub fn show(win: *Window, raise: bool) bool {
+    const sw = host.show(win);
+    switch (sw) {
+        .refused => return false,
+        .already => {
+            if (raise) if (toplevel) |t| t.as(gtk.Window).present();
+            return true;
+        },
+        .own_window => {
+            win.releaseContent();
+            load(win);
+            if (raise) win.as(gtk.Window).present() else win.as(gtk.Widget).setVisible(1);
+            return true;
+        },
+        .load_first => |l| {
+            l.releaseContent();
+            load(l);
+            l.as(gtk.Widget).setVisible(1);
+            return show(win, raise);
+        },
+        .hand_off => |h| {
+            handOff(h.from, h.to);
+            if (raise) if (toplevel) |t| t.as(gtk.Window).present();
+            return true;
+        },
+    }
+}
+
+fn handOff(from: *Window, to: *Window) void {
+    const t = toplevel orelse return;
+    // Surrender: `from`'s content comes out of the toplevel, kept whole by
+    // its own reference.
+    if (from == t) from.holdContent() else from.holdContentFrom(t);
+    // Adopt: `to`'s content becomes the toplevel's.
+    if (to == t) to.releaseContent() else to.releaseContentInto(t);
+    // The title lands at once, never held back (Mac adoptWindow).
+    if (to.currentTitle()) |title| t.as(gtk.Window).setTitle(title);
+    from.syncSeen();
+    to.syncSeen();
+    t.queueSidebarRefresh();
+    log.info("workspace: show window={s} (from {s})", .{ name(to), name(from) });
+}
+
+/// `win` is being disposed. Its content must never go down with a toplevel
+/// it was borrowing, nor take another workspace's content down with its own
+/// toplevel. The closing EXPERIENCE (hand the window to the one shown before
+/// it, ask first, undo) is T3652; this only keeps every workspace whole.
+pub fn forget(win: *Window) void {
+    if (!host.manages(win)) return;
+    const quitting = Application.default().isQuitting();
+    const t = toplevel;
+    const was_active = if (host.active) |a| a == win else false;
+
+    if (t == win) {
+        // The toplevel goes. The workspace on show (if another) takes its
+        // content back into its own GtkWindow and loads a window of its own.
+        if (host.active) |a| if (a != win) a.holdContentFrom(win);
+        win.releaseContent();
+        closeInHost(win);
+        toplevel = null;
+        if (host.active) |a| {
+            a.releaseContent();
+            load(a);
+            if (!quitting) a.as(gtk.Widget).setVisible(1);
+            a.syncSeen();
+            log.info("workspace: the shared window closed; window={s} loads its own", .{name(a)});
+        } else if (host.order.items.len > 0 and !quitting) {
+            const next = host.order.items[0];
+            _ = show(next, false);
+        }
+        return;
+    }
+
+    if (was_active) {
+        // Borrowing the toplevel: give it back its own content first.
+        if (t) |tw| win.holdContentFrom(tw);
+        win.releaseContent();
+        switch (host.close(win)) {
+            .hand_to => |next| if (t) |tw| {
+                if (next == tw) next.releaseContent() else next.releaseContentInto(tw);
+                if (next.currentTitle()) |title| tw.as(gtk.Window).setTitle(title);
+                next.syncSeen();
+            },
+            .close_window => _ = host.windowDidClose(win, true),
+            .in_place, .not_managed => {},
+        }
+        return;
+    }
+
+    // Parked: it closes in place.
+    win.releaseContent();
+    closeInHost(win);
+}
+
+/// Drop `win` from the host whatever it held: the last workspace's
+/// `close_window` drops it through `windowDidClose`.
+fn closeInHost(win: *Window) void {
+    switch (host.close(win)) {
+        .close_window => _ = host.windowDidClose(win, true),
+        .hand_to, .in_place, .not_managed => {},
+    }
+}
+
+/// The window's workspace name for logs.
+fn name(win: *Window) []const u8 {
+    return win.ipcName() orelse "?";
+}
+
+/// Debug seam (`workspaces`): reset between harness runs is never needed -
+/// a process holds one host - but tests read it through these.
+pub fn snapshot() struct { active: ?*Window, toplevel: ?*Window, order: []const *Window } {
+    return .{ .active = host.active, .toplevel = toplevel, .order = host.order.items };
+}
+
+comptime {
+    _ = adw;
+    _ = gio;
+    _ = gobject;
+}

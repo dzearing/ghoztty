@@ -50,6 +50,18 @@ pub fn listFind(
 /// Wrapper around `gtk.Widget.getAncestor` to get the widget ancestor
 /// of the given type `T`, or null if it doesn't exist.
 pub fn getAncestor(comptime T: type, widget: *gtk.Widget) ?*T {
+    // A type whose instances mark a subtree as theirs (T3648: `Window` in
+    // single-window mode, where a workspace's content sits inside another
+    // workspace's toplevel, or out of every window while parked) is found by
+    // that mark first, nearest first: the owner, not the widget tree.
+    if (comptime @hasDecl(T, "workspace_qdata_key")) {
+        var w: ?*gtk.Widget = widget;
+        while (w) |cur| : (w = cur.getParent()) {
+            if (cur.as(gobject.Object).getData(T.workspace_qdata_key)) |p| {
+                return @ptrCast(@alignCast(p));
+            }
+        }
+    }
     const ancestor_ = widget.getAncestor(gobject.ext.typeFor(T));
     const ancestor = ancestor_ orelse return null;
     // We can assert the unwrap because getAncestor above

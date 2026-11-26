@@ -3015,6 +3015,10 @@ const Action = struct {
             PopupFit.arm(win, s);
         }
 
+        // T3648: in single-window mode every window but the first is a
+        // workspace of the one toplevel: it opens parked, or on show in it.
+        if (@import("../Workspaces.zig").present(win, overrides.activate)) return;
+
         // Show the window. `present` is show + an activation request (on
         // Wayland, xdg-activation). A window a script opened without
         // `--focus` is only shown, so it does not take the keyboard from

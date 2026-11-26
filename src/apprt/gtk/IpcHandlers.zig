@@ -217,6 +217,7 @@ pub fn handleSeam(app: Context, request: Request) Allocator.Error!server.SeamRep
     if (std.mem.eql(u8, request.action, "settings")) return .{ .reply = try settingsSeam(app, request) };
     if (std.mem.eql(u8, request.action, "shortcut-guide")) return .{ .reply = try shortcutGuideSeam(app, request) };
     if (std.mem.eql(u8, request.action, "pane-seen")) return .{ .reply = try paneSeenSeam(app, request) };
+    if (std.mem.eql(u8, request.action, "workspaces")) return .{ .reply = try workspacesSeam(app, request) };
     if (std.mem.eql(u8, request.action, "close-dialog")) return .{ .reply = try closeDialogSeam(app, request) };
     if (std.mem.eql(u8, request.action, "window-size")) return .{ .reply = try windowSizeSeam(app, request) };
     if (std.mem.eql(u8, request.action, "main-menu")) return .{ .reply = try mainMenuSeam(app, request) };
@@ -934,6 +935,109 @@ fn ghostReport(arena: Allocator, surface: *Surface, png_path: ?[]const u8) Ghost
 /// terminal-resize.md) and the headless harness has no seat to drag an edge
 /// with. The reply is the size as of NOW; the new one is laid out on GTK's
 /// next frame, so a caller polls a later read for it.
+/// `workspaces [--show=<pane|window>]` (T3648): single-window mode's
+/// bookkeeping. `mode` is the latched mode; `toplevel` the workspace whose
+/// GtkWindow the person sees; `active` the one on show; `content` the
+/// workspace whose content root is the toplevel's content right now (the
+/// hand-off's oracle); `order` every workspace, on show first, each with
+/// `parked`, `held` (its content out of every window), `seen`, and
+/// `owner_ok` (every pane in it resolves to it through the owner-of
+/// lookup). `--show` puts the target's workspace on show without raising.
+fn workspacesSeam(app: Context, request: Request) Allocator.Error![]u8 {
+    const Workspaces = @import("Workspaces.zig");
+    const window_mode = @import("../win32/window_mode.zig");
+    const ext = @import("ext.zig");
+    const Tab = @import("class/tab.zig").Tab;
+    var show_arg: ?[]const u8 = null;
+    for (request.arguments orelse &.{}) |arg| {
+        if (std.mem.startsWith(u8, arg, "--show=")) show_arg = arg["--show=".len..];
+    }
+
+    var arena_state = std.heap.ArenaAllocator.init(c_alloc);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var shown: ?bool = null;
+    if (show_arg) |name| {
+        const target = switch (try resolve(arena, app, name)) {
+            .found => |t| t,
+            .ambiguous => |windows| return server.errorResponse(c_alloc, "{s}", .{
+                try target_lookup.ambiguityError(arena, name, windows),
+            }),
+            .not_found => return server.errorResponse(c_alloc, "pane '{s}' not found in registry", .{name}),
+        };
+        shown = Workspaces.show(target.window_(), false);
+    }
+
+    const Row = struct {
+        window: ?[]const u8,
+        parked: bool,
+        held: bool,
+        seen: bool,
+        /// Its OWN GtkWindow is mapped (only the toplevel's ever is).
+        mapped: bool,
+        panes: usize,
+        owner_ok: bool,
+    };
+    const snap = Workspaces.snapshot();
+    var rows: std.ArrayListUnmanaged(Row) = .empty;
+    for (snap.order) |w| {
+        var panes: usize = 0;
+        var owner_ok = true;
+        const tab_view = w.getTabView();
+        const n: usize = @intCast(@max(tab_view.getNPages(), 0));
+        for (0..n) |i| {
+            const page = tab_view.getNthPage(@intCast(i));
+            const tab = gobject.ext.cast(Tab, page.getChild()) orelse continue;
+            const tree = tab.getSurfaceTree() orelse continue;
+            var it = tree.iterator();
+            while (it.next()) |entry| {
+                panes += 1;
+                const owner = ext.getAncestor(Window, entry.view.as(gtk.Widget));
+                if (owner != w) owner_ok = false;
+            }
+        }
+        try rows.append(arena, .{
+            .window = w.ipcName(),
+            .parked = Workspaces.isParked(w),
+            .held = w.isContentHeld(),
+            .seen = w.isSeen(),
+            .mapped = w.as(gtk.Widget).getMapped() != 0,
+            .panes = panes,
+            .owner_ok = owner_ok,
+        });
+    }
+
+    const content_name: ?[]const u8 = content: {
+        const t = snap.toplevel orelse break :content null;
+        const root = t.as(adw.ApplicationWindow).getContent() orelse break :content null;
+        const p = root.as(gobject.Object).getData(Window.workspace_qdata_key) orelse break :content null;
+        const owner: *Window = @ptrCast(@alignCast(p));
+        break :content owner.ipcName();
+    };
+    const toplevel_title: ?[]const u8 = if (snap.toplevel) |t|
+        (if (t.as(gtk.Window).getTitle()) |c| std.mem.span(c) else null)
+    else
+        null;
+
+    var out: std.Io.Writer.Allocating = .init(c_alloc);
+    defer out.deinit();
+    std.json.Stringify.value(.{
+        .success = true,
+        .data = .{
+            .mode = @tagName(window_mode.current()),
+            .toplevel = if (snap.toplevel) |t| t.ipcName() else null,
+            .toplevel_mapped = if (snap.toplevel) |t| t.as(gtk.Widget).getMapped() != 0 else false,
+            .toplevel_title = toplevel_title,
+            .active = if (snap.active) |a| a.ipcName() else null,
+            .content = content_name,
+            .shown = shown,
+            .order = rows.items,
+        },
+    }, .{}, &out.writer) catch return error.OutOfMemory;
+    return c_alloc.dupe(u8, out.written());
+}
+
 fn windowSizeSeam(app: Context, request: Request) Allocator.Error![]u8 {
     var target_arg: ?[]const u8 = null;
     var size_arg: ?[]const u8 = null;
