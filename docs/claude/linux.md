@@ -425,9 +425,11 @@ private runtime dir, so a test app can never meet the user's.
   `Window.syncTitle`, which replaced the tab-title property binding), and
   each tab's entry shows a spinner (`AdwTabPage:loading`) while busy and
   asks for attention (`needs-attention`) on a move into `needs_input`
-  (cleared on leaving it, or by selecting the tab as for a bell). GTK 4 has
-  no urgency hint, so the Mac's Dock bounce / win32's taskbar flash for a
-  background window has no counterpart here. A debug build appends every render to
+  (cleared on leaving it, or by selecting the tab as for a bell). The Mac's
+  Dock bounce / win32's taskbar flash for a background window is the
+  window's urgency (`winproto.setUrgent`, as the bell's `attention` feature
+  sets it), requested on a move into `needs_input` since T3654 (under Window
+  modes). A debug build appends every render to
   `$GHOZTTY_TEST_BANNER_DUMP` (`BANNER <pane-id> shown|cleared`, one line per
   widget, `END`). Acceptance: `wsl-run.ps1 -CommandFile
   test\linux\cli-banner.sh`, ends `CLI BANNER: ALL PASS` (46 checks; S1t-S5t
@@ -2361,8 +2363,43 @@ powershell -NoProfile -File scripts\linux\wsl-run.ps1 -Step 'NEGATIVE=1 bash tes
 
 Ends `WINDOW WORKSPACE SWITCH: ALL PASS` (27 checks, about a minute).
 `NEGATIVE=1` runs it in `separate` mode and must fail from S1 on (20
-failures). Still to come: the CLI (T3653), rolled-up activity (T3654),
-persistence (T3655), undo of a workspace close (T3790).
+failures). Still to come: the CLI (T3653), persistence (T3655), undo of a
+workspace close (T3790).
+
+### Activity: state never pauses (T3654)
+
+- **The window's activity is the most urgent of every workspace's**, parked
+  ones included (`Workspaces.refreshActivity` over win32's pure
+  `Host.rolledUpActivity`; Mac `refreshWindowActivity`). Recomputed from
+  `Window.syncActivity` on every activity change of a workspace (a parked
+  pane's `+set-state` reaches its own workspace through the content root's
+  owner qdata), and when a workspace is admitted (`present`), closes for good
+  (`forget`) or is retired into a frame (`retire`). Logged on a move:
+  `window activity rolled up state=<s> workspaces=<n>`.
+- **The title suffix stays the workspace on show's own**: `Window.syncTitle`
+  composes from the workspace's own aggregate, and only the workspace on show
+  titles the toplevel (`landTitle`).
+- **A move INTO `needs_input` asks for attention** (`Window.noteActivityAttention`,
+  win32's pure `activity_attention.Tracker`, T2907): once per move, only when
+  the window the person sees is not active, through `winproto.setUrgent(true)`
+  (X11 urgency hint; Wayland an xdg-activation token) - the same urgency the
+  bell's `attention` feature sets, cleared by `propIsActive` when that window
+  is activated. A parked workspace asks on the shared toplevel
+  (`Workspaces.attentionWindow`); separate mode asks on the window itself.
+  Logged on every move into or out of it: `activity attention
+  needs_input=<b> active=<b> urgent=<b> parked=<b> target=<name>`.
+- **Seam**: `workspaces` has `activity` (the roll-up) and per workspace
+  `activity` (its own panes').
+
+```powershell
+powershell -NoProfile -File scripts\linux\wsl-run.ps1 -CommandFile test\linux\window-workspace-activity.sh
+powershell -NoProfile -File scripts\linux\wsl-run.ps1 -Step 'NEGATIVE=1 bash test/linux/window-workspace-activity.sh'
+```
+
+Ends `WINDOW WORKSPACE ACTIVITY: ALL PASS` (18 checks, under a minute). The
+headless Weston has no seat, so the toplevel is never active and A7 sees
+`urgent=true`. `NEGATIVE=1` runs it in `separate` mode and must fail from A1
+on (11 failures).
 
 ### Parked layout (T3650)
 
