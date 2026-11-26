@@ -57,6 +57,7 @@ const color_math = @import("../../win32/color_math.zig");
 const pane_style = @import("../pane_style.zig");
 const Tab = @import("tab.zig").Tab;
 const window_seen = @import("../window_seen.zig");
+const draw_stats = @import("../draw_stats.zig");
 
 const log = std.log.scoped(.gtk_ghostty_surface);
 
@@ -721,6 +722,9 @@ pub const Surface = extern struct {
         /// `pane-stack` seam reports it, so a glide can be shown to resize
         /// each terminal once, after the motion.
         size_changes: u32 = 0,
+        /// What this pane's draws and resizes cost (T3792): the debug
+        /// `pane-seen` seam's `draw` block.
+        draw_stats: draw_stats.DrawStats = .{},
         cursor_pos: apprt.CursorPos,
 
         /// Various input method state. All related to key input.
@@ -1762,6 +1766,15 @@ pub const Surface = extern struct {
         }
         surface.renderer.releaseQueuedFrames();
         return 0;
+    }
+
+    /// What this pane's draws and resizes have cost (T3792), for the debug
+    /// `pane-seen` seam; `reset` starts a fresh measurement.
+    pub fn drawStats(self: *Self, reset: bool) draw_stats.DrawStats {
+        const priv = self.private();
+        const out = priv.draw_stats;
+        if (reset) priv.draw_stats.reset();
+        return out;
     }
 
     /// What this pane's frames hold right now (T3645), for the debug
@@ -4575,12 +4588,37 @@ pub const Surface = extern struct {
         const priv = self.private();
         const surface = priv.core_surface orelse return 1;
 
+        const t0 = monoNs();
+        defer priv.draw_stats.recordDraw(t0, monoNs() -| t0);
+        if (comptime build_config.is_debug) testDrawDelay();
         surface.renderer.drawFrame(true) catch |err| {
             log.warn("failed to draw frame err={}", .{err});
             return 0;
         };
 
         return 1;
+    }
+
+    /// `GHOZTTY_TEST_DRAW_DELAY_MS` (debug builds; T3792's negative control
+    /// in `test/linux/resize-frame-cost.sh`): sleep that long in every draw,
+    /// so the measurement can be shown to see a slow frame.
+    fn testDrawDelay() void {
+        const S = struct {
+            var ms: ?u64 = null;
+        };
+        const ms = S.ms orelse blk: {
+            const v = std.posix.getenv("GHOZTTY_TEST_DRAW_DELAY_MS") orelse "0";
+            const parsed = std.fmt.parseInt(u64, v, 10) catch 0;
+            S.ms = parsed;
+            break :blk parsed;
+        };
+        if (ms > 0) std.Thread.sleep(ms * std.time.ns_per_ms);
+    }
+
+    /// Monotonic ns for `draw_stats` (T3792); 0 when the clock is unavailable.
+    fn monoNs() u64 {
+        const ts = std.posix.clock_gettime(.MONOTONIC) catch return 0;
+        return @as(u64, @intCast(ts.sec)) * std.time.ns_per_s + @as(u64, @intCast(ts.nsec));
     }
 
     fn glareaResize(
@@ -4628,6 +4666,8 @@ pub const Surface = extern struct {
             };
 
             if (changed) {
+                const t0 = monoNs();
+                defer priv.draw_stats.recordResize(monoNs() -| t0);
                 surface.sizeCallback(new_size) catch |err| {
                     log.warn("error in size callback err={}", .{err});
                 };

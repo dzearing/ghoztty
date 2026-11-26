@@ -2419,7 +2419,7 @@ fn writeSettingsState(jws: *std.json.Stringify, arena: Allocator, w_opt: anytype
 ///   --op=shot --path=<file.png>   the window from its own render
 ///   --op=close       the title bar's close button
 ///   filters on any op: --query=<q> --category=<all|name> --unbound=<0|1>
-/// `pane-seen --target=<pane|window> [--toplevel=minimized|suspended|shown|real]`
+/// `pane-seen --target=<pane|window> [--toplevel=minimized|suspended|shown|real] [--reset-draw]`
 /// (T3571, docs/reference/background-windows.md): whether the target's
 /// window and each of its panes can be seen, and the window's title as set
 /// on the window beside the one it is holding. `--toplevel` stands in for
@@ -2430,9 +2430,11 @@ fn paneSeenSeam(app: Context, request: Request) Allocator.Error![]u8 {
     const window_seen = @import("window_seen.zig");
     var target_arg: ?[]const u8 = null;
     var toplevel_arg: ?[]const u8 = null;
+    var reset_draw = false;
     for (request.arguments orelse &.{}) |arg| {
         if (std.mem.startsWith(u8, arg, "--target=")) target_arg = arg["--target=".len..];
         if (std.mem.startsWith(u8, arg, "--toplevel=")) toplevel_arg = arg["--toplevel=".len..];
+        if (std.mem.eql(u8, arg, "--reset-draw")) reset_draw = true;
     }
     const target_name = target_arg orelse return server.errorResponse(c_alloc, "--target is required for pane-seen", .{});
 
@@ -2469,7 +2471,7 @@ fn paneSeenSeam(app: Context, request: Request) Allocator.Error![]u8 {
     defer out.deinit();
     var jws: std.json.Stringify = .{ .writer = &out.writer };
     (struct {
-        fn write(j: *std.json.Stringify, a: Context, w: *Window, rep: window_seen.Toplevel) !void {
+        fn write(j: *std.json.Stringify, a: Context, w: *Window, rep: window_seen.Toplevel, reset_draw: bool) !void {
             try j.beginObject();
             try j.objectField("success");
             try j.write(true);
@@ -2520,6 +2522,24 @@ fn paneSeenSeam(app: Context, request: Request) Allocator.Error![]u8 {
                     try j.objectField("released");
                     try j.write(fm.released);
                     try j.endObject();
+                    // What its draws and resizes cost (T3792), in us;
+                    // `--reset-draw` starts a fresh measurement.
+                    const ds = p.surface.drawStats(reset_draw);
+                    try j.objectField("draw");
+                    try j.beginObject();
+                    inline for (.{ "draws", "resizes", "resize_gaps" }) |name| {
+                        const s = @field(ds, name);
+                        try j.objectField(name);
+                        try j.beginObject();
+                        try j.objectField("count");
+                        try j.write(s.count);
+                        try j.objectField("mean_us");
+                        try j.write(s.meanUs());
+                        try j.objectField("max_us");
+                        try j.write(s.maxUs());
+                        try j.endObject();
+                    }
+                    try j.endObject();
                 }
                 // A viewer pane (T3643): whether it is on show, whether its
                 // web view is mapped (what WebKit reads as the page being
@@ -2548,7 +2568,7 @@ fn paneSeenSeam(app: Context, request: Request) Allocator.Error![]u8 {
             try j.endObject();
             try j.endObject();
         }
-    }).write(&jws, app, window, reported) catch return error.OutOfMemory;
+    }).write(&jws, app, window, reported, reset_draw) catch return error.OutOfMemory;
     return c_alloc.dupe(u8, out.written());
 }
 

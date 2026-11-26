@@ -642,6 +642,9 @@ test {
     // ... and whether a window or pane can be seen, and when a hidden
     // window's title lands (T3571). No GTK imports.
     _ = @import("gtk/window_seen.zig");
+    // ... and what a pane's draws and resizes cost, for the resize
+    // measurement (T3792). No GTK imports.
+    _ = @import("gtk/draw_stats.zig");
     // ... and the pane sidebar's: a row's text, the mode, where the shared
     // flags are kept (T3557). No GTK imports.
     _ = @import("gtk/pane_sidebar_rows.zig");
