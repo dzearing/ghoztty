@@ -244,7 +244,7 @@ sb wa "--click=tool:stash:$a" > /dev/null
 hl_wait_for 10 is wa '([x["pane"] for x in p], row("'"$a"'")["stashed"], row("'"$a"'")["draggable"])' "(['$b', '$c', '$a'], True, True)"
 hl_check "T2 a stashed pane moves into the tray, after the panes on screen, and still drags" $? "$(plist) $(sb wa)"
 hl_wait_for 10 laid wa "$a" "$b" "$c" tray
-is wa '(row("tray")["count"], row("tray")["label"], row("'"$c"'")["top"] < row("tray")["top"] < row("'"$a"'")["top"])' "(1, 'Stashed', True)"
+[ "$(field wa '(row("tray")["count"], row("tray")["label"], 0 <= row("'"$c"'")["top"] < row("tray")["top"] < row("'"$a"'")["top"])' --layout)" = "(1, 'Stashed', True)" ]
 hl_check "T3 the tray's head - Stashed, 1 - sits between the list and the stash" $? "$(sb wa --layout)"
 
 # A pane on screen let go low on the stashed row: stashed, below it.
