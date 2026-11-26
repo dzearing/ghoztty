@@ -979,15 +979,16 @@ fn workspacesSeam(app: Context, request: Request) Allocator.Error![]u8 {
         tabs: usize,
         owner_ok: bool,
         /// T3650: each pane's grid as "<cols>x<rows>" (null before its
-        /// terminal started), tree order.
-        grids: []const ?[]const u8,
+        /// terminal started), by pane id, tree order.
+        grids: []const Grid,
     };
+    const Grid = struct { pane: []const u8, grid: ?[]const u8 };
     const snap = Workspaces.snapshot();
     var rows: std.ArrayListUnmanaged(Row) = .empty;
     for (snap.order) |w| {
         var panes: usize = 0;
         var owner_ok = true;
-        var grids: std.ArrayListUnmanaged(?[]const u8) = .empty;
+        var grids: std.ArrayListUnmanaged(Grid) = .empty;
         const tab_view = w.getTabView();
         const n: usize = @intCast(@max(tab_view.getNPages(), 0));
         for (0..n) |i| {
@@ -999,10 +1000,13 @@ fn workspacesSeam(app: Context, request: Request) Allocator.Error![]u8 {
                 panes += 1;
                 const owner = ext.getAncestor(Window, entry.view.as(gtk.Widget));
                 if (owner != w) owner_ok = false;
-                try grids.append(arena, if (entry.view.gridSize()) |g|
-                    try std.fmt.allocPrint(arena, "{d}x{d}", .{ g.cols, g.rows })
-                else
-                    null);
+                try grids.append(arena, .{
+                    .pane = entry.view.paneId(),
+                    .grid = if (entry.view.gridSize()) |g|
+                        try std.fmt.allocPrint(arena, "{d}x{d}", .{ g.cols, g.rows })
+                    else
+                        null,
+                });
             }
         }
         try rows.append(arena, .{

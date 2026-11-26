@@ -23,7 +23,7 @@
 # and a resize of one window never reaches another: it must FAIL from Y1 on.
 #
 # Oracles: the debug-only `workspaces` seam (`grids`: each pane's
-# "<cols>x<rows>", null before its terminal started), the `window-size` seam
+# "<cols>x<rows>" by pane id, null before its terminal started), the `window-size` seam
 # to resize the toplevel the way an edge drag would, and the app's log line
 # `workspace: parked window=<w> laid out at <W>x<H> ... why=<resize|tree>`.
 # Output: one PASS/FAIL line per check, then 'WINDOW WORKSPACE LAYOUT: ALL
@@ -78,8 +78,9 @@ except Exception as e:
 }
 wsis() { local want="$1"; shift; [ "$(ws "$@")" = "$want" ]; }
 last() { cat "$XDG_RUNTIME_DIR/ws-last" 2>/dev/null; }
-# The grid of pane <i> of workspace <w> ("<cols>x<rows>" or None).
-grid() { ws "(row.get('$1') or {}).get('grids', [None]*9)[$2]"; }
+# The grid of pane <p> of workspace <w> ("<cols>x<rows>" or None): <p> is a
+# pane id, or a number for the Nth pane in tree order.
+grid() { ws "(lambda g: (g[int('$2')] if '$2'.isdigit() else next((x for x in g if x['pane'] == '$2'), {})).get('grid'))((row.get('$1') or {}).get('grids') or [{}]*9)"; }
 started() { local g; g=$(grid "$1" "$2"); [ -n "$g" ] && [ "$g" != None ] && [ "${g#error}" = "$g" ]; }
 # The first pane id of the window called <target>.
 pane_of() {
@@ -153,23 +154,24 @@ hl_check "Y7 $first is on show again, two parked" $? "$(last)"
 mark=$(log_lines)
 cli +split --pane="$pb" --name=two-b --direction=right > /dev/null 2>&1
 hl_wait_for 10 wsis "(2, True)" 'row["two"]["panes"], row["two"]["parked"]'
+pc=$(ws "next(x['pane'] for x in row['two']['grids'] if x['pane'] != '$pb')")
 hl_check "Y8 the split landed in parked two (2 panes, still parked)" $? "$(last)"
 hl_wait_for 5 log_has "$mark" "parked window=two laid out .* why=tree"
 hl_check "Y9 the tree change laid parked two out at once (why=tree)" $? "$(log_after "$mark" | grep 'parked window' | tail -2 | tr '\n' ' ')"
 cols() { printf '%s' "$1" | cut -dx -f1; }
-g_half=$(grid two 0)
+g_half=$(grid two "$pb")
 c_full=$(cols "$g_two3"); c_half=$(cols "$g_half")
 [ -n "$c_half" ] && [ "$c_half" != None ] && [ "$c_half" -lt "$c_full" ] 2>/dev/null && [ "$c_half" -gt $(( c_full / 3 )) ] 2>/dev/null
 hl_check "Y10 parked, two's first pane took its half at once ($g_two3 -> $g_half)" $?
 
 hl_ipc workspaces "--show=$pb" > /dev/null 2>&1
 hl_wait_for 10 wsis two 'd["active"]'
-hl_wait_for 10 started two 1
+hl_wait_for 10 started two "$pc"
 sleep 1
-g_half2=$(grid two 0)
+g_half2=$(grid two "$pb")
 [ "$g_half2" = "$g_half" ]
 hl_check "Y11 shown, two's first pane kept its grid ($g_half -> $g_half2)" $? "$(last)"
-started two 1
-hl_check "Y12 the pane made while parked started on show ($(grid two 1); T3786 starts it sooner)" $?
+started two "$pc"
+hl_check "Y12 the pane made while parked started on show ($(grid two "$pc"); T3786 starts it sooner)" $?
 
 hl_finish "$L"
