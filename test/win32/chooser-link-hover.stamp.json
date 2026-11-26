@@ -1,14 +1,14 @@
 {
     "guard":  "chooser-link-hover",
     "script":  "test/win32/chooser-link-hover.ps1",
-    "generated":  "2026-11-25T08:32:51-08:00",
-    "commit":  "31b9a7fd7",
+    "generated":  "2026-11-26T08:18:33-08:00",
+    "commit":  "8f47920cba",
     "uncommitted":  [
-                        "src/apprt/win32/MachineChooser.zig"
+
                     ],
     "files":  {
                   "src/apprt/win32/MachineChooser.zig":  "c53d1e23c4422762e38c000b7ac91807332c27693e4c895d0e9875a30392be7e",
-                  "src/apprt/win32/RelayAccountRow.zig":  "1a98979fa009d3e2d9687a4dc307e94b4ea245330efcecbe1f080fa626005227",
+                  "src/apprt/win32/RelayAccountRow.zig":  "e1b4ae251a9ccce48fc4ed2b5a5cff3899ed71aca062b2481a1b1d8d89d98c60",
                   "test/win32/chooser-link-hover.ps1":  "614cd0dc1c5f97009a6a316edecb31d3df93cba9037cf836739f3b7b2f0a2cb0"
               },
     "code":  {

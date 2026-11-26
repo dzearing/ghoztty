@@ -3117,13 +3117,31 @@ three seats say the same thing. Local's detail title is "This Computer"
   T3635 editor. Every control carries Mac's `.help` sentence.
 - Not yet: the warm connection pool and pushed roster (T3811), CPU meters and
   sort headers (T3812), Restore All (T3813), Rename / Remove / See Activity
-  (T3814), keyboard navigation and the filter (T3815), the account row's
-  Sign In (T3575).
+  (T3814), keyboard navigation and the filter (T3815), the forced "Sign Out
+  Anyway" after a revocation that failed (T3676).
+- **The account row signs in and out** (T3575; win32 `RelayAccountRow`, Mac
+  `accountRow`). Words: win32's `relay_account_text.zig` (shared since this
+  card), composed in `machine_chooser_rules.accountView`: signed in it is
+  "Signed in as <email>" over **Sign Out**; signed out it is the **Sign in
+  with Google…** button alone; an unconfigured build has no button and says
+  "Google sign-in isn't set up in this build" (the hover carries the
+  remedy). Sign In runs `relay_signin.signIn` on a worker (it waits on the
+  browser for minutes) and lands through `g_idle_add`; while it runs the
+  row reads "Finish signing in in your browser…" and the button is
+  "Signing in…", insensitive, app-wide (a reopened chooser shows it too).
+  Sign Out is `relay_signin.signOut(.revoke)`, its outcome sentence under
+  the row. A sign-in refetches the machines and replays the relay-window
+  record (`RelayWindows.start`, skipping the windows already open), so
+  windows a signed-out launch kept come back. **Linux-only line**: when the
+  stored account is in the 0600 file (`relay_account.location() == .file`,
+  no keyring daemon - the WSL default), the row says "No keyring is
+  running, so your sign-in is kept in a private file only you can read
+  (<path>)", `~` for home; under a keyring it says nothing.
 
 Seam (DEBUG-ONLY, `src/apprt/gtk/ipc_machine_chooser.zig`): `machine-chooser
 --op=open|chord --key=<ctrl+shift+n|ctrl+n|ctrl+alt+shift+n>|state|select
 --value=<id>|new-window|resume --value=<session>|end --value=<session>|
-host-settings|sort --value=name|cpu|close`; every button op emits that
+host-settings|sort --value=name|cpu|account|close`; every button op emits that
 button's `clicked`, every reply is the chooser as drawn (machines, detail,
 tooltips, roster state, rows) plus `last`, what it last did (kept after it
 closes).
@@ -3140,6 +3158,25 @@ Resume of the SAME far shell, Show without a second attach, End, and a local
 session a SIGKILLed app left behind resumed. A local session's roster `pid` is
 the top of its process tree, so the test matches a local shell by ancestry.
 `NEGATIVE=1` presses New Window where Resume is meant and must fail R4.
+
+The account row (state adds `account_visible`, `account_button` - null when
+hidden - `account_button_sensitive`, `account_busy`, `account_store_note`,
+`account_message`):
+
+```powershell
+powershell -NoProfile -File scripts\linux\wsl-run.ps1 -CommandFile test\linux\chooser-account.sh
+```
+
+Ends `CHOOSER ACCOUNT: ALL PASS` (23 checks, about 2 minutes warm). A python
+relay on loopback answers `/oauth/exchange` and `/oauth/signout`; the app
+runs with `GHOZTTY_ENROLL_NO_OPEN=1`, and the harness plays the browser by
+GETting the redirect URL the app logged. U: an unconfigured build. A: a
+private session bus with no keyring - signed out, Sign In, busy, the
+redirect, the email, a 0600 file and its sentence, the machines listed,
+a reopen, Sign Out (revoked at the relay, file gone), a refused exchange.
+K: an unlocked gnome-keyring (extracted, secret-store.sh's recipe) - no file,
+no sentence, Sign Out clears it. `NEGATIVE=1` runs a keyring in phase A too
+and must fail A5/A6.
 
 ## The relay account store: keyring, else a private file (T3341)
 

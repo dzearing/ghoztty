@@ -197,7 +197,7 @@ Mac's does — filed as T610.
 
 Signing in to the Google account that authenticates relay connections is a
 **GUI affordance on every platform**: the machine chooser's account row
-(Cmd-Shift-N on macOS, Ctrl+Shift+N on Windows) shows the signed-in email with
+(Cmd-Shift-N on macOS, Ctrl+Shift+N on Windows and Linux) shows the signed-in email with
 a **Sign Out** button, or a **Sign in with Google…** button when signed out.
 There is deliberately **no `+relay-login` / `+relay-logout` CLI command** —
 Windows briefly had that pair and it was removed (T141), because a verb that
@@ -215,7 +215,8 @@ server-side), and the returned opaque **relay session token** + expiry + email
 read or renew the user's real sign-in - T1859; `GHOSTTY_ACCOUNT_STORE` overrides
 either), Linux in the **Secret Service** (libsecret) when a keyring daemon
 runs and otherwise a mode-0600 file at `$XDG_DATA_HOME/ghoztty/account.dat`
-(WSL has no keyring daemon, so that is its default - T3341, details in
+(WSL has no keyring daemon, so that is its default - T3341; the Linux row then
+says the sign-in is in a private file, T3575; details in
 `docs/claude/linux.md`). No Google token or
 client secret ever touches the machine. The flow runs on a background thread so
 the window never blocks while the browser is open; the app renews the session
