@@ -824,3 +824,13 @@ as the digest that showed them.
 - A page from another machine says whose localhost it is (a viewer showing a page fetched through another machine leads its address bar with that machine's name)
 - A new window opens on the screen your pointer is on (new windows from the keyboard or a script land on the monitor you are working on)
 - A page from another machine reloads from what it already has (unchanged pictures and scripts of a remote page are kept on this PC, so a reload over a slow link fetches only what changed)
+
+## 2026-11-26
+
+- A WSL pane that is still waking says so (a cold-starting distro shows "Starting Ubuntu..." with the seconds counting, instead of a black pane you cannot tell from a broken one)
+- Same folder, other side (one key opens a split beside a WSL pane on PowerShell in the same folder, path translated, and back again)
+- The shell menu puts your favourites first (the new-tab chevron orders shells by use, and + can be set to open the shell you picked last)
+- Make it my default, right from the menu (each shell in the new-tab menu carries "Use as default")
+- Closing a distro's last pane can give its memory back (a quiet offer to shut that WSL distro down when its last pane closes)
+- Windows you put away give their memory back (new angle on idle windows cost nothing: a window minimized or covered for minutes releases its drawing buffers and graphics memory, redraws on return)
+- A slow-starting shell shows where the time went (a pane that takes over a second to reach its prompt says why in its header tooltip, e.g. the PowerShell profile's load time)
