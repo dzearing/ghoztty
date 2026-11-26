@@ -567,8 +567,8 @@ pub const Application = extern struct {
         const surfaces = self.private().core_app.surfaces.items;
         if (surfaces.len == 0) return 0;
         log.warn("quit: {d} surface(s) still alive after the run loop ended (T3689)", .{surfaces.len});
-        for (surfaces) |rt| {
-            const s = rt.gobj();
+        for (surfaces) |rt_surface| {
+            const s = rt_surface.gobj();
             const w = s.as(gtk.Widget);
             log.warn(
                 "quit: survivor pane={s} refs={d} parent={} root={} realized={} title={s}",
