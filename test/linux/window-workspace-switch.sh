@@ -203,15 +203,20 @@ hl_wait_for 10 wsis $((n0 + 1)) 'len(d["order"])'
 wsis "True" 'd["active"] != "'$from'" and d["active"] == d["content"]'
 hl_check "S9 Ctrl+Shift+N opens a new workspace on show" $? "$(last)"
 
-# A pane popped out (Ctrl+Shift+.) of a two-pane workspace: a new workspace.
+# A pane popped out of a two-pane workspace on show (rearrange mode, then a
+# drag released over nothing - the pop-out path): a new workspace.
 cli +split --target=two --direction=right > /dev/null 2>&1
 hl_wait_for 10 wsis 2 'row["two"]["panes"]'
+cli +new-window --target=two --focus > /dev/null 2>&1
+hl_wait_for 10 wsis two 'd["active"]'
 n0=$(ws 'len(d["order"])')
 pop=$(panes_of two | cut -d' ' -f2)
 press "$pop" ctrl+shift+period
+sleep 1
+pd_out=$(hl_ipc pane-drag "--target=$pop" --release-nowhere 2>&1)
 hl_wait_for 10 wsis $((n0 + 1)) 'len(d["order"])'
 wsis "(1, True, True)" 'row["two"]["panes"], d["active"] == d["content"] and d["active"] != "two", d["toplevel_mapped"]'
-hl_check "S10 a pane popped out opens a new workspace on show, not a second window" $? "pane=$pop $(last)"
+hl_check "S10 a pane popped out opens a new workspace on show, not a second window" $? "pane=$pop drag=$pd_out $(last)"
 wsis "True" 'all(not o["mapped"] for o in d["order"] if o["window"] != d["toplevel"])'
 hl_check "S10b only the toplevel is mapped" $? "$(last)"
 
@@ -229,5 +234,5 @@ hl_wait_for 10 wsis "five" 'd["active"]'
 hl_check "S12b a --focus split into a parked workspace puts it on show" $? "$o $(last)"
 
 alive "$APP"; hl_check "S13 the app is alive" $?
-grep -E 'workspace|over workspaces|new_tab' "$APP_LOG" | tail -25
+grep -E "workspace|over workspaces|new_tab|pop out|focus:" "$APP_LOG" | tail -40
 hl_finish "$L"

@@ -3084,9 +3084,13 @@ pub fn focusTarget(target: Target) void {
         if (tabOf(window, s)) |tab| tab.getSplitTree().focusSurface(s);
         s.present();
     } else window.bringForward();
+    const Workspaces = @import("Workspaces.zig");
+    // A pane just made (`+split --focus`) can be asked before its window
+    // has connected its present request: a parked workspace still goes on
+    // show (T3649), its pane focused by the hand-off.
+    if (Workspaces.isParked(window)) window.bringForward();
     // In single-window mode the window the compositor activates is the
     // shared toplevel, never a workspace's own (T3649).
-    const Workspaces = @import("Workspaces.zig");
     watchActivation(if (Workspaces.manages(window)) Workspaces.physical() orelse window else window);
 }
 
