@@ -424,3 +424,15 @@ headerbar .title,
 .heading {
   font-weight: 600;
 }
+
+/* The remote connection pill (T3675): the machine a window's panes run on,
+ * and its link's state. The dot takes libadwaita's success / warning color;
+ * a broken pill is a destructive-action button. */
+.remote-pill {
+  padding: 2px 8px;
+  min-height: 0;
+}
+
+.remote-pill .remote-pill-dot {
+  font-size: 0.7em;
+}

@@ -43,6 +43,9 @@ const activity_attention = @import("../../win32/activity_attention.zig");
 const pane_style = @import("../pane_style.zig");
 const color_math = @import("../../win32/color_math.zig");
 const RemoteLink = @import("../RemoteLink.zig");
+const RemotePill = @import("../RemotePill.zig");
+const IpcHandlers = @import("../IpcHandlers.zig");
+const RemoteReconnect = @import("../RemoteReconnect.zig");
 const Workspaces = @import("../Workspaces.zig");
 const desk_fade = @import("../../win32/desk_fade.zig");
 const window_chord = @import("../../win32/window_chord.zig");
@@ -311,6 +314,10 @@ pub const Window = extern struct {
         /// and the tab bar is forced visible. Per window, like the Mac's.
         rearrange_mode: bool = false,
 
+        /// The remote connection pills (T3675): header bar, then tab bar.
+        /// Null until `init` built them.
+        remote_pills: ?[2]RemotePill.Widgets = null,
+
         /// The tab-bar dwell of a pane drag (T3615): the tab a drag is
         /// resting on and the 500ms clock that selects it.
         dwell_tab: ?usize = null,
@@ -385,6 +392,10 @@ pub const Window = extern struct {
         toolbar: *adw.ToolbarView,
         toast_overlay: *adw.ToastOverlay,
         sidebar_row: *gtk.Box,
+        /// The header bar's and the tab bar's end boxes: each carries a
+        /// remote connection pill (T3675), whichever bar is shown.
+        header_end_box: *gtk.Box,
+        tabs_end_box: *gtk.Box,
         /// The main menu both menu buttons show (T3640's seam reads it).
         main_menu: *gio.Menu,
 
@@ -478,6 +489,13 @@ pub const Window = extern struct {
         // the first window draws one, so a restored window starts as
         // `macos-pane-sidebar` says too.
         self.initPaneSidebar(config);
+
+        // The remote connection pills (T3675): hidden until the window
+        // carries a pane on a remote machine.
+        self.private().remote_pills = .{
+            RemotePill.create(@ptrCast(self.private().header_end_box), @ptrCast(&remotePillClicked), self),
+            RemotePill.create(@ptrCast(self.private().tabs_end_box), @ptrCast(&remotePillClicked), self),
+        };
 
         // Escape leaves rearrange mode (T3564). Capture phase, so it is seen
         // before the focused pane's terminal would send it to the shell -
@@ -1294,6 +1312,31 @@ pub const Window = extern struct {
         return gobject.ext.cast(Tab, child);
     }
 
+    // ---- The remote connection pill (T3675) --------------------------------
+
+    /// Repaint this window's remote pills from the link its panes ride (a
+    /// local window hides them).
+    pub fn refreshRemotePill(self: *Self) void {
+        const pills = self.private().remote_pills orelse return;
+        const link = IpcHandlers.remoteLinkOf(self);
+        for (pills) |p| RemotePill.paint(p, link);
+    }
+
+    /// The header-bar pill's widgets (the seam reads them as drawn).
+    pub fn remotePill(self: *Self) ?RemotePill.Widgets {
+        const pills = self.private().remote_pills orelse return null;
+        return pills[0];
+    }
+
+    /// A click on either pill: a broken link reconnects now.
+    pub fn clickRemotePill(self: *Self) void {
+        RemotePill.clicked(IpcHandlers.remoteLinkOf(self), &RemoteReconnect.manualReconnect);
+    }
+
+    fn remotePillClicked(_: *anyopaque, self: *Self) callconv(.c) void {
+        self.clickRemotePill();
+    }
+
     // ---- The pane sidebar (T3557) ------------------------------------------
 
     fn initPaneSidebar(self: *Self, config: *const configpkg.Config) void {
@@ -1329,6 +1372,9 @@ pub const Window = extern struct {
     /// their names or its focus changed. In the all-windows scope (T3558)
     /// every window's list shows this window too, so every window redraws.
     pub fn queueSidebarRefresh(self: *Self) void {
+        // Every tree change lands here, so the remote pill follows a remote
+        // pane moving in or out too (T3675).
+        self.refreshRemotePill();
         if (!PaneSidebar.scope.all_windows) {
             if (self.private().pane_sidebar) |s| s.queueRefresh();
             return;
@@ -3962,6 +4008,8 @@ pub const Window = extern struct {
             class.bindTemplateChildPrivate("toolbar", .{});
             class.bindTemplateChildPrivate("toast_overlay", .{});
             class.bindTemplateChildPrivate("sidebar_row", .{});
+            class.bindTemplateChildPrivate("header_end_box", .{});
+            class.bindTemplateChildPrivate("tabs_end_box", .{});
             class.bindTemplateChildPrivate("main_menu", .{});
 
             // Template Callbacks

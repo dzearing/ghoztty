@@ -24,6 +24,8 @@ const tcp_dial = @import("../../remote/tcp_dial.zig");
 const relay_dial = @import("../../remote/relay_dial.zig");
 const connection = @import("../../remote/connection.zig");
 const host_defaults = @import("../win32/host_defaults.zig");
+const policy = @import("../win32/remote_reconnect.zig");
+const List = @import("../ipc/list.zig").List;
 
 const log = std.log.scoped(.gtk_remote);
 
@@ -130,6 +132,33 @@ pub fn freeOwned(s: []u8) void {
     alloc.free(s);
 }
 
+/// The reconnect ladder's live state for one link (T3675, win32
+/// `RemoteReconnect.State`). It lives on the LINK, not the window: GTK panes
+/// hold the link and can span windows, so one dial has one ladder, and every
+/// window showing a pane on it paints the same pill. Driven by
+/// `RemoteReconnect.zig`; the decisions are win32's pure `remote_reconnect`.
+pub const Reconnect = struct {
+    /// What the pill paints and `+list` reports.
+    ladder: policy.WindowState = .connected,
+    breaker: policy.Breaker = .{},
+    /// Cancellation: bumped by everything that invalidates an in-flight dial.
+    gen: policy.Generation = .{},
+    /// The 1-based fast-ladder attempt being paced or run.
+    attempt: u32 = 0,
+    /// The ladder now running was started by a click (T611: only then may
+    /// "the sessions are gone" be answered with fresh shells).
+    manual: bool = false,
+    /// Wall-clock ms the next dial is due (0: none scheduled).
+    due_ms: i64 = 0,
+    /// A worker is dialing right now.
+    inflight: bool = false,
+    /// The link-state observer is installed on the current transport.
+    observed: bool = false,
+    /// Transports this link replaced. Shut down, never freed: the panes
+    /// they carried borrowed their connection (the module doc's rule).
+    replaced: std.ArrayList(Dialed) = .empty,
+};
+
 /// One dialed machine and the panes riding it.
 pub const Link = struct {
     dialed: Dialed,
@@ -139,9 +168,18 @@ pub const Link = struct {
     refs: u32 = 0,
     /// Shut down: the last pane let go. Nothing new may ride it.
     retired: bool = false,
+    /// The reconnect ladder (T3675).
+    reconnect: Reconnect = .{},
 
     pub fn conn(self: *const Link) *connection.Connection {
         return self.dialed.conn();
+    }
+
+    /// The `+list` connection object for this link (T3675, win32 T609): the
+    /// ladder's state, with its attempt, self-healable flag and reason.
+    pub fn listConnection(self: *const Link) List.Connection {
+        if (self.retired) return .{ .state = "disconnected", .self_healable = false };
+        return self.reconnect.ladder.listConnection();
     }
 
     pub fn ref(self: *Link) void {
@@ -162,18 +200,51 @@ pub const Link = struct {
     pub fn retire(self: *Link) void {
         if (self.retired) return;
         self.retired = true;
+        // The ladder ends with the link: a dial in flight lands stale, and
+        // the dying transport's transitions are noise. `clearStateHandler`
+        // returns once any running handler has finished.
+        _ = self.reconnect.gen.bump();
+        self.reconnect.due_ms = 0;
+        self.conn().clearStateHandler();
+        self.reconnect.observed = false;
         log.info("remote link to {s}: no pane rides it any more; closing it", .{self.machine.displayName()});
-        const t = std.Thread.spawn(.{}, shutdownRetired, .{self.conn()}) catch |err| {
-            log.warn("remote link: async teardown unavailable ({}), shutting down inline", .{err});
-            self.conn().shutdown();
-            return;
-        };
-        t.detach();
+        shutdownAsync(self.conn());
+    }
+
+    /// Ride `fresh` from now on (T3675's swap): the current transport is
+    /// kept, shut down off the GTK thread, and never freed - every pane that
+    /// rode it borrowed its connection. The caller moves the panes FIRST
+    /// (re-ATTACH before retire, win32's `SwapGuard`).
+    pub fn replaceTransport(self: *Link, fresh: Dialed) void {
+        const old = self.dialed;
+        old.conn().clearStateHandler();
+        self.reconnect.observed = false;
+        self.reconnect.replaced.append(alloc, old) catch
+            log.warn("remote link: a replaced transport could not be tracked; leaking it", .{});
+        self.dialed = fresh;
+        shutdownAsync(old.conn());
     }
 };
 
+/// Shut a connection down on its own thread (`shutdown` joins the
+/// connection's threads; a peer that does not let go would wedge the app).
+fn shutdownAsync(c: *connection.Connection) void {
+    const t = std.Thread.spawn(.{}, shutdownRetired, .{c}) catch |err| {
+        log.warn("remote link: async teardown unavailable ({}), shutting down inline", .{err});
+        c.shutdown();
+        return;
+    };
+    t.detach();
+}
+
 fn shutdownRetired(c: *connection.Connection) void {
     c.shutdown();
+}
+
+/// Every link this run dialed, retired ones included (check `retired`): the
+/// reconnect driver's pass.
+pub fn allLinks() []const *Link {
+    return links.items;
 }
 
 /// Every link this run dialed, retired or not. Never freed (module doc).
@@ -232,19 +303,6 @@ pub fn dial(machine: Machine) !Dialed {
     }
 }
 
-/// The `+list` `connection.state` for a link (T609): `connected` while it
-/// carries (a degraded link still does), `reconnecting` while the connection
-/// re-dials, `disconnected` once it is dead or retired. The reconnect ladder
-/// and its pill are T3563's.
-pub fn listState(state: connection.LinkState.State, retired: bool) []const u8 {
-    if (retired) return "disconnected";
-    return switch (state) {
-        .connected, .degraded => "connected",
-        .reconnecting, .reattaching => "reconnecting",
-        .dead => "disconnected",
-    };
-}
-
 test "displayName: the host for a direct dial, the pinned name, else the device" {
     const testing = std.testing;
     try testing.expectEqualStrings("10.0.0.5", (Machine{ .tcp = .{ .host = "10.0.0.5", .port = 7777 } }).displayName());
@@ -252,12 +310,16 @@ test "displayName: the host for a direct dial, the pinned name, else the device"
     try testing.expectEqualStrings("dev-1", (Machine{ .relay = .{ .base = "b", .device = "dev-1", .token = "t" } }).displayName());
 }
 
-test "listState: a degraded link still carries; a retired one is disconnected" {
+test "Reconnect: a new link reads connected; the ladder's state is what +list reports" {
     const testing = std.testing;
-    try testing.expectEqualStrings("connected", listState(.degraded, false));
-    try testing.expectEqualStrings("reconnecting", listState(.reattaching, false));
-    try testing.expectEqualStrings("disconnected", listState(.dead, false));
-    try testing.expectEqualStrings("disconnected", listState(.connected, true));
+    var r: Reconnect = .{};
+    try testing.expectEqualStrings("connected", r.ladder.listConnection().state);
+    r.ladder = .{ .reconnecting = .{ .attempt = 2 } };
+    const c = r.ladder.listConnection();
+    try testing.expectEqualStrings("reconnecting", c.state);
+    try testing.expectEqual(@as(?i64, 2), c.attempt);
+    r.ladder = policy.exhausted_state;
+    try testing.expectEqual(@as(?bool, true), r.ladder.listConnection().self_healable);
 }
 
 test "Machine.dupe copies every string and leaks nothing on failure" {

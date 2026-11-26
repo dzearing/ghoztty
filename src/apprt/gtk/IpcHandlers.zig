@@ -224,6 +224,7 @@ pub fn handleSeam(app: Context, request: Request) Allocator.Error!server.SeamRep
     if (std.mem.eql(u8, request.action, "command-palette")) return .{ .reply = try commandPaletteSeam(app, request) };
     if (std.mem.eql(u8, request.action, "label-weights")) return .{ .reply = try labelWeightsSeam(app, request) };
     if (std.mem.eql(u8, request.action, "machine-chooser")) return .{ .reply = try @import("ipc_machine_chooser.zig").seam(app, request) };
+    if (std.mem.eql(u8, request.action, "remote-pill")) return .{ .reply = try @import("ipc_remote_pill.zig").seam(app, request) };
     if (!std.mem.eql(u8, request.action, "capture-pane")) return .unhandled;
     return .{ .reply = try capturePane(app, request) };
 }
@@ -4089,7 +4090,8 @@ fn buildWindow(arena: Allocator, app: Context, window: *Window) Allocator.Error!
         // T3597: a cross-machine window names its machine (T1557) and its
         // link's state (T609); a local window has neither field.
         .machine = if (remote) |l| List.machineField(try arena.dupe(u8, l.machine.displayName())) else null,
-        .connection = if (remote) |l| .{ .state = RemoteLink.listState(l.conn().state(), l.retired) } else null,
+        // T3675: the reconnect ladder's state, not the raw transport's.
+        .connection = if (remote) |l| l.listConnection() else null,
     };
 }
 

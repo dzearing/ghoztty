@@ -62,7 +62,7 @@ template $GhosttyWindow: Adw.ApplicationWindow {
         }
 
         [end]
-        Gtk.Box {
+        Gtk.Box header_end_box {
           Gtk.ToggleButton {
             icon-name: "view-grid-symbolic";
             tooltip-text: _("View Open Tabs");
@@ -113,7 +113,7 @@ template $GhosttyWindow: Adw.ApplicationWindow {
         }
 
         [end]
-        Gtk.Box {
+        Gtk.Box tabs_end_box {
           orientation: horizontal;
           visible: bind $titlebar_style_is_tabs(template.titlebar-style) as <bool>;
 

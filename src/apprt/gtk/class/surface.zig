@@ -48,6 +48,7 @@ const PaneBanner = @import("../PaneBanner.zig");
 const PaneDrag = @import("../PaneDrag.zig");
 const PaneDragGhost = @import("../PaneDragGhost.zig");
 const RemoteLink = @import("../RemoteLink.zig");
+const RemoteReconnect = @import("../RemoteReconnect.zig");
 const disconnect_offer = @import("../disconnect_offer.zig");
 const wk = @import("../webkit.zig");
 const banner_link = @import("../../win32/banner_link.zig");
@@ -963,6 +964,8 @@ pub const Surface = extern struct {
         const alloc = Application.default().allocator();
         o.link.ref();
         priv.remote_link = o.link;
+        // T3675: the link's reconnect ladder watches from its first pane on.
+        RemoteReconnect.watch(o.link);
         priv.remote_working_directory = if (o.working_directory) |v| alloc.dupe(u8, v) catch null else null;
         priv.remote_shell = if (o.shell) |v| alloc.dupe(u8, v) catch null else null;
         priv.remote_command = if (o.command) |v| alloc.dupe(u8, v) catch null else null;
@@ -977,6 +980,13 @@ pub const Surface = extern struct {
     /// (T3597).
     pub fn remoteLink(self: *Self) ?*RemoteLink.Link {
         return self.private().remote_link;
+    }
+
+    /// The REMOTE shell and cwd this pane's OPEN asked for (T3675): what a
+    /// reconnect's fresh shell in the same slot asks for again. Borrowed.
+    pub fn remoteOpenValues(self: *Self) struct { shell: ?[]const u8, working_directory: ?[]const u8 } {
+        const priv = self.private();
+        return .{ .shell = priv.remote_shell, .working_directory = priv.remote_working_directory };
     }
 
     /// Take on a recorded pane (T3397): its pane id, and either the session
