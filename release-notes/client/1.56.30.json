@@ -1,0 +1,20 @@
+{
+  "version": "1.56.30",
+  "sections": [
+    { "title": "New",
+      "items": [
+        { "text": "A pane's shell can be swapped in place: Restart Pane with Shell." },
+        { "text": "On Linux a Settings change keeps the config file's permissions and names its backup in local time, as on the Mac." },
+        { "text": "On Linux, Settings shows whether the session agent runs and lists your remote machines with Host Settings, as on the Mac." },
+        { "text": "On Linux, Settings > Appearance has the theme picker - one theme or a light and a dark one, a tile per theme, the filter - and the live preview, as on the Mac." },
+        { "text": "The command palette opens a tab, window or split on a shell you pick." },
+        { "text": "Right-click the tab strip's + to open a tab on any installed shell; File > New Tab lists the same shells." },
+        { "text": "A new pane takes a folder only from a pane of the same shell family: WSL to WSL, Windows to Windows." }
+      ] },
+    { "title": "Improvements",
+      "items": [
+        { "text": "On Linux, a viewer pane in a minimized or covered window stops polling git and animating, then catches up once when shown." },
+        { "text": "On Linux, a terminal pane left idle or out of sight gives back its drawing buffers and font copies, and draws afresh when needed." }
+      ] }
+  ]
+}
