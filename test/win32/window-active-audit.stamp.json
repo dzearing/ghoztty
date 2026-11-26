@@ -1,8 +1,8 @@
 {
     "guard":  "window-active-audit",
     "script":  "test/win32/window-active-audit.ps1",
-    "generated":  "2026-11-26T13:14:53-08:00",
-    "commit":  "a9378a02c4",
+    "generated":  "2026-11-26T14:01:06-08:00",
+    "commit":  "9f76d7c2c1",
     "uncommitted":  [
 
                     ],
