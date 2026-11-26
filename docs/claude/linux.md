@@ -2444,6 +2444,26 @@ same app with the key unset latches `separate`. A resident app does not quit
 on SIGTERM (T3656), so the script KILLs the first app after a TERM that did
 not work.
 
+## Chrome title weights: semibold, like the Mac (T3791)
+
+Adwaita draws the header bar's title and every `.heading` bold (700); the
+Mac's titlebar, sidebar headers and Settings section titles are semibold and
+nothing in its chrome is bold. `style.css`'s last block sets
+`windowtitle .title`, `headerbar .title` and `.heading` to 600, and the pane
+strip, the shortcut guide's badges and the picked theme tile carry 600 too
+(the per-label table is in T3791). A new chrome label takes the Mac's weight,
+not Adwaita's default.
+
+The debug-only `label-weights --target=<pane> [--of=window|settings|guide]`
+seam lists every label of that window with the weight CSS computed for it
+(the Pango font description of its context: 400 regular, 600 semibold, 700
+bold), whether it is mapped, its classes and its parent's node name and
+classes. `test/linux/label-weights.sh` (B1-B11) asserts the title, the
+Settings headings and the guide's badges at 600 and no mapped label in a
+window at 700 or more; its control is a gtk-custom-css asking for 800, which
+must move the read and move it back. AdwWindowTitle's `.title` label sits in
+a box inside `windowtitle`, so find it by its text, not its parent.
+
 ## The interop PATH trap
 
 Inside WSL the Windows `PATH` is appended by default, so a bare `ghoztty` can
