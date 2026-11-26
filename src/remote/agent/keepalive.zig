@@ -563,8 +563,16 @@ test "integration: server heartbeat pings keep the link alive (no false stale)" 
 
     const ctrl = try ws_client.WsClient.connectUrl(alloc, url, &headers);
 
+    // The window is ~33 server pings wide on purpose (T3696). This test can
+    // only fail by going stale, and `lastRxMillis` is WALL clock (see its doc
+    // comment), so with the 150ms window the stale test above uses, a 150ms
+    // gap of any kind - the reader thread starved under a full floor run, or
+    // a WSL2 host-time-sync clock step - tripped it with nothing wrong (the
+    // Linux floor's agent lane, 2026-11-24). 1s needs a gap no healthy run
+    // has, and the 2.5s observation below still spans 2.5 windows, so a
+    // regression where pings stop counting as traffic trips at ~1.1s and fails.
     var ka = Keepalive{
-        .cfg = .{ .ping_interval_ms = 40, .stale_after_ms = 150 },
+        .cfg = .{ .ping_interval_ms = 100, .stale_after_ms = 1000 },
         .link = wsLink(ctrl),
     };
     // Same teardown as the stale test above, armed for a failed assertion
@@ -589,7 +597,7 @@ test "integration: server heartbeat pings keep the link alive (no false stale)" 
     // Several stale windows pass; the server's pings are counted as inbound
     // traffic (readMessage consumes them internally, WsClient timestamps them),
     // so the keepalive never trips and the read stays blocked.
-    std.Thread.sleep(600 * std.time.ns_per_ms);
+    std.Thread.sleep(2500 * std.time.ns_per_ms);
     try testing.expect(!ka.went_stale.load(.monotonic));
     try testing.expect(!reader.done.isSet());
 
