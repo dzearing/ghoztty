@@ -54,7 +54,8 @@ WS_LAST=""
 ws() {
     local expr="$1"; shift
     WS_LAST=$(hl_ipc workspaces "$@" 2>&1)
-    printf '%s' "$WS_LAST" | python3 -I -c '
+    printf '%s' "$(cat "$XDG_RUNTIME_DIR/ws-last" 2>/dev/null)" > "$XDG_RUNTIME_DIR/ws-last"
+    printf '%s' "$(cat "$XDG_RUNTIME_DIR/ws-last" 2>/dev/null)" | python3 -I -c '
 import json, sys
 try:
     r = json.load(sys.stdin)
@@ -81,7 +82,7 @@ hl_check "K0c the app serves its socket" $?
 hl_wait_for 10 wsis True 'd["toplevel_mapped"]'
 first=$(ws 'd["toplevel"]')
 wsis "('single', 1, True)" 'd["mode"], len(d["order"]), d["toplevel"] == d["active"] == d["content"]'
-hl_check "K1 the first window loads the toplevel: one workspace, on show, its content in it ($first)" $? "$WS_LAST"
+hl_check "K1 the first window loads the toplevel: one workspace, on show, its content in it ($first)" $? "$(cat "$XDG_RUNTIME_DIR/ws-last" 2>/dev/null)"
 grep -q "workspace: window=.* loads the shared window" "$APP_LOG"
 hl_check "K1b ...and logs it" $? "$(grep 'workspace:' "$APP_LOG" | head -3)"
 
@@ -91,24 +92,24 @@ hl_check "K2a +new-window --target=two succeeds" $rc "$o"
 hl_wait_for 10 wsis 2 'len(d["order"])'
 wsis "('$first', '$first', True, True, False, False)" \
     'd["active"], d["content"], row["two"]["parked"], row["two"]["held"], row["two"]["seen"], row["two"]["mapped"]'
-hl_check "K2 two opens parked: held out of every window, unseen, its own window never mapped; $first keeps the toplevel" $? "$WS_LAST"
+hl_check "K2 two opens parked: held out of every window, unseen, its own window never mapped; $first keeps the toplevel" $? "$(cat "$XDG_RUNTIME_DIR/ws-last" 2>/dev/null)"
 wsis "('$first', 'two')" 'tuple(o["window"] for o in d["order"])'
-hl_check "K2b the order is on show first, then the parked one" $? "$WS_LAST"
+hl_check "K2b the order is on show first, then the parked one" $? "$(cat "$XDG_RUNTIME_DIR/ws-last" 2>/dev/null)"
 wsis True 'all(o["owner_ok"] for o in d["order"]) and row["two"]["panes"] == 1'
-hl_check "K2c every pane resolves to its own workspace, parked included (owner-of)" $? "$WS_LAST"
+hl_check "K2c every pane resolves to its own workspace, parked included (owner-of)" $? "$(cat "$XDG_RUNTIME_DIR/ws-last" 2>/dev/null)"
 
 # ---- 3. the hand-off: no new window, the content moves ---------------------
 wsis True 'd["shown"]' --show=two
-hl_check "K3a --show=two is accepted" $? "$WS_LAST"
+hl_check "K3a --show=two is accepted" $? "$(cat "$XDG_RUNTIME_DIR/ws-last" 2>/dev/null)"
 wsis "('$first', 'two', 'two', True, False, True, True, True, False)" \
     'd["toplevel"], d["active"], d["content"], d["toplevel_mapped"], row["two"]["parked"], row["two"]["seen"], row["'$first'"]["parked"], row["'$first'"]["held"], row["'$first'"]["seen"]'
-hl_check "K3 two is on show IN $first's toplevel; $first is parked, held and unseen" $? "$WS_LAST"
+hl_check "K3 two is on show IN $first's toplevel; $first is parked, held and unseen" $? "$(cat "$XDG_RUNTIME_DIR/ws-last" 2>/dev/null)"
 wsis "False" 'row["two"]["mapped"]'
-hl_check "K3b two's own GtkWindow is still never mapped (one window)" $? "$WS_LAST"
+hl_check "K3b two's own GtkWindow is still never mapped (one window)" $? "$(cat "$XDG_RUNTIME_DIR/ws-last" 2>/dev/null)"
 grep -q "workspace: show window=two (from " "$APP_LOG"
 hl_check "K3c the hand-off is logged" $? "$(grep 'workspace:' "$APP_LOG" | tail -3)"
 wsis True 'all(o["owner_ok"] for o in d["order"])'
-hl_check "K3d after the hand-off every pane still resolves to its own workspace" $? "$WS_LAST"
+hl_check "K3d after the hand-off every pane still resolves to its own workspace" $? "$(cat "$XDG_RUNTIME_DIR/ws-last" 2>/dev/null)"
 
 # Its terminal runs inside the borrowed toplevel: keys reach its shell.
 mark="$XDG_RUNTIME_DIR/two-ran"
@@ -126,27 +127,27 @@ o=$(cli +split --target="$first" --direction=right 2>&1); rc=$?
 hl_check "K5a +split into the parked $first succeeds" $rc "$o"
 hl_wait_for 10 wsis 2 'row["'$first'"]["panes"]'
 wsis "(2, 1, 'two', True)" 'row["'$first'"]["panes"], row["two"]["panes"], d["content"], all(o["owner_ok"] for o in d["order"])'
-hl_check "K5 the split lands in $first (parked), not in two which is on show" $? "$WS_LAST"
+hl_check "K5 the split lands in $first (parked), not in two which is on show" $? "$(cat "$XDG_RUNTIME_DIR/ws-last" 2>/dev/null)"
 
 # ---- 5. switching back -----------------------------------------------------
 wsis "('$first', '$first', True, True, True)" 'd["active"], d["content"], row["two"]["parked"], row["two"]["held"], row["'$first'"]["seen"]' --show="$first"
-hl_check "K6 showing $first again puts its content back in its own toplevel and parks two" $? "$WS_LAST"
+hl_check "K6 showing $first again puts its content back in its own toplevel and parks two" $? "$(cat "$XDG_RUNTIME_DIR/ws-last" 2>/dev/null)"
 
 # ---- 6. closes keep every workspace whole (the experience is T3652) --------
 o=$(cli +close --target=two --force 2>&1); rc=$?
 hl_check "K7a +close --force on the parked two succeeds" $rc "$o"
 hl_wait_for 10 wsis 1 'len(d["order"])'
 wsis "('$first', '$first')" 'd["active"], d["content"]'
-hl_check "K7 a parked workspace closes in place; $first is untouched" $? "$WS_LAST"
+hl_check "K7 a parked workspace closes in place; $first is untouched" $? "$(cat "$XDG_RUNTIME_DIR/ws-last" 2>/dev/null)"
 alive "$APP"; hl_check "K7b the app is alive" $?
 
 o=$(cli +new-window --target=three --focus 2>&1); rc=$?
 hl_check "K8a +new-window --target=three --focus succeeds" $rc "$o"
 hl_wait_for 10 wsis "('three', 'three')" 'd["active"], d["content"]'
-hl_check "K8 a --focus open goes on show in the toplevel at once" $? "$WS_LAST"
+hl_check "K8 a --focus open goes on show in the toplevel at once" $? "$(cat "$XDG_RUNTIME_DIR/ws-last" 2>/dev/null)"
 o=$(cli +close --target=three --force 2>&1); rc=$?
 hl_wait_for 10 wsis "(1, '$first', '$first', True)" 'len(d["order"]), d["active"], d["content"], d["toplevel_mapped"]'
-hl_check "K8b closing the workspace on show hands the toplevel back with $first's content" $? "$WS_LAST"
+hl_check "K8b closing the workspace on show hands the toplevel back with $first's content" $? "$(cat "$XDG_RUNTIME_DIR/ws-last" 2>/dev/null)"
 alive "$APP"; hl_check "K8c the app is alive" $?
 
 o=$(cli +new-window --target=four --focus 2>&1)
@@ -158,9 +159,10 @@ for _ in 1 2 3; do
     sleep 0.5
 done
 hl_wait_for 10 wsis "(1, 'four', 'four', 'four', True)" 'len(d["order"]), d["toplevel"], d["active"], d["content"], d["toplevel_mapped"]'
-hl_check "K8d the toplevel's own workspace closing hands four a window of its own, whole" $? "$WS_LAST"
+hl_check "K8d the toplevel's own workspace closing hands four a window of its own, whole" $? "$(cat "$XDG_RUNTIME_DIR/ws-last" 2>/dev/null)"
 alive "$APP"; hl_check "K8e the app is alive" $?
 
+grep 'workspace:' "$APP_LOG" | tail -12
 stop_app "$APP"
 
 # ---- 7. negative control: separate mode makes no workspaces ----------------
@@ -171,7 +173,7 @@ hl_wait_for 30 test -S "$(hl_socket)"
 cli +new-window --target=two >/dev/null 2>&1
 sleep 1
 wsis "('separate', 0, None)" 'd["mode"], len(d["order"]), d["toplevel"]'
-hl_check "K9 the same app with the key unset makes no workspaces" $? "$WS_LAST"
+hl_check "K9 the same app with the key unset makes no workspaces" $? "$(cat "$XDG_RUNTIME_DIR/ws-last" 2>/dev/null)"
 stop_app "$APP2"
 
 hl_finish "$L"
