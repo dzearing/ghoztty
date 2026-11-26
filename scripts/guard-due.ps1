@@ -2432,6 +2432,22 @@ $GuardTable = @(
             'src\apprt\surface.zig'
         )
     },
+    # A starting folder per shell (T3770): the pure matcher, the one seam in
+    # `Surface.init` that applies it, the IPC sites that mark an explicit
+    # folder, and the Settings row that validates a value as it is typed.
+    [pscustomobject]@{
+        Name   = 'shell-starting-folder'
+        Script = 'test\win32\shell-starting-folder.ps1'
+        Stamp  = 'test\win32\shell-starting-folder.stamp.json'
+        Covers = @(
+            'test\win32\shell-starting-folder.ps1',
+            'src\apprt\ipc\shell_folder.zig',
+            'src\apprt\win32\Surface.zig',
+            'src\apprt\win32\IpcHandlers.zig',
+            'src\apprt\win32\SettingsWindow.zig',
+            'src\apprt\win32\ipc_settings.zig'
+        )
+    },
     # CLI-created windows and panes open in the background; `--focus` opts in
     # (T1797, main 3081022ec). Every file that decides it: the flag parse
     # (`ipc\args.zig`), the verbs (`IpcHandlers.zig`), the remote open tail and

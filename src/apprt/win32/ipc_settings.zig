@@ -59,6 +59,8 @@
 //! {"action":"settings","arguments":["--op=choose","--key=font-family","--value=Consolas"]}  (T3766: the Font menu's pick; "" is Default)
 //! {"action":"settings","arguments":["--op=list-add","--key=font-family","--value=Segoe UI Emoji"]}
 //! {"action":"settings","arguments":["--op=list-remove","--key=font-family","--index=0"]}
+//! {"action":"settings","arguments":["--op=typing","--key=shell-working-directory","--value=pwsh=~"]}
+//!   (T3770: types into the field without Enter; ok=false when the row shows a problem)
 //!   (a curated list row's chips; on the Font row its fallback chips, so
 //!   index 0 is the file's SECOND value); the Font row's state adds
 //!   "choices":[{value,label}], "subtitle" (the not-installed warning),
@@ -146,6 +148,8 @@ pub const Op = enum {
     // A curated list row's chips; on the Font row, its fallbacks (T3766).
     @"list-add",
     @"list-remove",
+    // Typing into a field without Enter: the as-you-type check (T3770).
+    typing,
 };
 
 /// The Font row (T3766): a curated `.font` control.
@@ -281,6 +285,17 @@ pub fn handle(app: *App, alloc: Allocator, arguments: ?[]const []const u8) Alloc
                 w.setFieldText(value);
                 w.commitEdit();
                 ok = w.editingKey() == null and w.model.problem(key) == null;
+            }
+        },
+        // T3770: what typing into the field does before Enter - the field
+        // stays open, and "problem" is what the row shows as you type.
+        .typing => {
+            const key = req.key orelse return errorResponse(alloc, "--key is required for --op=typing", .{});
+            if (!w.beginEdit(key)) {
+                ok = false;
+            } else {
+                w.setFieldText(req.value orelse "");
+                ok = w.model.problem(key) == null;
             }
         },
         .@"list-remove" => {

@@ -706,12 +706,14 @@ pub fn openWindow(
                 .local_agent = true,
             },
             .shell_spec = interactiveShellSpec(args.e_args, args.command, args.shell),
+            .folder_explicit = explicitFolder(args) != null,
             .env = env.items,
         };
     } else .{
         .command_argv = try execArgv(ctx, arena, args.e_args, args.command, args.shell, explicitFolder(args)),
         .working_directory = processFolder(args.working_directory),
         .shell_spec = interactiveShellSpec(args.e_args, args.command, args.shell),
+        .folder_explicit = explicitFolder(args) != null,
         .env = env.items,
     };
 
@@ -1066,12 +1068,14 @@ pub fn createSplit(
                 .local_agent = true,
             },
             .shell_spec = interactiveShellSpec(args.e_args, command, args.shell),
+            .folder_explicit = explicitFolder(args) != null,
             .env = env.items,
         };
     } else .{
         .command_argv = try execArgv(ctx, arena, args.e_args, command, args.shell, wsl_folder),
         .working_directory = split_cwd,
         .shell_spec = interactiveShellSpec(args.e_args, command, args.shell),
+        .folder_explicit = explicitFolder(args) != null,
         .env = env.items,
     };
 

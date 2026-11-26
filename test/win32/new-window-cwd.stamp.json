@@ -1,13 +1,13 @@
 {
     "guard":  "new-window-cwd",
     "script":  "test/win32/new-window-cwd.ps1",
-    "generated":  "2026-11-25T16:52:04-08:00",
-    "commit":  "4e3e05a95",
+    "generated":  "2026-11-25T21:50:37-08:00",
+    "commit":  "bbacdece43",
     "uncommitted":  [
                         "src/cli/new_window.zig"
                     ],
     "files":  {
-                  "src/cli/new_window.zig":  "fe7ab11a78434d9a51dfa18dcae535302e4c211bd5abab5ce9eb9963f3547074",
+                  "src/cli/new_window.zig":  "ef5747fcde8d95151f26ac4018768725255fc51b0ff3864ab8c27e2a8d24b863",
                   "src/config/file_load.zig":  "4eb4e37b6cb6a6d614d2a7b978972c06590d3683f205eef29f5418930f3b7072",
                   "src/os/homedir.zig":  "47ed2777ec445d309d7a912b81826c19348c115e1f53160f8001e24d2c8298ea",
                   "test/win32/new-window-cwd.ps1":  "788bd5914286f4694bf5a872f29c996e34854fd383bc46016131f71cc7ae4b06"

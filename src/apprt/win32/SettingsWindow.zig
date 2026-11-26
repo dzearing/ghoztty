@@ -81,6 +81,7 @@ const remote_view = @import("settings_remote_view.zig");
 const DirectoryProbe = @import("DirectoryProbe.zig");
 const folder_dialog = @import("folder_dialog.zig");
 const wsl_distros = @import("wsl_distros.zig");
+const shell_folder = @import("../ipc/shell_folder.zig");
 const font_families = @import("font_families.zig");
 const help_tooltip = @import("help_tooltip.zig");
 const ShortcutGuideWindow = @import("ShortcutGuideWindow.zig");
@@ -1140,9 +1141,44 @@ pub fn beginEdit(self: *SettingsWindow, key: []const u8) bool {
     return true;
 }
 
+/// The keys whose values this window checks as you type (T3770).
+fn checksAsTyped(key: []const u8) bool {
+    return std.mem.eql(u8, key, "shell-working-directory");
+}
+
+/// Why the typed `text` cannot be one of `key`'s values (T3770:
+/// `shell-working-directory` takes `shell=folder`, with a Linux folder for
+/// WSL and an existing Windows one otherwise). Null for every other key, and
+/// for an empty field.
+fn typedProblem(key: []const u8, text: []const u8) ?[]const u8 {
+    if (!checksAsTyped(key)) return null;
+    const v = std.mem.trim(u8, text, " \t");
+    if (v.len == 0) return null;
+    const Fs = struct {
+        fn dirExists(_: void, p: []const u8) bool {
+            var d = std.fs.cwd().openDir(p, .{}) catch return false;
+            d.close();
+            return true;
+        }
+    };
+    return shell_folder.valueProblem(v, {}, Fs.dirExists);
+}
+
+/// Show (or clear) the field's problem as it is typed - Mac's inline
+/// validation, ahead of Enter.
+fn checkTyped(self: *SettingsWindow) void {
+    const key = self.edit_key orelse return;
+    if (!checksAsTyped(key)) return;
+    if (typedProblem(key, self.field.text())) |p|
+        self.model.setProblem(key, p) catch {}
+    else
+        self.model.clearProblem(key);
+}
+
 /// Replace the field's text (the seam's typing).
 pub fn setFieldText(self: *SettingsWindow, text: []const u8) void {
     self.field.set(text);
+    self.checkTyped();
     self.invalidate();
 }
 
@@ -1161,6 +1197,14 @@ pub fn commitEdit(self: *SettingsWindow) void {
     if (repeatable) {
         const v = std.mem.trim(u8, typed, " \t");
         if (v.len == 0) {
+            self.invalidate();
+            return;
+        }
+        if (typedProblem(key, v)) |p| {
+            // Refused before the write: the text stays in the field.
+            self.model.setProblem(key, p) catch {};
+            self.edit_key = key;
+            self.focus = .field;
             self.invalidate();
             return;
         }
@@ -1244,6 +1288,8 @@ fn refuse(self: *SettingsWindow, key: []const u8, msg: []const u8) bool {
 
 /// Esc in a field: drop what was typed.
 pub fn cancelEdit(self: *SettingsWindow) void {
+    // A problem shown as it was typed goes with the dropped text (T3770).
+    if (self.edit_key) |k| if (checksAsTyped(k)) self.model.clearProblem(k);
     self.edit_key = null;
     self.focus = .search;
     self.invalidate();
@@ -3607,7 +3653,10 @@ fn edited(self: *SettingsWindow) void {
         },
         // The theme filter narrows the grid as you type (Mac's binding).
         .theme_filter => self.relayoutTheme(),
-        .field => self.invalidate(),
+        .field => {
+            self.checkTyped();
+            self.invalidate();
+        },
     }
 }
 

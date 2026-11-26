@@ -1628,6 +1628,24 @@ class: ?[:0]const u8 = null,
 ///   * `inherit` - The working directory of the launching process.
 @"working-directory": ?WorkingDirectory = null,
 
+/// The folder a pane opened on a particular shell starts in, as
+/// `<shell>=<folder>`. Repeat it once per shell. The shell is named the way
+/// `ghoztty +new-window --shell=` takes it: `pwsh.exe`, `cmd`, a full path,
+/// or on Windows `wsl:<distro>` (a bare `wsl` covers every distro without its
+/// own entry).
+///
+/// It applies only when nothing else gives the new pane a folder: an explicit
+/// `--working-directory`, or a folder inherited from a pane running the same
+/// kind of shell (see `window-inherit-working-directory` and friends). It
+/// then takes the place of `working-directory` for that shell.
+///
+/// A WSL shell takes a Linux folder (`/srv/app`, `~`, `~/src`; the default
+/// is `~`, the distro's home). Any other shell takes a full path that
+/// exists.
+///
+/// Example: `shell-working-directory = wsl:Ubuntu=~/src`
+@"shell-working-directory": RepeatableString = .{},
+
 /// Key bindings. The format is `trigger=action`. Duplicate triggers will
 /// overwrite previously set values. The list of actions is available in
 /// the documentation or using the `ghoztty +list-actions` command.

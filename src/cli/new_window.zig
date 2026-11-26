@@ -18,6 +18,13 @@ fn isRootedPosix(path: []const u8) bool {
     return path.len > 0 and path[0] == '/' and (path.len == 1 or path[1] != '/');
 }
 
+/// `~` or `~/...`: a WSL shell's home-relative folder (T3770). Held back with
+/// the rooted ones so a WSL shell gets it as-is (`wsl --cd ~/src` expands it
+/// inside the distro); any other shell still has it expanded here.
+fn isTildePath(path: []const u8) bool {
+    return path.len > 0 and path[0] == '~' and (path.len == 1 or path[1] == '/');
+}
+
 /// Whether the forwarded arguments ask for a WSL shell: a `--shell=` before
 /// any `-e` that names one (`wsl`, `wsl.exe`, `wsl:<distro>`).
 fn wslShellRequested(arguments: []const [:0]const u8) bool {
@@ -36,6 +43,14 @@ test "isRootedPosix: a Linux root path, never UNC or relative (T3754)" {
     try std.testing.expect(!isRootedPosix("C:\\src"));
     try std.testing.expect(!isRootedPosix("src"));
     try std.testing.expect(!isRootedPosix(""));
+}
+
+test "isTildePath: ~ and ~/..., never ~user (T3770)" {
+    try std.testing.expect(isTildePath("~"));
+    try std.testing.expect(isTildePath("~/src"));
+    try std.testing.expect(!isTildePath("~user"));
+    try std.testing.expect(!isTildePath("src~"));
+    try std.testing.expect(!isTildePath(""));
 }
 
 test "wslShellRequested: a WSL --shell before -e (T3754)" {
@@ -131,7 +146,7 @@ pub const Options = struct {
             if (std.mem.eql(u8, stripped, "home")) return try alloc.dupeZ(u8, arg);
             if (std.mem.eql(u8, stripped, "inherit")) return try alloc.dupeZ(u8, arg);
             if (comptime builtin.os.tag == .windows) {
-                if (isRootedPosix(stripped)) {
+                if (isRootedPosix(stripped) or isTildePath(stripped)) {
                     self._linux_working_directory = try alloc.dupe(u8, stripped);
                     self._working_directory_seen = true;
                     return null;
@@ -157,8 +172,10 @@ pub const Options = struct {
         const value: []const u8 = if (wslShellRequested(self._arguments.items))
             raw
         else value: {
+            var expandhome_buf: [std.fs.max_path_bytes]u8 = undefined;
+            const expanded = homedir.expandHome(raw, &expandhome_buf) catch raw;
             var realpath_buf: [std.fs.max_path_bytes]u8 = undefined;
-            break :value try alloc.dupe(u8, try std.fs.cwd().realpath(raw, &realpath_buf));
+            break :value try alloc.dupe(u8, try std.fs.cwd().realpath(expanded, &realpath_buf));
         };
         // At the front, ahead of any `-e`, like the implicit cwd.
         try self._arguments.insert(alloc, 0, try std.fmt.allocPrintSentinel(alloc, "--working-directory={s}", .{value}, 0));

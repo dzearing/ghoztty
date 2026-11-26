@@ -410,6 +410,10 @@ pub const target_lookup = @import("ipc/target_lookup.zig");
 /// inherits across families (T3754).
 pub const shell_family = @import("ipc/shell_family.zig");
 
+/// The per-shell starting folder (`shell-working-directory`, T3770): which
+/// configured folder a pane opened on a given shell starts in.
+pub const shell_folder = @import("ipc/shell_folder.zig");
+
 /// The frontend-independent half of an IPC server: request shape, action
 /// table, reply builders and the dispatcher each frontend plugs its verb
 /// handlers into (T3334). A frontend missing a verb does not compile.

@@ -835,6 +835,12 @@ pub const Overrides = struct {
     working_directory: ?[]const u8 = null,
     env: []const EnvVar = &.{},
 
+    /// The folder this pane opens in was asked for (`--working-directory`),
+    /// even when it rides a WSL `--cd` rather than `working_directory` - so
+    /// an explicit `~` is not mistaken for the default and replaced by the
+    /// shell's own starting folder (T3770).
+    folder_explicit: bool = false,
+
     /// The pane id to ADOPT instead of generating a fresh one (T113): the
     /// session-layout manifest's recorded id for the leaf this surface is
     /// restoring. The re-attached (or agent-RELAUNCHed) shell keeps the
@@ -1210,6 +1216,24 @@ fn initOnce(
         break :points focused.font_size.points;
     };
 
+    // T3770: whether the overrides below hand this pane a folder of its own,
+    // so the per-shell starting folder knows to stand down. Read before they
+    // are consumed. `windows_folder_given` is a process cwd (explicit, or the
+    // CLI caller's, or inherited) - which a WSL pane ignores, since its folder
+    // rides `--cd`; `folder_explicit` is an asked-for one of either kind.
+    var folder_explicit = false;
+    var windows_folder_given = false;
+    var attaching = false;
+    if (parent.pending_surface_overrides) |ov| {
+        folder_explicit = ov.folder_explicit;
+        windows_folder_given = ov.working_directory != null or
+            (if (ov.remote) |r| r.working_directory != null else false);
+        attaching = if (ov.remote) |r| r.session_id != null else false;
+    }
+    // Untouched = still the configured `working-directory` (nothing inherited
+    // above, or the T3754 cross-family reset put it back).
+    const wd_untouched = sameWorkingDirectory(config.@"working-directory", app.config.@"working-directory");
+
     // Apply IPC overrides (command/cwd/env) queued on the parent window by
     // the IPC server. One-shot: cleared here so a later plain tab/split
     // doesn't inherit them.
@@ -1293,6 +1317,16 @@ fn initOnce(
         }
     }
     self.shell_family = launchFamily(self.remote_command_argv, self.remote_shell, config.command);
+
+    // T3770: a pane on a shell with its own `shell-working-directory` starts
+    // there when nothing above gave it a folder. A cross-machine pane's
+    // folders belong to that machine, and a re-attached session is already
+    // somewhere.
+    const local = self.remote_conn == null or self.remote_is_local_agent;
+    if (local and !attaching and !folder_explicit) {
+        self.applyShellStartingFolder(&config, wd_untouched and !windows_folder_given) catch |err|
+            log.warn("shell-working-directory not applied err={}", .{err});
+    }
 
     // T113: bake `$GHOZTTY_PANE_ID` into the pane's environment, the way the
     // Mac apprt does via `surface_cfg.environmentVariables`. This rides the
@@ -3180,6 +3214,81 @@ fn launchFamily(
         .direct => |d| if (d.len > 0) sf.ofProgram(d[0]) else .windows,
         .shell => |s| sf.ofCommandLine(s),
     };
+}
+
+/// Whether two `working-directory` values are the SAME value - not merely
+/// equal text: an inherited folder is a fresh copy, so pointer identity is
+/// what says "nothing replaced the configured one" (T3770).
+fn sameWorkingDirectory(a: ?configpkg.Config.WorkingDirectory, b: ?configpkg.Config.WorkingDirectory) bool {
+    const x = a orelse return b == null;
+    const y = b orelse return false;
+    if (std.meta.activeTag(x) != std.meta.activeTag(y)) return false;
+    return switch (x) {
+        .path => |p| p.ptr == y.path.ptr and p.len == y.path.len,
+        else => true,
+    };
+}
+
+/// T3770: start this pane in its shell's `shell-working-directory`, if one
+/// is configured. Called only for a local pane that nothing gave a folder.
+/// A Windows shell's folder replaces the configured `working-directory`
+/// (unless something was inherited into it); a WSL shell's replaces the
+/// default `--cd ~` in its argv.
+fn applyShellStartingFolder(self: *Surface, config: *configpkg.Config, wd_untouched: bool) !void {
+    const sf = apprt.ipc.shell_folder;
+    const values = self.app.config.@"shell-working-directory".list.items;
+    if (values.len == 0) return;
+    const carena = config._arena.?.allocator();
+
+    const command_argv: ?[]const []const u8 = if (config.command) |c| switch (c) {
+        .direct => |d| argv: {
+            const out = try carena.alloc([]const u8, d.len);
+            for (d, 0..) |a, i| out[i] = a;
+            break :argv out;
+        },
+        .shell => |s| try sf.splitCommandLine(carena, s),
+    } else null;
+
+    const id: sf.Identity = id: {
+        if (self.shellSpec()) |spec| break :id sf.ofSpec(spec);
+        if (self.remote_command_argv) |a| if (sf.ofArgv(a)) |i| break :id i;
+        if (self.remote_shell) |s| if (s.len > 0) break :id sf.ofSpec(s);
+        if (command_argv) |a| if (sf.ofArgv(a)) |i| break :id i;
+        return;
+    };
+    const folder = sf.find(values, id) orelse return;
+
+    switch (self.shell_family) {
+        .windows => {
+            if (!wd_untouched) return;
+            if (!apprt.ipc.shell_family.isWindowsPath(folder)) {
+                log.warn("shell-working-directory {s}: not a Windows folder, ignored", .{folder});
+                return;
+            }
+            config.@"working-directory" = .{ .path = try carena.dupe(u8, folder) };
+        },
+        .wsl => {
+            if (self.remote_command_argv) |a| {
+                if (try sf.withWslFolder(carena, a, folder)) |next| {
+                    const plain = try carena.alloc([]const u8, next.len);
+                    for (next, 0..) |n, i| plain[i] = n;
+                    self.remote_command_argv = plain;
+                }
+                return;
+            }
+            const a = command_argv orelse return;
+            const next = (try sf.withWslFolder(carena, a, folder)) orelse return;
+            // Keep the command's own form: a `.shell` line is what the agent
+            // path execs as its words (T3750), so it stays a line.
+            config.command = switch (config.command.?) {
+                .direct => .{ .direct = next },
+                .shell => .{ .shell = (try sf.joinCommandLine(carena, next)) orelse {
+                    log.warn("shell-working-directory {s}: a folder with spaces cannot ride a shell command line, ignored", .{folder});
+                    return;
+                } },
+            };
+        },
+    }
 }
 
 /// The folder a new `child`-family pane opened from this one inherits

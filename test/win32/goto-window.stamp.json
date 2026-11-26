@@ -1,10 +1,10 @@
 {
     "guard":  "goto-window",
     "script":  "test/win32/goto-window.ps1",
-    "generated":  "2026-11-25T20:39:53-08:00",
-    "commit":  "169fd8fa7c",
+    "generated":  "2026-11-25T21:43:22-08:00",
+    "commit":  "bbacdece43",
     "uncommitted":  [
-
+                        "src/config/Config.zig"
                     ],
     "files":  {
                   "src/apprt/win32/App.zig":  "6948f68068eebb8647f7855265d0f4de0ef725a5d387487274faba5c5a5082e9",
@@ -12,7 +12,7 @@
                   "src/apprt/win32/pane_sidebar_window_order.zig":  "f9f98fafbb0aba45202da9e5ef1d53270eaa7c17d57f078fa93adbc4cec8132f",
                   "src/apprt/win32/PaneSidebar.zig":  "1ab97b9c37381ba05ef3cacfba507fd5baf00117bcfe50a980d493086d29cf23",
                   "src/apprt/win32/viewer_accel.zig":  "07d6f44e59f931c2c1caa5db167ffb7c099bb0684ae386a15260f6b46c5c1d2e",
-                  "src/config/Config.zig":  "89b88b4bdbeeb2c79c7591d6296e52dea06a47f6cffc704d8f1fe273335e27a4",
+                  "src/config/Config.zig":  "3ca7bbee0ba1ddff00ab8570efdbf03baac6bcaf24602f13822c2e1567c54c79",
                   "test/win32/goto-window.ps1":  "46d315222e373a99e41e10787bf31cbd847e3cd8c383da93e902008f549627a1"
               },
     "code":  {

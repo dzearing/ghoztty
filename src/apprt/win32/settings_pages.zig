@@ -23,6 +23,10 @@
 //!   the selection clipboard": Windows has no separate selection clipboard.
 //! - "Shell for scripted windows" names the Windows shell flavors in its hint
 //!   instead of Mac's `-lic`.
+//! - Terminal > Shell adds "Starting folder per shell"
+//!   (`shell-working-directory`, T3770) ahead of the Mac, which gets the same
+//!   row with its own shells in T3736; it is the first platform to read the
+//!   key, so the row is not a Windows-only setting.
 //! - Appearance > Window drops `background-blur` and `macos-titlebar-style`:
 //!   the win32 renderer never blurs the terminal background (Mac's blur is a
 //!   CoreAnimation/glass facility) and the title bar is Ghoztty's own tab
@@ -315,23 +319,31 @@ pub const panes: Page = .{
     },
 };
 
+/// Terminal > Shell. "Starting folder per shell" (T3770) is Windows-only
+/// until the Linux seat applies the key (T3737); on Windows its values are
+/// checked as `shell=folder` with the folder's family rule.
+const shell_rows = [_]Row{
+    .{ .key = "command", .label = "Shell", .control = .{ .shell = .{ .scripted = false } } },
+    .{ .key = "working-directory", .label = "Start new windows in", .control = .folder },
+} ++ (if (linux) [_]Row{} else [_]Row{
+    .{ .key = "shell-working-directory", .label = "Starting folder per shell", .control = .{ .list = .{ .placeholder = "wsl:Ubuntu=~/src" } }, .hint = "A folder for one shell, as shell=folder: wsl:Ubuntu=~/src, pwsh.exe=C:\\src. A WSL shell takes a Linux folder (default ~). Used when a new pane has no folder of its own." },
+}) ++ [_]Row{
+    .{ .key = "window-inherit-working-directory", .label = "New windows open in the current folder", .control = .toggle },
+    .{ .key = "split-inherit-working-directory", .label = "New panes open in the current folder", .control = .toggle },
+    .{ .key = "tab-inherit-working-directory", .label = "New tabs open in the current folder", .control = .toggle },
+    .{ .key = "command-shell", .label = "Shell for scripted windows", .control = .{ .shell = .{ .scripted = true } }, .hint = if (linux)
+        "Runs the command of ghoztty +new-window --command=\u{2026} through this shell, as -lic."
+    else
+        "Runs the command of ghoztty +new-window --command=\u{2026} through this shell (pwsh -NoExit -Command, cmd /K or wsl --)." },
+};
+
 pub const terminal: Page = .{
     .id = .terminal,
     .title = "Terminal",
     .glyph = ">_",
     .tint = 0x4D4D4D,
     .sections = &.{
-        .{ .title = "Shell", .rows = &.{
-            .{ .key = "command", .label = "Shell", .control = .{ .shell = .{ .scripted = false } } },
-            .{ .key = "working-directory", .label = "Start new windows in", .control = .folder },
-            .{ .key = "window-inherit-working-directory", .label = "New windows open in the current folder", .control = .toggle },
-            .{ .key = "split-inherit-working-directory", .label = "New panes open in the current folder", .control = .toggle },
-            .{ .key = "tab-inherit-working-directory", .label = "New tabs open in the current folder", .control = .toggle },
-            .{ .key = "command-shell", .label = "Shell for scripted windows", .control = .{ .shell = .{ .scripted = true } }, .hint = if (linux)
-                "Runs the command of ghoztty +new-window --command=\u{2026} through this shell, as -lic."
-            else
-                "Runs the command of ghoztty +new-window --command=\u{2026} through this shell (pwsh -NoExit -Command, cmd /K or wsl --)." },
-        } },
+        .{ .title = "Shell", .rows = &shell_rows },
         .{ .title = "Scrollback", .rows = &.{
             .{ .key = "scrollback-limit", .label = "Scrollback size", .control = .{ .megabytes = .{ .max = 4096 } } },
             .{ .key = "scrollbar", .label = "Scroll bar", .control = .{ .picker = &.{
