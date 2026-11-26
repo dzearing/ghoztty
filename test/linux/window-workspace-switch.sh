@@ -19,8 +19,8 @@
 #   powershell -NoProfile -File scripts\linux\wsl-run.ps1 -Step 'NEGATIVE=1 bash test/linux/window-workspace-switch.sh'
 #
 # NEGATIVE=1 runs the same steps in `separate` mode, where there are no
-# workspaces: it must FAIL S2 (a sidebar click raises a window, nothing is
-# put on show).
+# workspaces: it must FAIL from S1 on - S2 included (a sidebar click raises
+# a window; nothing is put on show). Measured: 20 failures.
 #
 # Oracles: the debug-only `workspaces` seam (who is on show, whose content IS
 # the toplevel's, whose own GtkWindow is mapped, which workspace has the

@@ -25,8 +25,12 @@
 //! - Parked counts as hidden: a parked workspace's `Window.syncSeen` reads
 //!   unseen and its content is unmapped, so its terminals build no frames.
 //!
-//! Not here (their own cards): the sidebar switch and every open path
-//! (T3649), parked layout at the toplevel's size (T3650), the shade fade
+//! Switching (T3649): `Window.bringForward` is "go to this window" - the
+//! sidebar's all-windows list, `--focus`, a pane's present request - and
+//! `gotoTab` / `gotoWindow` walk the list's order; a new tab, a tab or pane
+//! dragged out, and every new-window path open a workspace.
+//!
+//! Not here (their own cards): parked layout at the toplevel's size (T3650), the shade fade
 //! (T3651), closing semantics and the toplevel's close button (T3652), the
 //! CLI (T3653), rolled-up activity (T3654), persistence (T3655). Until T3652
 //! a workspace close is only made SAFE here (`forget`): its content never

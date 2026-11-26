@@ -2250,22 +2250,69 @@ never counts.
 - **Known gaps, filed on their cards**: a workspace parked from birth has no
   running terminal until first shown (the core surface starts on the GLArea's
   first resize, which needs a mapped allocation - T3650); the toplevel's own
-  close button and window-level key controller act for the toplevel's own
-  workspace (T3652, T3649); the desk is the toplevel workspace's (T3651).
+  close button acts for the toplevel's own workspace (T3652); the desk is the
+  toplevel workspace's (T3651).
 - **Seam**: debug-only `hl_ipc workspaces [--show=<pane|window>]` - `mode`,
   `toplevel`, `active`, `content` (whose content root IS the toplevel's
-  content: the hand-off's oracle), `toplevel_title`, and per workspace
-  `parked`, `held`, `seen`, `mapped` (its own GtkWindow), `panes`,
-  `owner_ok`.
+  content: the hand-off's oracle), `toplevel_title`, `focus_window` (the
+  workspace whose pane has the toplevel's keyboard focus), `list` (the
+  all-windows list's order, what the goto walks step through), and per
+  workspace `parked`, `held`, `seen`, `mapped` (its own GtkWindow), `panes`,
+  `tabs`, `owner_ok`.
 
 ```powershell
 powershell -NoProfile -File scripts\linux\wsl-run.ps1 -CommandFile test\linux\window-workspaces.sh
 ```
 
 Ends `WINDOW WORKSPACES: ALL PASS` (28 checks, about a minute). K9 is the negative control: the key
-unset makes no workspaces. Still to come: the sidebar switch and every open
-path (T3649), parked layout (T3650), the shade fade (T3651), closing (T3652),
-the CLI (T3653), rolled-up activity (T3654), persistence (T3655).
+unset makes no workspaces.
+
+### Switching and every open path (T3649)
+
+- **"Go to this window" is `Window.bringForward`** (Mac `bringForward`): in
+  single mode it puts the workspace on show (`Workspaces.show`); a window
+  built outside `initAndShowWindow` (a tab dragged out, a pane popped out) is
+  admitted as a new workspace first; separate mode presents the window as
+  before. Every raise goes through it: a pane's present request (bells,
+  notification clicks, the palette), `--focus` (`IpcHandlers.focusTarget`,
+  which also puts a parked workspace on show when the pane was made in the
+  same request and its window had not connected the present request yet),
+  a pane drop's arrival, the sidebar.
+- **The sidebar's all-windows list switches.** A click on a workspace's row
+  (or tile), or on one of its panes' rows, puts it on show **on the next idle
+  turn** (`PaneSidebar.raiseLater`, win32 `showWorkspaceLater`): the hand-off
+  takes the clicked sidebar's own content out of the window in the middle of
+  the click. Latest request wins; what it names is looked up again when it
+  runs. Logged `workspace switch from the sidebar key=|pane=`.
+- **The hand-off focuses** the workspace's own active pane (`grabFocus`), so
+  keys land in the workspace now on show.
+- **goto_tab and goto_window walk the list** (`Workspaces.gotoTab` /
+  `gotoWindow` over `PaneSidebar.listOrder`, which is `all.railOrder` over the
+  same gather the sidebar draws): previous/next wrap, last is the last, N is
+  the Nth (clamped), through win32's pure `pane_sidebar_window_order.gotoTab`
+  and `stepped`. Nowhere to go returns false (the key goes on). Separate mode
+  is unchanged (tabs within the window; goto_window over GTK's toplevels).
+- **A new tab is a new workspace** (`Workspaces.newTabIsWindow`, from both the
+  core action and the viewer-pane path): opened as Ctrl+Shift+N opens one from
+  that pane, on show. So every workspace has one tab.
+- **Focus policy**: a manual open (keys, menus, palette, sidebar +) goes on
+  show; `+new-window` without `--focus` stays parked; `--focus`, or
+  `--target=<existing> --focus`, or a `+split --focus` into a parked workspace,
+  puts it on show.
+- **Window-level key controllers act for the workspace on show**
+  (`Workspaces.keyTarget`): the rearrange-mode Escape controller lives on the
+  GtkWindow, which in single mode is the toplevel.
+
+```powershell
+powershell -NoProfile -File scripts\linux\wsl-run.ps1 -CommandFile test\linux\window-workspace-switch.sh
+powershell -NoProfile -File scripts\linux\wsl-run.ps1 -Step 'NEGATIVE=1 bash test/linux/window-workspace-switch.sh'
+```
+
+Ends `WINDOW WORKSPACE SWITCH: ALL PASS` (27 checks, about a minute).
+`NEGATIVE=1` runs it in `separate` mode and must fail from S1 on (20
+failures). Still to come: parked layout (T3650), the shade fade (T3651),
+closing (T3652), the CLI (T3653), rolled-up activity (T3654), persistence
+(T3655).
 
 The launch latch's own test:
 
