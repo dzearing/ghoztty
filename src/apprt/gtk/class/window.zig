@@ -43,6 +43,7 @@ const pane_style = @import("../pane_style.zig");
 const color_math = @import("../../win32/color_math.zig");
 const RemoteLink = @import("../RemoteLink.zig");
 const Workspaces = @import("../Workspaces.zig");
+const desk_fade = @import("../../win32/desk_fade.zig");
 
 const log = std.log.scoped(.gtk_ghostty_window);
 
@@ -306,6 +307,26 @@ pub const Window = extern struct {
         /// the pane sidebar too), cached per size/seed/theme. Owned.
         desk_texture: ?*wk.GdkTexture = null,
         desk_key: pane_style.DeskKey = .{},
+        /// The seed of the desk last drawn (0: the ocean), and whether one
+        /// was: in single mode the toplevel draws the desk of the workspace
+        /// on show (T3651), and the `workspaces` seam reads which.
+        desk_drawn_seed: u64 = 0,
+        desk_drawn: bool = false,
+
+        /// The shade crossfade on a workspace switch (T3651; Mac
+        /// `PaneDeskEntrance`/`PaneDeskFade`, win32 T3183): the desk of the
+        /// workspace that left, drawn over the new one at `fade_keep`/255
+        /// and eased out over `desk_fade.duration_ms` on the frame clock.
+        /// Only ever on the toplevel. Owned.
+        fade_texture: ?*wk.GdkTexture = null,
+        fade_from_seed: u64 = 0,
+        fade_t0_us: i64 = 0,
+        fade_keep: u8 = 0,
+        fade_tick: c_uint = 0,
+        /// Counters for the seam: fades begun, and frames DRAWN with the old
+        /// desk laid on (the pixels' own count, not the clock's).
+        fades_started: u32 = 0,
+        fade_frames: u32 = 0,
 
         /// The configuration that this surface is using.
         config: ?*Config = null,
@@ -1332,6 +1353,155 @@ pub const Window = extern struct {
         priv.desk_variant = variant;
         priv.desk_variant_decided = true;
         self.as(gtk.Widget).queueDraw();
+        // In single mode the toplevel draws the desk of the workspace on
+        // show (T3651), so a new gradient there is the toplevel's redraw.
+        if (Workspaces.physical()) |t| if (t != self) t.as(gtk.Widget).queueDraw();
+    }
+
+    /// Render the desk for `variant` at a `w`x`h` window: the gradient at
+    /// its small size, as a texture the snapshot stretches. Owned by the
+    /// caller; null when out of memory.
+    fn renderDeskTexture(w: i32, h: i32, variant: ?pane_style.Variant, is_light: bool) ?*wk.GdkTexture {
+        const size = pane_style.deskSize(@intCast(w), @intCast(h));
+        const alloc = Application.default().allocator();
+        const buf = alloc.alloc(u32, size.w * size.h) catch return null;
+        defer alloc.free(buf);
+        pane_style.renderDesk(buf, size, @floatFromInt(w), @floatFromInt(h), pane_style.Palette.forWindow(variant, is_light));
+        const bytes = wk.g_bytes_new(buf.ptr, buf.len * @sizeOf(u32));
+        defer wk.g_bytes_unref(bytes);
+        return wk.gdk_memory_texture_new(
+            @intCast(size.w),
+            @intCast(size.h),
+            wk.GDK_MEMORY_B8G8R8A8_PREMULTIPLIED,
+            bytes,
+            size.w * @sizeOf(u32),
+        );
+    }
+
+    /// The toolbar view's bounds in the window, where the desk is drawn;
+    /// null before it has a size.
+    fn deskArea(self: *Self) ?wk.GrapheneRect {
+        const priv = self.private();
+        var area: wk.GrapheneRect = .{};
+        if (wk.gtk_widget_compute_bounds(@ptrCast(priv.toolbar), @ptrCast(self.as(gtk.Widget)), &area) == 0) return null;
+        if (@round(area.w) <= 0 or @round(area.h) <= 0) return null;
+        return area;
+    }
+
+    fn seedOf(variant: ?pane_style.Variant) u64 {
+        return if (variant) |v| v.seed else 0;
+    }
+
+    /// Debug builds only: stretch the shade fade's clock N-fold, so the
+    /// harness can capture frames from the middle of a 0.35s fade.
+    const fade_stretch_env = "GHOZTTY_DEBUG_DESK_FADE_STRETCH";
+
+    fn fadeStretch() i64 {
+        if (comptime !build_config.is_debug) return 1;
+        const raw = std.posix.getenv(fade_stretch_env) orelse return 1;
+        const n = std.fmt.parseInt(i64, raw, 10) catch return 1;
+        return std.math.clamp(n, 1, 1000);
+    }
+
+    /// A workspace switch put `to` on show in this toplevel (T3651; Mac
+    /// `deskEntrance`, win32 `beginDeskFade`): fade from `from`'s gradient
+    /// to `to`'s - the old desk drawn over the new and eased out over
+    /// 0.35s - when one is owed: the elevated style (flat has no desk),
+    /// animations on, and two different gradients. Otherwise the desk just
+    /// swaps on the next frame.
+    pub fn beginDeskFade(self: *Self, from: ?pane_style.Variant, to: ?pane_style.Variant) void {
+        self.endDeskFade();
+        const widget = self.as(gtk.Widget);
+        widget.queueDraw();
+        const config_obj = Application.default().getConfig();
+        defer config_obj.unref();
+        const cfg = config_obj.get();
+        const elevated = pane_style.hasDesk(paneStyleOf(cfg));
+        const animations = wk.adw_get_enable_animations(@ptrCast(widget)) != 0;
+        if (!desk_fade.owed(pane_style.Variant, elevated, animations, from, to)) {
+            log.info("workspace shade swap (no fade) from={d} to={d} elevated={} animations={}", .{ seedOf(from), seedOf(to), elevated, animations });
+            return;
+        }
+        const priv = self.private();
+        const area = self.deskArea() orelse return;
+        const bg = cfg.background;
+        const is_light = pane_style.isLight(.{ .r = bg.r, .g = bg.g, .b = bg.b });
+        const w: i32 = @intFromFloat(@round(area.w));
+        const h: i32 = @intFromFloat(@round(area.h));
+        // The desk the window shows right now is `from`'s: reuse it.
+        const want: pane_style.DeskKey = .{ .w = @intCast(w), .h = @intCast(h), .seed = if (from) |v| v.seed else null, .is_light = is_light };
+        const old: *wk.GdkTexture = if (priv.desk_texture != null and priv.desk_key.eql(want))
+            @ptrCast(wk.g_object_ref(priv.desk_texture.?))
+        else
+            renderDeskTexture(w, h, from, is_light) orelse return;
+        priv.fade_texture = old;
+        priv.fade_from_seed = seedOf(from);
+        priv.fade_t0_us = wk.g_get_monotonic_time();
+        priv.fade_keep = 255;
+        priv.fades_started +%= 1;
+        priv.fade_tick = wk.gtk_widget_add_tick_callback(@ptrCast(widget), &deskFadeTick, null, null);
+        log.info("workspace shade fade from={d} to={d} stretch={d}", .{ seedOf(from), seedOf(to), fadeStretch() });
+    }
+
+    /// Drop the crossfade: the desk is the workspace on show's alone.
+    fn endDeskFade(self: *Self) void {
+        const priv = self.private();
+        if (priv.fade_tick != 0) wk.gtk_widget_remove_tick_callback(@ptrCast(self.as(gtk.Widget)), priv.fade_tick);
+        priv.fade_tick = 0;
+        if (priv.fade_texture) |t| wk.g_object_unref(t);
+        priv.fade_texture = null;
+        priv.fade_keep = 0;
+    }
+
+    /// One frame of the crossfade on the frame clock: what is left of the
+    /// old desk, redrawn; the last frame drops it.
+    fn deskFadeTick(widget: *wk.GtkWidget, clock: *wk.GdkFrameClock, _: ?*anyopaque) callconv(.c) c_int {
+        const self = gobject.ext.cast(Self, @as(*gobject.Object, @ptrCast(@alignCast(widget)))) orelse return 0;
+        const priv = self.private();
+        const now = wk.gdk_frame_clock_get_frame_time(clock);
+        const elapsed_ms = @divTrunc(@divTrunc(now - priv.fade_t0_us, 1000), fadeStretch());
+        const k = desk_fade.keep(elapsed_ms) orelse {
+            // Returning 0 removes this callback; forget its id first.
+            priv.fade_tick = 0;
+            self.endDeskFade();
+            self.as(gtk.Widget).queueDraw();
+            log.info("workspace shade fade done frames={d}", .{priv.fade_frames});
+            return 0;
+        };
+        if (k != priv.fade_keep) {
+            priv.fade_keep = k;
+            self.as(gtk.Widget).queueDraw();
+        }
+        return 1;
+    }
+
+    /// The `workspaces` seam's view of the desk (T3651).
+    pub const DeskState = struct {
+        drawn: bool,
+        drawn_seed: u64,
+        fade_on: bool,
+        fade_from_seed: u64,
+        fade_keep: u8,
+        fades_started: u32,
+        fade_frames: u32,
+    };
+
+    pub fn deskState(self: *Self) DeskState {
+        const priv = self.private();
+        return .{
+            .drawn = priv.desk_drawn,
+            .drawn_seed = priv.desk_drawn_seed,
+            .fade_on = priv.fade_texture != null,
+            .fade_from_seed = priv.fade_from_seed,
+            .fade_keep = priv.fade_keep,
+            .fades_started = priv.fades_started,
+            .fade_frames = priv.fade_frames,
+        };
+    }
+
+    /// The seed of this workspace's own gradient (0: the ocean).
+    pub fn deskSeed(self: *Self) u64 {
+        return seedOf(self.deskVariant());
     }
 
     /// Mark the window for `style.css` while it paints the desk (T3623): the
@@ -1362,15 +1532,16 @@ pub const Window = extern struct {
         const style = paneStyleOf(cfg);
         if (!pane_style.hasDesk(style)) return;
         const widget = self.as(gtk.Widget);
-        var area: wk.GrapheneRect = .{};
-        if (wk.gtk_widget_compute_bounds(@ptrCast(priv.toolbar), @ptrCast(widget), &area) == 0) return;
+        const area = self.deskArea() orelse return;
         const w: i32 = @intFromFloat(@round(area.w));
         const h: i32 = @intFromFloat(@round(area.h));
-        if (w <= 0 or h <= 0) return;
         const bg = cfg.background;
         const rgb: color_math.Rgb = .{ .r = bg.r, .g = bg.g, .b = bg.b };
         const is_light = pane_style.isLight(rgb);
-        const variant = self.deskVariant();
+        // In single mode this toplevel shows another workspace's content,
+        // and the desk is that workspace's gradient (T3651; Mac: the desk
+        // is the controller's, and the controller on show owns the window).
+        const variant = Workspaces.deskOwner(self).deskVariant();
 
         const key: pane_style.DeskKey = .{
             .w = @intCast(w),
@@ -1379,25 +1550,24 @@ pub const Window = extern struct {
             .is_light = is_light,
         };
         if (priv.desk_texture == null or !priv.desk_key.eql(key)) {
-            const size = pane_style.deskSize(key.w, key.h);
-            const alloc = Application.default().allocator();
-            const buf = alloc.alloc(u32, size.w * size.h) catch return;
-            defer alloc.free(buf);
-            pane_style.renderDesk(buf, size, @floatFromInt(w), @floatFromInt(h), pane_style.Palette.forWindow(variant, is_light));
-            const bytes = wk.g_bytes_new(buf.ptr, buf.len * @sizeOf(u32));
-            defer wk.g_bytes_unref(bytes);
-            const tex = wk.gdk_memory_texture_new(
-                @intCast(size.w),
-                @intCast(size.h),
-                wk.GDK_MEMORY_B8G8R8A8_PREMULTIPLIED,
-                bytes,
-                size.w * @sizeOf(u32),
-            ) orelse return;
+            const tex = renderDeskTexture(w, h, variant, is_light) orelse return;
             if (priv.desk_texture) |old| wk.g_object_unref(old);
             priv.desk_texture = tex;
             priv.desk_key = key;
         }
         wk.gtk_snapshot_append_scaled_texture(snap, priv.desk_texture.?, wk.GSK_SCALING_FILTER_LINEAR, &area);
+        priv.desk_drawn = true;
+        priv.desk_drawn_seed = seedOf(variant);
+
+        // The shade crossfade (T3651): the old workspace's desk over it,
+        // at what is left of it. Stretched over the same area, so a resize
+        // mid-fade still covers the window.
+        if (priv.fade_texture) |old| if (priv.fade_keep > 0) {
+            wk.gtk_snapshot_push_opacity(snap, @as(f64, @floatFromInt(priv.fade_keep)) / 255.0);
+            wk.gtk_snapshot_append_scaled_texture(snap, old, wk.GSK_SCALING_FILTER_LINEAR, &area);
+            wk.gtk_snapshot_pop(snap);
+            priv.fade_frames +%= 1;
+        };
 
         // The sidebar card's glass sheet, inside its rounded corners.
         const sheet = pane_style.sidebarSheet(style, cfg.@"macos-pane-glass", rgb) orelse return;
@@ -2168,6 +2338,9 @@ pub const Window = extern struct {
         // T3615: nor a drag's tab dwell.
         self.cancelTabDwell();
 
+        // T3651: nor a shade fade's frame-clock tick.
+        self.endDeskFade();
+
         // T3571: a held title's timer must not fire into a disposed window.
         if (priv.held_title_timer != 0) {
             _ = glib.Source.remove(priv.held_title_timer);
@@ -2212,6 +2385,8 @@ pub const Window = extern struct {
         priv.held_title = null;
         if (priv.desk_texture) |t| wk.g_object_unref(t);
         priv.desk_texture = null;
+        if (priv.fade_texture) |t| wk.g_object_unref(t);
+        priv.fade_texture = null;
 
         gobject.Object.virtual_methods.finalize.call(
             Class.parent,

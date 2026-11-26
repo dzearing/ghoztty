@@ -982,6 +982,8 @@ fn workspacesSeam(app: Context, request: Request) Allocator.Error![]u8 {
         /// T3650: each pane's grid as "<cols>x<rows>" (null before its
         /// terminal started), by pane id, tree order.
         grids: []const Grid,
+        /// T3651: the seed of its own gradient (0: the ocean).
+        desk_seed: u64,
     };
     const snap = Workspaces.snapshot();
     var rows: std.ArrayListUnmanaged(Row) = .empty;
@@ -1019,6 +1021,7 @@ fn workspacesSeam(app: Context, request: Request) Allocator.Error![]u8 {
             .tabs = n,
             .owner_ok = owner_ok,
             .grids = grids.items,
+            .desk_seed = w.deskSeed(),
         });
     }
 
@@ -1059,6 +1062,9 @@ fn workspacesSeam(app: Context, request: Request) Allocator.Error![]u8 {
             .focus_window = focus_window,
             .list = list_names.items,
             .order = rows.items,
+            // T3651: the toplevel's desk - the seed it last drew (the
+            // workspace on show's) and its shade crossfade.
+            .desk = if (snap.toplevel) |t| t.deskState() else null,
         },
     }, .{}, &out.writer) catch return error.OutOfMemory;
     return c_alloc.dupe(u8, out.written());

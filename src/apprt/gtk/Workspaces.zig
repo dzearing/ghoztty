@@ -36,8 +36,11 @@
 //! new size at the shared window's pixel scale, so a switch never changes a
 //! grid. A terminal made while parked starts on first show (T3786).
 //!
-//! Not here (their own cards): the shade fade
-//! (T3651), closing semantics and the toplevel's close button (T3652), the
+//! Shade fade (T3651): the toplevel draws the desk of the workspace on show
+//! (`deskOwner`), and a hand-off crossfades from the old workspace's
+//! gradient to the new one's over 0.35s (`Window.beginDeskFade`).
+//!
+//! Not here (their own cards): closing semantics and the toplevel's close button (T3652), the
 //! CLI (T3653), rolled-up activity (T3654), persistence (T3655). Until T3652
 //! a workspace close is only made SAFE here (`forget`): its content never
 //! goes down with a toplevel it was borrowing.
@@ -231,6 +234,9 @@ fn handOff(from: *Window, to: *Window) void {
     if (to == t) to.releaseContent() else to.releaseContentInto(t);
     // The title lands at once, never held back (Mac adoptWindow).
     if (to.currentTitle()) |title| t.as(gtk.Window).setTitle(title);
+    // The shade fades from `from`'s gradient to `to`'s (T3651; Mac
+    // `deskEntrance`, 0.35s; nothing fades in the flat style).
+    t.beginDeskFade(from.deskVariant(), to.deskVariant());
     from.syncSeen();
     to.syncSeen();
     // Focus goes back where it was in `to` (Mac adoptWindow): the focused
@@ -330,6 +336,14 @@ fn treeSettled(_: ?*anyopaque) callconv(.c) c_int {
     tree_idle = null;
     layoutAllParked("tree");
     return 0;
+}
+
+/// The workspace whose gradient `win` draws as its desk (T3651): the
+/// toplevel draws the desk of the workspace on show in it; every other
+/// window its own.
+pub fn deskOwner(win: *Window) *Window {
+    if (toplevel == win) if (host.active) |a| return a;
+    return win;
 }
 
 /// The workspace a controller on `win`'s own GtkWindow acts for: in single

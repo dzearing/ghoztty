@@ -662,6 +662,8 @@ pub extern fn gsk_rounded_rect_init_from_rect(self: *GskRoundedRect, bounds: *co
 pub extern fn gtk_snapshot_push_rounded_clip(snapshot: *GtkSnapshot, bounds: *const GskRoundedRect) void;
 pub extern fn gtk_snapshot_push_clip(snapshot: *GtkSnapshot, bounds: *const GrapheneRect) void;
 pub extern fn gtk_snapshot_pop(snapshot: *GtkSnapshot) void;
+// The single-window shade crossfade (T3651): the old desk over the new.
+pub extern fn gtk_snapshot_push_opacity(snapshot: *GtkSnapshot, opacity: f64) void;
 pub extern fn gtk_snapshot_save(snapshot: *GtkSnapshot) void;
 pub extern fn gtk_snapshot_restore(snapshot: *GtkSnapshot) void;
 pub extern fn gtk_snapshot_translate(snapshot: *GtkSnapshot, point: *const GraphenePoint) void;
