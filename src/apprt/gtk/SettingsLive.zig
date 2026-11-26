@@ -483,6 +483,13 @@ fn onHostSettingsClicked(button: *wk.GtkWidget, w: *SettingsWindow) callconv(.c)
     _ = w.live.openHostSettings(w, t - 1);
 }
 
+/// Click the account row's New Remote Window... (the seam, T3674).
+pub fn clickNewRemoteWindow(self: *SettingsLive) bool {
+    const b = self.new_remote_button orelse return false;
+    wk.g_signal_emit_by_name(@ptrCast(b), "clicked");
+    return true;
+}
+
 /// Click the i-th row's Host Settings... (the seam).
 pub fn clickHostSettings(self: *SettingsLive, index: usize) bool {
     if (index >= self.machine_rows.items.len) return false;

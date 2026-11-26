@@ -1849,6 +1849,9 @@ fn settingsSeam(app: Context, request: Request) Allocator.Error![]u8 {
             const id = val orelse return server.errorResponse(c_alloc, "--value=<device id> is required", .{});
             const i = w.live.indexOf(id) orelse return server.errorResponse(c_alloc, "no machine row has id '{s}'", .{id});
             ok = w.live.clickHostSettings(i);
+        } else if (std.mem.eql(u8, op, "new_remote_window")) {
+            // Click the account row's New Remote Window... (T3674).
+            ok = w.live.clickNewRemoteWindow();
         } else {
             const d = HostSettingsDialog.current() orelse
                 return server.errorResponse(c_alloc, "no Host Settings dialog is open", .{});
@@ -2097,7 +2100,7 @@ fn writeLiveState(jws: *std.json.Stringify, w: anytype) !void {
 
 /// The Remote Machines / Host Settings ops (T3635).
 fn liveOp(op: []const u8) bool {
-    const ops = [_][]const u8{ "host_settings", "host-settings-fill", "host-settings-preset", "host-settings-answer" };
+    const ops = [_][]const u8{ "host_settings", "new_remote_window", "host-settings-fill", "host-settings-preset", "host-settings-answer" };
     for (ops) |o| if (std.mem.eql(u8, op, o)) return true;
     return false;
 }

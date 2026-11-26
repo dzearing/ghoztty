@@ -222,6 +222,20 @@ EOF
     [ -n "$rp1" ] && is_ancestor "$RLAGENT" "$rp1"
 hl_check "N1 New Window closes the chooser and opens a window on the relayed agent" $? "out=$out win=$rwin pid=$rp1"
 
+# --- O: the other two ways in: the window menu and Settings ---------------------------
+pane1=$(hl_first_pane "$app")
+o=$(hl_ipc main-menu --target="$pane1" '--activate=New Remote Window…' 2>&1)
+sleep 0.5
+[ "$(q "$o" 'd["activated"]')" = true ] && [ "$(q "$(mc)" 'd["open"]')" = true ]
+hl_check "O1 the window menu's New Remote Window… opens the chooser" $? "reply=$(printf '%s' "$o" | head -c 300)"
+mc --op=close > /dev/null
+hl_ipc settings --op=state --page=remote > /dev/null 2>&1
+o=$(hl_ipc settings --op=new_remote_window 2>&1)
+sleep 0.5
+[ "$(q "$(mc)" 'd["open"]')" = true ]
+hl_check "O2 Settings > Remote Machines' New Remote Window… opens the chooser" $? "reply=$(printf '%s' "$o" | head -c 300)"
+mc --op=close > /dev/null
+
 # --- R: Disconnect it, then Resume it from the chooser -------------------------------
 dialog() { local t=$1; shift; hl_ipc close-dialog "--target=$t" "$@" 2>&1; }
 dialog "$rwin" --op=window > /dev/null
