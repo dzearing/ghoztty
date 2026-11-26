@@ -53,7 +53,10 @@
 #       its top. On Windows the thinned sheet lives only inside the banner's
 #       own popup, so it goes wherever the banner goes. The positive control
 #       after D3: the same pane brought on show shows its banner popup again,
-#       so the class filter can see one.
+#       so the class filter can see one. T2334: on the composition path
+#       (T2559, `banner path visual=true`) the card is the pane's own visual
+#       and its popup stays hidden; the window capture cannot see that visual,
+#       so there the control is the log line plus "no popup on show".
 #
 # The elevated leg pins `macos-pane-glass=false` (its default is on), so it
 # keeps checking the opaque colour; -Glass is the glass leg (T2160).
@@ -231,7 +234,12 @@ function Get-Shot([IntPtr]$top) { return Get-TestWindowPixels -Window $top -Sync
 # On glass (T2160) the strip is within a few levels of the desk's dark top,
 # so the width is read on a row near the strip's foot instead, where the desk
 # beyond it is far off the strip colour; the colour is still the top row's.
-function Measure-Strip($shot, $p) {
+#
+# `$Stop` is the leading edge of the strip in front (T2334): the strips of
+# one stack are the same colour in the opaque style, so a walk that is not
+# stopped there runs on down the next strip and reads two as one.
+function Measure-Strip($shot, $p, [int]$Stop = [int]::MaxValue) {
+    $end = [math]::Min([int]$p.Right, $Stop)
     $y = $p.Top + 4
     $x0 = $p.Left + $script:cornerPx + 2
     $c0 = Get-TestPixel -Shot $shot -X $x0 -Y $y
@@ -245,7 +253,7 @@ function Measure-Strip($shot, $p) {
         if ($null -eq $cw) { continue }
         $rgb = @([int]$cw.R, [int]$cw.G, [int]$cw.B)
         $x = $x0
-        while ($x -lt $p.Right -and (Test-Near (Get-TestPixel -Shot $shot -X $x -Y $wy) $rgb 6)) { $x++ }
+        while ($x -lt $end -and (Test-Near (Get-TestPixel -Shot $shot -X $x -Y $wy) $rgb 6)) { $x++ }
         $rw = $x - $p.Left
         if ($w -eq 0 -or $rw -lt $w) { $w = $rw }
     }
@@ -454,7 +462,9 @@ try {
     $strips = @{}
     try {
         foreach ($t in $tucked) {
-            $m = Measure-Strip $shot $t.Pane
+            $front = @($tucked | Where-Object { $_.Pane.Left -gt $t.Pane.Left } | ForEach-Object { [int]$_.Pane.Left } | Sort-Object)
+            $stop = if ($front.Count -gt 0) { $front[0] } else { [int]::MaxValue }
+            $m = Measure-Strip $shot $t.Pane $stop
             $strips[$t.Pane.Hwnd] = $m
             $got = if ($m.Color) { 'rgb({0},{1},{2})' -f $m.Color.R, $m.Color.G, $m.Color.B } else { 'off-capture' }
             $isStrip = Test-Near $m.Color $expected
@@ -498,11 +508,13 @@ try {
                     $ds = [math]::Abs($c.R - $ref[0]) + [math]::Abs($c.G - $ref[1]) + [math]::Abs($c.B - $ref[2])
                     return ($dd -lt $ds)
                 }
-                # On glass (T2505) a strip whose leading corner lies over the
-                # strip behind it shows that strip's glass there - the same
-                # material it is - so the curve is read only over open desk.
-                $overStrip = $Glass -and @($tucked | Where-Object { $_.Pane.Left -lt $t.Pane.Left -and $_.Pane.Left + $strips[$_.Pane.Hwnd].Width -ge $gapX }).Count -gt 0
-                if ($overStrip) { Say ("      glass: x={0}'s leading corner lies over the strip behind it; its curve is not readable" -f $t.Pane.Left) }
+                # A strip whose leading corner lies over the strip behind it
+                # shows that strip there - the same colour opaque, the same
+                # material on glass (T2505) - so the curve is read only over
+                # open desk (T2334: the opaque leg read the strip behind as
+                # its "desk" and failed on a curve it could not see).
+                $overStrip = @($tucked | Where-Object { $_.Pane.Left -lt $t.Pane.Left -and $_.Pane.Left + $strips[$_.Pane.Hwnd].Width -ge $gapX }).Count -gt 0
+                if ($overStrip) { Say ("      x={0}'s leading corner lies over the strip behind it; its curve is not readable" -f $t.Pane.Left) }
                 else { Assert ((& $nearDesk $lead $deskTop) -and (& $nearDesk $leadLow $deskLow)) ("D1: its leading corners are rounded - the desk shows there (top {0} vs desk {1}, bottom {2} vs desk {3})" -f (Format-Rgb $lead), (Format-Rgb $deskTop), (Format-Rgb $leadLow), (Format-Rgb $deskLow)) }
             } else {
                 Assert ((Test-Near $lead $expected) -and (Test-Near $leadLow $expected)) ("D1: its leading corners are square in the flat style (top {0}, bottom {1})" -f (Format-Rgb $lead), (Format-Rgb $leadLow))
@@ -515,10 +527,17 @@ try {
             }
             # Square only where it reaches under the strip in front (T2283):
             # a strip with open desk past it ends in its card's own rounded
-            # corner, which only glass lets the oracle tell apart (T2505).
-            $tuckedUnder = -not $Glass -or @($tucked | Where-Object { $_.Pane.Left -gt $t.Pane.Left -and $_.Pane.Left -le $t.Pane.Left + $m.Width + 2 }).Count -gt 0
+            # corner (T2505). In the elevated style that holds opaque as well
+            # (T2334: the opaque leg demanded a square corner there and read
+            # the desk's blue through the curve); the flat style has no curve.
+            $tuckedUnder = $PaneStyle -ne 'elevated' -or @($tucked | Where-Object { $_.Pane.Left -gt $t.Pane.Left -and $_.Pane.Left -le $t.Pane.Left + $m.Width + 2 }).Count -gt 0
             if ($tuckedUnder) {
                 Assert (Test-Near $trail $ref $(if ($Glass) { 2 } else { 4 })) "D1: its trailing corner is square ($(Format-Rgb $trail) vs rgb($($ref -join ',')))"
+            } elseif (-not $Glass) {
+                # Opaque, the strip is far off the desk's top, so the curve is
+                # readable: the corner is nearer the desk just past it.
+                $deskPast = Get-TestPixel -Shot $shot -X ($t.Pane.Left + $m.Width + [int][math]::Floor(4 * $script:scale)) -Y ($t.Pane.Top + 1)
+                Assert (& $nearDesk $trail $deskPast) ("D1: with open desk past it, its trailing corner is its card's rounded one - the desk shows there ({0} vs desk {1})" -f (Format-Rgb $trail), (Format-Rgb $deskPast))
             } else {
                 Say ("      glass: x={0} has open desk past it, so its trailing corner is its card's ({1})" -f $t.Pane.Left, (Format-Rgb $trail))
             }
@@ -534,10 +553,14 @@ try {
         $restExp = $expected
         $tol = 1
         $my = $h.Pane.Top + [int](($h.Pane.Bottom - $h.Pane.Top) / 2)
-        $sx = if ($Glass) { $h.Pane.Left + [int][math]::Ceiling(4 * $script:scale) } else { $h.Pane.Left + $hw - 3 }
+        # Elevated, the strip in front casts its blade shadow back over the
+        # trailing side (T2307), so the sample sits just inside the leading
+        # edge instead - past the rim, short of the name (T2334: the opaque leg
+        # read the shadow, rgb(19,22,25), as a wrong strip colour).
+        $sx = if ($PaneStyle -eq 'elevated') { $h.Pane.Left + [int][math]::Ceiling(4 * $script:scale) } else { $h.Pane.Left + $hw - 3 }
         $shot = Get-Shot $top
         try {
-            $rest = Get-StripMid $shot $h.Pane $hw
+            $rest = if ($PaneStyle -eq 'elevated') { Get-TestPixel -Shot $shot -X $sx -Y $my } else { Get-StripMid $shot $h.Pane $hw }
             if ($Glass) {
                 # T2505: just inside the leading edge - past its rim, short of
                 # the name down the middle, clear of the front blade's shadow
@@ -689,6 +712,12 @@ try {
         $shot = Get-ShotAsShown $top
         try { $backInk9 = Measure-Ink $shot $t.Pane $sw $expected } finally { Close-TestWindowPixels -Shot $shot }
         Assert ([math]::Abs($backInk9 - $shortInk9) -le 2) "D9: back to the short title, the strip reads as it did ($backInk9 px vs $shortInk9 px)"
+        # D9 cleared the banner D2 set; D3's D8 positive control looks for that
+        # banner's card once the pane is on show, so put it back (T2334).
+        # No wait: D3's click below settles, and its control polls for the path.
+        if ($Glass) {
+            & $exe +set-banner --target=$($t.Name) '## Abcdefghijklmnopqrstuvwxyz banner title' 2>&1 | Out-Null
+        }
     }
 
     if ($SpinnerCpuSeconds -gt 0) {
@@ -744,22 +773,57 @@ try {
     Assert ($focused -eq $t.Name) "D3: the clicked pane has focus (+list says '$focused')"
     if ($Glass -and -not $NegativeControl) {
         # D8's positive control: on show, the pane's banner card is back.
+        # Since T2559 the card can be drawn on the pane's own composition tree
+        # (the app logs `banner path visual=true`), with its popup HIDDEN - and
+        # the window capture does not hold that visual, so neither the popup
+        # count nor the pixels can see the card there (T2334: both read "no
+        # card" over one the log placed on show). On that path the oracle is
+        # the log, as in stack-fold-slide.ps1 and comp-present.ps1; on the
+        # popup path it is the popup and D8's two-row pixel comparison.
         $mine = @($after | Where-Object { $_.Hwnd -eq $p.Hwnd })[0]
-        $cards = @(Get-TestWindows -ProcessId $app.Pid -Class 'GhozttyBannerOverlay' | Where-Object {
-                $mine -and $_.Right -gt $mine.Left -and $_.Left -lt $mine.Right -and $_.Bottom -gt ($mine.Top - $_.Height) -and $_.Top -lt $mine.Bottom })
-        Assert ($cards.Count -eq 1) "D8: brought on show, $($t.Name)'s banner card is on show again ($($cards.Count)) - the D8 probe can see one"
-        # And D8's two-row comparison tells a banner from none: the same two
-        # rows down this card, from the top of its banner band, differ.
-        if ($cards.Count -eq 1) {
-            $c8 = $cards[0]
+        $everyCard = @(Get-TestWindows -ProcessId $app.Pid -Class 'GhozttyBannerOverlay' -AllowHidden)
+        $shownCards = @($everyCard | Where-Object { $_.Visible -and $mine -and $_.Right -gt $mine.Left -and $_.Left -lt $mine.Right -and $_.Bottom -gt ($mine.Top - $_.Height) -and $_.Top -lt $mine.Bottom })
+        $appLog = Join-Path $tmp 'ghoztty\ghoztty-debug.log'
+        $bannerPath = $null
+        foreach ($l in @(Get-Content -Path $appLog -ErrorAction SilentlyContinue)) {
+            if ($l -match 'banner path visual=(true|false)') { $bannerPath = if ($Matches[1] -eq 'true') { 'visual' } else { 'popup' } }
+        }
+        Say ("      {0} on show at {1}-{2} x {3}-{4}; banner path {5}; banner popups: {6}" -f $t.Name, $mine.Left, $mine.Right, $mine.Top, $mine.Bottom, $(if ($bannerPath) { $bannerPath } else { 'never logged (popup)' }), $(if ($everyCard.Count) { ($everyCard | ForEach-Object { "{0}-{1} x {2}-{3}{4}" -f $_.Left, $_.Right, $_.Top, $_.Bottom, $(if (-not $_.Visible) { '(hidden)' }) }) -join ' | ' } else { 'none' }))
+    }
+    if ($Glass -and -not $NegativeControl -and $bannerPath -eq 'visual') {
+        # The card is the pane's own visual: it is on show with the pane, and
+        # no popup copy of it is left anywhere over the row.
+        Assert (@($everyCard | Where-Object Visible).Count -eq 0) "D8: brought on show, $($t.Name)'s banner card is the pane's own visual (log: banner path visual=true) and no banner popup is on show ($(@($everyCard | Where-Object Visible).Count))"
+    } elseif ($Glass -and -not $NegativeControl) {
+        Assert ($shownCards.Count -eq 1) "D8: brought on show, $($t.Name)'s banner card is on show again as its popup ($($shownCards.Count)) - the D8 probe can see one"
+        # Held to D8's own measure, not a raw distance: the glass carries the
+        # desk's gradient, so the two rows of a strip with NO card already sit
+        # ~14 levels apart. A card is a channel moving more than the desk
+        # beside it does (+2), the exact test D8 passes a strip on.
+        $hi = $null; $lo = $null; $dHi = $null; $dLo = $null; $over8 = 0
+        # Polled: the card may come back a beat after the pane does.
+        $cardsBy = (Get-Date).AddSeconds(4)
+        do {
             $shot = Get-Shot $top
             try {
-                $hi = Get-TestPixel -Shot $shot -X ($c8.Left + $sw - 3) -Y ($c8.Top + (Get-TestChromeDip -Dip 30 -Scale $script:scale))
-                $lo = Get-TestPixel -Shot $shot -X ($c8.Left + $sw - 3) -Y ($c8.Top + (Get-TestChromeDip -Dip 150 -Scale $script:scale))
+                $yHi = $mine.Top + (Get-TestChromeDip -Dip 30 -Scale $script:scale)
+                $yLo = $mine.Top + (Get-TestChromeDip -Dip 150 -Scale $script:scale)
+                $hi = Get-TestPixel -Shot $shot -X ($mine.Left + $sw - 3) -Y $yHi
+                $lo = Get-TestPixel -Shot $shot -X ($mine.Left + $sw - 3) -Y $yLo
+                $dHi = Get-DeskBeside $shot $mine $yHi
+                $dLo = Get-DeskBeside $shot $mine $yLo
             } finally { Close-TestWindowPixels -Shot $shot }
-            $apart8 = if ($hi -and $lo) { [math]::Abs($hi.R - $lo.R) + [math]::Abs($hi.G - $lo.G) + [math]::Abs($hi.B - $lo.B) } else { 0 }
-            Assert ($apart8 -gt 6) ("D8: with its banner on show the two rows differ ({0} vs {1}, {2} levels) - the comparison can see a card" -f (Format-Rgb $hi), (Format-Rgb $lo), $apart8)
-        }
+            $over8 = 0
+            if ($hi -and $lo -and $dHi -and $dLo) {
+                foreach ($ch in 'R', 'G', 'B') {
+                    $o = [math]::Abs([int]$hi.$ch - [int]$lo.$ch) - [math]::Abs([int]$dHi.$ch - [int]$dLo.$ch)
+                    if ($o -gt $over8) { $over8 = $o }
+                }
+            }
+            if ($over8 -gt 2) { break }
+            Start-Sleep -Milliseconds 250
+        } while ((Get-Date) -lt $cardsBy)
+        Assert ($over8 -gt 2) ("D8: brought on show, {0}'s banner card is back - its rows move {1} levels past the desk beside them ({2} vs {3}; desk {4} vs {5}), so D8's comparison can see a card" -f $t.Name, $over8, (Format-Rgb $hi), (Format-Rgb $lo), (Format-Rgb $dHi), (Format-Rgb $dLo))
     }
 
     # ---- D4-D6: a strip is a drag source (T2120) -------------------------------

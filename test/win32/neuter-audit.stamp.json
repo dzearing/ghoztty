@@ -1,8 +1,8 @@
 {
     "guard":  "neuter-audit",
     "script":  "test/win32/neuter-audit.ps1",
-    "generated":  "2026-11-26T04:44:33-08:00",
-    "commit":  "53000ddfbc",
+    "generated":  "2026-11-26T05:23:11-08:00",
+    "commit":  "200c358fe8",
     "uncommitted":  [
 
                     ],
@@ -275,7 +275,7 @@
                   "src/apprt/win32/PaneDragGhost.zig":  "75cb6d32f4313912ab7ddcd73a624140ca91ae60ca583fccd5f5f1d69658fea2",
                   "src/apprt/win32/PaneGrabHandle.zig":  "959df18a9af052cb606f2e4b5d9e5aa196a1e5a83c53e238103bcb407907ab4e",
                   "src/apprt/win32/panel_theme.zig":  "caf0cd7e30f705d17e3590985e3fa51a7a3a32f90b619fd38e51b932a6c7a134",
-                  "src/apprt/win32/PaneSidebar.zig":  "ba32cf1b9361ff8cd22081cd6d46bebe0363a4cfb825d6272d7f2e5f282814b3",
+                  "src/apprt/win32/PaneSidebar.zig":  "cc46ff0957627408772714f061bbac23b3aa5a94599c51dec92c1e0f12be0464",
                   "src/apprt/win32/PaneView.zig":  "66178bd1ff0806c699d541876914c4294a95852e411a03e38771eddd8faeaad7",
                   "src/apprt/win32/path_paste.zig":  "b63c54b9158fabfdb5907dcb9237cf7ee74e1d6f915a0e7ee5747528eb42213f",
                   "src/apprt/win32/PathInstaller.zig":  "77ee61d5ba639eb627756e917077c3de09b6f77c1fd2440fb707b1a7a9e5d2e5",
