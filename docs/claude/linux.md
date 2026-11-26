@@ -3115,9 +3115,9 @@ three seats say the same thing. Local's detail title is "This Computer"
 - **New Window** opens on the selected machine (a relay one gets its per-host
   defaults through `openWith`); **Host Settings...** (relay rows) is the
   T3635 editor. Every control carries Mac's `.help` sentence.
-- Not yet: the warm connection pool and pushed roster (T3806), CPU meters and
-  sort headers (T3807), Restore All (T3808), Rename / Remove / See Activity
-  (T3809), keyboard navigation and the filter (T3810), the account row's
+- Not yet: the warm connection pool and pushed roster (T3811), CPU meters and
+  sort headers (T3812), Restore All (T3813), Rename / Remove / See Activity
+  (T3814), keyboard navigation and the filter (T3815), the account row's
   Sign In (T3575).
 
 Seam (DEBUG-ONLY, `src/apprt/gtk/ipc_machine_chooser.zig`): `machine-chooser
