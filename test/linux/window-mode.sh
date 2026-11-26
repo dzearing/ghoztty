@@ -84,11 +84,16 @@ sleep 1
 [ "$(grep -c -- '-> ' <(grep 'window mode' "$APP_LOG"))" = 1 ]
 hl_check "W5b a window opened beside an open one does not re-latch" $? "$(grep 'window mode' "$APP_LOG" | tail -4)"
 
-# T3656: with quit-after-last-window-closed = false a SIGTERM logs
-# "quitting" and the app stays up (and ignores a second one), so a TERM that
-# has not worked in 5s is followed by a KILL - or hl_stop would wait forever.
+# T3656: SIGTERM (a logout, `systemctl stop`) quits the app whatever
+# quit-after-last-window-closed says - here it is false and two windows are
+# open. It once logged "quitting" and stayed up for good; the KILL after a
+# failed check only keeps hl_stop from waiting on a stuck app.
 kill -TERM "$APP" 2>/dev/null
-hl_wait_for 5 sh -c "! kill -0 $APP 2>/dev/null" || kill -KILL "$APP" 2>/dev/null
+hl_wait_for 10 sh -c "! kill -0 $APP 2>/dev/null"
+hl_check "W5c SIGTERM quits the resident app (quit-after-last-window-closed = false) within 10s" $? "$(grep -E 'SIGTERM|runloop' "$APP_LOG" | tail -3)"
+grep -q 'received SIGTERM, quitting' "$APP_LOG"
+hl_check "W5d ...and it is the SIGTERM handler that quit it" $?
+kill -KILL "$APP" 2>/dev/null
 hl_wait_for 10 sh -c "! kill -0 $APP 2>/dev/null"
 
 # ---- 4. negative control: the key unset latches separate -------------------
