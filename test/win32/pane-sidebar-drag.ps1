@@ -45,6 +45,14 @@
 #   G) a tile released over ANOTHER window stays in its own window's list:
 #      the pane is still this window's child, and that window is untouched
 #
+# T2316: the GRAB HANDLE is the drag that still reaches another window's rail
+# (`beginGrabHandleDrag` -> `.sidebar_order` / `.stash` with a dest window).
+#   H) s1's handle dragged onto window B's list, above B's own tile: the same
+#      HWND is now B's child on screen, and B's list reads s1, B's pane
+#      (`pane drop joined another window's list index=0`)
+#   I) s2's handle dragged onto B's empty tray well: the same HWND is now B's
+#      child, stashed (`pane drop stashed into another window index=0`)
+#
 # T2304 (Mac e77422577 / 543489bca): a drop into the list or a non-empty tray
 # is shown by the rows SLIDING to open a gap there, not by a caret - so B and
 # D-G assert no preview window, and the app's `pane sidebar drag slide` line
@@ -253,6 +261,67 @@ function Show-State([string]$Label) {
             '{0}:[{1}]' -f $w, ((@(Get-VisiblePanes ([IntPtr]$w) | ForEach-Object { $_.Hwnd })) -join ',')
         })
     '  ({0}: {1} | visible {2} | P={3} s1={4} s2={5})' -f $Label, ($parts -join ' '), ($vis -join ' '), $hP, $h1, $h2
+}
+# The rail whose `pane sidebar rows` line names pane $Id (T2316): two windows
+# log rows into one stderr, and a pane id says whose line it is. Its grid ids
+# (list order), stashed ids (tray order), and the empty tray's well center in
+# rail coordinates ($null while something is stashed).
+function Get-RailWith([string]$Id) {
+    $line = @(Get-Content $script:errlog -ErrorAction SilentlyContinue | Where-Object { $_ -match 'pane sidebar rows ' -and $_.ToUpperInvariant().Contains("#$Id;") }) | Select-Object -Last 1
+    $r = [pscustomobject]@{ List = @(); Tray = @(); Well = $null }
+    if (-not $line -or $line -notmatch 'items=(\S*)') { return $r }
+    foreach ($i in ($Matches[1] -split ';' | Where-Object { $_ })) {
+        if ($i -match '^g\d+([gs])@-?\d+,-?\d+#(\S+)$') {
+            if ($Matches[1] -eq 'g') { $r.List += $Matches[2].ToUpperInvariant() } else { $r.Tray += $Matches[2].ToUpperInvariant() }
+        }
+    }
+    if ($line -match ' tray=(-?\d+),(-?\d+) ') { $r.Well = @{ X = [int]$Matches[1]; Y = [int]$Matches[2] } }
+    return $r
+}
+# B's rail once it reads as $Want says (or as it last read, after 3s).
+function Wait-Rail([string]$Id, [scriptblock]$Want) {
+    $deadline = (Get-Date).AddMilliseconds(3000)
+    do {
+        $r = Get-RailWith $Id
+        if (& $Want $r) { return $r }
+        Start-Sleep -Milliseconds 150
+    } while ((Get-Date) -lt $deadline)
+    return $r
+}
+# A drag from a pane's GRAB HANDLE (T2316, as pane-grab-handle.ps1 E drives
+# one): a move into the pane's top band raises the handle over it, the press
+# goes to the handle, and the window carries the moves and the release to
+# ($X, $Y) on screen - here, over another window's rail. Returns whether the
+# handle came up and every message was delivered; why not in $script:dragNote.
+function Invoke-HandleDrag($top, [int64]$PaneHwnd, [int]$X, [int]$Y) {
+    $pane = @(Get-VisiblePanes $top | Where-Object { [int64]$_.Hwnd -eq $PaneHwnd }) | Select-Object -First 1
+    $script:dragNote = $null
+    if ($null -eq $pane) { $script:dragNote = "the pane $PaneHwnd is not on screen in its window"; return $false }
+    $mid = $pane.Left + [int]($pane.Width / 2)
+    [void](Send-TestMouse -Window $top -Target ([IntPtr]$PaneHwnd) -X ($pane.Left + (Px 100)) -Y ($pane.Top + (Px 10)) -Action move)
+    # Wait for the handle to come up over this pane, rather than for a time.
+    $h = $null
+    $deadline = (Get-Date).AddMilliseconds(3000)
+    do {
+        $h = @(Get-TestWindows -ProcessId $script:appPid -Class 'GhozttyPaneGrabHandle' | Where-Object {
+                $_.Visible -and [math]::Abs(($_.Left + [int]($_.Width / 2)) - $mid) -le 2 -and [math]::Abs($_.Top - $pane.Top) -le 2
+            }) | Select-Object -First 1
+        if ($null -ne $h) { break }
+        Start-Sleep -Milliseconds 100
+    } while ((Get-Date) -lt $deadline)
+    if ($null -eq $h) { $script:dragNote = "no grab handle came up over pane $PaneHwnd"; return $false }
+    $hx = $h.Left + [int]($h.Width / 2); $hy = $h.Top + [int]($h.Height / 2)
+    $ok = Send-TestMouse -Window $top -Target ([IntPtr]$h.Hwnd) -X $hx -Y $hy -Action down
+    $ok = $ok -and (Send-TestMouse -Window $top -Target $top -X $hx -Y ($hy + (Px 40)) -Action move)
+    Start-Sleep -Milliseconds 200  # settle: the travelled move starts the drag before the jump to the target, as a hand's drag would
+    $ok = $ok -and (Send-TestMouse -Window $top -Target $top -X $X -Y $Y -Action move)
+    Start-Sleep -Milliseconds 400  # settle: a hand dwells over the target before letting go; the drop resolves on the move
+    $logAt = Get-LogCount
+    $ok = $ok -and (Send-TestMouse -Window $top -Target $top -X $X -Y $Y -Action up)
+    # The release is over when the app logs what the drop did.
+    $deadline = (Get-Date).AddMilliseconds(4000)
+    while (@(Get-LogLines $logAt 'pane drop ').Count -eq 0 -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 100 }
+    return $ok
 }
 
 . (Join-Path $PSScriptRoot 'lib\Transcript.ps1')
@@ -596,6 +665,72 @@ try {
     Assert "G: the drop was a list place in this window (log)" (@(Get-LogLines $logG 'pane drop placed in list index=0 restored=false').Count -ge 1)
     Assert "G: nothing moved between windows (log)" (@(Get-LogLines $logG 'another window').Count -eq 0)
 
+    # T2316: a pane's GRAB HANDLE is not a list drag, so it is not held to its
+    # own sidebar - it is the way a pane reaches another window's rail now.
+    Show-State "before H"
+    "== H: a pane dragged by its grab handle onto ANOTHER window's list joins it there"
+    $id1 = Get-PaneId 's1'
+    # Assigned, never piped: Get-Leaves returns a unary-comma array, which a
+    # pipe hands on as ONE object (every id joined into one string).
+    $leavesH = Get-Leaves
+    $idB = $null
+    foreach ($l in $leavesH) {
+        $u = ([string]$l.id).ToUpperInvariant()
+        if ($u -ne $idP -and $u -ne $id1 -and $u -ne $id2) { $idB = $u; break }
+    }
+    Assert "H: every pane's id is known, the other window's own included" ($idP -and $id1 -and $id2 -and $idB)
+    Assert "+restore s1 exit 0 ($(Get-CliErr))" ((Invoke-Cli "+restore --target=s1") -eq 0)
+    Assert "H: s1 back on screen in this window" ((Wait-Stashed 's1' $false) -and (Test-VisibleChild $top $h1))
+    $bSb = Get-Sidebar $bTop
+    $railB = Get-RailWith $idB
+    "  (other window before: list $($railB.List -join ', ') | tray $($railB.Tray -join ', '))"
+    if ($railB.List.Count -eq 0) {
+        # Evidence for a red run: whose rows lines there are.
+        $rl = @(Get-Content $script:errlog -ErrorAction SilentlyContinue | Where-Object { $_ -match 'pane sidebar rows ' })
+        "  ($($rl.Count) rows line(s); the latest two:)"
+        $rl | Select-Object -Last 2 | ForEach-Object { "  | $(if ($_.Length -gt 300) { $_.Substring(0, 300) } else { $_ })" }
+    }
+    Assert "H: the other window's list holds only its own pane" ($railB.List.Count -eq 1 -and $railB.List[0] -eq $idB -and $railB.Tray.Count -eq 0)
+    # Above the middle of B's one tile: B's list index 0.
+    $bTile = Get-TileCenter $bSb 0 1
+    $logH = Get-LogCount
+    Assert "H: grab-handle drag of s1 onto the other window's list delivered" (Invoke-HandleDrag $top ([int64]$h1) $bTile.X ($bTile.Y - (Px 9)))
+    if ($script:dragNote) { "  ($($script:dragNote))" }
+    Get-LogLines $logH '(pane drop|row drag start|another window|cross-window)' | Select-Object -First 8 | ForEach-Object { "  | $_" }
+    Assert "H: the drop joined the other window's list at 0 (log)" (@(Get-LogLines $logH "pane drop joined another window's list index=0").Count -ge 1)
+    Assert "H: s1's SAME handle is now the other window's child, on screen" (Test-VisibleChild $bTop $h1)
+    Assert "H: and no longer this window's" (-not (Test-Child $top $h1))
+    Assert "H: s1 is not stashed (+list)" (-not (Test-StashedId 's1'))
+    $railB = Wait-Rail $idB { param($r) $r.List.Count -eq 2 }
+    "  (other window after H: list $($railB.List -join ', ') | tray $($railB.Tray -join ', '))"
+    if ($NegativeControl) {
+        Assert "NEGATIVE: s1 is NOT first in the other window's list (a drop that ignored the place)" (-not ($railB.List.Count -ge 1 -and $railB.List[0] -eq $id1))
+    } else {
+        Assert "H: the other window's list reads s1, then its own pane" ($railB.List.Count -eq 2 -and $railB.List[0] -eq $id1 -and $railB.List[1] -eq $idB)
+    }
+    Assert "H: this window keeps P and s2 on screen" ((Test-VisibleChild $top $hP) -and (Test-VisibleChild $top $h2))
+
+    Show-State "before I"
+    "== I: a pane dragged by its grab handle onto ANOTHER window's tray joins it stashed"
+    $bSb = Get-Sidebar $bTop
+    $railB = Get-RailWith $idB
+    Assert "I: the other window's tray is empty, its well laid out (log)" ($null -ne $railB.Well)
+    # Without the well, the tray's height on B's rail (A's claim A drop).
+    if ($null -ne $railB.Well) { $wx = $bSb.Left + $railB.Well.X; $wy = $bSb.Top + $railB.Well.Y }
+    else { $wx = $bSb.Left + [int]($bSb.Width / 2); $wy = $bSb.Top + [int]($bSb.Height * 0.8) }
+    $logI = Get-LogCount
+    Assert "I: grab-handle drag of s2 onto the other window's tray delivered" (Invoke-HandleDrag $top ([int64]$h2) $wx $wy)
+    if ($script:dragNote) { "  ($($script:dragNote))" }
+    Get-LogLines $logI '(pane drop|another window|cross-window)' | Select-Object -First 8 | ForEach-Object { "  | $_" }
+    Assert "I: the drop stashed into the other window (log)" (@(Get-LogLines $logI 'pane drop stashed into another window index=0').Count -ge 1)
+    Assert "I: s2 is stashed (+list)" (Wait-Stashed 's2' $true)
+    Assert "I: s2's SAME handle is now the other window's child, off screen" ((Test-Child $bTop $h2) -and -not (Test-VisibleChild $bTop $h2))
+    Assert "I: and no longer this window's" (-not (Test-Child $top $h2))
+    $railB = Wait-Rail $idB { param($r) $r.Tray.Count -eq 1 }
+    "  (other window after I: list $($railB.List -join ', ') | tray $($railB.Tray -join ', '))"
+    Assert "I: the other window's tray holds s2, its list unchanged" ($railB.Tray.Count -eq 1 -and $railB.Tray[0] -eq $id2 -and $railB.List.Count -eq 2)
+    Assert "I: this window keeps P on screen" (Test-VisibleChild $top $hP)
+
     Show-State "end"
     Assert "no crash" (-not ($app.Process -and $app.Process.HasExited))
     $launched += $script:GhozttyTestDesktopPids
@@ -606,6 +741,12 @@ try {
 } finally {
     Remove-TestDesktop
     [void](Stop-RepoGhoztty -Exe $Exe -AppOnly -SettleMs 500)
+    # Evidence for a red run: the app's own log outlives the scratch folder.
+    if ($script:failures -gt 0 -and $script:errlog) {
+        $keep = Join-Path $env:TEMP "ghoztty-t1844-app-stderr-$PID.log"
+        Copy-Item $script:errlog $keep -ErrorAction SilentlyContinue
+        "  (app log kept: $keep)"
+    }
 }
 
 Assert "the body ran to its last section" ($script:reachedEnd -eq $true)

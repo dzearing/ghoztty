@@ -1,10 +1,10 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-11-26T00:41:36-08:00",
-    "commit":  "13571f1315",
+    "generated":  "2026-11-26T01:21:25-08:00",
+    "commit":  "80802e317e",
     "uncommitted":  [
-
+                        "test/win32/pane-sidebar-drag.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "cfa23792d110d499fa4086697daa516d218d0d110e594a7452167a81220ee15e",
@@ -432,7 +432,7 @@
                   "test/win32/pane-sidebar-add.ps1":  "c7ed6fc37ac65afb363beeedcb5b6c8c230d9223528d3e097e01d6e7f082090a",
                   "test/win32/pane-sidebar-all-windows.ps1":  "046684b34ba534bbfad8782a609c1cc9180d5a15a5cf07202b446934012dcddd",
                   "test/win32/pane-sidebar-close.ps1":  "a7c8945f88ead7c8d79aa9feec72ed7980d15ae76d8c6536c0bc8dc6dff0c107",
-                  "test/win32/pane-sidebar-drag.ps1":  "737ad23d0562bcb72d33ef75ef62e6098318b807ecab9791e0cc850a90ed6005",
+                  "test/win32/pane-sidebar-drag.ps1":  "30aae2cae03f3ab57aa927f4ff33dd1b83b4642f6249f28e6345cb7382c2b06d",
                   "test/win32/pane-sidebar-elevated.ps1":  "77decaf8df557213aed7abeb46669903ab1b45bf6e9aed12df6764a34e14fd2b",
                   "test/win32/pane-sidebar-foreign-drag.ps1":  "cba796392e57083fba030e6a3d52f950ae8177c3f229573aad3058f7beb02d9e",
                   "test/win32/pane-sidebar-glide.ps1":  "9099e4690e8119f75ab7689f339d28c151b527152d26329c5d2bb537ad5a978c",
