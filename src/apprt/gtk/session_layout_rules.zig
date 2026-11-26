@@ -167,6 +167,47 @@ pub fn deskSeedToRestore(win: schema.Window) ?u64 {
     return deskSeedToRecord(win.desk_variant);
 }
 
+/// The order a relaunch builds the manifest's windows in (T3655; Mac
+/// `SessionLayoutManifest.frontmostLast`, win32 `restore_pacing.frontmostLast`).
+/// The GTK manifest lists windows front first (the most recently focused, or
+/// in single mode the workspace on show then the most recently shown), and
+/// every window a restore builds is presented in turn, so the LAST one built
+/// ends in front - on show in `single` mode. So: back to front, with the entry
+/// marked `frontmost` moved to the end wherever it sits. With no mark the
+/// order is plain back to front, which is what a manifest written before the
+/// mark existed restored as. `out.len == front.len`.
+pub fn restoreOrder(front: []const bool, out: []usize) void {
+    std.debug.assert(out.len == front.len);
+    const marked: ?usize = std.mem.indexOfScalar(bool, front, true);
+    var n: usize = 0;
+    var i = front.len;
+    while (i > 0) {
+        i -= 1;
+        if (marked != null and i == marked.?) continue;
+        out[n] = i;
+        n += 1;
+    }
+    if (marked) |m| out[n] = m;
+}
+
+test "restoreOrder builds back to front and the frontmost-marked entry last (T3655)" {
+    var out: [4]usize = undefined;
+    // The usual GTK manifest: the front window listed first and marked.
+    restoreOrder(&.{ true, false, false, false }, &out);
+    try std.testing.expectEqualSlices(usize, &.{ 3, 2, 1, 0 }, &out);
+    // A mark that is not first (another lineage's order) still comes last.
+    restoreOrder(&.{ false, false, true, false }, &out);
+    try std.testing.expectEqualSlices(usize, &.{ 3, 1, 0, 2 }, &out);
+    // No mark: back to front, as before the mark existed.
+    restoreOrder(&.{ false, false, false, false }, &out);
+    try std.testing.expectEqualSlices(usize, &.{ 3, 2, 1, 0 }, &out);
+    // Two marks (a hand-edited file): the first listed wins the front.
+    restoreOrder(&.{ false, true, false, true }, &out);
+    try std.testing.expectEqualSlices(usize, &.{ 3, 2, 0, 1 }, &out);
+    var none: [0]usize = .{};
+    restoreOrder(&.{}, &none);
+}
+
 test "deskSeedToRecord keeps a window's seed and writes none for the ocean or a zero" {
     try std.testing.expectEqual(@as(?u64, 0xF00D_CAFE_DEAD_BEEF), deskSeedToRecord(0xF00D_CAFE_DEAD_BEEF));
     try std.testing.expectEqual(@as(?u64, null), deskSeedToRecord(null));

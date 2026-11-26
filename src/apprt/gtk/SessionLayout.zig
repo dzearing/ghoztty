@@ -21,6 +21,12 @@
 //! snapshotted too, so a re-attached pane paints its last frame at once while
 //! the agent gap-fills from the snapshot's offset.
 //!
+//! In single-window mode (T3655) each workspace is one window entry, listed
+//! in the workspaces' order (on show first) at the shared window's size, and
+//! the one on show is marked `frontmost`. A restore builds the frontmost entry
+//! last (`rules.restoreOrder`), so it is on show again in `single` mode and in
+//! front in `separate` mode: a manifest from either mode restores in the other.
+//!
 //! When it writes: a change-checked capture every `sync_interval_ms` (the Mac
 //! debounces each change by 250 ms; GTK has no single change hook across tree,
 //! title, name and directory changes, and a once-a-second capture of a few
@@ -60,6 +66,7 @@ const Window = @import("class/window.zig").Window;
 const Tab = @import("class/tab.zig").Tab;
 const Surface = @import("class/surface.zig").Surface;
 const IpcHandlers = @import("IpcHandlers.zig");
+const Workspaces = @import("Workspaces.zig");
 
 /// The pure half - the path, the first leaf, the size rules, a viewer's
 /// restore - std-only so every test lane runs its tests (T3551).
@@ -112,11 +119,27 @@ fn owns(app: *Application) bool {
 pub fn capture(arena: Allocator, app: *Application, snapshots: bool) Allocator.Error!schema.File {
     var windows: std.ArrayList(schema.Window) = .empty;
     var budget: schema.SnapshotBudget = .{};
-    // Most recently focused first (gtk_application_get_windows).
+
+    // Front first. In single mode (T3655) that is the workspaces' own order -
+    // the one on show, then most recently shown - because only the shared
+    // toplevel is ever focused, so GTK's focus order cannot tell parked
+    // workspaces apart. Then every other window, most recently focused first
+    // (gtk_application_get_windows).
+    var order: std.ArrayList(*Window) = .empty;
+    for (Workspaces.order()) |w| try order.append(arena, w);
     var node: ?*glib.List = app.as(gtk.Application).getWindows();
     while (node) |n| : (node = n.f_next) {
         const obj: *gobject.Object = @ptrCast(@alignCast(n.f_data orelse continue));
         const window = gobject.ext.cast(Window, obj) orelse continue;
+        if (Workspaces.manages(window)) continue;
+        try order.append(arena, window);
+    }
+
+    // Who is in front: the workspace on show, else the most recently
+    // focused window.
+    const on_show = Workspaces.active();
+    var front: ?usize = null;
+    for (order.items) |window| {
         if (window.isQuickTerminal()) continue;
         // T3652: a single-window frame holds no workspace of its own.
         if (window.isFrame()) continue;
@@ -125,16 +148,23 @@ pub fn capture(arena: Allocator, app: *Application, snapshots: bool) Allocator.E
         // on the local one would open wrong panes. Bringing remote windows
         // back at launch is its own record (win32 T3352; `RelayWindows.zig`, T3671).
         if (IpcHandlers.remoteLinkOf(window) != null) continue;
-        const w = try captureWindow(arena, window, windows.items.len, snapshots, &budget) orelse continue;
+        // A workspace is the shared window's size and state, parked or on
+        // show (window-modes.md, Persistence): its own GtkWindow never maps,
+        // so its own default size says nothing.
+        const geometry: *Window = if (Workspaces.manages(window)) Workspaces.physical() orelse window else window;
+        const w = try captureWindow(arena, window, geometry, windows.items.len, snapshots, &budget) orelse continue;
+        if (on_show != null and on_show.? == window) front = windows.items.len;
         try windows.append(arena, w);
     }
-    if (windows.items.len > 0) windows.items[0].frontmost = true;
+    if (front == null and windows.items.len > 0) front = 0;
+    if (front) |f| windows.items[f].frontmost = true;
     return .{ .windows = windows.items };
 }
 
 fn captureWindow(
     arena: Allocator,
     window: *Window,
+    geometry: *Window,
     index: usize,
     snapshots: bool,
     budget: *schema.SnapshotBudget,
@@ -177,14 +207,14 @@ fn captureWindow(
     // window is maximized, so it is exactly the schema's "restored rect" for
     // a maximized window. A window nobody sized yet reports 0: take what it
     // is showing at. Wayland gives a client no position, so x/y record 0.
-    const gw = window.as(gtk.Window);
+    const gw = geometry.as(gtk.Window);
     const maximized = gw.isMaximized() != 0;
     var dw: c_int = 0;
     var dh: c_int = 0;
     gw.getDefaultSize(&dw, &dh);
     if ((dw <= 0 or dh <= 0) and !maximized) {
-        dw = window.as(gtk.Widget).getWidth();
-        dh = window.as(gtk.Widget).getHeight();
+        dw = geometry.as(gtk.Widget).getWidth();
+        dh = geometry.as(gtk.Widget).getHeight();
     }
 
     const name = window.ipcName();
@@ -395,13 +425,19 @@ pub fn restore(app: *Application) usize {
     var claimed: std.StringHashMapUnmanaged(void) = .empty;
     var ctx: Ctx = .{ .arena = arena, .attach = &attach, .claimed = &claimed };
 
-    // The front window last, so it ends up in front.
+    // The front window last, so it ends up in front - on show in single
+    // mode, where every restored window is a workspace (T3655). Whichever
+    // mode wrote the manifest, its `frontmost` entry is the one.
+    const front = arena.alloc(bool, windows.len) catch return 0;
+    for (windows, front) |w, *b| b.* = w.frontmost orelse false;
+    const build_order = arena.alloc(usize, windows.len) catch return 0;
+    rules.restoreOrder(front, build_order);
     var opened: usize = 0;
-    var i = windows.len;
-    while (i > 0) {
-        i -= 1;
-        if (restoreWindow(app, &ctx, windows[i])) opened += 1;
+    for (build_order) |idx| {
+        log.info("session layout: building window={s} frontmost={}", .{ windows[idx].ipc_name orelse windows[idx].id, front[idx] });
+        if (restoreWindow(app, &ctx, windows[idx])) opened += 1;
     }
+    if (Workspaces.active()) |a| log.info("session layout: the workspace on show is window={s}", .{a.ipcName() orelse "?"});
     log.info("session layout: restored {d} of {d} window(s), {d} pane(s) re-attached", .{ opened, windows.len, ctx.attached });
     return opened;
 }

@@ -57,7 +57,13 @@
 //! that starts waiting on a question marks the toplevel urgent
 //! (`attentionWindow`), and the title suffix stays the workspace on show's.
 //!
-//! Not here (their own cards): the CLI (T3653), persistence (T3655).
+//! Persistence (T3655): the session layout records one entry per workspace,
+//! in this module's order, each at the shared window's size, with the one on
+//! show marked `frontmost`; a relaunch builds that entry last, so it is on
+//! show again - and in front in `separate` mode, so a manifest from either
+//! mode restores in the other (`SessionLayout.capture` / `restore`).
+//!
+//! Not here (its own card): the CLI (T3653).
 const Workspaces = @This();
 
 const std = @import("std");
