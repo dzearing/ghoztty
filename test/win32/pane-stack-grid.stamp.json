@@ -1,10 +1,10 @@
 {
     "guard":  "pane-stack-grid",
     "script":  "test/win32/pane-stack-grid.ps1",
-    "generated":  "2026-11-26T00:48:05-08:00",
-    "commit":  "52bd56aaec",
+    "generated":  "2026-11-26T01:43:52-08:00",
+    "commit":  "33611dd8ec",
     "uncommitted":  [
-                        "src/apprt/win32/Window.zig"
+
                     ],
     "files":  {
                   "src/apprt/ipc/list.zig":  "078850a9a4f0e1456e50df5bd74942976c03d40f4d437f42b5210ae1ed2243ae",

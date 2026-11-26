@@ -1,10 +1,10 @@
 {
     "guard":  "stash-restore",
     "script":  "test/win32/stash-restore.ps1",
-    "generated":  "2026-11-26T00:45:26-08:00",
-    "commit":  "52bd56aaec",
+    "generated":  "2026-11-26T01:43:50-08:00",
+    "commit":  "33611dd8ec",
     "uncommitted":  [
-                        "src/apprt/win32/Window.zig"
+
                     ],
     "files":  {
                   "src/apprt/win32/App.zig":  "6948f68068eebb8647f7855265d0f4de0ef725a5d387487274faba5c5a5082e9",

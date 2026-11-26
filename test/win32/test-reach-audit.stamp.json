@@ -1,11 +1,10 @@
 {
     "guard":  "test-reach",
     "script":  "test/win32/test-reach-audit.ps1",
-    "generated":  "2026-11-26T01:15:29-08:00",
-    "commit":  "52bd56aaec",
+    "generated":  "2026-11-26T02:30:41-08:00",
+    "commit":  "33611dd8ec",
     "uncommitted":  [
-                        "src/apprt/win32/strip_face.zig",
-                        "src/apprt/win32/Window.zig"
+
                     ],
     "files":  {
                   "src/apprt/win32.zig":  "59d9ba4574ce720fd451898f7564aab221b524066e184c317014d0348e2a5469",

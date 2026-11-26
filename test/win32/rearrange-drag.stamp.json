@@ -1,10 +1,10 @@
 {
     "guard":  "rearrange-drag",
     "script":  "test/win32/rearrange-drag.ps1",
-    "generated":  "2026-11-26T00:47:36-08:00",
-    "commit":  "52bd56aaec",
+    "generated":  "2026-11-26T01:55:54-08:00",
+    "commit":  "33611dd8ec",
     "uncommitted":  [
-                        "src/apprt/win32/Window.zig"
+
                     ],
     "files":  {
                   "src/apprt/win32/drop_highlight.zig":  "7056bd6cbc735dace5e1ce6dab0b903a4375cc09ccfc98f998bf8709146648e3",

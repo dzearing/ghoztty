@@ -1,10 +1,10 @@
 {
     "guard":  "sidebar-divider-tuck",
     "script":  "test/win32/sidebar-divider-tuck.ps1",
-    "generated":  "2026-11-26T00:43:25-08:00",
-    "commit":  "52bd56aaec",
+    "generated":  "2026-11-26T01:51:45-08:00",
+    "commit":  "33611dd8ec",
     "uncommitted":  [
-                        "src/apprt/win32/Window.zig"
+
                     ],
     "files":  {
                   "src/apprt/win32/pane_sidebar.zig":  "3bb5fd89bfeaeb4f1fdaf87de55302e6fba45e0081cb01eedc71dcf3f2c1f618",

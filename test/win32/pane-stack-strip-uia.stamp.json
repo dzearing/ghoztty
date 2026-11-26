@@ -1,10 +1,10 @@
 {
     "guard":  "pane-stack-strip-uia",
     "script":  "test/win32/pane-stack-strip-uia.ps1",
-    "generated":  "2026-11-26T00:45:55-08:00",
-    "commit":  "52bd56aaec",
+    "generated":  "2026-11-26T01:54:15-08:00",
+    "commit":  "33611dd8ec",
     "uncommitted":  [
-                        "src/apprt/win32/Window.zig"
+
                     ],
     "files":  {
                   "src/apprt/win32/strip_uia.zig":  "b3aa56a2be440c387364d480521c68a6e77ca45eb6a6b2940a8df1208ece2507",
