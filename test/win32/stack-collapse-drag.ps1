@@ -28,10 +28,13 @@
 #      between cards, double-clicked after the other grip's drag unevened
 #      the cards, gives the three the same width, the blades keep their
 #      strips, and the second click starts no drag
+#   H) T2266 (T2253, Mac `GutterBar`): a grip between those cards lights the
+#      accent gutter bar - half strength hovered, full strength dragged, in
+#      the same colour - and letting go leaves no bar lit (debug-log oracle)
 #
 # -NegativeControl inverts claim A to "three panes stay on show" - the
-# pre-T2124 answer - and skips G's double-clicks (the pre-T2409 answer); it
-# MUST fail.
+# pre-T2124 answer - skips G's double-clicks (the pre-T2409 answer) and H's
+# hover (the pre-T2253 answer); it MUST fail.
 #
 # Hermetic: per-run LOCALAPPDATA, per-run agent binary override, a private IPC
 # pipe suffix, and it only ever kills ghoztty processes launched from this
@@ -57,6 +60,7 @@ if ($AgentExe) { $agent = $AgentExe }
 $script:pass = 0
 $script:fail = 0
 $root = Join-Path $env:TEMP "ghoztty-stack-collapse-drag-$PID"
+$script:errlog = Join-Path $root 'app-stderr.log'
 
 . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
 . (Join-Path $PSScriptRoot 'lib\BuildMode.ps1')
@@ -76,7 +80,8 @@ $appArgs = @('--config-default-files=false', "--macos-pane-style=$PaneStyle")
 function Start-App {
     # persistence: on (default) - harmless here (a throwaway $env:LOCALAPPDATA)
     # and it keeps the panes on agent sessions, the shape users run.
-    $app = Start-OnTestDesktop -Exe $exe -Arguments $appArgs
+    # The debug build's stderr carries the gutter-bar oracle lines H reads.
+    $app = Start-OnTestDesktop -Exe $exe -StdErr $script:errlog -Arguments $appArgs
     if ((Wait-TestWindow -ProcessId $app.Pid -Class 'GhozttyWindow') -eq [IntPtr]::Zero) {
         Write-TestAssertedNothing -Reason 'the app never opened a GhozttyWindow'
     }
@@ -138,6 +143,19 @@ function Move-To([IntPtr]$top, [int]$fromX, [int]$toX, [int]$y) {
         Start-Sleep -Milliseconds 60
     }
     Start-Sleep -Milliseconds 400
+}
+
+# The app's stderr lines past line $from, once one matching $pattern has
+# arrived or $timeoutSec ran out (then whatever is there): the gutter-bar
+# oracle is written when a paint changes the lit bar, not on a clock.
+function Wait-LogLine([int]$from, [string]$pattern, [int]$timeoutSec = 5) {
+    $deadline = (Get-Date).AddSeconds($timeoutSec)
+    do {
+        $lines = @(Get-Content $script:errlog -ErrorAction SilentlyContinue | Select-Object -Skip $from)
+        if (@($lines | Where-Object { $_ -match $pattern }).Count -gt 0) { return $lines }
+        Start-Sleep -Milliseconds 100
+    } while ((Get-Date) -lt $deadline)
+    return @(Get-Content $script:errlog -ErrorAction SilentlyContinue | Select-Object -Skip $from)
 }
 
 # -----------------------------------------------------------------------------
@@ -365,6 +383,55 @@ try {
             Assert (($w2 -join '/') -eq ($w1 -join '/')) `
                 "G${slot}: the second click starts no drag - moving the pointer after it changes nothing ($($w1 -join '/') -> $($w2 -join '/'))"
         }
+    }
+
+    # ---- H: a grip between cards lights the accent gutter bar (T2266) --------
+    # T2253 (Mac `GutterBar`) lights a stack grip's gutter the way it lights a
+    # divider's: half strength while hovered, full strength on the grip
+    # nearest the pointer while dragged, and nothing once let go (on the
+    # background desktop the pointer cannot be read back, which reads as
+    # "over nothing"). Oracle: the debug build's `gutter bar grip <hover|drag>
+    # rgb=r,g,b` / `gutter bar none` lines, logged when the lit bar changes.
+    Say '== H: hover, drag and release a grip between cards'
+    $h = @(Get-VisiblePanes $top)
+    Assert ($h.Count -eq 3) "H: precondition - three cards on show, so grips sit between them (got $($h.Count))"
+    if ($h.Count -eq 3) {
+        $hx = [int](($h[0].Right + $h[1].Left) / 2)
+        # Off the gutters first, so the hover below is a change the log shows.
+        $cardX = [int](($h[1].Left + $h[1].Right) / 2)
+        [void](Send-TestMouse -Window $top -Target $top -X $cardX -Y $y -Action move -HoldMs 0)
+        [void](Wait-LogLine 0 'gutter bar none' 3)
+        $from = @(Get-Content $script:errlog -ErrorAction SilentlyContinue).Count
+        if ($NegativeControl) {
+            # The pre-T2253 answer: a grip is never lit, so nothing to hover.
+            Say '      NEGATIVE: the grip is not hovered'
+        } else {
+            [void](Send-TestMouse -Window $top -Target $top -X $hx -Y $y -Action move -HoldMs 0)
+        }
+        $hover = @(Wait-LogLine $from 'gutter bar grip hover rgb=' 5)
+        $hoverBar = @($hover | Where-Object { $_ -match 'gutter bar grip hover rgb=(\d+),(\d+),(\d+)' } | Select-Object -Last 1)
+        Assert ($hoverBar.Count -eq 1) "H1: hovering the grip between the first two cards lights its bar at half strength (log: gutter bar grip hover)"
+        $hoverRgb = if ($hoverBar.Count -eq 1 -and $hoverBar[0] -match 'rgb=(\d+,\d+,\d+)') { $Matches[1] } else { '' }
+        Assert ($hoverRgb -ne '' -and $hoverRgb -ne '0,0,0') "H1: the hovered bar is drawn in a colour, the accent ($hoverRgb)"
+
+        $from = @(Get-Content $script:errlog -ErrorAction SilentlyContinue).Count
+        [void](Send-TestMouse -Window $top -Target $top -X $hx -Y $y -Action down -HoldMs 0)
+        $to = $hx + (Get-TestChromeDip -Dip 60 -Scale $scale)
+        Move-To $top $hx $to $y
+        $drag = @(Wait-LogLine $from 'gutter bar grip drag rgb=' 5)
+        $dragEnd = $from + $drag.Count
+        [void](Send-TestMouse -Window $top -Target $top -X $to -Y $y -Action up -HoldMs 0)
+        [void](Wait-LogLine $dragEnd 'gutter bar none' 5)
+        $all = @(Get-Content $script:errlog -ErrorAction SilentlyContinue | Select-Object -Skip $from)
+        $dragBar = @($drag | Where-Object { $_ -match 'gutter bar grip drag rgb=' } | Select-Object -Last 1)
+        $lastDuring = @($drag | Where-Object { $_ -match 'gutter bar ' } | Select-Object -Last 1)
+        Say ("      during the drag: {0}" -f (($drag | Where-Object { $_ -match 'gutter bar ' }) -join ' / '))
+        Assert ($dragBar.Count -eq 1) "H2: dragging the grip lights its bar at full strength (log: gutter bar grip drag)"
+        Assert ($lastDuring.Count -eq 1 -and $lastDuring[0] -match 'gutter bar grip drag') "H2: the full bar stays lit while the grip is held (last: $lastDuring)"
+        $dragRgb = if ($dragBar.Count -eq 1 -and $dragBar[0] -match 'rgb=(\d+,\d+,\d+)') { $Matches[1] } else { '' }
+        Assert ($dragRgb -ne '' -and $dragRgb -eq $hoverRgb) "H2: hover and drag paint the same accent, only the strength differs ($hoverRgb vs $dragRgb)"
+        $lastBar = @($all | Where-Object { $_ -match 'gutter bar ' } | Select-Object -Last 1)
+        Assert ($lastBar.Count -eq 1 -and $lastBar[0] -match 'gutter bar none') "H3: letting go leaves no bar lit (last: $lastBar)"
     }
 
     Complete-TestBody

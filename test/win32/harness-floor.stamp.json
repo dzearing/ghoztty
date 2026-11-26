@@ -1,10 +1,10 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-11-25T22:24:32-08:00",
-    "commit":  "bbacdece43",
+    "generated":  "2026-11-25T22:38:36-08:00",
+    "commit":  "49e3e290d0",
     "uncommitted":  [
-                        "test/win32/shell-starting-folder.ps1"
+                        "test/win32/stack-collapse-drag.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "cfa23792d110d499fa4086697daa516d218d0d110e594a7452167a81220ee15e",
@@ -96,7 +96,7 @@
                   "test/win32/chooser-sessions-push.ps1":  "77bd4ca1b2ee476f4323f9b62e04862984d61aa0e04ae2fcd55621471bbb60d5",
                   "test/win32/chooser-sessions-remote.ps1":  "02711dededed6572ce0e55af74df523c62e5829a74f8c5a381ebe3d6aa72371c",
                   "test/win32/chooser-warm-list.ps1":  "c615a0de86c2debc15e196b56f97cc2021594a6548058fa4f9a48e991fca28f2",
-                  "test/win32/chrome-merged-row.ps1":  "92d45d3450de2902b84b97cbff07c187b2a02f12177f0493f80c95ba9e55b10a",
+                  "test/win32/chrome-merged-row.ps1":  "25e50f11ec3e34541aea2730422d203a9df19fc7bb94f968b5949a71fa5f7d05",
                   "test/win32/chrome-paint-clip.ps1":  "0b8249811e6e438749b4bc1606e7cfca9e8a0952cf36991ef5e6405a276116c7",
                   "test/win32/chrome-theme.ps1":  "47319fe25fafb4ede38f9eb9ad1a21be1ae06649279d9bb8da106131f88d6198",
                   "test/win32/claude-fullscreen-env.ps1":  "af09ed9e96b5d9eda02e54f9cdbcd59e08b0ed9d3bd20143b9813da59059c0ac",
@@ -285,7 +285,7 @@
                   "test/win32/lib/CheckoutGuard.ps1":  "9536259de2474ff6834dc9112a864b6c40579ae6dcf12cdc123efd4e08089216",
                   "test/win32/lib/ChooserControls.ps1":  "a89ca8550ef8143250eb27df76bfa9e11b5c1af46f086ea23e07defd5d8eaec0",
                   "test/win32/lib/ChooserCursor.ps1":  "899edb2b38d63abcb8af6734687abf41a0f9e5906e1cd3d9508cc2b1e7cb1023",
-                  "test/win32/lib/ChromeGeometry.ps1":  "af0f9beb1d17af0f8d021d5ee3178d4b34748857f7a87bf65387d3ee65677380",
+                  "test/win32/lib/ChromeGeometry.ps1":  "9c51a3a8301d6b007036e816ce7700a457a405262671ce523afc25f11ef1cf6d",
                   "test/win32/lib/CleanSlate.ps1":  "f7bfe9a4e3d0fb4f8e1c66b980a38230f18357cb0672a602b5cfd10de53b0aa4",
                   "test/win32/lib/CleanSlateAudit.ps1":  "e70b73f92c5a1102cdf0ce47a5fade709030b1cb4dda438e0a64155668f5b445",
                   "test/win32/lib/ClickCoordAudit.ps1":  "3f404a1cd9e3ff05c0daec8735a9d5c163d02b3a1beae8161ee2885d5026e36f",
@@ -400,7 +400,7 @@
                   "test/win32/msi-upgrade.ps1":  "756713b20450fba0ca2ab0f9cfcf923b93bee1e449300266acbf7ada59d8cb84",
                   "test/win32/native-stderr-audit.ps1":  "652d2abb648dff1eec9505a5d0454f75bd083ddc57666379491d1f18272bbdcc",
                   "test/win32/neuter-audit.ps1":  "b2057597d46fad5597ff832b399d8ee9a585f9131fbfe7244b7cea9bf44bd928",
-                  "test/win32/new-tab-shell.ps1":  "2dbe0a4c1c5c3c9913230223ae226c4c8b1d50d52acf91968c85021805526c41",
+                  "test/win32/new-tab-shell.ps1":  "02abaa5c67a48fc6b47916699336c18cf5f928b39ca717f9b9826999f5affea5",
                   "test/win32/new-window-cwd.ps1":  "788bd5914286f4694bf5a872f29c996e34854fd383bc46016131f71cc7ae4b06",
                   "test/win32/new-window-maximized.ps1":  "ae6d8e38ff402b3a80d94c6970c51618e6670dd1add82b9790bf47656c7ecae7",
                   "test/win32/notification-click-focus.ps1":  "3aa1620e8914dac09fe3134fe439f714bab40641d9f66707f4affbed9d1661af",
@@ -553,7 +553,6 @@
                   "test/win32/settings-window.ps1":  "abc135aeb74d2db7e66d5691044d43412a820a044d0b1b5e811880c09b9739fc",
                   "test/win32/setup-front-door.ps1":  "adf700c80246004738d8717e9cc25c7be3b4c4e32ecf3354cfb977d9fc72d13b",
                   "test/win32/share-machine.ps1":  "34e40c8ca85c443766d887410f57d43e8e2085a3a0cd8b71bdfdc2f64df792cc",
-                  "test/win32/shell-starting-folder.ps1":  "5b7ff11760cfc8f98304ab88112630eb20e9e5c461528d0761d51cd9ab7914a0",
                   "test/win32/ship-workflow.ps1":  "7bf70cc43ea794bd74bf0805a941d717b21105f67302ea654794cebdd6195ac6",
                   "test/win32/shortcut-guide.ps1":  "7418a4994b37655bf3a1cef7dd47eb000ab50db63a33a090f332214d64bac502",
                   "test/win32/sidebar-comp.ps1":  "8f24185c8d9e69ec538498b639a1ec03846f6b9ad02cf1684030a0e5ef81a20a",
@@ -577,7 +576,7 @@
                   "test/win32/sprite-testdata.ps1":  "79914472fe57b285f38ca6e0740a22e4975c142ccd15fe554b9b3b0835033d21",
                   "test/win32/stack-caret-on-show.ps1":  "70db1bcbb5a17f5e0819d05b500a247ed314f385d7ef752d37f7450866d95541",
                   "test/win32/stack-collapse-carry.ps1":  "2fb0e9c3403e77a583f2eee95338ea9b0cbd9005eff39ca7dd278e5e202b713c",
-                  "test/win32/stack-collapse-drag.ps1":  "361cdf30d5cc7152c6ea7457809cef559f7b831ff0bf3e1ec7fae84ff37a54fb",
+                  "test/win32/stack-collapse-drag.ps1":  "3920e3507becefdfffe664522336401ed45fe9c6b0006b85494d199f0cad090f",
                   "test/win32/stack-fold-slide.ps1":  "e663a7f1cafad809988faf665a58dd7e40797e46dbada6dab251cff39986655f",
                   "test/win32/stale-build-notify.ps1":  "4ab2898604ac45d3a62e7f78232a6e6a02081d7fee27716f1975831fda65d4a1",
                   "test/win32/startup-failure.ps1":  "17e72b90d659b5f98d19e3f18aa7aca5d9ba87004f41a10016ba96f08ca015ea",
