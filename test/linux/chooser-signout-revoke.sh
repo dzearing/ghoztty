@@ -31,8 +31,11 @@
 # the relay is a python server on loopback and the harness plays the browser
 # by GETting the redirect the app logged.
 #
-# NEGATIVE=1 makes the relay de-enroll even in its "down" mode, so the first
-# sign-out revokes and R2-R5 must FAIL.
+# NEGATIVE=1 makes the relay de-enroll even in its "nodeenroll" mode, so the
+# first sign-out revokes and R2-R4 (and everything that waits on the armed
+# revocation, R6-R16 bar R11) must FAIL. R5 stays green on purpose: the
+# machine's name is recorded BEFORE the de-enroll whether or not it lands.
+# Measured 2026-11-26: 13 failures.
 #
 # Output: one PASS/FAIL line per check, then 'CHOOSER SIGNOUT REVOKE: ALL PASS'
 # or 'CHOOSER SIGNOUT REVOKE: <n> FAILURE(S)'. Exit 0 only on ALL PASS.
