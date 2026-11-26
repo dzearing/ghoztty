@@ -538,7 +538,9 @@ fn onAccountDone(ud: ?*anyopaque) callconv(.c) c_int {
     defer c_alloc.destroy(job);
     account_busy = .none;
     setAccountMsg(job.message_buf[0..job.message_len]);
-    log.info("machine chooser: {s} {s}", .{ @tagName(job.kind), if (job.ok) "ok" else "failed" });
+    // An open chooser logs it through `noteLast`.
+    if (open_chooser == null)
+        log.info("machine chooser: {s} {s}", .{ @tagName(job.kind), if (job.ok) "ok" else "failed" });
     if (open_chooser) |self| {
         self.noteLast("{s} {s}", .{ @tagName(job.kind), if (job.ok) "ok" else "failed" });
         self.readAccount();
