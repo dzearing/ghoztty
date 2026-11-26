@@ -1,10 +1,10 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-11-26T04:22:41-08:00",
-    "commit":  "9028ea4449",
+    "generated":  "2026-11-26T04:23:13-08:00",
+    "commit":  "6a4b4dcd10",
     "uncommitted":  [
-
+                        "test/win32/pane-sidebar-activity.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "cfa23792d110d499fa4086697daa516d218d0d110e594a7452167a81220ee15e",
@@ -428,7 +428,7 @@
                   "test/win32/pane-ingest-lag.ps1":  "1edc18cdbb6b7cf3450ee030f4a674d3a94e77b7d96a63a70e4a3d9197616dcf",
                   "test/win32/pane-sidebar.ps1":  "ca39c3b6ef8818b23ca6f68ce734833f7f89b0e60430f3b739bba45da968080e",
                   "test/win32/pane-sidebar-actions.ps1":  "f522881b34a6f7bf2359255759c7dc3fd1cf441bd234d104874bc8dd5d70862b",
-                  "test/win32/pane-sidebar-activity.ps1":  "e05f449dc87fb695df3d0f53515607e7c78c8e6f0d9ced90c3572b139e589899",
+                  "test/win32/pane-sidebar-activity.ps1":  "dc4f2eb43ad53d37c5b3da2b921227a67191d59a5c90f6e6dcbaf094096628a6",
                   "test/win32/pane-sidebar-add.ps1":  "c7ed6fc37ac65afb363beeedcb5b6c8c230d9223528d3e097e01d6e7f082090a",
                   "test/win32/pane-sidebar-all-windows.ps1":  "046684b34ba534bbfad8782a609c1cc9180d5a15a5cf07202b446934012dcddd",
                   "test/win32/pane-sidebar-close.ps1":  "a7c8945f88ead7c8d79aa9feec72ed7980d15ae76d8c6536c0bc8dc6dff0c107",

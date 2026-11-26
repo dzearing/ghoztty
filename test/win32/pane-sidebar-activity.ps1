@@ -21,6 +21,9 @@
 #      -SaveFrames <dir> keeps the sampled frames as PNGs.
 #   2. Idle again, the clock stops itself (log `motion off`) and the rail
 #      holds still: consecutive frames are identical.
+#   2c. A resting rail reuses its tiles' rims (T2333): forty more paints
+#      add cache hits and no misses (log `pane sidebar rim cache`), and the
+#      idle picture is still the one from before the work.
 #   2b. A progress report alone (OSC 9;4;3 printed by s1's shell, the state
 #      left idle) is work too, as it is what lights the pane's border: the
 #      tally counts it busy, the rail moves, and 9;4;0 stops it again.
@@ -206,6 +209,34 @@ try {
     Assert "the motion clock stopped itself (log)" ($null -ne $off)
     $frames = Get-Frames $sb 4 200
     Assert "an idle rail is one picture ($(Get-Distinct $frames) distinct)" ((Get-Distinct $frames) -eq 1)
+    Assert "and it is the picture from before the work (cached rims draw what was computed)" ($null -ne $restRail -and $frames[0] -eq $restRail)
+
+    "== 2c: a resting rail reuses its tiles' rims instead of recomputing them (T2333)"
+    # Every synchronous capture is a full paint of the rail. Before T2333 each
+    # one ran the rim overlay pixel by pixel for every tile; now a resting
+    # tile's rim comes from the cache, so paints add hits and no misses.
+    $rimRe = 'pane sidebar rim cache hits=(\d+) misses=(\d+) held=(\d+)'
+    $before = @(Get-Content $script:errlog -ErrorAction SilentlyContinue | Where-Object { $_ -match $rimRe }) | Select-Object -Last 1
+    "  before: $before"
+    $m0 = if ($before -match $rimRe) { [int64]$Matches[2] } else { -1 }
+    $h0 = if ($before -match $rimRe) { [int64]$Matches[1] } else { -1 }
+    $mark = Get-LogCount
+    $null = Get-Frames $sb 40 0
+    # The captures are synchronous paints; wait for the tally line they move.
+    $null = Wait-Log $mark $rimRe 3000
+    $after = @(Get-Content $script:errlog -ErrorAction SilentlyContinue | Where-Object { $_ -match $rimRe }) | Select-Object -Last 1
+    "  after:  $after"
+    $ok = $after -match $rimRe
+    $h1 = if ($ok) { [int64]$Matches[1] } else { -1 }
+    $m1 = if ($ok) { [int64]$Matches[2] } else { -1 }
+    $held = if ($ok) { [int]$Matches[3] } else { -1 }
+    Assert "the rail computed its rims at least once (misses=$m0)" ($m0 -ge 1)
+    if ($NegativeControl) {
+        Assert "NEGATIVE CONTROL: forty paints recompute the rims" ($m1 -gt $m0)
+    } else {
+        Assert "forty resting paints reuse the rims: hits $h0 -> $h1, misses stay $m0 -> $m1" ($h1 -gt $h0 -and $m1 -eq $m0)
+    }
+    Assert "the cache stays bounded (held=$held, cap 8)" ($held -ge 1 -and $held -le 8)
 
     "== 2b: a progress report alone is work too - the tile sheens while it lights the border (T2279)"
     # Mac 919fba868: busy is the activity state OR a progress report on

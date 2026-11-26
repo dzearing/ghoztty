@@ -67,6 +67,7 @@ const transition = @import("pane_sidebar_transition.zig");
 const xf = @import("pane_sidebar_xfade.zig");
 const list_comp = @import("pane_sidebar_transition_comp.zig");
 const Dib32 = @import("dib32.zig");
+const rim_cache_mod = @import("pane_sidebar_rim_cache.zig");
 const desk_palette = @import("desk_palette.zig");
 const chrome_comp = @import("chrome_comp.zig");
 const App = @import("App.zig");
@@ -711,6 +712,13 @@ motion_client_px: u64 = 0,
 /// finished fading out is free.
 fades: [pane_sidebar.max_items]FadeSlot = undefined,
 fade_count: usize = 0,
+/// The rail tiles' resting rims (T2333), premultiplied and ready to blend:
+/// a resting tile's overlay depends only on its size, theme, scale and
+/// hover, so a scroll step or a hover elsewhere reuses it instead of
+/// recomputing it pixel by pixel. Freed in `destroy`.
+rim_cache: rim_cache_mod.Cache(Dib32, rim_cache_mod.default_cap) = .{},
+/// The hit/miss tally last logged, so the log line moves only with it.
+rim_logged: [2]u64 = .{ 0, 0 },
 /// When a motion tick last re-read the roster, so a progress report that
 /// expired without a "done" stops its row's sheen (`onMotionTick`).
 busy_poll_ms: u64 = 0,
@@ -901,6 +909,7 @@ pub fn destroy(self: *PaneSidebar) void {
     self.comp_fill.deinit();
     self.list_layers.drop();
     self.comp.deinit();
+    for (self.rim_cache.drain()) |s| s.value.destroy();
     // Clear the back-pointer FIRST: DestroyWindow delivers messages
     // synchronously and they must not find a half-dead object.
     _ = w32.SetWindowLongPtrW(self.hwnd, w32.GWLP_USERDATA, 0);
@@ -4500,8 +4509,29 @@ fn paintOverlay(self: *PaneSidebar, hdc: w32.HDC, r: pane_sidebar.Rect, radius: 
     if (self.paint_sheen and level > 0) o.busyAt(level, self.paint_ms);
     o.tile_rim = tile;
     if (!o.visible()) return;
+    // T2333: a resting tile's rim is the same bitmap every paint, so it is
+    // computed once and blended from the cache; only a pill whose busy sheen
+    // is showing (it moves with the clock) is computed here per paint.
+    if (rim_cache_mod.cacheable(o.busy, o.tile_rim)) {
+        const key = rim_cache_mod.Key.init(w, h, radius, o.rim_w, t.dark, o.tile_rim.?);
+        const dib = self.rim_cache.get(key) orelse made: {
+            const d = Dib32.create(hdc, w, h) orelse return;
+            fillOverlay(d, o, w, h);
+            if (self.rim_cache.put(key, d)) |old| old.destroy();
+            break :made d;
+        };
+        blendOverlay(hdc, r, dib, w, h);
+        self.logRimCache();
+        return;
+    }
     const dib = Dib32.create(hdc, w, h) orelse return;
     defer dib.destroy();
+    fillOverlay(dib, o, w, h);
+    blendOverlay(hdc, r, dib, w, h);
+}
+
+/// `o` into `dib`'s pixels, premultiplied.
+fn fillOverlay(dib: Dib32, o: motion.Overlay, w: i32, h: i32) void {
     const uw: usize = @intCast(w);
     for (0..@intCast(h)) |y| {
         for (dib.pixels[y * uw ..][0..uw], 0..) |*p, x| {
@@ -4511,10 +4541,24 @@ fn paintOverlay(self: *PaneSidebar, hdc: w32.HDC, r: pane_sidebar.Rect, radius: 
             p.* = (a << 24) | (c << 16) | (c << 8) | c;
         }
     }
+}
+
+fn blendOverlay(hdc: w32.HDC, r: pane_sidebar.Rect, dib: Dib32, w: i32, h: i32) void {
     _ = w32.AlphaBlend(hdc, r.left, r.top, w, h, dib.dc, 0, 0, w, h, .{
         .SourceConstantAlpha = 255,
         .AlphaFormat = w32.AC_SRC_ALPHA,
     });
+}
+
+/// The rim cache's tally (T2333), logged when the number of bitmaps it had
+/// to compute moves - so a run reads how many rims it computed against how
+/// many paints reused one, without a line per tile per paint (one every 32
+/// reuses at most).
+fn logRimCache(self: *PaneSidebar) void {
+    const c = &self.rim_cache;
+    if (c.misses == self.rim_logged[1] and c.hits < self.rim_logged[0] + 32) return;
+    self.rim_logged = .{ c.hits, c.misses };
+    log.debug("pane sidebar rim cache hits={d} misses={d} held={d}", .{ c.hits, c.misses, c.len });
 }
 
 /// What a pane's pill drew its glyph on.
