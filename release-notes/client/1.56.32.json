@@ -1,0 +1,23 @@
+{
+  "version": "1.56.32",
+  "sections": [
+    { "title": "New",
+      "items": [
+        { "text": "Linux single-window mode switches workspaces: the sidebar list, goto_tab/goto_window in list order, and every new window or tab opens a workspace." },
+        { "text": "On Windows the Settings Font row is a menu of the installed fixed-width fonts, as on the Mac." },
+        { "text": "Linux single-window mode lays a parked workspace out at the shared window's size, so a switch never changes its grid." },
+        { "text": "The workspaces seam's Grid is declared before the row that uses it." },
+        { "text": "Linux single-window mode: a parked workspace follows the shared window's size while it waits, so switching to it never changes its grid." },
+        { "text": "Linux single-window mode: the toplevel draws the desk of the workspace on show, and a switch crossfades the old gradient into the new one." },
+        { "text": "Linux single-window mode: the desk is measured on the workspace on show's toolbar, so a workspace other than the toplevel's own gets a desk at all and its switch fades." },
+        { "text": "The T3651 fade acceptance greps the app's shade lines, not the OpenGL shader log, and is executable." },
+        { "text": "The tab strip shows a chevron beside + that drops down the shell list, like Windows Terminal's split button." },
+        { "text": "Linux single-window mode: the shared window shows the gradient of the workspace on show, and a switch crossfades it over 0.35s." }
+      ] },
+    { "title": "Fixes",
+      "items": [
+        { "text": "Linux under WSLg finds WSLg's Wayland socket instead of falling back to an X11 window that draws nothing." },
+        { "text": "A headless test proves the Linux app reaches WSLg's Wayland socket without ever touching the user's desktop." }
+      ] }
+  ]
+}
