@@ -296,62 +296,75 @@ hl_check "F2 and leaves nothing to undo" $? "out=$out $(dump)"
 # --- a closed window (T3665) ----------------------------------------------------
 
 no_window() { ! has_window "$1"; }
+echo "  crit before W: $(grep -c CRITICAL "$APP_LOG")"
 cli +new-window --target=uy > /dev/null 2>&1
 hl_wait_for 15 has_window uy
 y=$(shape_of uy)
 pid_y=$(tpid "$y")
 alive "$pid_y"
 hl_check "W0 window uy has a live shell" $? "y=$y pid_y=$pid_y"
+echo "  crit after W0: $(grep -c CRITICAL "$APP_LOG")"
 
 cli +close --target=uy > /dev/null 2>&1
 hl_wait_for 10 no_window uy
 alive "$pid_y"
 hl_check "W1 +close of window uy takes it out of +list; its shell still runs" $? "pid_y=$pid_y"
+echo "  crit after W1: $(grep -c CRITICAL "$APP_LOG")"
 out=$(undo "$a")
 hl_wait_for 10 has_window uy
 [ "$(tpid "$y")" = "$pid_y" ]
 hl_check "W2 ctrl+shift+z in ANOTHER window (uw) brings uy back, same shell" $? "out=$out now=$(tpid "$y")"
+echo "  crit after W2: $(grep -c CRITICAL "$APP_LOG")"
 cli +send-keys --target="$y" 'echo W3_$((40+2))' Enter > /dev/null 2>&1
 read_y() { cli +read --name="$y" --lines=20 2>/dev/null | grep -q 'W3_42'; }
 hl_wait_for 10 read_y
 hl_check "W3 the restored window's pane runs what it is sent" $? "$(cli +read --name="$y" --lines=6 2>&1 | tr '\n' '|' | head -c 300)"
+echo "  crit after W3: $(grep -c CRITICAL "$APP_LOG")"
 out=$(redo "$a")
 hl_wait_for 10 no_window uy
 alive "$pid_y"
 hl_check "W4 ctrl+shift+y closes it again, parked (shell alive)" $? "out=$out pid_y=$pid_y"
+echo "  crit after W4: $(grep -c CRITICAL "$APP_LOG")"
 out=$(undo "$a")
 hl_wait_for 10 has_window uy
 hl_check "W5 ctrl+shift+z after the redo brings it back again" $? "out=$out"
+echo "  crit after W5: $(grep -c CRITICAL "$APP_LOG")"
 
 # Its last tab closing is the window closing: it parks whole.
 press "$y" ctrl+shift+w > /dev/null
 hl_wait_for 10 no_window uy
 alive "$pid_y"
 hl_check "W6 closing uy's last tab closes the window, parked (shell alive)" $? "pid_y=$pid_y"
+echo "  crit after W6: $(grep -c CRITICAL "$APP_LOG")"
 out=$(undo "$a")
 hl_wait_for 10 has_window uy
 [ "$(tpid "$y")" = "$pid_y" ]
 hl_check "W7 ctrl+shift+z brings the window back with that tab, same shell" $? "out=$out now=$(tpid "$y")"
+echo "  crit after W7: $(grep -c CRITICAL "$APP_LOG")"
 
 # So is its last pane closing.
 cli +close --target="$y" > /dev/null 2>&1
 hl_wait_for 10 no_window uy
 alive "$pid_y"
 hl_check "W8 +close of uy's only pane closes the window, parked (shell alive)" $? "pid_y=$pid_y"
+echo "  crit after W8: $(grep -c CRITICAL "$APP_LOG")"
 out=$(undo "$a")
 hl_wait_for 10 has_window uy
 [ "$(tpid "$y")" = "$pid_y" ]
 hl_check "W9 ctrl+shift+z brings it back, same shell" $? "out=$out now=$(tpid "$y")"
+echo "  crit after W9: $(grep -c CRITICAL "$APP_LOG")"
 
 # Expiry ends a parked window's shell; nothing is left to undo.
 cli +close --target=uy > /dev/null 2>&1
 hl_wait_for 10 no_window uy
 hl_wait_for $((timeout_s + 10)) dead "$pid_y"
 hl_check "W10 a closed window's shell ends once the undo expires" $? "pid_y=$pid_y"
+echo "  crit after W10: $(grep -c CRITICAL "$APP_LOG")"
 out=$(undo "$a")
 sleep 1
 no_window uy
 hl_check "W11 and it stays closed: nothing is left to undo" $? "out=$out"
+echo "  crit after W11: $(grep -c CRITICAL "$APP_LOG")"
 
 # +close --force of a window is never parked.
 cli +new-window --target=uz > /dev/null 2>&1
@@ -362,6 +375,7 @@ cli +close --target=uz --force > /dev/null 2>&1
 hl_wait_for 10 no_window uz
 hl_wait_for 3 dead "$pid_z"
 hl_check "W12 +close --force of a window ends its shell at once" $? "pid_z=$pid_z"
+echo "  crit after W12: $(grep -c CRITICAL "$APP_LOG")"
 
 grep -q "panic\|reached unreachable" "$APP_LOG"
 [ $? != 0 ]
