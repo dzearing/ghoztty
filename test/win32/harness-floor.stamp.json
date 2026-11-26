@@ -1,10 +1,10 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-11-25T18:12:56-08:00",
-    "commit":  "4a11293cd",
+    "generated":  "2026-11-25T19:30:42-08:00",
+    "commit":  "9989c421f3",
     "uncommitted":  [
-                        "test/win32/restore-pane-shell.ps1"
+
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "cfa23792d110d499fa4086697daa516d218d0d110e594a7452167a81220ee15e",
@@ -570,7 +570,7 @@
                   "test/win32/split-dim.ps1":  "f7fddb7e47fe4b82b735103e1f4abcea05e9ec40be893c9bb35590098f611a30",
                   "test/win32/split-dim-viewer.ps1":  "c499244428b1c2bd391ece8bee8d306226046836508ef9e23cd04f281e5377f3",
                   "test/win32/split-divider.ps1":  "5b17fbef23d7cec0fda65b675dd168b46b1b159393632e8926ff86315d706a98",
-                  "test/win32/split-inherit-cwd.ps1":  "b3817c300e94d7edaa888b6df0440ad488428239cfa213b34b67a784bc888913",
+                  "test/win32/split-inherit-cwd.ps1":  "5e9dc174c910069125b39bcc0af5619e534c615816d0c0ceda716fdbf0a909f3",
                   "test/win32/split-name-collision.ps1":  "5064c7b9a869a94f8023ec1afc83d5a5ea9ff17291e1e922f7840910c46299d2",
                   "test/win32/split-zoom-nav.ps1":  "8e1ad86aa8265a425b5cba060c5e51e2d27bc32b0ae877a8319abf9db75a9095",
                   "test/win32/sprite-testdata.ps1":  "79914472fe57b285f38ca6e0740a22e4975c142ccd15fe554b9b3b0835033d21",
