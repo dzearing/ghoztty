@@ -996,7 +996,7 @@ fn workspacesSeam(app: Context, request: Request) Allocator.Error![]u8 {
             }
         }
         try rows.append(arena, .{
-            .window = w.ipcName(),
+            .window = windowName(app, w),
             .parked = Workspaces.isParked(w),
             .held = w.isContentHeld(),
             .seen = w.isSeen(),
@@ -1011,7 +1011,7 @@ fn workspacesSeam(app: Context, request: Request) Allocator.Error![]u8 {
         const root = t.as(adw.ApplicationWindow).getContent() orelse break :content null;
         const p = root.as(gobject.Object).getData(Window.workspace_qdata_key) orelse break :content null;
         const owner: *Window = @ptrCast(@alignCast(p));
-        break :content owner.ipcName();
+        break :content windowName(app, owner);
     };
     const toplevel_title: ?[]const u8 = if (snap.toplevel) |t|
         (if (t.as(gtk.Window).getTitle()) |c| std.mem.span(c) else null)
@@ -1024,10 +1024,10 @@ fn workspacesSeam(app: Context, request: Request) Allocator.Error![]u8 {
         .success = true,
         .data = .{
             .mode = @tagName(window_mode.current()),
-            .toplevel = if (snap.toplevel) |t| t.ipcName() else null,
+            .toplevel = if (snap.toplevel) |t| windowName(app, t) else null,
             .toplevel_mapped = if (snap.toplevel) |t| t.as(gtk.Widget).getMapped() != 0 else false,
             .toplevel_title = toplevel_title,
-            .active = if (snap.active) |a| a.ipcName() else null,
+            .active = if (snap.active) |a| windowName(app, a) else null,
             .content = content_name,
             .shown = shown,
             .order = rows.items,

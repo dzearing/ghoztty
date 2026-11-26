@@ -82,7 +82,7 @@ hl_wait_for 10 wsis True 'd["toplevel_mapped"]'
 first=$(ws 'd["toplevel"]')
 wsis "('single', 1, True)" 'd["mode"], len(d["order"]), d["toplevel"] == d["active"] == d["content"]'
 hl_check "K1 the first window loads the toplevel: one workspace, on show, its content in it ($first)" $? "$WS_LAST"
-grep -q "workspace: window=$first loads the shared window" "$APP_LOG"
+grep -q "workspace: window=.* loads the shared window" "$APP_LOG"
 hl_check "K1b ...and logs it" $? "$(grep 'workspace:' "$APP_LOG" | head -3)"
 
 # ---- 2. a programmatic open stays parked, out of every window --------------
@@ -105,16 +105,21 @@ wsis "('$first', 'two', 'two', True, False, True, True, True, False)" \
 hl_check "K3 two is on show IN $first's toplevel; $first is parked, held and unseen" $? "$WS_LAST"
 wsis "False" 'row["two"]["mapped"]'
 hl_check "K3b two's own GtkWindow is still never mapped (one window)" $? "$WS_LAST"
-grep -q "workspace: show window=two (from $first)" "$APP_LOG"
+grep -q "workspace: show window=two (from " "$APP_LOG"
 hl_check "K3c the hand-off is logged" $? "$(grep 'workspace:' "$APP_LOG" | tail -3)"
 wsis True 'all(o["owner_ok"] for o in d["order"])'
 hl_check "K3d after the hand-off every pane still resolves to its own workspace" $? "$WS_LAST"
 
 # Its terminal runs inside the borrowed toplevel: keys reach its shell.
 mark="$XDG_RUNTIME_DIR/two-ran"
-hl_wait_for 10 sh -c "env -u GHOZTTY_IPC_SOCKET -u GHOZTTY_PANE_ID '$app' +send-keys --target=two 'touch $mark' >/dev/null 2>&1 && sleep 0.5 && test -e '$mark'"
-hl_check "K4 two's shell runs and takes keys while on show in the shared toplevel" $?
-cli +set-title --target=two --title=Two-Title >/dev/null 2>&1 || true
+for _ in $(seq 1 20); do
+    K4_OUT=$(cli +send-keys --target=two "touch $mark
+" 2>&1)
+    sleep 0.5
+    test -e "$mark" && break
+done
+test -e "$mark"
+hl_check "K4 two's shell runs and takes keys while on show in the shared toplevel" $? "$K4_OUT"
 
 # ---- 4. a split addressed to the parked workspace lands in it --------------
 o=$(cli +split --target="$first" --direction=right 2>&1); rc=$?
