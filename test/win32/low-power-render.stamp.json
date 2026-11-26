@@ -1,18 +1,20 @@
 {
     "guard":  "low-power-render",
     "script":  "test/win32/low-power-render.ps1",
-    "generated":  "2026-11-24T03:14:17-08:00",
-    "commit":  "696762529",
+    "generated":  "2026-11-25T19:50:52-08:00",
+    "commit":  "caa0d1e032",
     "uncommitted":  [
+                        "src/apprt/win32/occlusion.zig",
+                        "src/renderer/Thread.zig",
                         "test/win32/low-power-render.ps1"
                     ],
     "files":  {
-                  "src/apprt/win32/occlusion.zig":  "efe06766422d41454190b9be5d3a865ef33814801f5fb9158e326392eb39d338",
+                  "src/apprt/win32/occlusion.zig":  "6f49e880e753900a0ef7cc46d71a50237bb9159af49bb2ddf3f66a426c7caa24",
                   "src/renderer/low_power.zig":  "561c61649c3385011078e4c7646604e1f28b70e3cd6889967b8d997e8788e8cb",
-                  "src/renderer/Thread.zig":  "8f1ce8a9434e86e8a06d046e9d61dabad2c634af095211dc5eeda8474a37291f",
-                  "test/win32/low-power-render.ps1":  "10db8574daf099b5f8e966c81847aff932d261d0daf70c46131037fc764a0c63"
+                  "src/renderer/Thread.zig":  "1de7cfcabea0d5adb638d73d329791642ada45fa295244193aa139d1417b8fac",
+                  "test/win32/low-power-render.ps1":  "4ab3013818a91b62591d7a51bafb500f09d63232a7da81246aaaf00817b27b37"
               },
     "code":  {
-                 "test/win32/low-power-render.ps1":  "code1:08520a127024755ce6b57fb4de7377ccf215c1912deba885d965365345e88b6c"
+                 "test/win32/low-power-render.ps1":  "code1:e505a4e6aa7b4554760e269aebb798a7e4e1725b618a00449b35157b3f409a9f"
              }
 }

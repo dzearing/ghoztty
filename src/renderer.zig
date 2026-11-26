@@ -22,6 +22,7 @@ pub const Options = @import("renderer/Options.zig");
 pub const Overlay = @import("renderer/Overlay.zig");
 pub const Thread = @import("renderer/Thread.zig");
 pub const low_power = @import("renderer/low_power.zig");
+pub const pace = @import("renderer/pace.zig");
 pub const State = @import("renderer/State.zig");
 pub const CursorStyle = cursor.Style;
 pub const Message = message.Message;
@@ -64,6 +65,7 @@ test {
     _ = @import("renderer/gl_report.zig");
     _ = @import("renderer/upload_diff.zig");
     _ = @import("renderer/low_power.zig");
+    _ = @import("renderer/pace.zig");
     _ = @import("renderer/storage_trim.zig");
     _ = @import("renderer/gl_loader.zig");
     _ = @import("renderer/gl_robust.zig");

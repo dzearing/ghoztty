@@ -1,18 +1,18 @@
 {
     "guard":  "cursor-blink-redraw",
     "script":  "test/win32/cursor-blink-redraw.ps1",
-    "generated":  "2026-11-25T17:21:44-08:00",
-    "commit":  "4a11293cd",
+    "generated":  "2026-11-25T19:12:43-08:00",
+    "commit":  "caa0d1e032",
     "uncommitted":  [
-
+                        "src/renderer/Thread.zig"
                     ],
     "files":  {
                   "src/renderer/cursor.zig":  "1cec4ef3e7be9cdd649c7e121052ee3e77e645c4f8093b73c97e3d8fe5ed1c3f",
                   "src/renderer/generic.zig":  "eb9a343b976acb8d37d0d999cb2de3d23826c28b443d926f90a1c1db01d5af62",
-                  "src/renderer/Thread.zig":  "8f1ce8a9434e86e8a06d046e9d61dabad2c634af095211dc5eeda8474a37291f",
+                  "src/renderer/Thread.zig":  "1de7cfcabea0d5adb638d73d329791642ada45fa295244193aa139d1417b8fac",
                   "test/win32/cursor-blink-redraw.ps1":  "5c7725e905ad660031583cb9a2058be442b6df96c4c7b18f24f4a0be372f4e34"
               },
     "code":  {
-                 "test/win32/cursor-blink-redraw.ps1":  "code1:decd4a805c3a7df7d3efb3dd76c83ba58fd8bc43e67c8a2629006a586bab4334"
+                 "test/win32/cursor-blink-redraw.ps1":  "code1:4665748fe3d4fb463a06859464743b9e9ebc7e0cb63ab269c20c37cfb9ecf5f9"
              }
 }

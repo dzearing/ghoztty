@@ -30,6 +30,14 @@
 # load a window of Claude Code spinners is), and measures echo in the idle
 # first pane. -MeasureOnly prints the table and asserts nothing.
 #
+# Section D (T3761) leaves the windows cascaded, each showing a strip, starts
+# the spinner load in every pane but the first, and activates the newest
+# window: the app must stay under two cores (D1), each pane outside the window
+# in use draws at its capped pace - ~4 fps when a sliver of its window shows,
+# ~20 fps when more does (D3-D5) - and the pane in the window in use is not
+# capped (D6-D7). -NegativeControl runs the uncapped renderer
+# (GHOZTTY_TEST_NO_PACE=1), so D1 goes red.
+#
 # Section C stacks every window on one rectangle and starts the spinner load in
 # all but the first pane: covered windows must draw nothing (C1 <= one core),
 # and typing in the quiet pane stays fast (C2).
@@ -39,7 +47,7 @@
 # ~22 MB GPU a window (T3762); covered busy windows are stopped (54% of a core
 # at 50). The cliff is VISIBLE busy panes: cascaded, each draws ~50 fps and
 # costs ~37% of a core (renderer + GPU-driver thread), 50 windows ~11 cores on
-# release (T3761, which promotes -Busy into the verdict when it lands).
+# release. T3761 paces the panes of windows nobody is using (section D).
 #
 # Only touches ghoztty processes running from this repo's zig-out*.
 #   powershell -NoProfile -File test\win32\window-count-scale.ps1
@@ -78,6 +86,10 @@ $errlog = Join-Path $env:TEMP "ghoztty-window-count-scale-$PID.log"
 . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
 . (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
 . (Join-Path $PSScriptRoot 'lib\ProcessMemory.ps1')
+. (Join-Path $PSScriptRoot 'lib\PaneCapture.ps1')
+
+# The negative control runs the uncapped renderer (T3761), so D1 must go red.
+if ($NegativeControl) { $env:GHOZTTY_TEST_NO_PACE = '1' } else { Remove-Item Env:GHOZTTY_TEST_NO_PACE -ErrorAction SilentlyContinue }
 
 $script:pass = 0
 $script:fail = 0
@@ -326,6 +338,71 @@ try {
         Assert ($bN.AppCpu -le 10) ("A4 {0} idle windows cost <= 10% of a core ({1}%)" -f $bN.N, $bN.AppCpu)
     }
 
+    # ---- D: cascaded busy windows draw at a capped rate (T3761) ----------
+    # Every window still cascaded, each showing a strip, and every pane but the
+    # first printing like a spinner. Before T3761 each drew every chunk of
+    # output (~50 fps) and 50 windows kept ~11 cores busy; now a pane outside
+    # the window in use draws at most 20 fps, and 4 fps when only a sliver of
+    # its window shows (`renderer/pace.zig`). The frame-pacing probe reads
+    # each pane's pace and frame count, so the budget is read per pane as
+    # well as for the app. -NegativeControl runs with GHOZTTY_TEST_NO_PACE=1,
+    # the old uncapped renderer, so D1 MUST go red.
+    $dStarted = $false
+    if (-not $MeasureOnly -and $Layout -eq 'cascade') {
+        if (-not $Busy) {
+            for ($i = 2; $i -lt $n; $i++) { Start-BusyPane "wcs${i}a" }
+            $dStarted = $true
+        }
+        # The control: one busy pane's window is the one in use. Off the input
+        # desktop new windows open inactive, behind the launch window, and the
+        # app cannot take the foreground there, so the harness activates the
+        # window holding the newest pane itself (+list --json's window id is
+        # its HWND in separate-window mode).
+        $inUsePane = "wcs$($n - 1)a"
+        $activated = $false
+        $listed = $null
+        try { $listed = (Invoke-Verb @('+list', '--json')).Text | ConvertFrom-Json } catch { $listed = $null }
+        $holder = @($listed.data.windows | Where-Object { ($_ | ConvertTo-Json -Depth 30 -Compress) -match ('"' + $inUsePane + '"') })
+        if ($holder.Count -eq 1) {
+            $activated = [bool](Set-TestActiveWindow -Window ([IntPtr][int64]$holder[0].id))
+        }
+        Write-Host ("D  in-use control: {0} in window {1} (activated={2})" -f $inUsePane, $(if ($holder.Count -eq 1) { $holder[0].id } else { "$($holder.Count) matches" }), $activated)
+        Start-Sleep -Seconds 4  # settle: the spinner loops start and the visibility poll paces every window
+        $busyPanes = @(for ($i = 2; $i -lt $n; $i++) { "wcs${i}a" })
+        foreach ($p in $busyPanes) { [void](Invoke-GhozttyIpc -Action 'frame-pacing' -Arguments @("--target=$p", '--reset')) }
+        $cpuD = Measure-IdleCpu $appPid $IdleSec
+        $paced = @(foreach ($p in $busyPanes) {
+            $resp = Invoke-GhozttyIpc -Action 'frame-pacing' -Arguments @("--target=$p")
+            if ($null -eq $resp -or -not $resp.success) { continue }
+            # The rate over the frames' own span: the read comes some seconds
+            # after the CPU window closes, so frames / IdleSec overcounts.
+            $fps = if ($resp.data.span_us -gt 0) { $resp.data.intervals * 1e6 / [double]$resp.data.span_us } else { 0 }
+            [pscustomobject]@{ Pane = $p; Pace = [string]$resp.data.pace; Fps = [math]::Round($fps, 1) }
+        })
+        $byPace = $paced | Group-Object Pace | ForEach-Object {
+            '{0}={1} (max {2} fps)' -f $_.Name, $_.Count, (($_.Group | Measure-Object Fps -Maximum).Maximum)
+        }
+        Write-Host ("D  {0} windows cascaded, {1} printing: app {2}% desc {3}%  panes: {4}" -f (Get-TopCount $appPid), $busyPanes.Count, $cpuD.AppPct, $cpuD.DescPct, ($byPace -join ', '))
+        Write-Host ("D  threads: {0}" -f (Measure-ThreadCensus $appPid $IdleSec))
+        Assert ($cpuD.AppPct -le 200) ("D1 {0} cascaded windows with busy panes cost <= two cores ({1}%)" -f (Get-TopCount $appPid), $cpuD.AppPct)
+        Assert ($paced.Count -eq $busyPanes.Count) ("D2 the frame-pacing probe read every busy pane ({0} of {1})" -f $paced.Count, $busyPanes.Count)
+        $bg = @($paced | Where-Object { $_.Pace -eq 'background' })
+        $gl = @($paced | Where-Object { $_.Pace -eq 'glimpse' })
+        $bgMax = if ($bg.Count) { ($bg | Measure-Object Fps -Maximum).Maximum } else { 0 }
+        $glMax = if ($gl.Count) { ($gl | Measure-Object Fps -Maximum).Maximum } else { 0 }
+        # A cascade's back windows show only a strip; the ones near the front
+        # show more. Either way none of them is the window in use.
+        Assert ($gl.Count -ge [math]::Floor($busyPanes.Count / 2)) ("D3 most cascaded windows read as a glimpse ({0} of {1})" -f $gl.Count, $busyPanes.Count)
+        # The caps, with a frame of slack for the forced frames a pace or
+        # visibility change earns and the probe's own window edges.
+        Assert ($glMax -le 6) ("D4 a glimpsed pane draws at most ~4 fps ({0} fps)" -f $glMax)
+        Assert ($bgMax -le 22) ("D5 a background pane draws at most ~20 fps ({0} fps)" -f $bgMax)
+        $full = @($paced | Where-Object { $_.Pace -eq 'full' })
+        $fullMin = if ($full.Count) { ($full | Measure-Object Fps -Minimum).Minimum } else { 0 }
+        Assert ($activated -and $full.Count -eq 1 -and $full[0].Pane -eq $inUsePane) ("D6 exactly the pane of the window in use runs at full pace ({0}; full: {1})" -f $inUsePane, (($full | ForEach-Object { $_.Pane }) -join ','))
+        Assert ($fullMin -gt 22) ("D7 the pane in the window in use is not capped: it draws above the background cap ({0} fps)" -f $fullMin)
+    }
+
     # ---- C: covered windows draw nothing, however many there are ---------
     # Every window onto the same rectangle (the newest in front), then every
     # pane but the first prints like a spinner. Only the front window can be
@@ -339,7 +416,7 @@ try {
                 [void](Set-TestWindowPos -Window ([IntPtr][int64]$w.Hwnd) -X 40 -Y 40 -Width 1000 -Height 700)
             }
         }
-        for ($i = 2; $i -lt $n; $i++) { Start-BusyPane "wcs${i}a" }
+        if (-not $dStarted) { for ($i = 2; $i -lt $n; $i++) { Start-BusyPane "wcs${i}a" } }
         Start-Sleep -Seconds 4  # settle: the spinner loops start and the occlusion poll sees the stack
         $cpuC = Measure-IdleCpu $appPid $IdleSec
         Write-Host ("C  {0} windows, {1} printing: app {2}% desc {3}%  threads: {4}" -f (Get-TopCount $appPid), ($n - 2), $cpuC.AppPct, $cpuC.DescPct, (Measure-ThreadCensus $appPid $IdleSec))

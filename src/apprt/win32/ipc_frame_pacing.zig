@@ -19,7 +19,7 @@
 //! {"action":"frame-pacing","arguments":["--target=<pane|window|pane-id>"]}
 //!   -> {"success":true,"data":{"frames":N,"intervals":N,"mean_us":N,
 //!        "p50_us":N,"p95_us":N,"p99_us":N,"max_us":N,"long":N,"span_us":N,
-//!        "captures":N,"histogram":{"<=4ms":N,...,">250ms":N}}}
+//!        "captures":N,"histogram":{"<=4ms":N,...,">250ms":N},"pace":"full"}}
 //! ```
 //!
 //! A reading covers the frames since the last `--reset` (the ring holds the
@@ -91,13 +91,13 @@ pub fn handle(
     if (req.reset) {
         surface.framePacingReset();
         log.info("frame-pacing reset target={s}", .{req.target});
-        return try writeJson(alloc, null);
+        return try writeJson(alloc, null, null);
     }
     const reading = surface.framePacingRead();
-    return try writeJson(alloc, reading);
+    return try writeJson(alloc, reading, @tagName(surface.reported_pace));
 }
 
-fn writeJson(alloc: Allocator, reading: ?Surface.FramePacingReading) Allocator.Error![]u8 {
+fn writeJson(alloc: Allocator, reading: ?Surface.FramePacingReading, pace: ?[]const u8) Allocator.Error![]u8 {
     var out: std.Io.Writer.Allocating = .init(alloc);
     errdefer out.deinit();
     var jws: std.json.Stringify = .{ .writer = &out.writer };
@@ -126,6 +126,11 @@ fn writeJson(alloc: Allocator, reading: ?Surface.FramePacingReading) Allocator.E
                 jws.write(n) catch break :write;
             }
             jws.endObject() catch break :write;
+            // The pace the pane's renderer was last told (T3761).
+            if (pace) |p| {
+                jws.objectField("pace") catch break :write;
+                jws.write(p) catch break :write;
+            }
         } else {
             jws.objectField("reset") catch break :write;
             jws.write(true) catch break :write;

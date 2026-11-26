@@ -4722,6 +4722,19 @@ pub fn occlusionCallback(self: *Surface, visible: bool) !void {
     try self.queueRender();
 }
 
+/// Callback for how much anybody is looking at this surface's window (T3761,
+/// `renderer/pace.zig`): the window in use renders at full rate, the others
+/// at a cap. The apprt sends changes only.
+pub fn paceCallback(self: *Surface, pace: rendererpkg.pace.Pace) !void {
+    crash.sentry.thread_state = self.crashThreadState();
+    defer crash.sentry.thread_state = null;
+
+    _ = self.renderer_thread.mailbox.push(.{
+        .pace = pace,
+    }, .{ .forever = {} });
+    try self.queueRender();
+}
+
 pub fn focusCallback(self: *Surface, focused: bool) !void {
     // Crash metadata in case we crash in here
     crash.sentry.thread_state = self.crashThreadState();

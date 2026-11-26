@@ -22,6 +22,11 @@ pub const Message = union(enum) {
     /// and still have focus.
     visible: bool,
 
+    /// How much anybody is looking at the window this pane is in (T3761):
+    /// the window in use presents at full rate, the others at a cap. See
+    /// `renderer/pace.zig`. Sent only on a change.
+    pace: @import("pace.zig").Pace,
+
     /// Reset the cursor blink by immediately showing the cursor then
     /// restarting the timer.
     reset_cursor_blink,

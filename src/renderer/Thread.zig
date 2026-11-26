@@ -9,6 +9,7 @@ const crash = @import("../crash/main.zig");
 const internal_os = @import("../os/main.zig");
 const rendererpkg = @import("../renderer.zig");
 const low_power = @import("low_power.zig");
+const pace_cap = @import("pace.zig");
 const wake_coalesce = @import("wake_coalesce.zig");
 const apprt = @import("../apprt.zig");
 const configpkg = @import("../config.zig");
@@ -143,6 +144,12 @@ last_present: ?std.time.Instant = null,
 /// low-power cap (T1951) is measured from here, so a pane whose output changes
 /// nothing on screen - a title spinner - still builds at most at the cap.
 last_build: ?std.time.Instant = null,
+
+/// How much anybody is looking at this pane's window (T3761): output-driven
+/// frames of a pane outside the window in use wait for `pace_cap.capMs`.
+/// Full until the apprt says otherwise, so an apprt that never sends `.pace`
+/// (macOS today) renders exactly as before.
+pace: pace_cap.Pace = .full,
 
 flags: packed struct {
     /// This is true when a blinking cursor should be visible and false
@@ -440,7 +447,13 @@ fn drainMailbox(self: *Thread) !void {
                 log.debug("mailbox message=pane_backdrop null", .{}),
             else => log.debug("mailbox message={}", .{message}),
         }
-        self.force_frame.store(true, .release);
+        // Every message forces the next frame past the present caps - except
+        // the cursor-blink reset, which the IO thread sends for OUTPUT (at
+        // most every 500 ms while output flows, `Termio.processOutputLocked`).
+        // It is the output's own frame, not a reason to skip the cap: forced,
+        // it put two extra frames a second on every capped pane (T3761). The
+        // cursor it shows is a pixel change, so that frame presents anyway.
+        if (std.meta.activeTag(message) != .reset_cursor_blink) self.force_frame.store(true, .release);
         switch (message) {
             .crash => @panic("crash request, crashing intentionally"),
 
@@ -529,6 +542,10 @@ fn drainMailbox(self: *Thread) !void {
                     }
                 }
             },
+
+            // The forced frame every message earns (above) is the catch-up
+            // when the pace rises: output held for the old cap draws now.
+            .pace => |p| self.pace = p,
 
             .reset_cursor_blink => {
                 self.flags.cursor_blink_visible = true;
@@ -753,11 +770,12 @@ fn wakeupCallback(
     t.drainMailbox() catch |err|
         log.err("error draining mailbox err={}", .{err});
 
-    // In low-power mode (T1951) output inside the pane's present cap waits
-    // for the cap rather than building a frame now: the timer below renders
-    // once with everything that arrived in between. A forced frame (resize,
-    // focus, config, a repaint) goes straight through.
-    if (t.lowPowerDelayMs()) |ms| {
+    // In low-power mode (T1951), and in a window nobody is using (T3761),
+    // output inside the pane's present cap waits for the cap rather than
+    // building a frame now: the timer below renders once with everything that
+    // arrived in between. A forced frame (resize, focus, config, a repaint)
+    // goes straight through.
+    if (t.paceDelayMs()) |ms| {
         if (t.render_c.state() != .active) {
             t.render_h.run(&t.loop, &t.render_c, ms, Thread, t, renderCallback);
         }
@@ -897,17 +915,17 @@ fn renderCallback(
     return .disarm;
 }
 
-/// How long to hold a frame woken by output, or null to build it now (T1951).
-fn lowPowerDelayMs(t: *Thread) ?u64 {
-    const on = low_power.active();
-    if (!on) return null;
+/// How long to hold a frame woken by output, or null to build it now: the
+/// low-power cap (T1951) and the window's pace (T3761), whichever is stricter.
+fn paceDelayMs(t: *Thread) ?u64 {
+    const cap = pace_cap.capMs(low_power.active(), t.flags.focused, t.pace) orelse return null;
     const forced = t.force_frame.load(.acquire);
     const since: ?u64 = since: {
         const l = t.last_build orelse break :since null;
         const n = std.time.Instant.now() catch break :since null;
         break :since n.since(l);
     };
-    return low_power.deferMs(on, t.flags.focused, forced, since);
+    return pace_cap.deferMs(cap, forced, since);
 }
 
 /// How long an unchanged frame may go unpresented (T1935).

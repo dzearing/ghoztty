@@ -95,6 +95,7 @@ const about_rows = @import("about_rows.zig");
 const color_math = @import("color_math.zig");
 const hero_snap_schedule = @import("hero_snap_schedule.zig");
 const frame_pacing = @import("frame_pacing.zig");
+const pace_cap = @import("../../renderer/pace.zig");
 const build_config = @import("../../build_config.zig");
 const busy_light = @import("busy_light.zig");
 
@@ -155,6 +156,10 @@ core_surface_ready: bool = false,
 /// The visibility last forwarded to the core (`setVisible`, T1951); null until
 /// the first one. The renderer starts out visible.
 reported_visible: ?bool = null,
+
+/// The pace last forwarded to the core (`setPace`, T3761). The renderer
+/// starts out at full pace.
+reported_pace: pace_cap.Pace = .full,
 
 /// The pane is hidden in a way nothing reads its render targets through: its
 /// WINDOW is hidden - minimized, cloaked, covered, or parked by a close-undo
@@ -2002,6 +2007,18 @@ pub fn setVisible(self: *Surface, visible: bool) void {
     self.reported_visible = visible;
     self.core_surface.occlusionCallback(visible) catch |err| {
         log.warn("occlusionCallback failed err={}", .{err});
+    };
+}
+
+/// Tell the renderer how much anybody is looking at this pane's window
+/// (T3761, `renderer/pace.zig`). Changes only: the visibility poll re-asserts
+/// it four times a second.
+pub fn setPace(self: *Surface, pace: pace_cap.Pace) void {
+    if (!self.core_surface_ready) return;
+    if (self.reported_pace == pace) return;
+    self.reported_pace = pace;
+    self.core_surface.paceCallback(pace) catch |err| {
+        log.warn("paceCallback failed err={}", .{err});
     };
 }
 

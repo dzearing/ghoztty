@@ -1569,8 +1569,9 @@ pub fn pollVisibility(self: *App) void {
     if (occlusion.disabled()) return;
     for (self.windows.items) |w| {
         const h = w.hwnd orelse continue;
-        const hidden = self.session_hidden or occlusion.windowHidden(h) != .visible;
-        w.applyOcclusion(hidden);
+        const view = occlusion.windowView(h);
+        const hidden = self.session_hidden or view.state != .visible;
+        w.applyView(hidden, if (hidden) 0 else view.seen_permille);
     }
 }
 

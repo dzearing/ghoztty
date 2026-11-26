@@ -46,6 +46,11 @@ if ($ExePath) { $exe = $ExePath }
 
 $env:GHOZTTY_PIPE_SUFFIX = "-lowpwr$PID"
 $env:GHOZTTY_PERF = '1'
+# This measures the low-power cap alone (T3761): U's window is not the one in
+# use and F covers most of it, so the window pace would cap it at 4 fps too
+# and the "full rate when low-power is off" controls could not tell the two
+# caps apart. window-count-scale.ps1 section D owns the pace.
+$env:GHOZTTY_TEST_NO_PACE = '1'
 
 . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
 . (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
@@ -226,7 +231,7 @@ Stop-Process -Id $g.App.Pid -Force -ErrorAction SilentlyContinue
     Remove-TestDesktop
     Kill-RepoInstances
     Set-SoftwarePath $false
-    Remove-Item Env:\GHOZTTY_LOW_POWER, Env:\GHOZTTY_PERF -ErrorAction SilentlyContinue
+    Remove-Item Env:\GHOZTTY_LOW_POWER, Env:\GHOZTTY_PERF, Env:\GHOZTTY_TEST_NO_PACE -ErrorAction SilentlyContinue
     Remove-Item $spin -ErrorAction SilentlyContinue
 }
 

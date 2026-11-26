@@ -13,6 +13,7 @@ const input = @import("../../input.zig");
 
 const App = @import("App.zig");
 const occlusion = @import("occlusion.zig");
+const pace_cap = @import("../../renderer/pace.zig");
 const remote_session = @import("remote_session.zig");
 const CoreApp = @import("../../App.zig");
 const MachineChooser = @import("MachineChooser.zig");
@@ -765,6 +766,12 @@ sidebar: ?*PaneSidebar = null,
 
 /// Set by `applyOcclusion` while nobody can see this window (T1951).
 occluded: bool = false,
+/// The share of the client area on view at the last visibility poll, in
+/// thousandths (T3761, `occlusion.View`).
+seen_permille: u16 = 1000,
+/// The pace this window's terminal panes were last told (T3761,
+/// `renderer/pace.zig`): full in the window in use, capped elsewhere.
+pace: pace_cap.Pace = .full,
 /// The title (and tab-strip repaint) held while nobody can see this window
 /// (T2912, `held_title`); `title_landed` says a first title has been set.
 title_hold: held_title.Held = .{},
@@ -5089,6 +5096,35 @@ pub fn setActiveTabVisible(self: *Window, visible: bool) void {
 /// (`Surface.setVisible` and `ViewerPane.setVisible` forward only changes).
 /// Revealed, the panes come back and the layout re-derives which of them are
 /// really shown (a zoomed split, a stashed pane), so each draws once.
+/// The visibility poll's whole answer (T3761): whether anybody can see this
+/// window, and how much of it shows. The second half sets the pace its panes
+/// present at (`syncPace`).
+pub fn applyView(self: *Window, hidden: bool, seen_permille: u16) void {
+    self.seen_permille = seen_permille;
+    self.applyOcclusion(hidden);
+    self.syncPace();
+}
+
+/// Tell the active tab's terminal panes their pace (T3761,
+/// `renderer/pace.zig`): full in the window in use, capped in every other
+/// window, and capped harder when only a sliver of it shows. Fifty cascaded
+/// windows of busy panes each drew every chunk of output at ~50 fps and kept
+/// ~11 cores busy. Cheap and idempotent - each pane forwards changes only -
+/// so it runs on every poll and picks up panes added since the last one.
+fn syncPace(self: *Window) void {
+    const p: pace_cap.Pace = if (occlusion.paceDisabled()) .full else pace_cap.ofWindow(self.inUse(), self.seen_permille);
+    if (p != self.pace) {
+        log.debug("window pace {s} -> {s} (seen={d}/1000)", .{ @tagName(self.pace), @tagName(p), self.seen_permille });
+        self.pace = p;
+    }
+    if (self.active_tab >= self.tab_count) return;
+    var it = self.tab_trees[self.active_tab].iterator();
+    while (it.next()) |entry| switch (entry.view.kind) {
+        .terminal => |s| s.setPace(p),
+        .viewer => {},
+    };
+}
+
 pub fn applyOcclusion(self: *Window, hidden: bool) void {
     const was = self.occluded;
     self.occluded = hidden;
@@ -10509,6 +10545,8 @@ fn inUseChanged(self: *Window) void {
     if (self.closing) return;
     self.syncBusyLights();
     if (self.sidebar) |sb| sb.repaint();
+    // Activated: the panes go to full pace now, not at the next poll.
+    self.syncPace();
 }
 
 /// Where every light's head is right now.
