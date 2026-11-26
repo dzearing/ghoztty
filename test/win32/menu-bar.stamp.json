@@ -1,8 +1,8 @@
 {
     "guard":  "menu-bar",
     "script":  "test/win32/menu-bar.ps1",
-    "generated":  "2026-11-25T16:10:31-08:00",
-    "commit":  "f066635bf",
+    "generated":  "2026-11-25T16:39:17-08:00",
+    "commit":  "4e3e05a95",
     "uncommitted":  [
 
                     ],

@@ -1,8 +1,8 @@
 {
     "guard":  "checkout-guard",
     "script":  "test/win32/checkout-guard.ps1",
-    "generated":  "2026-11-25T16:17:14-08:00",
-    "commit":  "f066635bf",
+    "generated":  "2026-11-25T17:09:48-08:00",
+    "commit":  "4e3e05a95",
     "uncommitted":  [
 
                     ],
