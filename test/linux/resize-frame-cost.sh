@@ -67,7 +67,7 @@ first=$(hl_first_pane "$app")
 ws() { hl_ipc window-size "--target=$first" "$@"; }
 jget() { python3 -I -c 'import json,sys; r=json.load(sys.stdin); print(eval(sys.argv[1]))' "$1" 2>/dev/null; }
 seen() { hl_ipc pane-seen "--target=$first" "$@"; }
-dstat() { printf '%s' "$1" | jget "[p for p in r['data']['panes'] if p['pane']=='$first'][0]['frames']['draw']$2"; }
+dstat() { printf '%s' "$1" | jget "[p for p in r['data']['panes'] if p['pane']=='$first'][0]['draw']$2"; }
 
 # Let the first frames land, then start a fresh measurement.
 for _ in $(seq 1 200); do seen | grep -q '"draw"' && break; sleep 0.1; done
