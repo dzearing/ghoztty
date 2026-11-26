@@ -1,8 +1,8 @@
 {
     "guard":  "unwired-hook",
     "script":  "test/win32/unwired-hook-audit.ps1",
-    "generated":  "2026-11-26T13:08:41-08:00",
-    "commit":  "49ff696021",
+    "generated":  "2026-11-26T13:14:48-08:00",
+    "commit":  "a9378a02c4",
     "uncommitted":  [
 
                     ],
@@ -84,7 +84,7 @@
                   "src/apprt/gtk/pane_banner_rules.zig":  "ccc269408c9b39474850639746843393e1653402495048f2db0328e3298dfbcf",
                   "src/apprt/gtk/pane_drop_apply.zig":  "28bfdb3dc4b24a60a441ff7e3d7dfeba5bce0543f16f57dff0746ea4ea2345c8",
                   "src/apprt/gtk/pane_ghost_rules.zig":  "53611b6b9f04cf42c271fd2d543b1aaf4cb5bb3133ced62db90460193a3b9612",
-                  "src/apprt/gtk/pane_sidebar_all.zig":  "e237088a5f90ac152e5bb7afb250c446f4cd7ca2ffa53ad20e79e781d7a8cbfd",
+                  "src/apprt/gtk/pane_sidebar_all.zig":  "cc52efed04671d0cc3a88001bee059c3976d45f0091ecf29dffb891f9093d9ce",
                   "src/apprt/gtk/pane_sidebar_rows.zig":  "264b9e839b59dc46a8a80b460a5e549f29942e47bbec8601bc128259627bf87c",
                   "src/apprt/gtk/pane_snapshot.zig":  "1ae68a786104731789761780642bc64a8ec794a2bafa9e9c7a723fc1242ad79f",
                   "src/apprt/gtk/pane_stage_rules.zig":  "51a94120645034542ce58360428b12be6f7c0dd2574b757087a1b80082e373d2",
@@ -92,7 +92,7 @@
                   "src/apprt/gtk/PaneBanner.zig":  "faa3384cfa2c0f189f9d4f9b6e39b50810d9afda50b33f33ff5a67693a3753c5",
                   "src/apprt/gtk/PaneDrag.zig":  "df31e313b58eee4aadfa33e5e5b86d9b443a27fee03641a8a8b76ad5aa918f67",
                   "src/apprt/gtk/PaneDragGhost.zig":  "dbafda6d0e699693cc5b7e7c0c762c796ac04e28c7ffb76972a1f656c08d27cc",
-                  "src/apprt/gtk/PaneSidebar.zig":  "52ab7f6ef9c956a13bc17ab6ecffcfac5cad39fe9fa9170490a0d00900812a37",
+                  "src/apprt/gtk/PaneSidebar.zig":  "50f6e9b45c9383ea00971b3d76b6b8ebd29e77cf54b9cfcada8be5cbb6ad1f02",
                   "src/apprt/gtk/portal.zig":  "2832170e68fbdd330e256b7f2925a916024de67e83dff5880d450efd3dde7707",
                   "src/apprt/gtk/portal/OpenURI.zig":  "53fead4541a2afbefe7e731ba0d4ae595d95586099e632f3df2b46f856e90541",
                   "src/apprt/gtk/post_fork.zig":  "2fbb12016b45d893cccc5949d1eeaf01ff2cd09af1769539a05699a31ea4454c",
@@ -1389,7 +1389,7 @@
                   "test/win32/crash-report.ps1":  "6025d55f192e5b76edf56c865f4fe57f18dda58b29d1bc73bb637940556dce95",
                   "test/win32/crash-stacks.ps1":  "dd47c1c863fb595f6b170407e6d1f2ce9027bb7d1b35717a4b5e2be1cc0d0980",
                   "test/win32/cursor-blink-redraw.ps1":  "5c7725e905ad660031583cb9a2058be442b6df96c4c7b18f24f4a0be372f4e34",
-                  "test/win32/daily-publish.ps1":  "ec4ba1160785300cfb8452561edf9306910fa3fc0a677399a33882a4c4275e6c",
+                  "test/win32/daily-publish.ps1":  "5f9f35a04cd40bd6c5527c1a420d12290d638e07571a1e160df3fb6c852f8f4d",
                   "test/win32/dark-menus.ps1":  "ff95db79cd0ac8bc9cd9c7def98d112d129127759b3c084a1f5f5e087e3e9502",
                   "test/win32/dashboard-dom.ps1":  "588b973da60dc74921f6acd2e47ff5d2ce448fe06359f6551a16e1b5e4d779cf",
                   "test/win32/dashboard-keepalive.ps1":  "907915acd38d52b16755167f2df7e4383bc5d1cb53a3f8cbd84e419a559c7429",
@@ -1831,6 +1831,7 @@
                   "test/win32/window-size-memory.ps1":  "de44d45b030df89128ff89acd7bf09556272820bb433cf54a1ce9834ca4b25a8",
                   "test/win32/window-title.ps1":  "e648149d63cc562e8047298986f4e9008d2db024db71fb5139d79ed505890b32",
                   "test/win32/wmi-bound-audit.ps1":  "054555b6b278d56f99f41989e1b8aa7bac1b95b3eb460d0d59c6c03b8ab6220d",
+                  "test/win32/wsl-pane-lifecycle.ps1":  "bba604776a3db7a99c2e56c61ec764617a78ce66463c593a3fe57533416326dd",
                   "test/win32/zig-repro-t476.ps1":  "18809a84f951773567de7a6ed8dbe628d2ad3a7872b339e292a2bebd0afb1364"
               }
 }
