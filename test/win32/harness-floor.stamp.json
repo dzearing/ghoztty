@@ -1,11 +1,10 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-11-25T15:30:34-08:00",
-    "commit":  "2d40b2a37",
+    "generated":  "2026-11-25T16:05:02-08:00",
+    "commit":  "f066635bf",
     "uncommitted":  [
-                        "test/win32/menu-bar.ps1",
-                        "test/win32/new-tab-shell.ps1"
+
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "cfa23792d110d499fa4086697daa516d218d0d110e594a7452167a81220ee15e",
@@ -415,6 +414,7 @@
                   "test/win32/palette-grid-size.ps1":  "503b63cbcb1bc6763c2d2800245923385ce4a4b5bb5a8e1649e5ddfe48f265b1",
                   "test/win32/palette-jump.ps1":  "ee11e403b39036691fbaf1f12aab1820f9a98ca96fc0d9a04f94e50200c1d7a7",
                   "test/win32/palette-order.ps1":  "1aa851b76eaafbb3d721aece4d5f934a9a142e0d9d23ac8b1645d38b86727580",
+                  "test/win32/palette-shell-pick.ps1":  "27fb59f9428fa25200a43c27e3f45ad1eb59e728f3be37095a13b5f92a2edd22",
                   "test/win32/pane-banner.ps1":  "25b0e0eef6f06ebcd952801efb2f8d6213cf6388edddce6f0bea4348562e9489",
                   "test/win32/pane-busy-light.ps1":  "b8e2419d707354caee5537689e49ded981568e372eb01ed0e2f1c5a952e8995c",
                   "test/win32/pane-capture.ps1":  "f188520b24d4750ac5db6bd12731747f73563e1c34f50227e715ac236ee3f570",
