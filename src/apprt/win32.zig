@@ -167,6 +167,11 @@ test {
     // routine outcome — so the budget is checked in its own right rather than
     // only through whichever caller happens to be compiled.
     _ = @import("win32/clipboard_open.zig");
+    // The box-wide lock every clipboard test takes its turn under (T850,
+    // shared since T2353). Its exclusion and its dead-holder hand-off are what
+    // keep two loop lanes' clipboard tests from reddening each other, so they
+    // are checked in their own right.
+    _ = @import("win32/clipboard_test_lock.zig");
     // The `ghoztty://` URL scheme's win32 half (T695): the registry entry a
     // clicked link is resolved through, and the activation process that
     // answers it. The registration strings decide whether a link reaches this

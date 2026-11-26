@@ -46,6 +46,7 @@
 
 const std = @import("std");
 const w32 = @import("win32.zig");
+const clipboard_test_lock = @import("clipboard_test_lock.zig");
 
 const log = std.log.scoped(.clipboard);
 
@@ -373,6 +374,12 @@ test "open then close leaves the clipboard takeable again" {
     // so by name is the useful answer. The same goes for a refused open with no
     // window named at all, the shape of the real 10-27 wedge (T2346). Our OWN
     // process holding it, or any other unexplained failure, still fails.
+    //
+    // Its turn first (T2353): this open lands in the middle of another lane's
+    // clipboard poll otherwise, and reddens THAT test for nothing it did.
+    var turn = clipboard_test_lock.ClipboardTestLock.init();
+    defer turn.deinit();
+    if (!turn.take(null, clipboard_test_lock.default_timeout_ms)) return error.ClipboardTestLock;
     if (!open(null)) {
         const h = holder();
         if (h.isBoxCondition()) {
@@ -402,6 +409,12 @@ test "holder: a free clipboard reads as free, and a held one names this process"
     const win = w32.CreateWindowExW(0, class, class, 0, 0, 0, 0, 0, null, null, null, null) orelse
         return error.SkipZigTest;
     defer _ = w32.DestroyWindow(win);
+
+    // Held with a real window excludes every other process for as long as it
+    // lasts, so it waits its turn behind the other lanes' clipboard tests (T2353).
+    var turn = clipboard_test_lock.ClipboardTestLock.init();
+    defer turn.deinit();
+    if (!turn.take(null, clipboard_test_lock.default_timeout_ms)) return error.ClipboardTestLock;
 
     if (!open(win)) {
         // Somebody else has it; the free/held arms cannot be told apart now.
