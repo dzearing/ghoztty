@@ -47,7 +47,8 @@ import json, sys
 r = json.load(sys.stdin)
 labels = r.get("labels", [])
 mapped = [l for l in labels if l["mapped"]]
-title = [l for l in mapped if "title" in l["classes"] and l["parent"] == "windowtitle"]
+# AdwWindowTitle: a box inside windowtitle holding the .title label.
+title = [l for l in mapped if "title" in l["classes"] and l["text"] == "Weights"]
 print(eval(sys.argv[1]))' "$expr" 2>/dev/null
 }
 
