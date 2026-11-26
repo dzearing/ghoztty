@@ -831,6 +831,36 @@ pub const Application = extern struct {
         return self.private().quitting;
     }
 
+    /// How long a quit may spend tearing windows down before the backstop
+    /// ends the process (T3656). A normal quit, debug leak report included,
+    /// is done well inside it.
+    const quit_backstop_ms: u64 = 8_000;
+
+    /// T3656: under WSLg, Mesa's d3d12 driver can block forever inside
+    /// window teardown (gtk_widget_unrealize -> gdk_gl_texture_release ->
+    /// a futex wait in libgallium that never wakes), so `quitNow` never
+    /// returns. The process then outlives a SIGTERM, a logout or a
+    /// `systemctl stop`, and every later SIGTERM goes unanswered because the
+    /// first handler is still running. Once the layout and relay windows
+    /// are saved nothing is lost by ending the process: the agent detaches
+    /// every session on the broken pipe, exactly as it does for a crash.
+    fn armQuitBackstop() void {
+        const thread = std.Thread.spawn(.{}, quitBackstopMain, .{}) catch |err| {
+            log.warn("quit backstop not armed: {}", .{err});
+            return;
+        };
+        thread.detach();
+    }
+
+    fn quitBackstopMain() void {
+        std.Thread.sleep(quit_backstop_ms * std.time.ns_per_ms);
+        log.warn(
+            "quit backstop: the quit has not finished {d}s after it began (window teardown is stuck); exiting now - the layout was saved first",
+            .{quit_backstop_ms / std.time.ms_per_s},
+        );
+        std.c._exit(0);
+    }
+
     fn quitNow(self: *Self) void {
         // T3397: record the layout (screens included) while every window
         // still stands; nothing writes it after this, so the teardown below
@@ -839,6 +869,9 @@ pub const Application = extern struct {
         // T3671: the relay windows' sessions, names and titles as they stand,
         // kept for the next launch.
         RelayWindows.syncForQuit();
+        // T3656: everything a relaunch needs is saved now, so a teardown that
+        // never returns must not keep the process alive.
+        if (!self.private().quitting) armQuitBackstop();
         self.private().quitting = true;
         // T3384: a pane parked for undo was closed by the user, so it ends
         // (its session too) rather than riding out the quit as a detach.

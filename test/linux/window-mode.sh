@@ -86,11 +86,14 @@ hl_check "W5b a window opened beside an open one does not re-latch" $? "$(grep '
 
 # T3656: SIGTERM (a logout, `systemctl stop`) quits the app whatever
 # quit-after-last-window-closed says - here it is false and two windows are
-# open. It once logged "quitting" and stayed up for good; the KILL after a
-# failed check only keeps hl_stop from waiting on a stuck app.
+# open. It once logged "quitting" and stayed up for good: about one run in
+# three, Mesa's d3d12 driver blocks the window teardown forever, and the quit
+# backstop (8s, application.zig) is what ends the process then. The KILL
+# after a failed check only keeps hl_stop from waiting on a stuck app.
 kill -TERM "$APP" 2>/dev/null
-hl_wait_for 10 sh -c "! kill -0 $APP 2>/dev/null"
-hl_check "W5c SIGTERM quits the resident app (quit-after-last-window-closed = false) within 10s" $? "$(grep -E 'SIGTERM|runloop' "$APP_LOG" | tail -3)"
+hl_wait_for 15 sh -c "! kill -0 $APP 2>/dev/null"
+hl_check "W5c SIGTERM quits the resident app (quit-after-last-window-closed = false) within 15s" $? "$(grep -E 'SIGTERM|runloop|quit backstop' "$APP_LOG" | tail -3)"
+grep -E 'exiting runloop|quit backstop' "$APP_LOG" | tail -1 | sed 's/^/  ended by: /'
 grep -q 'received SIGTERM, quitting' "$APP_LOG"
 hl_check "W5d ...and it is the SIGTERM handler that quit it" $?
 kill -KILL "$APP" 2>/dev/null
