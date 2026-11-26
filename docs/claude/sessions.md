@@ -39,6 +39,21 @@ crashes). It is **on by default** (disable with `session-persistence = off`).
 
   E2E: `test/win32/session-relaunch-notify.ps1`.
 
+**A pane comes back on ITS shell** (T3755, Windows; Mac T3736 and Linux T3737
+carry the same rule). A pane opened on a chosen shell - `--shell=<spec>` with no
+command, a "... with Shell" palette pick, Restart Pane with Shell - records that
+spec in its layout leaf (`shell`, additive: absent is the default shell, and an
+older build ignores it). When a restore has to OPEN a fresh shell for the pane
+(its session is gone, or there is no agent), it opens that shell through the
+same builder the pickers use (`pane_restart.shellOverrides`) instead of the
+default one. A `wsl:<distro>` pane records the distro's OSC 7 folder in its
+Linux spelling (the core hands it over as `\tmp`; `restart_shell.linuxPathOf`)
+and reopens with `wsl.exe -d <distro> --cd <that folder>`, or `~` when the
+distro never reported one. A command pane records no shell. A pane that
+re-ATTACHes keeps the process it has and only goes on remembering the spec.
+E2E: `test/win32/restore-pane-shell.ps1` (its WSL arm runs only when the default
+distro is already running).
+
 **A window that opens without the agent says so** (T1693). When the shared
 resolve fails — the agent would not launch (`spawn_failed`) or never answered
 inside the deadline (`unresponsive`) — that window, and every window opened in

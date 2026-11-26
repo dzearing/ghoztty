@@ -1,0 +1,21 @@
+{
+    "guard":  "restore-pane-shell",
+    "script":  "test/win32/restore-pane-shell.ps1",
+    "generated":  "2026-11-25T18:36:50-08:00",
+    "commit":  "caa0d1e03",
+    "uncommitted":  [
+                        "src/apprt/win32/pane_restart.zig",
+                        "src/apprt/win32/restart_shell.zig",
+                        "src/apprt/win32/session_layout.zig",
+                        "test/win32/restore-pane-shell.ps1"
+                    ],
+    "files":  {
+                  "src/apprt/win32/pane_restart.zig":  "024a4bc0aca9e59eda1db93576b3f97aeb60735e88d4f956f7b602565b5f6332",
+                  "src/apprt/win32/restart_shell.zig":  "d8a6624f447dd7c5386dc3525e2f278cdb77e5bb79ba1395dcba8203edd053f1",
+                  "src/apprt/win32/session_layout.zig":  "d679844c7039cbdb10e7772229aac91e0db1dcce40ca13fe056b52ce06fedf97",
+                  "test/win32/restore-pane-shell.ps1":  "4b03f52c9beedd2b140ff3c22471f868710fc7a15d3091c3fea6f82e508d7db7"
+              },
+    "code":  {
+                 "test/win32/restore-pane-shell.ps1":  "code1:4a75db2b340fc1d08a076a2ce8feda726c386ee5363a93fc1a3092747eaf8e99"
+             }
+}

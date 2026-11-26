@@ -21,6 +21,7 @@ const relay_suspend = @import("../../remote/relay_suspend.zig");
 const AgentIntegrationsDialog = @import("AgentIntegrationsDialog.zig");
 const ConfirmDialog = @import("ConfirmDialog.zig");
 const pane_restart = @import("pane_restart.zig");
+const restart_shell = @import("restart_shell.zig");
 const DarkMode = @import("DarkMode.zig");
 const bell_audio = @import("bell_audio.zig");
 const PathInstaller = @import("PathInstaller.zig");
@@ -514,6 +515,11 @@ pushed_layouts_conn: ?*remote_connection.Connection = null,
 /// can free it and reuse the slot. That keeps the peak cost at a single pane's
 /// screen no matter how many windows a restore rebuilds. Freed in `deinit`.
 restore_snapshot_scratch: ?[]u8 = null,
+
+/// Scratch for the shell argv of the restored leaf currently being built
+/// (T3755, `restoreShellOverrides`): the same one-slot contract as
+/// `restore_snapshot_scratch` above, reset by each call. Freed in `deinit`.
+restore_shell_scratch: ?std.heap.ArenaAllocator = null,
 
 /// Identity of the last session-layout body this process wrote to disk (T922),
 /// so a refresh tick that decides to capture can still skip the write when the
@@ -2979,6 +2985,11 @@ pub fn terminate(self: *App) void {
         alloc.free(s);
         self.restore_snapshot_scratch = null;
     }
+    // T3755: the last restored leaf's shell argv (Surface.init dupes it).
+    if (self.restore_shell_scratch) |*s| {
+        s.deinit();
+        self.restore_shell_scratch = null;
+    }
 
     if (self.bg_brush) |brush| {
         _ = w32.DeleteObject(@ptrCast(brush));
@@ -3724,6 +3735,12 @@ fn captureLeaf(
             var buf: [7]u8 = undefined;
             break :tint try arena.dupe(u8, color_math.hexString(rgb, &buf));
         } else null,
+        // T3755: the shell the pane was opened on, so a restore that has to
+        // open a fresh shell opens this one. A pane on another machine runs
+        // that machine's shells, which this list does not name.
+        .shell = if (surface.parent_window.remote_dialed != null)
+            null
+        else if (surface.shellSpec()) |s| try arena.dupe(u8, s) else null,
     };
 }
 
@@ -3744,6 +3761,16 @@ fn captureLeaf(
 /// recorded value must be native to the machine that runs the pane, and for a
 /// cross-machine pane that is the remote's own OSC-7 report.
 fn captureLeafWorkingDirectory(arena: Allocator, surface: *Surface) !?[]const u8 {
+    // T3755: a WSL pane's process is `wsl.exe`, whose OS-level cwd is the
+    // Windows folder it was started in, not where the user is inside the
+    // distro. The distro's own OSC 7 report is the answer there, and only a
+    // Linux path is one (`restart_shell.restoredCwd` takes nothing else) -
+    // recorded in its Linux spelling, since the core flips its separators.
+    if (surface.shellSpec()) |spec| if (restart_shell.isWslSpec(spec)) {
+        const reported = surface.pwd orelse return null;
+        const linux = try restart_shell.linuxPathOf(arena, reported) orelse return null;
+        return try arena.dupe(u8, linux);
+    };
     if (surface.livePwd(arena)) |live| {
         if (live.len > 0) return live;
     }
@@ -6020,9 +6047,14 @@ fn restoreAttachOverride(
     // and it still opens where the pane was (T752). A recorded directory that
     // has since been deleted costs nothing here: the exec spawn already logs it
     // and inherits instead of failing the pane.
-    const conn = tr.conn orelse return .{
-        .pane_id = leaf.pane_id,
-        .working_directory = leaf.working_directory,
+    //
+    // T3755: and on the shell it was opened on, when it recorded one.
+    const conn = tr.conn orelse {
+        if (self.restoreShellOverrides(leaf, null, leaf.pane_id)) |ov| return ov;
+        return .{
+            .pane_id = leaf.pane_id,
+            .working_directory = leaf.working_directory,
+        };
     };
 
     // T1684: the attach rule, then the one-pane-per-session rule. A session the
@@ -6051,7 +6083,16 @@ fn restoreAttachOverride(
     // session's last screen over it would be a lie about what the pane is —
     // exactly the case `termio.Remote` refuses on the relaunch path.
     const snap: ?Snapshot = if (sid != null) self.decodeLeafSnapshot(leaf) else null;
+    // T3755: a pane that has to OPEN a fresh shell opens the one it was on - a
+    // WSL distro at its own Linux folder - not the default. One that re-attaches
+    // keeps the shell it already has and only goes on remembering its name.
+    const fresh_shell: ?Surface.Overrides = if (sid == null)
+        self.restoreShellOverrides(leaf, conn, null)
+    else
+        null;
+    const fresh_remote: ?Surface.Overrides.Remote = if (fresh_shell) |f| f.remote else null;
     return .{
+        .shell_spec = if (fresh_shell) |f| f.shell_spec else leaf.shell,
         // T113: hand back the RECORDED pane id. The process we are re-attaching
         // to still holds it in `$GHOZTTY_PANE_ID`; generating a fresh one here
         // would silently break every pane's ability to name itself across an
@@ -6067,7 +6108,9 @@ fn restoreAttachOverride(
             .connection = conn,
             .local_agent = tr.local_agent,
             .session_id = sid,
-            .working_directory = restoreOpenWorkingDirectory(leaf, sid),
+            .working_directory = if (fresh_remote) |f| f.working_directory else restoreOpenWorkingDirectory(leaf, sid),
+            .shell = if (fresh_remote) |f| f.shell else null,
+            .command_argv = if (fresh_remote) |f| f.command_argv else null,
             .restore_snapshot = if (snap) |s| s.data else null,
             .restore_offset = if (snap) |s| s.offset else 0,
             // T422: `restoreLeafPresentation` puts this banner back on the GUI
@@ -6103,6 +6146,52 @@ fn restoreOpenWorkingDirectory(
     if (sid != null) return null;
     const wd = leaf.working_directory orelse return null;
     return if (wd.len > 0) wd else null;
+}
+
+/// The overrides that open a restored terminal leaf on the shell it RECORDED
+/// (T3755), or null when it recorded none (the default shell, as before) or
+/// the scratch could not be had. Built by `pane_restart.shellOverrides`, the
+/// builder a "… with Shell" pick and Restart Pane with Shell use, so a restore
+/// cannot open one choice a third way: a WSL spec opens `wsl.exe -d <distro>
+/// --cd <the pane's recorded Linux folder, else ~>`, a Windows shell opens in
+/// its recorded Windows folder. `conn` is the restore's local agent, or null
+/// for a plain ConPTY pane.
+///
+/// The strings live in `restore_shell_scratch`, which the NEXT call resets: the
+/// same one-slot contract as `restore_snapshot_scratch`, because every caller
+/// hands the override to the `Surface.init` that consumes it before building the
+/// next leaf's.
+fn restoreShellOverrides(
+    self: *App,
+    leaf: session_layout.Leaf,
+    conn: ?*remote_connection.Connection,
+    pane_id: ?[]const u8,
+) ?Surface.Overrides {
+    const spec = leaf.shell orelse return null;
+    if (spec.len == 0 or leaf.isViewer()) return null;
+    if (self.restore_shell_scratch == null)
+        self.restore_shell_scratch = std.heap.ArenaAllocator.init(self.core_app.alloc);
+    const scratch = &self.restore_shell_scratch.?;
+    _ = scratch.reset(.retain_capacity);
+    const arena = scratch.allocator();
+    const cwd = restart_shell.restoredCwd(spec, leaf.working_directory);
+    // A WSL pane's folder is a Linux one, for `wsl --cd`; a Windows shell's is
+    // the process cwd (T3754 split the two).
+    const wsl = restart_shell.isWslSpec(spec);
+    const ov = pane_restart.shellOverrides(
+        arena,
+        conn,
+        spec,
+        if (wsl) null else cwd,
+        if (wsl) cwd else null,
+        pane_id,
+        &.{},
+    ) catch |err| {
+        log.warn("session-restore: shell {s} overrides failed err={}; default shell", .{ spec, err });
+        return null;
+    };
+    log.info("session-restore: leaf reopens on its own shell {s} (cwd={s})", .{ spec, cwd orelse "<shell default>" });
+    return ov;
 }
 
 /// A decoded WP-D3 pair, pointing into the App's single decode scratch.

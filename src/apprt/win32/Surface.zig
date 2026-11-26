@@ -132,6 +132,17 @@ parent_window: *Window = undefined,
 /// and agent RELAUNCH. Never null after `init`; read it via `paneId()`.
 pane_id: pane_id_mod.Buf = undefined,
 
+/// The shell this pane was opened ON by an explicit choice (T3755): the spec a
+/// "… with Shell" pick, Restart Pane with Shell, `--shell=<spec>` with no
+/// command, or a restored leaf named (`pwsh`, `cmd.exe`, `wsl:Ubuntu`, a path).
+/// Empty for a pane on the default shell or running a command. The session
+/// layout records it, so a pane whose session is gone comes back on its own
+/// shell instead of the default one. Read it via `shellSpec()`.
+/// 256 bytes: the restart queue's bound (`pane_restart.Pending.spec`), so
+/// every spec a picker can hand over fits.
+shell_spec_buf: [256]u8 = undefined,
+shell_spec_len: usize = 0,
+
 /// The core terminal surface. Initialized by init() after creating
 /// the window and WGL context. Manages fonts, renderer, PTY, and IO.
 core_surface: CoreSurface = undefined,
@@ -789,6 +800,24 @@ pub fn paneId(self: *const Surface) []const u8 {
     return &self.pane_id;
 }
 
+/// The shell this pane was explicitly opened on (T3755), or null for the
+/// default shell. See `shell_spec_buf`.
+pub fn shellSpec(self: *const Surface) ?[]const u8 {
+    if (self.shell_spec_len == 0) return null;
+    return self.shell_spec_buf[0..self.shell_spec_len];
+}
+
+/// Remember `spec` as this pane's shell. An empty or over-long spec is not
+/// remembered (the pane then restores on the default shell, as before).
+fn setShellSpec(self: *Surface, spec: []const u8) void {
+    if (spec.len == 0 or spec.len > self.shell_spec_buf.len) {
+        self.shell_spec_len = 0;
+        return;
+    }
+    @memcpy(self.shell_spec_buf[0..spec.len], spec);
+    self.shell_spec_len = spec.len;
+}
+
 /// Per-surface config overrides for IPC-driven creation (`+new-window
 /// --command/--working-directory/--env`, `+split ...`). Consumed by the
 /// next Surface.init through the parent Window's pending_surface_overrides
@@ -809,6 +838,13 @@ pub const Overrides = struct {
     /// Borrowed for the consuming `Surface.init` only (copied into the
     /// surface's own buffer); ignored when malformed. Null ⇒ generate.
     pane_id: ?[]const u8 = null,
+
+    /// The shell spec this pane is being opened ON (T3755), remembered as the
+    /// surface's `shellSpec()` so the session layout can bring it back on the
+    /// same shell. Set only for an interactive pane opened on an explicit
+    /// shell (never alongside a command); null means the default shell.
+    /// Borrowed for the consuming `Surface.init` only.
+    shell_spec: ?[]const u8 = null,
 
     /// Remote-machine session (`+new-remote-window`): the surface is built
     /// with the `.remote` termio backend riding on this connection instead
@@ -1186,6 +1222,7 @@ fn initOnce(
                 log.warn("session-restore: ignoring malformed pane id '{s}'", .{pid});
             }
         }
+        if (ov.shell_spec) |spec| self.setShellSpec(spec);
         if (ov.command_argv) |argv| {
             const copy = try carena.alloc([:0]const u8, argv.len);
             for (argv, 0..) |arg, i| copy[i] = try carena.dupeZ(u8, arg);

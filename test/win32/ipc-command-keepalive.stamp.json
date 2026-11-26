@@ -1,15 +1,15 @@
 {
     "guard":  "ipc-command-keepalive",
     "script":  "test/win32/ipc-command-keepalive.ps1",
-    "generated":  "2026-11-25T16:39:00-08:00",
-    "commit":  "4e3e05a95",
+    "generated":  "2026-11-25T18:39:18-08:00",
+    "commit":  "caa0d1e03",
     "uncommitted":  [
                         "src/apprt/win32/IpcHandlers.zig",
                         "src/apprt/win32/Surface.zig"
                     ],
     "files":  {
-                  "src/apprt/win32/IpcHandlers.zig":  "ff7349fbd8f78f10261f69d4d9bc5ddd3d07d17d33491586ad1460280a9d8600",
-                  "src/apprt/win32/Surface.zig":  "ba067aeffbf4c0ee9a3958875d3fd072d7d56f62a0b468afa93250e15bd38094",
+                  "src/apprt/win32/IpcHandlers.zig":  "5e2bac7efd473587329de331d757d704daffd8c40851131466fc8db296f28c8a",
+                  "src/apprt/win32/Surface.zig":  "74a8b8741c167c847a19884087ad7e5e6d248480b65fcc74f289b674417d6010",
                   "src/termio/Remote.zig":  "161d0bdcc1bd8719c5e08ee43cf5840fe97d3f133800cb5bc66b75da7e866a68",
                   "test/win32/ipc-command-keepalive.ps1":  "a45c5ed1e632085fcc8342374a9179479b781001e09f71553b27ad94e5b8a6d2"
               },

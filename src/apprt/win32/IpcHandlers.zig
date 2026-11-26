@@ -337,7 +337,7 @@ pub fn shellPaneOverrides(
     wsl_folder: ?[]const u8,
 ) Allocator.Error!Surface.Overrides {
     const ctx: Context = .{ .app = app, .alloc = arena };
-    if (conn) |c| return .{ .remote = .{
+    if (conn) |c| return .{ .shell_spec = spec, .remote = .{
         .connection = c,
         .working_directory = cwd,
         .shell = agentShell(spec),
@@ -345,6 +345,7 @@ pub fn shellPaneOverrides(
         .local_agent = true,
     } };
     return .{
+        .shell_spec = spec,
         .command_argv = try execArgv(ctx, arena, &.{}, null, spec, wsl_folder),
         .working_directory = cwd,
     };
@@ -378,6 +379,29 @@ fn folderRefusal(ctx: Context, args: VerbArgs, command: ?[]const u8) Allocator.E
     const wd = explicitFolder(args) orelse return null;
     const problem = shell_family.folderProblem(childFamily(ctx, args, command), wd) orelse return null;
     return try std.fmt.allocPrint(ctx.alloc, "--working-directory={s} {s}", .{ wd, problem });
+}
+
+/// The shell a verb opens its pane ON, to be remembered by the pane (T3755):
+/// `--shell=<spec>` with no `-e` and no `--command` - an interactive pane on a
+/// chosen shell. A command pane is not "on" a shell the way a restore could
+/// re-open, so it records none.
+fn interactiveShellSpec(
+    e_args: []const [:0]const u8,
+    command: ?[]const u8,
+    shell_flag: ?[]const u8,
+) ?[]const u8 {
+    if (e_args.len > 0 or nonEmpty(command) != null) return null;
+    return nonEmpty(shell_flag);
+}
+
+test "T3755 interactiveShellSpec: only a shell with no command is remembered" {
+    const t = std.testing;
+    try t.expectEqualStrings("wsl:Ubuntu", interactiveShellSpec(&.{}, null, "wsl:Ubuntu").?);
+    try t.expectEqualStrings("pwsh", interactiveShellSpec(&.{}, "", "pwsh").?);
+    try t.expect(interactiveShellSpec(&.{}, "ls", "pwsh") == null);
+    try t.expect(interactiveShellSpec(&.{"vim"}, null, "pwsh") == null);
+    try t.expect(interactiveShellSpec(&.{}, null, "") == null);
+    try t.expect(interactiveShellSpec(&.{}, null, null) == null);
 }
 
 /// The LOCAL-agent half of `wrapCommandArgv` (T468): the same per-flavor
@@ -681,11 +705,13 @@ pub fn openWindow(
                 .command_argv = try localAgentArgv(ctx, arena, args.e_args, args.shell, args.command, explicitFolder(args)),
                 .local_agent = true,
             },
+            .shell_spec = interactiveShellSpec(args.e_args, args.command, args.shell),
             .env = env.items,
         };
     } else .{
         .command_argv = try execArgv(ctx, arena, args.e_args, args.command, args.shell, explicitFolder(args)),
         .working_directory = processFolder(args.working_directory),
+        .shell_spec = interactiveShellSpec(args.e_args, args.command, args.shell),
         .env = env.items,
     };
 
@@ -1039,11 +1065,13 @@ pub fn createSplit(
                 .command_argv = try localAgentArgv(ctx, arena, args.e_args, args.shell, command, wsl_folder),
                 .local_agent = true,
             },
+            .shell_spec = interactiveShellSpec(args.e_args, command, args.shell),
             .env = env.items,
         };
     } else .{
         .command_argv = try execArgv(ctx, arena, args.e_args, command, args.shell, wsl_folder),
         .working_directory = split_cwd,
+        .shell_spec = interactiveShellSpec(args.e_args, command, args.shell),
         .env = env.items,
     };
 

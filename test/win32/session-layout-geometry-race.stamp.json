@@ -1,13 +1,13 @@
 {
     "guard":  "session-layout-geometry-race",
     "script":  "test/win32/session-layout-geometry-race.ps1",
-    "generated":  "2026-11-22T02:03:13-08:00",
-    "commit":  "9a40d1d10",
+    "generated":  "2026-11-25T17:05:29-08:00",
+    "commit":  "4a11293cd",
     "uncommitted":  [
-                        "test/win32/session-layout-geometry-race.ps1"
+                        "src/apprt/win32/session_layout.zig"
                     ],
     "files":  {
-                  "src/apprt/win32/session_layout.zig":  "23de7c84c9bda3017a52911fb9743e5f963978426160938e66f3aa079aa70e2b",
+                  "src/apprt/win32/session_layout.zig":  "d679844c7039cbdb10e7772229aac91e0db1dcce40ca13fe056b52ce06fedf97",
                   "src/apprt/win32/window_memory.zig":  "5525d3e747fd7a5e272f8de1c82754c9139652ccefa7a51f71efbe30a9452d3a",
                   "test/win32/session-layout-geometry-race.ps1":  "14240d5625c2b3e5f37d688605389a9889bc11af06c6a34c4772ccab1034d6f8"
               },

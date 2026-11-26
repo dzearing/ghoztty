@@ -1,16 +1,16 @@
 {
     "guard":  "restart-pane",
     "script":  "test/win32/restart-pane.ps1",
-    "generated":  "2026-11-25T16:11:20-08:00",
-    "commit":  "4e3e05a95",
+    "generated":  "2026-11-25T18:38:50-08:00",
+    "commit":  "caa0d1e03",
     "uncommitted":  [
                         "src/apprt/win32/pane_restart.zig",
                         "src/apprt/win32/restart_shell.zig"
                     ],
     "files":  {
                   "src/apprt/win32/ipc_restart_pane.zig":  "1765c3c5a4c394f854e2624118f54a8086573dd48d5ca983e0df5b80d301d764",
-                  "src/apprt/win32/pane_restart.zig":  "b07c430be640ce2d973344c23e3d0066e12eb60bceead899ab35a1a908426cdd",
-                  "src/apprt/win32/restart_shell.zig":  "d6ad14d6770855170a2ccb3fedd9f98a1b329227c0a751af721ab095af48bc4c",
+                  "src/apprt/win32/pane_restart.zig":  "024a4bc0aca9e59eda1db93576b3f97aeb60735e88d4f956f7b602565b5f6332",
+                  "src/apprt/win32/restart_shell.zig":  "d8a6624f447dd7c5386dc3525e2f278cdb77e5bb79ba1395dcba8203edd053f1",
                   "test/win32/restart-pane.ps1":  "190f6da70f3e7b7d7b097958fa632852bbcbc2240defce082a1e3845a9a79479"
               },
     "code":  {

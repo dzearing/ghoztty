@@ -1,14 +1,14 @@
 {
     "guard":  "window-name-restore",
     "script":  "test/win32/window-name-restore.ps1",
-    "generated":  "2026-11-22T05:24:28-08:00",
-    "commit":  "5f05e5661",
+    "generated":  "2026-11-25T17:05:44-08:00",
+    "commit":  "4a11293cd",
     "uncommitted":  [
-
+                        "src/apprt/win32/session_layout.zig"
                     ],
     "files":  {
                   "src/apprt/win32/IpcRegistry.zig":  "4337c643db3bcd081f639932420132e3b87f44213f8199f16de1b76e58d40e50",
-                  "src/apprt/win32/session_layout.zig":  "23de7c84c9bda3017a52911fb9743e5f963978426160938e66f3aa079aa70e2b",
+                  "src/apprt/win32/session_layout.zig":  "d679844c7039cbdb10e7772229aac91e0db1dcce40ca13fe056b52ce06fedf97",
                   "test/win32/window-name-restore.ps1":  "127404766c05165a9f9a57cf1bbaa9cf876eff77d8547ef70fbff538cd2cd0f0"
               },
     "code":  {

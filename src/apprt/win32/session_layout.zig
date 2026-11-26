@@ -217,6 +217,16 @@ pub const Leaf = struct {
     /// `Leaf.tint`). Absent is the theme background; an older build ignores it
     /// and restores the pane untinted.
     tint: ?[]const u8 = null,
+    /// The shell the pane was explicitly opened on (T3755): the spec a "… with
+    /// Shell" pick, Restart Pane with Shell or `--shell=<spec>` with no command
+    /// gave it (`pwsh`, `cmd.exe`, `wsl:Ubuntu`, a path). A restore that has to
+    /// OPEN a fresh shell for this pane - its session is gone, the agent with
+    /// it - opens THIS shell, and a WSL one at the pane's recorded Linux
+    /// `working_directory`, instead of the default shell. Absent is the default
+    /// shell; an older build ignores it and restores the pane on the default
+    /// shell, as before. Windows-local: always null for a viewer leaf and for a
+    /// pane in a window on another machine.
+    shell: ?[]const u8 = null,
 
     /// Whether this leaf describes a VIEWER pane. Absent `kind` ⇒ terminal, so
     /// this is also the compatibility rule for a pre-viewer manifest. One

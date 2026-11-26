@@ -116,6 +116,40 @@ pub fn carriedWslFolder(
     return shell_family.inherit(arena, parent, .wsl, reported);
 }
 
+/// The folder a pane RESTORED on `spec` starts in, given the folder the
+/// session layout recorded for it (T3755). Unlike a restart, a restore is the
+/// same pane coming back, so a WSL pane keeps its own Linux folder: an
+/// absolute Linux path (the pane's OSC 7 report) is handed to `wsl.exe --cd`.
+/// Anything else - a Windows path, nothing - leaves a WSL pane at `~`. A
+/// Windows shell keeps a Windows folder and nothing else.
+pub fn restoredCwd(spec: []const u8, recorded: ?[]const u8) ?[]const u8 {
+    const cwd = recorded orelse return null;
+    if (!isWslSpec(spec)) return if (isWindowsPath(cwd)) cwd else null;
+    return if (isLinuxPath(cwd)) cwd else null;
+}
+
+/// An absolute POSIX path: `/home/me`, `/`. Never `//server` (a UNC spelled
+/// with forward slashes).
+pub fn isLinuxPath(p: []const u8) bool {
+    if (p.len == 0 or p[0] != '/') return false;
+    return p.len == 1 or p[1] != '/';
+}
+
+/// The Linux spelling of a WSL pane's reported folder, or null when it is not
+/// one (T3755). The distro reports `/tmp` in OSC 7, and on Windows the core
+/// hands the pane that path with its separators flipped (`\tmp`), so a rooted
+/// path with no drive and no UNC prefix is turned back: `\home\me` ->
+/// `/home/me`. A Windows folder (`C:\x`, `\\nas\s`) is not one. Allocated in
+/// `arena` only when it has to be rewritten.
+pub fn linuxPathOf(arena: Allocator, p: []const u8) Allocator.Error!?[]const u8 {
+    if (isLinuxPath(p)) return p;
+    if (p.len == 0 or p[0] != '\\') return null;
+    if (p.len > 1 and (p[1] == '\\' or p[1] == '/')) return null;
+    const out = try arena.dupe(u8, p);
+    std.mem.replaceScalar(u8, out, '\\', '/');
+    return out;
+}
+
 /// `C:\...`, `C:/...` or a UNC `\\server\share`.
 pub fn isWindowsPath(p: []const u8) bool {
     if (p.len >= 3 and std.ascii.isAlphabetic(p[0]) and p[1] == ':' and (p[2] == '\\' or p[2] == '/'))
@@ -197,6 +231,34 @@ test "carriedWslFolder: a WSL pane's Linux folder follows a WSL shell only (T375
     try testing.expect((try carriedWslFolder(arena, "wsl:Ubuntu", .wsl, "C:\\Users\\me")) == null);
     try testing.expect((try carriedWslFolder(arena, "wsl:Ubuntu", .wsl, null)) == null);
     try testing.expect((try carriedWslFolder(arena, "pwsh.exe", .wsl, "/home/me")) == null);
+}
+
+test "T3755 restoredCwd: a restored WSL pane keeps its Linux folder, a Windows shell its Windows one" {
+    try testing.expectEqualStrings("/home/me/src", restoredCwd("wsl:Ubuntu", "/home/me/src").?);
+    try testing.expectEqualStrings("/", restoredCwd("wsl", "/").?);
+    // A Windows folder (no OSC 7 from the distro) is not where the pane was.
+    try testing.expect(restoredCwd("wsl:Ubuntu", "C:\\Users\\me") == null);
+    try testing.expect(restoredCwd("wsl:Ubuntu", "//nas/share") == null);
+    try testing.expect(restoredCwd("wsl:Ubuntu", null) == null);
+    try testing.expect(restoredCwd("wsl:Ubuntu", "") == null);
+    // Windows shells: the restart rule.
+    try testing.expectEqualStrings("C:\\src", restoredCwd("pwsh.exe", "C:\\src").?);
+    try testing.expect(restoredCwd("cmd.exe", "/home/me") == null);
+}
+
+test "T3755 linuxPathOf: the core's flipped separators come back as the Linux path" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    try testing.expectEqualStrings("/tmp", (try linuxPathOf(a, "\\tmp")).?);
+    try testing.expectEqualStrings("/home/me/src", (try linuxPathOf(a, "\\home\\me\\src")).?);
+    try testing.expectEqualStrings("/", (try linuxPathOf(a, "\\")).?);
+    try testing.expectEqualStrings("/home/me", (try linuxPathOf(a, "/home/me")).?);
+    try testing.expect((try linuxPathOf(a, "C:\\Users\\me")) == null);
+    try testing.expect((try linuxPathOf(a, "\\\\nas\\share")) == null);
+    try testing.expect((try linuxPathOf(a, "\\/x")) == null);
+    try testing.expect((try linuxPathOf(a, "")) == null);
+    try testing.expect((try linuxPathOf(a, "tmp")) == null);
 }
 
 test "isWslSpec" {

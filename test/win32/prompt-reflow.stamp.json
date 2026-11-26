@@ -1,8 +1,8 @@
 {
     "guard":  "prompt-reflow",
     "script":  "test/win32/prompt-reflow.ps1",
-    "generated":  "2026-11-25T17:14:18-08:00",
-    "commit":  "9fa54655b",
+    "generated":  "2026-11-25T17:43:12-08:00",
+    "commit":  "4a11293cd",
     "uncommitted":  [
 
                     ],

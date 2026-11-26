@@ -177,8 +177,10 @@ pub fn restart(app: *App, pane: *PaneView, spec: []const u8, mode: Mode) Outcome
 /// two cannot open one choice two ways. `conn` is the window's local agent, or
 /// null for a plain ConPTY pane. A WSL spec opens `wsl.exe [-d <distro>] --cd
 /// <wsl_folder>` (T3749; `~` when null, T3754 carries a WSL pane's own Linux
-/// folder); `cwd` is the folder a Windows shell starts in (null: its
-/// default). Strings are borrowed or allocated in `arena`.
+/// folder, T3755 a restored one's); `cwd` is the folder a Windows shell starts
+/// in (null: its default). The pane remembers `spec` (`Surface.shellSpec`), so
+/// the session layout brings it back on this shell. Strings are borrowed or
+/// allocated in `arena`.
 pub fn shellOverrides(
     arena: Allocator,
     conn: ?*remote_connection.Connection,
@@ -198,6 +200,7 @@ pub fn shellOverrides(
     };
     if (conn) |c| return .{
         .pane_id = pane_id,
+        .shell_spec = spec,
         .env = env,
         .remote = .{
             .connection = c,
@@ -211,6 +214,7 @@ pub fn shellOverrides(
     };
     return .{
         .pane_id = pane_id,
+        .shell_spec = spec,
         .env = env,
         .command_argv = exec_argv,
         .working_directory = cwd,

@@ -1,8 +1,8 @@
 {
     "guard":  "hidden-window-memory",
     "script":  "test/win32/hidden-window-memory.ps1",
-    "generated":  "2026-11-25T17:02:57-08:00",
-    "commit":  "9fa54655b",
+    "generated":  "2026-11-25T17:26:35-08:00",
+    "commit":  "4a11293cd",
     "uncommitted":  [
 
                     ],

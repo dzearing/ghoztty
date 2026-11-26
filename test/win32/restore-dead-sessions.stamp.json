@@ -1,13 +1,16 @@
 {
     "guard":  "restore-dead-sessions",
     "script":  "test/win32/restore-dead-sessions.ps1",
-    "generated":  "2026-11-17T06:25:36-08:00",
-    "commit":  "9f1260ff1",
+    "generated":  "2026-11-25T17:04:38-08:00",
+    "commit":  "4a11293cd",
     "uncommitted":  [
-
+                        "src/apprt/win32/session_layout.zig"
                     ],
     "files":  {
-                  "src/apprt/win32/session_layout.zig":  "23de7c84c9bda3017a52911fb9743e5f963978426160938e66f3aa079aa70e2b",
+                  "src/apprt/win32/session_layout.zig":  "d679844c7039cbdb10e7772229aac91e0db1dcce40ca13fe056b52ce06fedf97",
                   "test/win32/restore-dead-sessions.ps1":  "95e0b3b6d0e2c2c6cd9c02e0823c715a4eff72e8ac7d12a70a50976d5baf25ce"
-              }
+              },
+    "code":  {
+                 "test/win32/restore-dead-sessions.ps1":  "code1:175d308dbb56f591a7a4d87217472bc4b02836e6544b8a9878673a20010ff895"
+             }
 }

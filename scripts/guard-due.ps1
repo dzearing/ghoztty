@@ -5898,6 +5898,22 @@ $GuardTable = @(
             'test\win32\restart-pane.ps1'
         )
     },
+    # A pane comes back on ITS shell (T3755, child of T3735).
+    # `restore-pane-shell.ps1` is the only harness that records a chosen shell
+    # in the session layout, loses every session, and reads back that each
+    # restored pane runs the shell it was opened on, in its own folder.
+    # `App.zig` is left off for the reason the restore rows above give.
+    [pscustomobject]@{
+        Name   = 'restore-pane-shell'
+        Script = 'test\win32\restore-pane-shell.ps1'
+        Stamp  = 'test\win32\restore-pane-shell.stamp.json'
+        Covers = @(
+            'src\apprt\win32\session_layout.zig',
+            'src\apprt\win32\pane_restart.zig',
+            'src\apprt\win32\restart_shell.zig',
+            'test\win32\restore-pane-shell.ps1'
+        )
+    },
     # A new tab on a chosen shell (T3753, child of T3735). `new-tab-shell.ps1`
     # is the only harness that opens the "+" dropdown and File > New Tab's
     # submenu, reads their rows against the shell catalog, and reads back the
