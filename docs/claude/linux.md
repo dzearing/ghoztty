@@ -2217,13 +2217,57 @@ while none is open re-reads it (`relatchIdle`, win32 T3212; logged as
 `window mode: A -> B (re-read with no window open)`). The quick terminal
 never counts.
 
-What single mode then DOES - one shared toplevel, workspaces switched from
-the sidebar's all-windows list - is not built yet. The mechanism is decided
-(T3573's progress log) and carried by T3648 (foundation: each workspace keeps
-its own `Window`, only its content moves into the shared toplevel; one
-owner-of helper replaces every widget-to-window lookup) and T3649-T3655
-(switching, parked layout, shade fade, closing, CLI, activity, persistence).
-Until then `single` is latched and logged and every window is still its own.
+### The foundation: one toplevel, workspaces hand it over (T3648)
+
+`src/apprt/gtk/Workspaces.zig`; decisions are win32's pure
+`workspace_host.zig` `Host(*Window)`. In `single` mode:
+
+- **One toplevel.** The first window (`Application.initAndShowWindow` ->
+  `Workspaces.present`) loads it as an ordinary window. Every later one is a
+  workspace that keeps its own `Window` GObject but never maps its own
+  GtkWindow: its content root (the template's `Adw.TabOverview`,
+  `Window.contentRoot`) is held out of every window by its own reference
+  (parked, `Window.holdContent`), or is the toplevel's content (on show).
+  `+new-window` without `--focus` opens parked; `--focus` opens on show.
+- **The hand-off** (`Workspaces.show`): the workspace on show's content
+  comes out of the toplevel, held; the other's goes in. No widget is rebuilt
+  and no process touched; the toplevel's title becomes the new one's.
+- **Owner-of.** The content root carries qdata naming its `Window`
+  (`Window.workspace_qdata_key`); `ext.getAncestor` reads it before the
+  widget tree for any type that declares the key. So every existing
+  `getAncestor(Window, ...)` answers the workspace a widget is IN - on show in
+  another workspace's toplevel, or parked - and separate mode answers as
+  before. The workspace's `win` actions are inserted on its content root.
+- **Parked counts as hidden**: `Window.syncSeen` reads the toplevel's map and
+  toplevel bits for the workspace on show and `false` for a parked one.
+- **Leaving.** The content root's `win` group references its Window, a cycle
+  that keeps a destroyed workspace from disposing, and GTK clears a destroyed
+  window's `application` with no notify. So a workspace leaves the host on the
+  application's `window-removed` (`Window.leaveWorkspace`). Until T3652 a
+  close is only kept SAFE: a parked one closes in place, the one on show hands
+  the toplevel back, and when the toplevel's own workspace closes the one on
+  show maps a GtkWindow of its own (a second window appears - T3652 keeps one).
+- **Known gaps, filed on their cards**: a workspace parked from birth has no
+  running terminal until first shown (the core surface starts on the GLArea's
+  first resize, which needs a mapped allocation - T3650); the toplevel's own
+  close button and window-level key controller act for the toplevel's own
+  workspace (T3652, T3649); the desk is the toplevel workspace's (T3651).
+- **Seam**: debug-only `hl_ipc workspaces [--show=<pane|window>]` - `mode`,
+  `toplevel`, `active`, `content` (whose content root IS the toplevel's
+  content: the hand-off's oracle), `toplevel_title`, and per workspace
+  `parked`, `held`, `seen`, `mapped` (its own GtkWindow), `panes`,
+  `owner_ok`.
+
+```powershell
+powershell -NoProfile -File scripts\linux\wsl-run.ps1 -CommandFile test\linux\window-workspaces.sh
+```
+
+Ends `WINDOW WORKSPACES: ALL PASS` (28 checks, about a minute). K9 is the negative control: the key
+unset makes no workspaces. Still to come: the sidebar switch and every open
+path (T3649), parked layout (T3650), the shade fade (T3651), closing (T3652),
+the CLI (T3653), rolled-up activity (T3654), persistence (T3655).
+
+The launch latch's own test:
 
 ```powershell
 powershell -NoProfile -File scripts\linux\wsl-run.ps1 -CommandFile test\linux\window-mode.sh
