@@ -434,7 +434,7 @@ hl_report_crash_() {
     case "$rc" in 143|137) return 0 ;; esac
     for entry in ${HL_PID_LOGS:-}; do [ "${entry%%=*}" = "$p" ] && log=${entry#*=}; done
     echo "hl_stop: pid $p died of signal $(( rc - 128 )) at teardown; last lines of ${log:-its log}:" >&2
-    [ -n "$log" ] && [ -f "$log" ] && tail -40 "$log" >&2
+    [ -n "$log" ] && [ -f "$log" ] && tail -${HL_CRASH_LINES:-150} "$log" >&2
     return 0
 }
 
