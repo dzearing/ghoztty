@@ -66,7 +66,9 @@ field() {
 import json, sys
 d = json.loads(sys.stdin.read() or "{}")
 s = d.get("sidebar") or {}
-r = s.get("rows") or []
+# The pane rows: the list also holds this window header and the rail +
+# (T3695, their own suite is cli-sidebar-header.sh).
+r = [x for x in (s.get("rows") or []) if x["kind"] in ("terminal", "viewer")]
 print(eval(sys.argv[1]))
 ' "$2" 2>/dev/null
 }

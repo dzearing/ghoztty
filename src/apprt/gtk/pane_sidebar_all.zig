@@ -22,8 +22,8 @@
 //! it runs in the none lane.
 //!
 //! A header's hover + and x (T3606) read `Item.members` for what they close.
-//! Not here yet: dragging rows (windows, groups, panes) and the stash tray
-//! (T3607); group editing - the window-row menu, renaming (T3608).
+//! This window's own list is built here too (`buildOwn`, T3695): the same
+//! window header over its panes, with its group's header above it.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -142,15 +142,36 @@ fn order(arena: Allocator, windows: []const Window, placed: []outline.Placed) Al
 /// (`filters`), else null. Items borrow the windows' names; everything is
 /// allocated in `arena`.
 pub fn build(arena: Allocator, windows: []const Window, query: ?[]const u8, shared: *const Shared, home: ?[]const u8) Allocator.Error![]Item {
+    return buildFor(arena, windows, query, shared, home, null);
+}
+
+/// This window's own list (T3695; Mac e94a9737e / 32bc9a6b5, win32
+/// `addThisWindowHeads`): the window `own` (an index into `windows`) held by
+/// its header - its chevron, name and count, and on hover + and x - with its
+/// panes one level in under it, exactly as all windows draws a window. A
+/// `<project>: <name>` window has its group's header above its own, and a
+/// folded group shows that header alone. The folds are this list's own
+/// (`folded_this`, not the all-windows ones), and the header is drawn
+/// selected only while it is folded: open, its focused pane's row has the
+/// accent. The group's header counts, and its x closes, every window of the
+/// group, not only this one - so `windows` is every window, and only `own`'s
+/// rows are listed.
+pub fn buildOwn(arena: Allocator, windows: []const Window, own: usize, shared: *const Shared, home: ?[]const u8) Allocator.Error![]Item {
+    return buildFor(arena, windows, null, shared, home, own);
+}
+
+fn buildFor(arena: Allocator, windows: []const Window, query: ?[]const u8, shared: *const Shared, home: ?[]const u8, only: ?usize) Allocator.Error![]Item {
     const placed = try arena.alloc(outline.Placed, windows.len);
     try order(arena, windows, placed);
     const searching = query != null;
+    const all_windows = only == null;
 
     // The windows listed (a search drops the ones with no hit) and each one's
     // hits, in the order the panes were gathered (reading order).
     const Listed = struct { placed: outline.Placed, hits: []usize };
     var listed: std.ArrayListUnmanaged(Listed) = .empty;
     for (placed) |p| {
+        if (only) |o| if (p.index != o) continue;
         const w = windows[p.index];
         var hits: std.ArrayListUnmanaged(usize) = .empty;
         for (w.panes, 0..) |pane, k| {
@@ -165,7 +186,7 @@ pub fn build(arena: Allocator, windows: []const Window, query: ?[]const u8, shar
     for (listed.items, specs) |l, *s| s.* = .{
         .project = l.placed.project,
         .grid = l.hits.len,
-        .folded = shared.groupFolded(true, windows[l.placed.index].key, searching),
+        .folded = shared.groupFolded(all_windows, windows[l.placed.index].key, searching),
         .project_folded = false,
     };
     // A project fold (and the Ungrouped header's) hides its windows' rows;
@@ -205,10 +226,12 @@ pub fn build(arena: Allocator, windows: []const Window, query: ?[]const u8, shar
                     .kind = .project,
                     .window = w,
                     .label = pj,
-                    .count = outline.projectSize(listed_placed, line.index),
+                    // This window's own list counts (and closes) the whole
+                    // group, every window of which `placed` holds.
+                    .count = if (all_windows) outline.projectSize(listed_placed, line.index) else countProject(placed, pj),
                     .folded = spec.project_folded,
                     .key = projectKey(pj),
-                    .members = try memberKeys(arena, windows, listed_placed, pj),
+                    .members = try memberKeys(arena, windows, if (all_windows) listed_placed else placed, pj),
                 };
             } else {
                 var lones: usize = 0;
@@ -238,7 +261,7 @@ pub fn build(arena: Allocator, windows: []const Window, query: ?[]const u8, shar
                 .folded = spec.folded,
                 .depth = line.depth,
                 .key = w.key,
-                .selection = ps.headSelection(.window, w.own, spec.folded, false, true),
+                .selection = ps.headSelection(.window, w.own, spec.folded, false, all_windows),
                 .members = try arena.dupe(u64, &.{w.key}),
             };
         },
@@ -254,6 +277,14 @@ pub fn build(arena: Allocator, windows: []const Window, query: ?[]const u8, shar
         },
     };
     return out;
+}
+
+fn countProject(placed: []const outline.Placed, project: []const u8) usize {
+    var n: usize = 0;
+    for (placed) |p| if (p.project) |q| {
+        if (std.mem.eql(u8, q, project)) n += 1;
+    };
+    return n;
 }
 
 /// The keys of the listed windows grouped under `project` (null: the lone
@@ -477,4 +508,60 @@ test "T3558: a window is named by its pinned title, else its tab's, else its pan
     try testing.expectEqualStrings("tab", name(null, "tab", "vim", "/x"));
     try testing.expectEqualStrings("vim", name("", null, "vim", "/x"));
     try testing.expectEqualStrings("Window", name(null, null, null, null));
+}
+
+test "T3695: this window's own list is its header over its panes, its group's header above, folded on its own" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var shared: Shared = .{};
+    defer shared.deinit(testing.allocator);
+
+    const two = [_]rows.Pane{ .{ .title = "vim" }, .{ .title = "make" } };
+    const one = [_]rows.Pane{.{ .title = "sh" }};
+    const wins = [_]Window{
+        .{ .name = "notes", .key = 1, .opened = 1, .own = true, .panes = &two },
+        .{ .name = "ghoztty: wt-2", .key = 2, .opened = 2, .panes = &one },
+        .{ .name = "ghoztty: wt-10", .key = 3, .opened = 3, .panes = &one },
+    };
+    var buf: [32]u8 = undefined;
+
+    // A lone window: its header (no Ungrouped over it), its panes a level
+    // in, open; the header is not selected (the focused pane's row is).
+    var items = try buildOwn(arena, &wins, 0, &shared, null);
+    try testing.expectEqualStrings("Wpp", kinds(items, &buf));
+    try testing.expectEqualStrings("notes", items[0].label);
+    try testing.expectEqual(@as(usize, 2), items[0].count);
+    try testing.expect(!items[0].folded);
+    try testing.expectEqual(HeadSelection.none, items[0].selection);
+    try testing.expectEqualSlices(u64, &.{1}, items[0].members);
+    try testing.expectEqual(@as(u8, 1), items[1].depth);
+    try testing.expectEqual(@as(usize, 1), items[2].pane);
+
+    // Its fold is this list's own: folded here, the header carries the
+    // selection, and all windows' folds are untouched by it.
+    shared.toggleGroup(testing.allocator, false, 1);
+    items = try buildOwn(arena, &wins, 0, &shared, null);
+    try testing.expectEqualStrings("W", kinds(items, &buf));
+    try testing.expect(items[0].folded);
+    try testing.expectEqual(HeadSelection.accent, items[0].selection);
+    _ = shared.setAllWindows(true);
+    shared.toggleGroup(testing.allocator, true, 1);
+    const every = try build(arena, &wins, null, &shared, null);
+    try testing.expectEqualStrings("UWppPWW", kinds(every, &buf));
+    _ = shared.setAllWindows(false);
+
+    // A grouped window: the group's header above its own, which is labeled
+    // by worktree; the group's header counts and closes the whole group.
+    items = try buildOwn(arena, &wins, 2, &shared, null);
+    try testing.expectEqualStrings("PWp", kinds(items, &buf));
+    try testing.expectEqualStrings("ghoztty", items[0].label);
+    try testing.expectEqual(@as(usize, 2), items[0].count);
+    try testing.expectEqualSlices(u64, &.{ 2, 3 }, items[0].members);
+    try testing.expectEqualStrings("wt-10", items[1].label);
+    try testing.expectEqual(@as(u8, 1), items[1].depth);
+    // A folded group is its header alone.
+    shared.toggleProject(testing.allocator, items[0].key);
+    items = try buildOwn(arena, &wins, 2, &shared, null);
+    try testing.expectEqualStrings("P", kinds(items, &buf));
 }

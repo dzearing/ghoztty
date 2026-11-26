@@ -56,11 +56,17 @@
 //! was. Each retitles windows `<group>: <name>` and pins the title as the
 //! user's, the rules win32's pure `pane_sidebar_menu`/`pane_sidebar_rename`.
 //!
+//! A window always holds its panes (T3695): this window's list starts with
+//! its header (chevron, name, count; + and x on hover) with its panes one
+//! level in, under its group's header when it is in one, and its fold is the
+//! list's own. The rail's first tile is a + standing in for what heads the
+//! list: a new pane in Panes, a new window in all windows. The panel's
+//! caption is "Panes" / "All Windows".
+//!
 //! Not here yet: dragging windows and groups, a row dropped into another
 //! window, and the stash tray (T3607's remainder), and from T3606's
-//! remainder (T3695) this window's own header row
-//! and the rail's +, rename in place, the hover tint, the busy sheen, the
-//! width grip and hero-mode suppression.
+//! remainder rename in place, the hover tint, the busy sheen, the width grip
+//! and hero-mode suppression.
 //!
 //! GTK main thread only.
 const PaneSidebar = @This();
@@ -216,7 +222,9 @@ pub fn setQuery(text: []const u8) bool {
 /// A fold flipped (a window's chevron, a project header): every list.
 fn toggleFold(kind: RowKind, key: u64) void {
     switch (kind) {
-        .window => scope.toggleGroup(shared_alloc, true, key),
+        // In the list it is drawn in: this window's own header folds in
+        // `folded_this`, an all-windows row in the outline's (T3695).
+        .window => scope.toggleGroup(shared_alloc, scope.all_windows, key),
         .project, .ungrouped => scope.toggleProject(shared_alloc, key),
         else => return,
     }
@@ -227,7 +235,8 @@ fn toggleFold(kind: RowKind, key: u64) void {
 // ---------------------------------------------------------------------------
 // One window's sidebar
 
-pub const RowKind = enum { pane, window, project, ungrouped, tile };
+/// `rail_add`: the rail's + at the top of the list (T3695).
+pub const RowKind = enum { pane, window, project, ungrouped, tile, rail_add };
 pub const Tool = rows.Tool;
 
 /// One drawn row: what the seam reports, and what a click does.
@@ -495,12 +504,9 @@ fn redraw(self: *PaneSidebar) void {
     self.syncSearchField();
     wk.gtk_widget_set_sensitive(self.toggle, @intFromBool(rows.canExpand(ww)));
     wk.gtk_widget_set_tooltip_text(self.toggle, if (expanded) "Collapse Sidebar" else "Expand Sidebar");
-    if (every) {
-        wk.gtk_label_set_text(self.title, "All Windows");
-    } else {
-        const wtitle = self.window.currentTitle();
-        wk.gtk_label_set_text(self.title, if (wtitle) |t| t else "");
-    }
+    // The caption names the list (win32 "PANES" / "ALL WINDOWS"): this
+    // window's name is its header row's now (T3695).
+    wk.gtk_label_set_text(self.title, if (every) "All Windows" else "Panes");
 
     self.clearRows();
     if (m == .hidden) {
@@ -517,10 +523,22 @@ fn redraw(self: *PaneSidebar) void {
         return;
     }
 
+    if (expanded) {
+        // This window's header over its panes (T3695).
+        if (self.refreshOwn(home)) |_| {
+            self.dump();
+            return;
+        } else |err| log.warn("pane sidebar own header rows failed err={}", .{err});
+        self.clearRows();
+    }
+
     const tab = self.window.getSelectedTab() orelse {
         self.dump();
         return;
     };
+    // The rail: the window header's + alone, in its slot, then a tile per
+    // pane (T3695).
+    if (!expanded) self.addRailAdd() catch |err| log.warn("pane sidebar rail + failed err={}", .{err});
     const active = tab.getActiveSurface();
     const tree = tab.getSurfaceTree() orelse {
         self.dump();
@@ -672,6 +690,8 @@ fn refreshAll(self: *PaneSidebar, expanded: bool, home: ?[]const u8) Allocator.E
     wk.gtk_label_set_text(self.count_label, count_z);
 
     if (!expanded) {
+        // The panel header's + stands over the tiles (T3695): a new window.
+        try self.addRailAdd();
         for (try all.railOrder(arena, g.windows)) |wi| try self.addWindowTile(g.windows[wi]);
         return;
     }
@@ -689,6 +709,66 @@ fn refreshAll(self: *PaneSidebar, expanded: bool, home: ?[]const u8) Allocator.E
         else => try self.addHeadRow(item),
     };
 }
+
+/// This window's own list, expanded (T3695; docs/reference/pane-sidebar.md
+/// "Rows and tiles": a window always holds its panes): its header - chevron,
+/// name and count, + and x on hover - with its panes one level in under it,
+/// and above it its group's header when it is a `<project>: <name>` window.
+/// `all.buildOwn` decides; the rows are drawn as all windows draws them.
+fn refreshOwn(self: *PaneSidebar, home: ?[]const u8) error{ OutOfMemory, NotListed }!void {
+    var arena_state = std.heap.ArenaAllocator.init(self.alloc);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const g = try self.gather(arena);
+    const own = for (g.windows, 0..) |w, i| {
+        if (w.own) break i;
+    } else return error.NotListed;
+    const items = try all.buildOwn(arena, g.windows, own, &scope, home);
+    for (items) |item| switch (item.kind) {
+        .pane => {
+            const v = g.surfaces[item.window][item.pane];
+            const w = g.windows[item.window];
+            try self.addPaneRow(v, g.actives[item.window] == v, true, home, item.depth, true, w.key);
+        },
+        else => try self.addHeadRow(item),
+    };
+}
+
+/// The rail's + (T3695; Mac `PaneSidebarRailAddSlot`): the first tile of the
+/// rail, the stand-in for what heads the list - this window's header (a new
+/// pane) in Panes, the panel header (a new window) in all windows - so the
+/// tiles under it sit where the rows they are sit expanded.
+fn addRailAdd(self: *PaneSidebar) Allocator.Error!void {
+    const r = try self.alloc.create(Row);
+    errdefer self.alloc.destroy(r);
+    const id = try self.alloc.dupe(u8, rail_add_id);
+    errdefer self.alloc.free(id);
+    // The tip of the + it stands in for (a window row's, the panel header's).
+    const tip = rows.toolTip(.add, add_rules.railAdd(scope.all_windows) == .new_pane);
+    const label = try self.alloc.dupeZ(u8, tip);
+    errdefer self.alloc.free(label);
+    const tooltip = try self.alloc.dupeZ(u8, tip);
+    errdefer self.alloc.free(tooltip);
+    const button = rowButton(false, tooltip);
+    wk.gtk_widget_add_css_class(button, "pane-sidebar-rail-add");
+    const icon = wk.gtk_image_new_from_icon_name("list-add-symbolic");
+    wk.gtk_widget_set_halign(icon, align_center);
+    wk.gtk_button_set_child(button, icon);
+    r.* = .{
+        .sidebar = self,
+        .widget = button,
+        .kind = .rail_add,
+        .id = id,
+        .label = label,
+        .tooltip = tooltip,
+    };
+    _ = wk.g_signal_connect_data(button, "clicked", @ptrCast(&onRowClicked), r, null, 0);
+    try self.drawn.append(self.alloc, r);
+    wk.gtk_box_append(self.list, button);
+}
+
+/// The rail +'s row id (the seam's `--click=rail-add`).
+pub const rail_add_id = "rail-add";
 
 /// A pane's row: its icon, and (expanded) its name with its directory under
 /// it. Indented one step under its window in the all-windows outline.
@@ -1019,6 +1099,7 @@ fn onRowClicked(_: *wk.GtkWidget, r: *Row) callconv(.c) void {
         .pane => _ = r.sidebar.activatePane(r.id, altHeld()),
         .window, .tile => _ = raiseWindow(r.key),
         .project, .ungrouped => toggleFold(r.kind, r.key),
+        .rail_add => r.sidebar.railAddClicked(),
     }
 }
 
@@ -1764,7 +1845,7 @@ fn closeFromRow(self: *PaneSidebar, r: *const Row) void {
     switch (r.kind) {
         .pane => p.pane = self.alloc.dupe(u8, r.id) catch null,
         .window, .project, .ungrouped => p.keys = self.alloc.dupe(u64, r.members) catch &.{},
-        .tile => {},
+        .tile, .rail_add => {},
     }
     log.info("pane sidebar close {s} id={s} windows={d}", .{ @tagName(r.kind), r.id, p.keys.len });
     _ = wk.g_idle_add(@ptrCast(&onPendingClose), p);
@@ -1802,14 +1883,7 @@ fn addFromRow(self: *PaneSidebar, r: *const Row) void {
     const first = findTab(r.members[0]) orelse return;
     const parent: ?*Surface = first.tab.getActiveSurface();
     switch (r.kind) {
-        .window => {
-            const dir = add_rules.split_memory.last;
-            log.info("pane sidebar add pane dir={s}", .{@tagName(dir)});
-            _ = raiseWindow(r.key);
-            first.tab.getSplitTree().newSplit(add_rules.as(Surface.Tree.Split.Direction, dir), parent, .none) catch |err| {
-                log.warn("pane sidebar add pane failed err={}", .{err});
-            };
-        },
+        .window => addPaneTo(first, r.key, "row"),
         .ungrouped => {
             log.info("pane sidebar add ungrouped window", .{});
             _ = first.win.as(gtk.Widget).activateAction("win.new-window", null);
@@ -1828,7 +1902,38 @@ fn addFromRow(self: *PaneSidebar, r: *const Row) void {
             const core = if (parent) |s| s.core() else null;
             _ = Application.default().newWindowFromSidebar(core, title);
         },
-        .pane, .tile => {},
+        .pane, .tile, .rail_add => {},
+    }
+}
+
+/// A new pane in window (tab) `key`: raised, and its focused pane split the
+/// way the user last split one by hand (`add_rules.split_memory`). What a
+/// window row's + and this window's rail + do.
+fn addPaneTo(f: FoundTab, key: u64, from: []const u8) void {
+    const dir = add_rules.split_memory.last;
+    log.info("pane sidebar add pane dir={s} from={s}", .{ @tagName(dir), from });
+    _ = raiseWindow(key);
+    f.tab.getSplitTree().newSplit(add_rules.as(Surface.Tree.Split.Direction, dir), f.tab.getActiveSurface(), .none) catch |err| {
+        log.warn("pane sidebar add pane failed err={}", .{err});
+    };
+}
+
+/// The rail's + (T3695; Mac `PaneSidebarRailAddSlot`, win32 `railAdd`): it
+/// heads the list it sits over, so in this window's panes it is the window
+/// header's + - a new pane here - and in all windows the panel header's - a
+/// new window, as Ctrl+Shift+N.
+fn railAddClicked(self: *PaneSidebar) void {
+    switch (add_rules.railAdd(scope.all_windows)) {
+        .new_window => {
+            log.info("pane sidebar add window (rail)", .{});
+            _ = self.window.as(gtk.Widget).activateAction("win.new-window", null);
+        },
+        .new_pane => {
+            const tab = self.window.getSelectedTab() orelse return;
+            const key = @intFromPtr(tab);
+            const f = findTab(key) orelse return;
+            addPaneTo(f, key, "rail");
+        },
     }
 }
 
@@ -1862,7 +1967,7 @@ pub fn clickRow(self: *PaneSidebar, id: []const u8) bool {
 /// A header's fold chevron, by id (the seam).
 pub fn clickFold(self: *PaneSidebar, id: []const u8) bool {
     const r = self.rowById(id) orelse return false;
-    if (r.kind == .pane or r.kind == .tile) return false;
+    if (r.kind == .pane or r.kind == .tile or r.kind == .rail_add) return false;
     toggleFold(r.kind, r.key);
     return true;
 }

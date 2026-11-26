@@ -184,15 +184,15 @@ hl_check "A19 clicking a window's row raises that window" $? "$(grep 'pane sideb
 
 # ---- 5. the rail: one tile per window --------------------------------------
 sb wa --click=toggle > /dev/null
-hl_wait_for 10 is wa '(s["mode"], [x["kind"] for x in r], s["search_shown"], s["scope_button_shown"])' "('mini', ['tile', 'tile', 'tile', 'tile'], False, False)"
-hl_check "A20 collapsed, all windows is one tile per window; no field, no scope button" $? "$(field wa '(s["mode"], [x["kind"] for x in r])')"
+hl_wait_for 10 is wa '(s["mode"], [x["kind"] for x in r], s["search_shown"], s["scope_button_shown"])' "('mini', ['rail_add', 'tile', 'tile', 'tile', 'tile'], False, False)"
+hl_check "A20 collapsed, all windows is the rail's + then one tile per window; no field, no scope button" $? "$(field wa '(s["mode"], [x["kind"] for x in r])')"
 is wa '([x["tooltip"] for x in r if x["selected"]], [x["tooltip"] for x in r][-2:])' "(['alpha'], ['proj: wt-2', 'proj: wt-10'])"
 hl_check "A21 a tile's tooltip is its window's full name; this window's tile is selected; the list's order" $? "$(field wa '[(x["tooltip"], x["selected"]) for x in r]')"
 sb wa --click=toggle > /dev/null
 
 # ---- 6. back to this window; kept across a relaunch ------------------------
 sb wa --click=scope > /dev/null
-hl_wait_for 10 is wa '(s["all_windows"], [x["kind"] for x in r], s["title"], s["search_shown"])' "(False, ['terminal'], 'alpha', False)"
+hl_wait_for 10 is wa '(s["all_windows"], [(x["kind"], x["label"]) for x in r][0], [x["kind"] for x in p], s["title"], s["search_shown"])' "(False, ('window', 'alpha'), ['terminal'], 'Panes', False)"
 hl_check "A22 the scope button switches every window back to its own panes" $? "$(field wa '(s["all_windows"], [x["kind"] for x in r], s["title"])')"
 is wb 's["all_windows"]' False
 hl_check "A23 for every window at once" $? "$(sb wb)"
