@@ -126,7 +126,7 @@ pub fn present(win: *Window, activate: bool) bool {
         .not_managed => unreachable,
         .show => {
             log.info("workspace: window={s} opened on show", .{name(win)});
-            show(win, activate);
+            _ = show(win, activate);
         },
         .stay_parked => {
             log.info("workspace: window={s} opened parked", .{name(win)});
