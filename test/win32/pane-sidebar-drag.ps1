@@ -53,6 +53,17 @@
 #   I) s2's handle dragged onto B's empty tray well: the same HWND is now B's
 #      child, stashed (`pane drop stashed into another window index=0`)
 #
+# T2319: the same motion in the EXPANDED panel. B's toggle opens its panel
+# (list s1, B's pane; tray s2), and the rows are scored from the panel's own
+# geometry line rather than the rail's tile arithmetic.
+#   J) B's pane's row dragged above s1's: the slide opens the gap at 0, the
+#      held row follows the pointer up the panel, the release settles it, and
+#      B's list reads B's pane, s1 - nothing stashed or restored
+#   K) s2's tray row dragged above the first list row: the list opens a gap
+#      at 0, the held row follows, and the release brings s2 back on screen at
+#      the list's top (`placed in list index=0 restored=true`)
+# Mid-drag captures of the panel: t2319-*.png.
+#
 # T2304 (Mac e77422577 / 543489bca): a drop into the list or a non-empty tray
 # is shown by the rows SLIDING to open a gap there, not by a caret - so B and
 # D-G assert no preview window, and the app's `pane sidebar drag slide` line
@@ -210,6 +221,16 @@ function Get-LogLines([int]$Skip, [string]$Pattern) {
     return @(Get-Content $script:errlog -ErrorAction SilentlyContinue | Select-Object -Skip $Skip | Where-Object { $_ -match $Pattern })
 }
 function Get-LogCount { @(Get-Content $script:errlog -ErrorAction SilentlyContinue).Count }
+# Wait (bounded) for the app to log $Pattern since line $Skip (T2319): the
+# app's own word that a step happened, rather than a guess at how long it takes.
+function Wait-LogLine([int]$Skip, [string]$Pattern, [int]$Ms = 3000) {
+    $deadline = (Get-Date).AddMilliseconds($Ms)
+    do {
+        if (@(Get-LogLines $Skip $Pattern).Count -ge 1) { return $true }
+        Start-Sleep -Milliseconds 100
+    } while ((Get-Date) -lt $deadline)
+    return $false
+}
 # The last held-row top the rail drew since line $Skip (T2304), or $null.
 function Get-HeldTop([int]$Skip) {
     $line = Get-LogLines $Skip 'pane sidebar row held top=' | Select-Object -Last 1
@@ -268,14 +289,22 @@ function Show-State([string]$Label) {
 # rail coordinates ($null while something is stashed).
 function Get-RailWith([string]$Id) {
     $line = @(Get-Content $script:errlog -ErrorAction SilentlyContinue | Where-Object { $_ -match 'pane sidebar rows ' -and $_.ToUpperInvariant().Contains("#$Id;") }) | Select-Object -Last 1
-    $r = [pscustomobject]@{ List = @(); Tray = @(); Well = $null }
-    if (-not $line -or $line -notmatch 'items=(\S*)') { return $r }
+    # Mode and Toggle (T2319): which layout drew the line, and the toggle's
+    # center; Rows: every shown row's center, in `items=` order (list, then
+    # tray), in sidebar coordinates.
+    $r = [pscustomobject]@{ List = @(); Tray = @(); Well = $null; Mode = $null; Toggle = $null; Rows = @() }
+    if (-not $line) { return $r }
+    if ($line -match 'pane sidebar rows mode=(\w+) ') { $r.Mode = $Matches[1] }
+    if ($line -match ' toggle=(-?\d+),(-?\d+) ') { $r.Toggle = @{ X = [int]$Matches[1]; Y = [int]$Matches[2] } }
+    if ($line -match ' tray=(-?\d+),(-?\d+) ') { $r.Well = @{ X = [int]$Matches[1]; Y = [int]$Matches[2] } }
+    if ($line -notmatch 'items=(\S*)') { return $r }
     foreach ($i in ($Matches[1] -split ';' | Where-Object { $_ })) {
-        if ($i -match '^g\d+([gs])@-?\d+,-?\d+#(\S+)$') {
-            if ($Matches[1] -eq 'g') { $r.List += $Matches[2].ToUpperInvariant() } else { $r.Tray += $Matches[2].ToUpperInvariant() }
+        if ($i -match '^g\d+([gs])@(-?\d+),(-?\d+)#(\S+)$') {
+            $id = $Matches[4].ToUpperInvariant()
+            if ($Matches[1] -eq 'g') { $r.List += $id } else { $r.Tray += $id }
+            $r.Rows += [pscustomobject]@{ Id = $id; Sec = $Matches[1]; X = [int]$Matches[2]; Y = [int]$Matches[3] }
         }
     }
-    if ($line -match ' tray=(-?\d+),(-?\d+) ') { $r.Well = @{ X = [int]$Matches[1]; Y = [int]$Matches[2] } }
     return $r
 }
 # B's rail once it reads as $Want says (or as it last read, after 3s).
@@ -730,6 +759,85 @@ try {
     "  (other window after I: list $($railB.List -join ', ') | tray $($railB.Tray -join ', '))"
     Assert "I: the other window's tray holds s2, its list unchanged" ($railB.Tray.Count -eq 1 -and $railB.Tray[0] -eq $id2 -and $railB.List.Count -eq 2)
     Assert "I: this window keeps P on screen" (Test-VisibleChild $top $hP)
+
+    # T2319: the T2304 motion runs in the EXPANDED panel too, and until here
+    # only the rail was driven. The other window now holds the shape both
+    # cases need - two list rows (s1, its own pane) and one stashed (s2) -
+    # so its panel is expanded and driven, scored from the panel's own
+    # geometry line (row centers in `items=`), since a panel row's height is
+    # a font metric the rail's tile arithmetic does not have.
+    Show-State "before J"
+    "== J: in the EXPANDED panel, a list row dragged up the list slides the rows and reorders the list"
+    $bSb = Get-Sidebar $bTop
+    $railB = Get-RailWith $idB
+    $tg = if ($null -ne $railB.Toggle) { @{ X = $bSb.Left + $railB.Toggle.X; Y = $bSb.Top + $railB.Toggle.Y } } else {
+        $inset = [int][math]::Truncate(((Px 52) - (Px 28)) / 2)
+        @{ X = $bSb.Left + (Px 12) + $inset + [int]((Px 28) / 2); Y = $bSb.Top + (Px 12) + $inset + [int]((Px 28) / 2) }
+    }
+    $logJ = Get-LogCount
+    Assert "J: the toggle click on the other window's rail delivered" (Send-TestMouse -Window $bTop -Target ([IntPtr]$bSb.Hwnd) -X $tg.X -Y $tg.Y -Action click)
+    $panelB = Wait-Rail $idB { param($r) $r.Mode -eq 'expanded' -and $r.Rows.Count -eq 3 }
+    Start-Sleep -Milliseconds 600  # settle: the panel's open transition runs before its rows are where the line says
+    $panelB = Get-RailWith $idB
+    $bSb = Get-Sidebar $bTop
+    "  (panel: mode $($panelB.Mode) width $($bSb.Width) | list $($panelB.List -join ', ') | tray $($panelB.Tray -join ', '))"
+    Assert "J: the other window's sidebar is the expanded panel (log mode=expanded, wider than the rail)" ($panelB.Mode -eq 'expanded' -and $bSb.Width -gt (Px 150))
+    Assert "J: the panel lists s1 then its own pane, s2 in the tray" ($panelB.List.Count -eq 2 -and $panelB.List[0] -eq $id1 -and $panelB.List[1] -eq $idB -and $panelB.Tray.Count -eq 1 -and $panelB.Tray[0] -eq $id2)
+    if ($panelB.Mode -ne 'expanded' -or $panelB.Rows.Count -ne 3) { return }
+    $rowH = $panelB.Rows[1].Y - $panelB.Rows[0].Y
+    "  (panel rows at y $(($panelB.Rows | ForEach-Object { $_.Y }) -join ', '); pitch $rowH)"
+    # Drag its own pane's row (list 1) above the middle of s1's (list 0).
+    $from = @{ X = $bSb.Left + $panelB.Rows[1].X; Y = $bSb.Top + $panelB.Rows[1].Y }
+    $jx = $bSb.Left + $panelB.Rows[0].X; $jy = $bSb.Top + $panelB.Rows[0].Y - (Px 9)
+    Assert "J: press and travel on the panel row delivered" (Start-TileDrag $bTop $bSb $from)
+    Assert "J: the row handed its pane to the window's drag (log)" (@(Get-LogLines $logJ 'pane sidebar row drag start item=1 section=grid').Count -ge 1)
+    Assert "J: move above s1's row delivered" (Move-Drag $bTop $jx $jy 'move')
+    [void](Wait-LogLine $logJ 'pane sidebar drag slide source=1 target=0 ')
+    Get-LogLines $logJ 'pane sidebar drag slide ' | Select-Object -Last 3 | ForEach-Object { "  | $_" }
+    Assert "J: the list opens a gap above s1, no caret (log)" (@(Get-LogLines $logJ 'pane sidebar drag slide source=1 target=0 list=2').Count -ge 1 -and $null -eq (Get-PreviewRect $app.Pid))
+    $heldJ = Get-HeldTop $logJ
+    "  (held top $heldJ; the row's centre was $($panelB.Rows[1].Y) in the panel)"
+    Assert "J: the row is held up the panel, by the pointer (log)" ($null -ne $heldJ -and $heldJ -lt ($panelB.Rows[1].Y - (Px 20)))
+    Save-RailShot $bSb 't2319-panel-held-in-list.png'
+    Assert "J: release delivered" (Move-Drag $bTop $jx $jy 'up')
+    [void](Wait-LogLine $logJ 'pane sidebar row settled')
+    Assert "J: the row glided to its new place and was let back into the list (log)" (@(Get-LogLines $logJ 'pane sidebar row settle from=').Count -ge 1 -and @(Get-LogLines $logJ 'pane sidebar row settled').Count -ge 1)
+    $panelB = Wait-Rail $idB { param($r) $r.List.Count -eq 2 -and $r.List[0] -eq $idB }
+    "  (panel after J: list $($panelB.List -join ', ') | tray $($panelB.Tray -join ', '))"
+    Assert "J: the panel's list reads its own pane, then s1" ($panelB.List.Count -eq 2 -and $panelB.List[0] -eq $idB -and $panelB.List[1] -eq $id1)
+    Assert "J: nothing was stashed or restored (log)" (@(Get-LogLines $logJ 'pane drop stashed').Count -eq 0 -and @(Get-LogLines $logJ 'restored=true').Count -eq 0)
+    Assert "J: s2 still stashed, the panel still expanded" ((Test-StashedId 's2') -and $panelB.Mode -eq 'expanded')
+
+    Show-State "before K"
+    "== K: in the EXPANDED panel, a stashed row dragged up into the list slides the list and comes back out"
+    $panelB = Get-RailWith $idB
+    $bSb = Get-Sidebar $bTop
+    $logK = Get-LogCount
+    # Rows: its own pane, s1 (the list), then s2 (the tray). s2 above the
+    # middle of the first list row: list index 0.
+    $from = @{ X = $bSb.Left + $panelB.Rows[2].X; Y = $bSb.Top + $panelB.Rows[2].Y }
+    $kx = $bSb.Left + $panelB.Rows[0].X; $ky = $bSb.Top + $panelB.Rows[0].Y - (Px 9)
+    Assert "K: press and travel on s2's tray row delivered" (Start-TileDrag $bTop $bSb $from)
+    Assert "K: the tray row handed s2 to the window's drag (log)" (@(Get-LogLines $logK 'pane sidebar row drag start item=2 section=stashed').Count -ge 1)
+    Assert "K: move above the first list row delivered" (Move-Drag $bTop $kx $ky 'move')
+    [void](Wait-LogLine $logK 'pane sidebar drag slide source=3 target=0 ')
+    Get-LogLines $logK 'pane sidebar drag slide ' | Select-Object -Last 3 | ForEach-Object { "  | $_" }
+    # s2 is tray row 0 under two list rows: sequence index 3 (list 0-1, the
+    # header 2), landing at the list's 0 - both rows and the header slide.
+    Assert "K: the list opens a gap at 0 for the stashed row, no caret (log)" (@(Get-LogLines $logK 'pane sidebar drag slide source=3 target=0 list=2').Count -ge 1 -and $null -eq (Get-PreviewRect $app.Pid))
+    $heldK = Get-HeldTop $logK
+    "  (held top $heldK; s2's row centre was $($panelB.Rows[2].Y) in the panel)"
+    Assert "K: s2's row is held above where it was, by the pointer (log)" ($null -ne $heldK -and $heldK -lt ($panelB.Rows[2].Y - (Px 20)))
+    Save-RailShot $bSb 't2319-panel-held-from-tray.png'
+    Assert "K: release delivered" (Move-Drag $bTop $kx $ky 'up')
+    [void](Wait-LogLine $logK 'pane sidebar row settled')
+    Assert "K: s2 is no longer stashed (+list)" (Wait-Stashed 's2' $false)
+    Assert "K: s2's SAME handle is on screen in the other window" (Test-VisibleChild $bTop $h2)
+    Assert "K: the drop placed it in the list at 0, out of the tray (log)" (@(Get-LogLines $logK 'pane drop placed in list index=0 restored=true').Count -ge 1)
+    Assert "K: the row glided to its new place and was let back into the list (log)" (@(Get-LogLines $logK 'pane sidebar row settle from=').Count -ge 1 -and @(Get-LogLines $logK 'pane sidebar row settled').Count -ge 1)
+    $panelB = Wait-Rail $idB { param($r) $r.List.Count -eq 3 }
+    "  (panel after K: list $($panelB.List -join ', ') | tray $($panelB.Tray -join ', '))"
+    Assert "K: the panel's list reads s2, its own pane, s1, the tray empty" ($panelB.List.Count -eq 3 -and $panelB.List[0] -eq $id2 -and $panelB.List[1] -eq $idB -and $panelB.List[2] -eq $id1 -and $panelB.Tray.Count -eq 0)
 
     Show-State "end"
     Assert "no crash" (-not ($app.Process -and $app.Process.HasExited))
