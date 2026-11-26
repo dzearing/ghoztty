@@ -40860,3 +40860,8 @@ WebKitGTK's script message carries no frame, and a page-world handler is visible
 - What: the first sidebar paint after a wheel step now logs `pane sidebar scroll paint us=`; new harness test/win32/pane-sidebar-scroll-cost.ps1 (+ guard row) builds Mac 321e61d7c's scene - 40 windows x 2 panes, all-windows list fully unfolded, 12 busy.
 - Evidence: Debug build, 20 steps: median 3.7-4.2 ms, max 7.4-9.5 ms over four runs (Mac 31-50 ms before, ~8 ms after, release); at rest 0-0.4% of a core. -NegativeControl exits 1. Floor lanes all PASS; harness floor green; due sweep 33 pass, all 12 reds acked to open tasks.
 - Filed: none.
+
+## 2026-11-26 05:20 lane l - T3665 done: a closed Linux window can be undone from any other window
+- What: `CloseUndo.parkWindow` parks a closed GTK window (its close, `+close`, or its last tab or pane going): hidden and out of the GtkApplication, so every window walk skips it. Ctrl+Shift+Z in any window brings it back with the same shells; Ctrl+Shift+Y closes it again; expiry ends it. Never parked: the last window, the quick terminal, workspaces (T3790), `+close --force`.
+- Evidence: cli-undo.sh W0-W12 green (CLI UNDO: ALL PASS); NEGATIVE=1 gives 33 FAILURE(S); Linux floor ALL PASS at e6ebd73031.
+- Filed: T3802 (5 adw_tab_view CRITICALs per window teardown, predates this), T3803 (Linux harnesses grep CRITICAL forms the app never writes).
