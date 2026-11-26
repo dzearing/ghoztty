@@ -31,7 +31,10 @@
 # The app runs on Mesa's software rasterizer (LIBGL_ALWAYS_SOFTWARE=1), so
 # every GL texture and buffer a pane holds lives in the app's own memory and
 # a leaked render target shows up in M1; on the d3d12 driver the same memory
-# sits on the Windows host where nothing here can read it.
+# sits on the Windows host where nothing here can read it. M6 reads the
+# session agent's LIVE heap from its own allocator (T3646, the `heap:` lines
+# a Debug agent writes to agent.log): private memory cannot tell a leaked
+# session from the DebugAllocator keeping a page that one live slot pins.
 #
 # Run it ONLY through the wrapper, from this box:
 #
@@ -201,16 +204,16 @@ for kind in $SCENARIOS; do
     done
     END=$(settled 2.5); show "$kind end" "$END"
     hl_check "P1 $kind: every one of the $((CYCLES + WARMUP)) opens succeeded" $((1 - ok))
-    set -- $BASE; b_priv=$1 b_thr=$2 b_fd=$3 b_procs=$4 b_pkb=$5
-    set -- $END; e_priv=$1 e_thr=$2 e_fd=$3 e_procs=$4 e_pkb=$5
-    set -- $PEAK; k_priv=$1 k_thr=$2 k_fd=$3 k_procs=$4
+    set -- $BASE; b_priv=$1 b_thr=$2 b_fd=$3 b_procs=$4 b_pkb=$5 b_heap=$6
+    set -- $END; e_priv=$1 e_thr=$2 e_fd=$3 e_procs=$4 e_pkb=$5 e_heap=$6
+    set -- $PEAK; k_priv=$1 k_thr=$2 k_fd=$3 k_procs=$4 k_heap=$6
     pane_kb=$((k_priv - b_priv))
     m=$(per "$b_priv" "$e_priv" "$CYCLES")
     t=$(per "$b_thr" "$e_thr" "$CYCLES")
     f=$(per "$b_fd" "$e_fd" "$CYCLES")
     pr=$(per "$b_procs" "$e_procs" "$CYCLES")
     pm=$(per "$b_pkb" "$e_pkb" "$CYCLES")
-    summary="$summary\n    $kind: one open pane ~${pane_kb}KB/$((k_thr - b_thr)) threads/$((k_fd - b_fd)) fds/$((k_procs - b_procs)) procs; per closed: ${m}KB ${t} threads ${f} fds ${pr} procs ${pm}KB in them"
+    summary="$summary\n    $kind: one open pane ~${pane_kb}KB/$((k_thr - b_thr)) threads/$((k_fd - b_fd)) fds/$((k_procs - b_procs)) procs; per closed: ${m}KB ${t} threads ${f} fds ${pr} procs ${pm}KB in them, $(per "$b_heap" "$e_heap" "$CYCLES")B agent live heap"
     python3 -I -c "import sys; sys.exit(0 if $m <= 1024 else 1)"
     hl_check "M1 $kind: private memory per closed pane <= 1 MB (left ${m} KB; one open pane cost ~${pane_kb} KB)" $? "base=$BASE end=$END peak=$PEAK"
     python3 -I -c "import sys; sys.exit(0 if $t <= 0.5 else 1)"
@@ -221,6 +224,16 @@ for kind in $SCENARIOS; do
     hl_check "M4 $kind: child processes per closed pane <= 0.2 - its shell (and web process) ended (left $pr)" $? "base=$BASE end=$END"
     python3 -I -c "import sys; sys.exit(0 if $pm <= 1024 else 1)"
     hl_check "M5 $kind: child private memory per closed pane <= 1 MB (left ${pm} KB)" $? "base=$BASE end=$END"
+    # T3646: the agent's LIVE heap (bytes its allocator handed out and did not
+    # get back), the leak oracle M5 cannot be. M5's agent share climbs ~27 KB
+    # a session in a Debug agent with nothing leaked, because the
+    # DebugAllocator never reuses a freed slot and keeps a page while any slot
+    # on it lives. One open session costs ~10 KB of live heap, so a session
+    # left behind in any form - table entry, ring, buffers - breaks 1 KB.
+    # -1 means the agent logged no count: the counter is gone, which fails.
+    hp=$(per "$b_heap" "$e_heap" "$CYCLES")
+    [ "$b_heap" -ge 0 ] && [ "$e_heap" -ge 0 ] && python3 -I -c "import sys; sys.exit(0 if $hp <= 1024 else 1)"
+    hl_check "M6 $kind: the session agent's live heap per closed pane <= 1 KB - nothing of the session kept (left ${hp} B; one open pane held ~$((k_heap - b_heap)) B)" $? "base=$BASE end=$END peak=$PEAK"
     if [ "$NEG" = 1 ]; then
         # leave nothing open for the next scenario's baseline
         for v in $(panes); do [ "$v" = "$p1" ] || cli +close --target="$v" > /dev/null 2>&1; done
