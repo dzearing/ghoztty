@@ -929,7 +929,20 @@ pub const Application = extern struct {
                 // tries to free on its own. I think this is probably a bug in
                 // the fcitx ime widget but still, we don't want a double free!
                 if (gobject.ext.isA(window, Window)) {
+                    // T3689: `destroy` drops only the toplevel list's
+                    // reference, so a window anything else still holds - a
+                    // pending timer such as `--focus`'s activation check -
+                    // is never disposed before the run loop ends. Its panes
+                    // then outlive the quit, keep their font grids, and core
+                    // `App.deinit` asserts (debug builds abort with 134).
+                    // Force the dispose: every pane is freed now, whoever
+                    // still holds the window object. The list does not
+                    // reference its windows, so hold one across the destroy.
+                    const obj = window.as(gobject.Object);
+                    _ = obj.ref();
+                    defer obj.unref();
                     window.destroy();
+                    obj.runDispose();
                 }
             }
         }.callback, null);
