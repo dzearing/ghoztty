@@ -2876,18 +2876,34 @@ shell.
   stamp), `GHOZTTY_AGENT_PROTO_VERSION` (the agent's advertised protocol),
   `GHOZTTY_TEST_AGENT_SKEW_DIALOG` (records the dialog) +
   `GHOZTTY_TEST_AGENT_SKEW_ANSWER=restart` (answers it).
-- Not yet: the waiting "Background Update Ready..." row (T3691) and the
-  dialog's What's New notes (T3692).
+- **The waiting update is visible** (T3691, win32's T1068): a settling check
+  (`agent_upgrade.settlesPending`) sets `pending` from `pendingFor`, which
+  enables `app.install-agent-update`. That one flag drives the main menu's
+  "Background Update Ready…" row (`hidden-when: action-disabled` in
+  window.blp) and the palette's "Install Background Process Update…" (an
+  `app_action` palette row; the palette rebuilds each time it opens). Choosing
+  either re-runs the check, then asks (Later default) with
+  `installNowTextInPlace`. Restart Now is the skew path's restart +
+  `AgentRecovery.recover`: the windows stay and the panes are rebuilt, with no
+  app relaunch (Windows relaunches the app, T1804). Logged: `agent update
+  affordance: shown (<kind>)|cleared` and `agent update offer: ...`. The
+  `main-menu` seam reports each item's `enabled`. Hooks:
+  `GHOZTTY_TEST_AGENT_UPDATE_DIALOG` + `_ANSWER`.
+- The app-older notice has a Linux body (`app_older_body_linux`). It does not
+  promise a click-to-update, because Linux has no updater behind one.
+- Not yet: the dialog's What's New notes (T3692).
 
 ```powershell
 powershell -NoProfile -File scripts\linux\wsl-run.ps1 -CommandFile test\linux\agent-upgrade.sh
 ```
 
-Ends `AGENT UPGRADE: ALL PASS` (29 checks): stale + live is deferred, the last
-window closing refreshes the idle agent, a current agent is left alone, a
-protocol-0 agent gets the dialog (Later leaves it, Restart replaces it and
-persistence returns), and a protocol-9999 agent gets the app-older notice and
-is never stopped.
+Ends `AGENT UPGRADE: ALL PASS` (48 checks). It covers six behaviors. Stale +
+live is deferred, the waiting row shows, and Later keeps it. The last window
+closing refreshes the idle agent and clears the row. A current agent is left
+alone and the row stays hidden. The palette entry's Restart Now rebuilds the
+pane on a new agent. A protocol-0 agent gets the dialog: Later leaves it, and
+Restart replaces it and brings persistence back. A protocol-9999 agent gets the
+app-older notice and is never stopped.
 
 ### Viewer panes restore too (T3420)
 
