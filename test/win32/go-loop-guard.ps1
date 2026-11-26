@@ -2393,6 +2393,11 @@ SStamp $sn.A 'shared' '2026-10-16T12:00:00-07:00'
 $r = SGuard $sn.A @('commit', '-Paths', 'test/win32/shared.stamp.json', '-Message', 'lane a stamps')
 Assert 'W28h control: without the driver two stamp commits conflict on the rebase' `
     ($r.Code -ne 0 -and $r.Out -match 'rebase did not run' -and $r.Out -match 'CONFLICT|conflict')
+# T2292: the conflict is reported, and the shared tree is NOT left mid-rebase.
+$snGd = (& git -C $sn.A rev-parse --absolute-git-dir 2>$null | Select-Object -First 1)
+Assert 'W28h2 a conflicting push-rebase is ABORTED, never left mid-rebase in the shared tree' `
+    ($r.Out -match 'PULL ABORTED' -and -not (Test-Path (Join-Path $snGd 'rebase-merge')) -and
+     -not (Test-Path (Join-Path $snGd 'REBASE_HEAD')) -and -not (Test-Path (Join-Path $snGd 'CHERRY_PICK_HEAD')))
 & git -C $sn.A rebase --abort 2>$null | Out-Null
 
 # The fix, both directions: the lane that pushes second keeps ITS stamp when it
@@ -2470,6 +2475,84 @@ Assert 'W28q a dirty non-stamp file still blocks the rebase and is left exactly 
 Assert 'W28r an unreadable stamp is never decided, so git keeps the conflict' `
     ($null -eq (Select-NewerStamp '<<<<<<< ours' "{`"generated`":`"2026-10-16T12:00:00-07:00`"}") -and
      (Select-NewerStamp "{`"generated`":`"2026-10-16T12:00:00-07:00`"}" "{`"generated`":`"2026-10-16T12:00:00-07:00`"}") -eq 'ours')
+
+# T2292: a transient index.lock in the MIDDLE of the push-rejected rebase. A
+# post-checkout hook (rebase runs it on the checkout of the new base, before the
+# first pick) plants a non-empty index.lock - the shape of the other window's
+# git mid-write - and, for the transient arms, removes it a few seconds later.
+# The first pick then fails exactly as it did on lane b on 2026-10-25.
+function New-LockFaultRepo([string]$tag, [int]$clearAfter) {
+    $bare = Join-Path $root "lockfault-$tag.git"
+    $mine = Join-Path $root "lockfault-$tag-mine"
+    $them = Join-Path $root "lockfault-$tag-theirs"
+    git init -q --bare $bare 2>$null
+    git clone -q $bare $mine 2>$null
+    git -C $mine config user.email 't@t' 2>$null; git -C $mine config user.name 't' 2>$null
+    Set-Content -Path (Join-Path $mine 'seed.txt') -Value 'seed'
+    git -C $mine add seed.txt 2>$null
+    git -C $mine -c core.hooksPath= commit -q -m 'seed' 2>$null
+    git -C $mine push -q -u origin HEAD 2>$null
+    git clone -q $bare $them 2>$null
+    git -C $them config user.email 't@t' 2>$null; git -C $them config user.name 't' 2>$null
+    Set-Content -Path (Join-Path $them 'theirs.txt') -Value 'theirs'
+    git -C $them add theirs.txt 2>$null
+    git -C $them -c core.hooksPath= commit -q -m 'the other lane moved the trunk' 2>$null
+    git -C $them push -q origin HEAD 2>$null
+    $clear = if ($clearAfter -gt 0) { "( sleep $clearAfter; rm -f `"`$g/index.lock`" ) >/dev/null 2>&1 &" } else { '' }
+    $hook = "#!/bin/sh`ng=`$(git rev-parse --absolute-git-dir)`n[ -f `"`$g/lockfault-armed`" ] || exit 0`n" +
+        "rm -f `"`$g/lockfault-armed`"`nprintf x > `"`$g/index.lock`"`n$clear`nexit 0`n"
+    $gd = (& git -C $mine rev-parse --absolute-git-dir 2>$null | Select-Object -First 1)
+    [System.IO.File]::WriteAllText((Join-Path $gd 'hooks\post-checkout'), $hook)
+    return @{ Bare = $bare; Mine = $mine; Gd = $gd }
+}
+function Test-MidOp([string]$gd) {
+    return ((Test-Path (Join-Path $gd 'rebase-merge')) -or (Test-Path (Join-Path $gd 'rebase-apply')) -or
+        (Test-Path (Join-Path $gd 'REBASE_HEAD')) -or (Test-Path (Join-Path $gd 'CHERRY_PICK_HEAD')))
+}
+$lf = New-LockFaultRepo 'ctl' 4
+Set-Content -Path (Join-Path $lf.Mine 'mine.txt') -Value 'mine'
+git -C $lf.Mine add mine.txt 2>$null
+git -C $lf.Mine -c core.hooksPath= commit -q -m 'mine' 2>$null
+New-Item -ItemType File -Force (Join-Path $lf.Gd 'lockfault-armed') | Out-Null
+$eapF = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+$fOut = (& git -C $lf.Mine -c rebase.autoStash=false pull --rebase 2>&1 | ForEach-Object { $_.ToString() } | Out-String)
+$fCode = $LASTEXITCODE
+$ErrorActionPreference = $eapF
+Assert 'W28lk1 control: the planted lock really stops a bare pull --rebase mid-rebase' `
+    ($fCode -ne 0 -and $fOut -match 'index\.lock' -and (Test-MidOp $lf.Gd))
+# Wait for the hook's own timer to take the lock away (bounded), then undo.
+$lfDeadline = (Get-Date).AddSeconds(15)
+while ((Test-Path (Join-Path $lf.Gd 'index.lock')) -and (Get-Date) -lt $lfDeadline) { Start-Sleep -Milliseconds 200 }
+& git -C $lf.Mine rebase --abort 2>$null | Out-Null
+
+$lf = New-LockFaultRepo 'fix' 4
+Set-Content -Path (Join-Path $lf.Mine 'mine.txt') -Value 'mine'
+New-Item -ItemType File -Force (Join-Path $lf.Gd 'lockfault-armed') | Out-Null
+$r = SGuard $lf.Mine @('commit', '-Paths', 'mine.txt', '-Message', 'mine, rebased past a busy lock')
+$fRemote = (& git -C $lf.Bare rev-parse HEAD 2>$null | Select-Object -First 1)
+$fLocal = (& git -C $lf.Mine rev-parse HEAD 2>$null | Select-Object -First 1)
+Assert 'W28lk2 a transient index.lock mid-rebase is waited out, the rebase finished, and the commit pushed' `
+    ($r.Code -eq 0 -and $r.Out -match 'busy index\.lock' -and $r.Out -match 'FINISHED' -and $r.Out -match 'PUSHED' -and
+     $fRemote -eq $fLocal)
+Assert 'W28lk3 and the tree is not left mid-rebase (no rebase-merge, REBASE_HEAD or CHERRY_PICK_HEAD)' `
+    (-not (Test-MidOp $lf.Gd) -and -not (Test-Path (Join-Path $lf.Gd 'index.lock')))
+Assert 'W28lk4 the other lane''s commit survived' `
+    (@(& git -C $lf.Mine log --oneline 2>$null | Where-Object { $_ -match 'the other lane moved the trunk' }).Count -eq 1)
+
+# A lock that never goes cannot be worked around (abort needs the index too):
+# the guard must SAY the tree is still mid-rebase and name the lock, not exit 6
+# over git's generic advice.
+$lf = New-LockFaultRepo 'stuck' 0
+Set-Content -Path (Join-Path $lf.Mine 'mine.txt') -Value 'mine'
+New-Item -ItemType File -Force (Join-Path $lf.Gd 'lockfault-armed') | Out-Null
+$r = SGuard $lf.Mine @('commit', '-Paths', 'mine.txt', '-Message', 'mine, behind a lock that stays', '-PullLockWaitSeconds', '1')
+Assert 'W28lk5 a lock that never clears: exit 6, STILL MID-REBASE named with the lock diagnosis' `
+    ($r.Code -eq 6 -and $r.Out -match 'STILL MID-REBASE' -and $r.Out -match 'index\.lock: .*not empty')
+Remove-Item -LiteralPath (Join-Path $lf.Gd 'index.lock') -Force -ErrorAction SilentlyContinue
+& git -C $lf.Mine rebase --abort 2>$null | Out-Null
+$r = SGuard $lf.Mine @('push')
+Assert 'W28lk6 once the lock is gone, push recovers the local commit' `
+    ($r.Code -eq 0 -and $r.Out -match 'PUSHED' -and -not (Test-MidOp $lf.Gd))
 
 # A branch nobody has ever pushed is the same problem with a longer tail.
 $oRepo = Join-Path $root 'no-upstream-repo'

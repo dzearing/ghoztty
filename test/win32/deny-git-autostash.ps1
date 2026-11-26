@@ -116,8 +116,15 @@ if ($env:CLAUDE_CODE_GIT_BASH_PATH -and (Test-Path $env:CLAUDE_CODE_GIT_BASH_PAT
 else {
     $git = Get-Command git -ErrorAction SilentlyContinue
     if ($git) {
-        $gb = Join-Path (Split-Path (Split-Path $git.Source -Parent) -Parent) 'bin\bash.exe'
-        if (Test-Path $gb) { $bash = $gb }
+        # git.exe sits at Git\cmd\ or, when a Git Bash PATH is inherited (the
+        # Bash tool, a sweep launched from it), at Git\mingw64\bin\ - walk up
+        # to the install root that holds bin\bash.exe rather than assume a depth.
+        $d = Split-Path $git.Source -Parent
+        for ($i = 0; $i -lt 4 -and $d -and -not $bash; $i++) {
+            $gb = Join-Path $d 'bin\bash.exe'
+            if (Test-Path $gb) { $bash = $gb }
+            $d = Split-Path $d -Parent
+        }
     }
 }
 if ($bash -and $command) {

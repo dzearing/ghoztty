@@ -131,6 +131,9 @@ param(
     # T2190 test seam: a .ps1 run as the build check instead of zig
     # (`powershell -File <it> -Repo <repo>`); non-zero exit = the tree is broken.
     [string]$BuildCheckScript,
+    # T2292 test seam: how long a pull that hit a busy index.lock waits for it
+    # to go before retrying (default 30s).
+    [int]$PullLockWaitSeconds = 30,
     [string]$Reason,
     [switch]$Force,
     [switch]$Json,
@@ -232,6 +235,115 @@ function Show-IndexLockDiagnosis {
     $s = Get-IndexLockState
     if (-not $s) { return }
     "  index.lock: $($s.Why)"
+}
+
+# A pull that stops part-way (T2292). On 2026-10-25 lane b's push-rejected
+# `pull --rebase` hit lane A's index.lock between two picks: the rebase stopped
+# with the pick rescheduled, the guard exited 6, and the shared tree sat
+# mid-rebase with a stale CHERRY_PICK_HEAD - so the next commit, from EITHER
+# window, failed with "cannot do a partial commit during a cherry-pick". The
+# pull path now never leaves the tree mid-operation: a busy lock is waited out
+# and the stopped rebase is finished (`rebase --continue`) or aborted and the
+# pull run again; any failure it cannot recover - a real conflict included - is
+# ABORTED, back to the pre-pull HEAD with the commit local, and says so.
+$PullLockAttempts = 3
+
+function Test-IndexLockFailure([string]$out) {
+    return ($out -match "index\.lock'?: File exists|Another git process seems to be running|Unable to create '[^']*\.lock'")
+}
+
+# What a stopped pull left behind, or $null when the tree is not mid-anything.
+function Get-InterruptedOp {
+    $gd = Get-GitDir
+    if (-not $gd) { return $null }
+    if ((Test-Path (Join-Path $gd 'rebase-merge')) -or (Test-Path (Join-Path $gd 'rebase-apply'))) { return 'rebase' }
+    if (Test-Path (Join-Path $gd 'MERGE_HEAD')) { return 'merge' }
+    if (Test-Path (Join-Path $gd 'CHERRY_PICK_HEAD')) { return 'cherry-pick' }
+    return $null
+}
+
+# Wait for a live index.lock to go away; a stale one is cleared on the way.
+function Wait-IndexLockGone([int]$seconds) {
+    $deadline = (Get-Date).AddSeconds($seconds)
+    while ($true) {
+        Clear-StaleIndexLock | Out-Null
+        if (-not (Get-IndexLockState)) { return $true }
+        if ((Get-Date) -ge $deadline) { return $false }
+        Start-Sleep -Milliseconds 500
+    }
+}
+
+# Back out of whatever the pull stopped in. Returns Ok (the tree is no longer
+# mid-operation) and Lines.
+function Exit-InterruptedOp([string]$op) {
+    $lines = @()
+    Wait-IndexLockGone $PullLockWaitSeconds | Out-Null
+    switch ($op) {
+        'rebase' { $a = Git-Run @('rebase', '--abort') }
+        'merge' { $a = Git-Run @('merge', '--abort') }
+        'cherry-pick' { $a = Git-Run @('cherry-pick', '--abort') }
+        default { $a = @{ Code = 0; Out = '' } }
+    }
+    # The 2026-10-25 shape: rebase-merge gone, CHERRY_PICK_HEAD left over. No
+    # sequencer owns it any more, so the ref alone is what blocks a commit.
+    $gd = Get-GitDir
+    if ($gd -and (Test-Path (Join-Path $gd 'CHERRY_PICK_HEAD')) -and -not (Test-Path (Join-Path $gd 'rebase-merge')) -and
+        -not (Test-Path (Join-Path $gd 'sequencer'))) {
+        Git-Run @('update-ref', '-d', 'CHERRY_PICK_HEAD') | Out-Null
+        $lines += '  removed a stale CHERRY_PICK_HEAD no operation owned'
+    }
+    $left = Get-InterruptedOp
+    if ($left) {
+        $lines += "  STILL MID-$($left.ToUpper()): git $op --abort did not undo it (exit $($a.Code)): $($a.Out)"
+        Show-IndexLockDiagnosis | ForEach-Object { $lines += $_ }
+        return @{ Ok = $false; Lines = $lines }
+    }
+    return @{ Ok = $true; Lines = $lines }
+}
+
+function Invoke-RecoveringPull([string[]]$pullArgs) {
+    $lines = @()
+    $preHead = (Git-Run @('rev-parse', '--short', 'HEAD')).Out
+    $pull = @{ Code = 1; Out = '' }
+    for ($attempt = 1; $attempt -le $PullLockAttempts; $attempt++) {
+        Clear-StaleIndexLock | ForEach-Object { $lines += $_ }
+        $pull = Git-Run $pullArgs
+        if ($pull.Code -eq 0) { return @{ Code = 0; Out = $pull.Out; Lines = $lines } }
+        $op = Get-InterruptedOp
+        if (-not (Test-IndexLockFailure $pull.Out)) { break }
+        $lines += "pull hit a busy index.lock (attempt $attempt of $PullLockAttempts) - waiting it out (T2292)"
+        Wait-IndexLockGone $PullLockWaitSeconds | Out-Null
+        if ($op -eq 'rebase') {
+            $prevEditor = $env:GIT_EDITOR
+            $env:GIT_EDITOR = 'true'
+            try { $c = Git-Run @('rebase', '--continue') } finally { $env:GIT_EDITOR = $prevEditor }
+            if ($c.Code -eq 0 -and -not (Get-InterruptedOp)) {
+                $lines += '  the stopped rebase FINISHED on rebase --continue'
+                return @{ Code = 0; Out = ($pull.Out + "`n" + $c.Out); Lines = $lines }
+            }
+            $lines += '  rebase --continue could not finish it - aborting and pulling again'
+            $pull.Out = $pull.Out + "`n" + $c.Out
+        }
+        $op = Get-InterruptedOp
+        if ($op) {
+            $x = Exit-InterruptedOp $op
+            foreach ($l in @($x.Lines)) { $lines += $l }
+            if (-not $x.Ok) { return @{ Code = $pull.Code; Out = $pull.Out; Lines = $lines } }
+        }
+    }
+    # Unrecoverable: never hand the shared tree back mid-operation.
+    $op = Get-InterruptedOp
+    if ($op) {
+        $x = Exit-InterruptedOp $op
+        foreach ($l in @($x.Lines)) { $lines += $l }
+        if ($x.Ok) {
+            $now = (Git-Run @('rev-parse', '--short', 'HEAD')).Out
+            $lines += "PULL ABORTED: the $op stopped and was undone - HEAD is back at $now (was $preHead before the pull); nothing pulled, the commit is local (T2292)"
+            if ($now -ne $preHead) { $lines += "  WARNING: HEAD $now is not the pre-pull $preHead" }
+            $lines += '  resolve it by hand (git pull --rebase, fix, git rebase --continue), then: scripts\git-commit-guard.ps1 push'
+        }
+    }
+    return @{ Code = $pull.Code; Out = $pull.Out; Lines = $lines }
 }
 
 function Get-LockPath {
@@ -742,12 +854,14 @@ function Invoke-ParkedPull([string]$mode) {
         }
     }
     if ($mode -eq 'ff') {
-        $pull = Git-Run @('-c', 'merge.autoStash=false', 'pull', '--ff-only')
+        $pullArgs = @('-c', 'merge.autoStash=false', 'pull', '--ff-only')
     } elseif ($mode -eq 'merge') {
-        $pull = Git-Run @('-c', 'merge.autoStash=false', 'pull', '--no-rebase', '--no-ff', '--no-edit')
+        $pullArgs = @('-c', 'merge.autoStash=false', 'pull', '--no-rebase', '--no-ff', '--no-edit')
     } else {
-        $pull = Git-Run @('-c', 'rebase.autoStash=false', 'pull', '--rebase')
+        $pullArgs = @('-c', 'rebase.autoStash=false', 'pull', '--rebase')
     }
+    $pull = Invoke-RecoveringPull $pullArgs
+    foreach ($l in @($pull.Lines)) { $lines += $l }
     if ($park.Count -gt 0) {
         $gd = Get-GitDir
         $midRebase = $gd -and ((Test-Path (Join-Path $gd 'rebase-merge')) -or (Test-Path (Join-Path $gd 'rebase-apply')) -or

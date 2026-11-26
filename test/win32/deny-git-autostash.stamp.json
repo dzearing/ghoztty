@@ -1,20 +1,21 @@
 {
     "guard":  "deny-git-autostash",
     "script":  "test/win32/deny-git-autostash.ps1",
-    "generated":  "2026-11-24T16:03:32-08:00",
-    "commit":  "be679ba55",
+    "generated":  "2026-11-25T23:19:05-08:00",
+    "commit":  "b4fc0d7974",
     "uncommitted":  [
-                        "scripts/git-commit-guard.ps1"
+                        "scripts/git-commit-guard.ps1",
+                        "test/win32/deny-git-autostash.ps1"
                     ],
     "files":  {
                   ".claude/settings.json":  "0ffacb36cfb794dd6c5e5eb713d717ede4ec36c33dbbbe0eabc41dffb90db124",
-                  "scripts/git-commit-guard.ps1":  "c9b31b95c7e9e278e40d1ebf8e4696fa9891302493446a5e31df8cbe9b2d9cf8",
+                  "scripts/git-commit-guard.ps1":  "51fcf4881b95883941dbdb3ec062e11436951769a9f07351ea8cd11e9f887ef9",
                   "scripts/hooks/deny-git-autostash.ps1":  "e3e6f854f147f2194cbd6909cf3b41fe233133fad5b37bf21c27ee414afd5a1b",
-                  "test/win32/deny-git-autostash.ps1":  "625dfd8e4a308dc01902adb6c31b80b0a60a47a1b2e230a9385eaaecd40846e0"
+                  "test/win32/deny-git-autostash.ps1":  "2570636ee4c7ccf0172ff96956afe18f7720d07b90f92b41b4cff6ed788e2c34"
               },
     "code":  {
-                 "scripts/git-commit-guard.ps1":  "code1:58f000f50be388bfe565da62cb5ef0f2a0e17037f453f423e7d9497504adae9c",
+                 "scripts/git-commit-guard.ps1":  "code1:07dce1b8faee1c96ad2eb250ae680cc910c912dd5a21edca4a4419cfa2566188",
                  "scripts/hooks/deny-git-autostash.ps1":  "code1:4eb7ccdb3b167120428398e01d514b535ea5b1e83b262c7da3eaf1e290b42e6a",
-                 "test/win32/deny-git-autostash.ps1":  "code1:e3d8bbe1ba87caac5583ef87269dba33c8cdbda25d7031f5b56149a440ff6a16"
+                 "test/win32/deny-git-autostash.ps1":  "code1:ec99dc9ff94d652c9bb780043f4c847bf9354bd4f4ee424b495f85d312019256"
              }
 }
