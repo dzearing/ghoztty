@@ -157,6 +157,31 @@ untouched. Log lines: `wslg: setting GALLIUM_DRIVER=d3d12 ...` and
 exports the variable to the app any more (only Weston gets it), so every GUI
 test exercises this default; `gtk-smoke.sh` S9-S13 prove both paths.
 
+**Root has no Wayland socket under WSLg, so the app finds WSLg's** (T3783,
+`src/apprt/gtk/wslg_display.zig`). WSLg's socket is
+`/mnt/wslg/runtime-dir/wayland-0`, linked into the DEFAULT user's
+`/run/user/<uid>` only; root (how this box drives the distro) inherits
+`WAYLAND_DISPLAY=wayland-0` with nothing at `/run/user/0/wayland-0`. GDK then
+fell back to X11 (XWayland), where d3d12 cannot present (`MESA: error: Failed
+to attach to x11 shm`, every frame dropped): a see-through window while the
+app's own render was fine (user report 2026-11-25). Now, before GTK opens its
+display, when the socket libwayland would try is missing and WSLg's exists
+(and neither `WAYLAND_SOCKET` nor a `GDK_BACKEND` without wayland says
+otherwise), the app sets `WAYLAND_DISPLAY` to WSLg's socket by absolute path,
+then puts the original value back once the display is open, so shells see
+what WSLg gave them. Not `XDG_RUNTIME_DIR`: the CLI socket lives there and
+every `+verb` client resolves it from its own environment. Log: `wslg: no
+Wayland socket at the runtime dir's wayland-0; connecting to WSLg's ...`. If
+it still lands on X11 under WSLg, the app drops its own d3d12 choice before GL
+comes up (software GL draws) and logs one `wslg: the display is X11 ...`
+warning with the remedy; a user's own `GALLIUM_DRIVER=d3d12` there is kept and
+warned about. A debug build reads "WSLg's socket" from
+`GHOZTTY_DEBUG_WSLG_SOCKET`: `hl_start` points it at a non-socket inside the
+harness dir (and `hl_isolation_problem` refuses anything outside it), so no
+test can reach the real WSLg through this fallback; `test/linux/wslg-display.sh`
+points it at the private Weston and proves the path (W1-W2 are the control).
+The on-screen pixel check is a person's command (T3785).
+
 ## GUI tests: the headless harness, `test/linux/lib/headless.sh` (T3333)
 
 **Never launch the Linux app into WSLg.** WSLg draws every Linux window into an
