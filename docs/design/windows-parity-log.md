@@ -40865,3 +40865,7 @@ WebKitGTK's script message carries no frame, and a page-world handler is visible
 - What: `CloseUndo.parkWindow` parks a closed GTK window (its close, `+close`, or its last tab or pane going): hidden and out of the GtkApplication, so every window walk skips it. Ctrl+Shift+Z in any window brings it back with the same shells; Ctrl+Shift+Y closes it again; expiry ends it. Never parked: the last window, the quick terminal, workspaces (T3790), `+close --force`.
 - Evidence: cli-undo.sh W0-W12 green (CLI UNDO: ALL PASS); NEGATIVE=1 gives 33 FAILURE(S); Linux floor ALL PASS at e6ebd73031.
 - Filed: T3802 (5 adw_tab_view CRITICALs per window teardown, predates this), T3803 (Linux harnesses grep CRITICAL forms the app never writes).
+## 2026-11-26 04:35 lane b - T2333 closed: the rail reuses each resting tile's rim instead of redrawing it every paint
+- What: new pane_sidebar_rim_cache.zig (key = size, radius, hairline, theme, hover; cap 8, oldest out; freed in destroy). paintOverlay blends a cached premultiplied DIB for a tile with no busy layer showing; busy pills still compute per paint. Debug log `pane sidebar rim cache hits= misses= held=`.
+- Evidence: floor-lane -Lane all ALL LANES PASS (new unit tests in none); pane-sidebar-activity.ps1 ALL PASS (52) incl. new 2c - 1 miss then 64 hits over 40 paints, idle picture unchanged after work; -NegativeControl red on 2c. Harness floor stamped; self-spawn/unwired-hook audits green.
+- Filed: none.
