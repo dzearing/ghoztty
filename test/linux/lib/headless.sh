@@ -89,6 +89,11 @@ hl_start() {
     export XDG_CONFIG_HOME="$HL_RUNTIME/config"
     mkdir -p "$XDG_CONFIG_HOME"
     unset DISPLAY WAYLAND_SOCKET
+    # T3783: a debug app whose Wayland socket is missing connects to WSLg's
+    # (/mnt/wslg/runtime-dir/wayland-0) - the user's desktop. Fence it off:
+    # point the debug override at a path that is never a socket. wslg-display.sh
+    # points it at the private Weston instead.
+    export GHOZTTY_DEBUG_WSLG_SOCKET="$HL_RUNTIME/no-wslg"
     local _
     if [ "$HL_COMPOSITOR" = sway ]; then
         hl_start_sway_ "$w" "$h" || return 1
@@ -171,6 +176,10 @@ hl_isolation_problem() {
     esac
     [ -S "$XDG_RUNTIME_DIR/$WAYLAND_DISPLAY" ] || { echo "no socket at $XDG_RUNTIME_DIR/$WAYLAND_DISPLAY"; return; }
     [ -L "$XDG_RUNTIME_DIR/$WAYLAND_DISPLAY" ] && { echo "$XDG_RUNTIME_DIR/$WAYLAND_DISPLAY is a symlink"; return; }
+    case "${GHOZTTY_DEBUG_WSLG_SOCKET:-}" in
+        "$HL_RUNTIME"/*) ;;
+        *) echo "GHOZTTY_DEBUG_WSLG_SOCKET='${GHOZTTY_DEBUG_WSLG_SOCKET:-}' is not inside the harness dir (the app's WSLg fallback could reach the user's desktop)"; return ;;
+    esac
     [ -n "${HL_WESTON_PID:-}" ] && kill -0 "$HL_WESTON_PID" 2>/dev/null || { echo "the private Weston is not running"; return; }
 }
 

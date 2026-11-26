@@ -3749,9 +3749,16 @@ fn setWslgDisplayEnv(alloc: Allocator) WslgDisplayOverride {
     if (comptime builtin.os.tag != .linux) return .{};
     assert(gtk.isInitialized() == 0);
     const current = std.posix.getenv(wslg_display_mod.env_name);
+    // A debug build takes the WSLg socket's path from the environment, so the
+    // headless harness can stand its private Weston in for WSLg's - and fence
+    // every other test off the real one (test/linux/lib/headless.sh, T3783).
+    const wslg_path: [:0]const u8 = if (comptime builtin.mode == .Debug)
+        std.posix.getenv(wslg_display_mod.debug_override_env) orelse wslg_display_mod.wslg_socket
+    else
+        wslg_display_mod.wslg_socket;
     var buf: [std.fs.max_path_bytes]u8 = undefined;
     const decision = wslg_display_mod.decide(.{
-        .wslg_socket = isSocket(wslg_display_mod.wslg_socket),
+        .wslg_socket = isSocket(wslg_path),
         .wayland_socket = std.posix.getenv("WAYLAND_SOCKET"),
         .gdk_backend = std.posix.getenv("GDK_BACKEND"),
         .current_resolves = if (wslg_display_mod.socketPath(&buf, current, std.posix.getenv("XDG_RUNTIME_DIR"))) |p| isSocket(p) else false,
@@ -3762,8 +3769,8 @@ fn setWslgDisplayEnv(alloc: Allocator) WslgDisplayOverride {
                 log.warn("wslg: out of memory saving " ++ wslg_display_mod.env_name ++ "; leaving it alone", .{});
                 return .{};
             } else null;
-            _ = internal_os.setenv(wslg_display_mod.env_name, wslg_display_mod.wslg_socket);
-            log.info("wslg: no Wayland socket at the runtime dir's {s}; connecting to WSLg's " ++ wslg_display_mod.wslg_socket ++ " instead of falling back to X11", .{current orelse "wayland-0"});
+            _ = internal_os.setenv(wslg_display_mod.env_name, wslg_path);
+            log.info("wslg: no Wayland socket at the runtime dir's {s}; connecting to WSLg's {s} instead of falling back to X11", .{ current orelse "wayland-0", wslg_path });
             return .{ .set = true, .original = original };
         },
         .user_choice => log.info("wslg: Wayland display left to the environment (WAYLAND_SOCKET or GDK_BACKEND set)", .{}),

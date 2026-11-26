@@ -39,6 +39,10 @@ const std = @import("std");
 
 pub const env_name = "WAYLAND_DISPLAY";
 pub const wslg_socket = "/mnt/wslg/runtime-dir/wayland-0";
+/// Debug builds only: the path to treat as WSLg's socket. The headless
+/// harness points it at its private Weston (or at nothing), so no test can
+/// reach the user's WSLg desktop through this fallback.
+pub const debug_override_env = "GHOZTTY_DEBUG_WSLG_SOCKET";
 
 pub const Inputs = struct {
     /// `wslg_socket` exists and is a socket.
