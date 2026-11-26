@@ -1,0 +1,108 @@
+#!/bin/sh
+# AppRun - the Ghoztty AppImage's entry point (T3658, Linux L14c).
+# package-appimage.sh copies this into the AppDir and fills in @WEBKIT_LINK@.
+#
+# It points the bundled GTK, GIO, gdk-pixbuf and GStreamer at the AppDir, and
+# puts WebKitGTK's helper processes where the bundled libwebkitgtk looks for
+# them, then runs the app. Every variable it changes is recorded so the app
+# can give a pane's shell and the agent the environment they would have had
+# (src/apprt/gtk/appimage_env.zig): GHOZTTY_APPIMAGE_ORIG_<NAME> holds a value
+# it replaced, GHOZTTY_APPIMAGE_UNSET lists the names that were not set.
+#
+# Why a fixed path for WebKit: libwebkitgtk-6.0 spawns WebKitWebProcess and
+# WebKitNetworkProcess (and loads its injected bundle) from a directory
+# compiled into it, and a distro build reads no variable to move it. The
+# bundled copy has that string rewritten to @WEBKIT_LINK@, a symlink this
+# script points at the AppDir. It works under WebKit's bubblewrap sandbox,
+# which a cwd-relative path does not. /tmp is shared, so the link is used
+# only if it is ours: one owned by anyone else, or that is not a symlink,
+# stops the launch rather than let WebKit run someone else's binary.
+set -u
+
+here=$(dirname "$(readlink -f "$0")")
+APPDIR=${APPDIR:-$here}
+export APPDIR
+
+GHOZTTY_APPIMAGE_UNSET=
+# set_var NAME VALUE: export NAME=VALUE, recording what it was.
+set_var() {
+    if eval "[ \"\${$1+set}\" = set ]"; then
+        eval "export GHOZTTY_APPIMAGE_ORIG_$1=\"\$$1\""
+    else
+        GHOZTTY_APPIMAGE_UNSET="$GHOZTTY_APPIMAGE_UNSET${GHOZTTY_APPIMAGE_UNSET:+:}$1"
+    fi
+    eval "export $1=\"\$2\""
+}
+
+usr="$APPDIR/usr"
+# Every bundled ELF already finds usr/lib through its $ORIGIN RUNPATH. This is
+# for WebKit's sandbox: bubblewrap shows the web process only the host's
+# system directories plus those named here, so without it the web process
+# loads the HOST's libwebkitgtk (or dies where there is none) - observed in
+# T3658's hidden-host test.
+set_var LD_LIBRARY_PATH "$usr/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+set_var XDG_DATA_DIRS "$usr/share:${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"
+set_var GIO_MODULE_DIR "$usr/lib/gio/modules"
+set_var GST_PLUGIN_SYSTEM_PATH_1_0 "$usr/lib/gstreamer-1.0"
+set_var GST_PLUGIN_SCANNER_1_0 "$usr/lib/gstreamer1.0/gstreamer-1.0/gst-plugin-scanner"
+# The bundled plugin set is not the host's; keep its registry out of the
+# host's ~/.cache/gstreamer-1.0.
+cache=${XDG_CACHE_HOME:-$HOME/.cache}/ghoztty
+mkdir -p "$cache" 2>/dev/null
+set_var GST_REGISTRY_1_0 "$cache/appimage-gstreamer-registry.bin"
+
+# gdk-pixbuf's loader cache names its modules by absolute path; the template
+# carries @APPDIR@ and is filled in per launch.
+tmpl="$usr/lib/gdk-pixbuf-2.0/2.10.0/loaders.cache.in"
+if [ -f "$tmpl" ]; then
+    rt=${XDG_RUNTIME_DIR:-$cache}
+    lc="$rt/ghoztty-appimage-pixbuf-loaders.$$.cache"
+    # Earlier launches' caches whose process is gone.
+    for old in "$rt"/ghoztty-appimage-pixbuf-loaders.*.cache; do
+        [ -e "$old" ] || continue
+        p=${old##*loaders.}; p=${p%.cache}
+        kill -0 "$p" 2>/dev/null || rm -f "$old"
+    done
+    if sed "s|@APPDIR@|$APPDIR|g" "$tmpl" > "$lc" 2>/dev/null; then
+        set_var GDK_PIXBUF_MODULE_FILE "$lc"
+    fi
+fi
+export GHOZTTY_APPIMAGE_UNSET
+
+# WebKit's helpers. A CLI verb (`ghoztty +list`, `+split ...`) never starts
+# WebKit, and must not repoint a running app's link at a mount that goes
+# away when the verb exits.
+case "${1:-}" in
+    +*) ;;
+    *)
+        link='@WEBKIT_LINK@'
+        target="$usr/lib/webkitgtk-6.0"
+        me=$(id -u)
+        if [ -L "$link" ] || [ -e "$link" ]; then
+            owner=$(stat -c %u "$link" 2>/dev/null)
+            if [ ! -L "$link" ] || [ "$owner" != "$me" ]; then
+                echo "ghoztty AppImage: $link exists and is not this user's symlink (owner uid ${owner:-?})." >&2
+                echo "ghoztty AppImage: refusing to start, so WebKit never runs a helper from it; remove it or ask its owner to." >&2
+                exit 1
+            fi
+            if [ "$(readlink "$link")" != "$target" ]; then
+                ln -s "$target" "$link.$$" && mv -Tf "$link.$$" "$link" || {
+                    rm -f "$link.$$"
+                    echo "ghoztty AppImage: cannot repoint $link at $target" >&2
+                    exit 1
+                }
+            fi
+        elif ! ln -s "$target" "$link" 2>/dev/null; then
+            echo "ghoztty AppImage: cannot create $link" >&2
+            exit 1
+        fi
+        # Created between the test and ln by someone else: check again.
+        owner=$(stat -c %u "$link" 2>/dev/null)
+        if [ ! -L "$link" ] || [ "$owner" != "$me" ] || [ "$(readlink "$link")" != "$target" ]; then
+            echo "ghoztty AppImage: $link changed under the launch; refusing to start." >&2
+            exit 1
+        fi
+        ;;
+esac
+
+exec "$usr/bin/ghoztty" "$@"

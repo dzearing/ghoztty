@@ -628,6 +628,9 @@ test {
     // The GTK `ghoztty://` front door's pure half - which argv is the link,
     // what a focus reply means (T3343). No GTK imports.
     _ = @import("gtk/url_activation.zig");
+    // ... and what an AppImage launch's AppRun changed, given back to a
+    // pane's shell and the agent (T3658). No GTK imports.
+    _ = @import("gtk/appimage_env.zig");
 
     // The GTK pane banner's pure half - banner markdown to Pango markup, the
     // heading sizes, a cell's alignment, a link's local path (T3339). No GTK

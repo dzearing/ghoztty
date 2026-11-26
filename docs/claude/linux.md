@@ -3099,9 +3099,58 @@ and MIME caches are refreshed by the dpkg file triggers desktop-file-utils,
 hicolor-icon-theme and shared-mime-info declare, and the entry's `MimeType` is
 what makes it the system-wide `ghoztty://` handler.
 
-**The AppImage** is not built yet (T3658): WebKitGTK spawns its web and network
-helper processes from a path fixed at its own build time, which an AppDir has
-to relocate.
+**The AppImage** (T3658). `scripts/linux/package-appimage.sh [TARBALL]`
+(default: a fresh release `package.sh` build; a Debug tarball only with
+`APPIMAGE_DEV=1`, exit 3 otherwise) writes
+`zig-out/dist/Ghoztty-<ver>+<count>.g<sha>-<mode>-<arch>.AppImage`: the pinned
+AppImage type2 runtime (`setup-distro.sh` fetches release `20251108` and checks
+its sha256) followed by a zstd squashfs of the AppDir - what appimagetool
+writes, minus update info and signing. No linuxdeploy: the bundler is the
+script itself.
+
+- **What it bundles.** The tarball's tree under `usr/`, plus every library
+  `ldd` resolves for the app, WebKit's helpers and the bundled modules, minus
+  `scripts/linux/appimage/excludelist` (glibc, libstdc++/libgcc_s, the
+  GL/EGL/DRM stack, X11/xcb, Wayland, fontconfig/freetype/harfbuzz, alsa,
+  udev, dbus: the host's own). That is about 137 libraries, 102 MB release.
+  Modules: glib-networking's TLS module (https in a website pane), the
+  gdk-pixbuf SVG loader, a GStreamer plugin subset plus its scanner, and the
+  GTK 4 GSettings schemas. Every bundled ELF gets an `$ORIGIN` RUNPATH. The
+  floor it needs: glibc 2.39 (the build distro's), a host libstdc++ at least
+  as new, and `bwrap` for WebKit's sandbox.
+- **WebKit's helpers.** `libwebkitgtk-6.0` spawns `WebKitWebProcess` and
+  `WebKitNetworkProcess`, and loads its injected bundle, from
+  `/usr/lib/<triple>/webkitgtk-6.0`, compiled in. A distro build reads no
+  variable to move it (`WEBKIT_EXEC_PATH` is developer-mode only and absent
+  from Ubuntu's). The bundled copy has the string rewritten, same length, to
+  `/tmp/.ghoztty-appimage-webkit` padded with `/`, and `AppRun` points that
+  symlink at the mount. Measured: an absolute path works under WebKit's
+  bubblewrap sandbox. The cwd-relative `././/lib/...` trick other AppImages use
+  fails with `bwrap: execvp ... No such file or directory`, because the sandbox
+  does not keep the cwd. `AppRun` uses the link only if it is this user's
+  symlink. A directory there, or a link someone else owns, stops the launch
+  (exit 1), so WebKit never runs another user's binary. A CLI verb (`+...`)
+  never repoints it.
+- **`LD_LIBRARY_PATH` is needed after all.** Bubblewrap shows the web process
+  only the host's system directories plus those in `LD_LIBRARY_PATH`. Without
+  it the sandboxed web process silently loaded the HOST's libwebkitgtk (seen
+  with the host's copy present), and died where there was none.
+- **What the shell gets.** `AppRun` records every variable it changes:
+  `GHOZTTY_APPIMAGE_ORIG_<NAME>` holds a replaced value and
+  `GHOZTTY_APPIMAGE_UNSET` lists the names that were unset; the second is also
+  the marker. `src/apprt/gtk/appimage_env.zig` (none lane) undoes exactly
+  that, and drops the runtime's `APPDIR`/`APPIMAGE`/`ARGV0`/`OWD`, for a
+  pane's shell (`surface.defaultTermioEnv`) and for the agent it spawns
+  (`LocalAgent.spawnDetached`). The app keeps them for itself, because WebKit's
+  network process reads `GIO_MODULE_DIR` each time it spawns.
+- **The top-level entry** is the tarball's with `Exec=ghoztty ...`. It drops
+  `TryExec` and `DBusActivatable`, since there is no D-Bus service file to
+  activate. The icon and `.DirIcon` sit beside it.
+
+Not done yet (filed): URL opening still hands `AppRun`'s variables to the
+host's browser; the agent runs from the FUSE mount, which goes away when the
+app exits; the link should be re-checked before each viewer; the GStreamer
+subset has never played media.
 
 **Installing it** (`ghoztty/install.sh`, from the unpacked tree; never sudo,
 nothing outside `$HOME`): the tree goes to `~/.local/opt/ghoztty`, a symlink to
@@ -3176,7 +3225,26 @@ install into a throwaway root (never this distro's `/usr`) that runs, the
 MIME cache once the trigger's command runs, `dpkg -r` removing every file, and
 a Debug tarball refused.
 
-Not covered: the AppImage (T3658), a real `apt install` on a clean machine,
+```powershell
+powershell -NoProfile -File scripts\linux\wsl-run.ps1 -CommandFile test\linux\package-appimage.sh
+```
+
+`PACKAGE APPIMAGE: ALL PASS` (T3658, about 8 minutes). B: AppDir layout, the
+relocated WebKit string, nothing excluded bundled, `$ORIGIN` RUNPATHs, each
+ELF's own deps bundled or excluded. H: in a private mount namespace where the
+host's GTK 4, libadwaita, WebKitGTK and JavaScriptCore are bind-mounted over
+with `/dev/null` and WebKit's helper dir is emptied (the unpacked tarball
+cannot start there, as a control), the FUSE-mounted debug AppImage renders
+markdown and a loopback website. The app maps the mount's libwebkitgtk, its
+web and network processes are the AppImage's, and bubblewrap is running. E:
+the app's own env has `AppRun`'s variables, the pane's shell has none of them,
+and an overridden one comes back with its original value. L: link
+ownership refusals, and a CLI verb leaves the link alone. X:
+`APPIMAGE_EXTRACT_AND_RUN=1`. R: a release AppImage (ReleaseFast, release app
+id) opens a viewer pane asked for by `+split --view` run through the same
+image.
+
+Not covered: the AppImage on a distro other than Ubuntu 24.04, a real `apt install` on a clean machine,
 and a real desktop's browser handing a click to xdg-open - the harness has no
 browser, so that last hop is the person at the keyboard's.
 

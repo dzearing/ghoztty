@@ -49,6 +49,7 @@ const agent_recovery = @import("../win32/agent_recovery.zig");
 const agent_build = @import("../../remote/agent_build.zig");
 const protocol = @import("../../remote/protocol.zig");
 const rules = @import("agent_upgrade_rules.zig");
+const appimage_env = @import("appimage_env.zig");
 
 const log = std.log.scoped(.gtk_local_agent);
 
@@ -683,6 +684,9 @@ fn spawnDetached(self: *LocalAgent, bin: []const u8, dir: []const u8) !void {
     // This app's own IPC endpoint and pane identity are not the agent's.
     env.remove("GHOZTTY_IPC_SOCKET");
     env.remove("GHOZTTY_PANE_ID");
+    // The agent's shells must not inherit an AppImage's bundled-library
+    // paths either (T3658).
+    try appimage_env.restore(arena, &env);
     const envp = try std.process.createNullDelimitedEnvMap(arena, &env);
 
     var home_buf: [std.fs.max_path_bytes]u8 = undefined;

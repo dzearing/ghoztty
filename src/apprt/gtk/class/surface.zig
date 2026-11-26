@@ -42,6 +42,7 @@ const media = @import("../media.zig");
 const pane_id_mod = @import("../../ipc/pane_id.zig");
 const Viewer = @import("../Viewer.zig");
 const viewer_chrome = @import("../viewer_chrome.zig");
+const appimage_env = @import("../appimage_env.zig");
 const IpcHandlers = @import("../IpcHandlers.zig");
 const PaneBanner = @import("../PaneBanner.zig");
 const PaneDrag = @import("../PaneDrag.zig");
@@ -2718,6 +2719,11 @@ pub const Surface = extern struct {
         env.remove("INVOCATION_ID");
         env.remove("JOURNAL_STREAM");
         env.remove("NOTIFY_SOCKET");
+
+        // An AppImage's AppRun points GIO, GStreamer, gdk-pixbuf and
+        // XDG_DATA_DIRS into its own mount; give the shell back what it
+        // changed (T3658).
+        try appimage_env.restore(alloc, &env);
 
         // Unset environment varies set by snaps if we're running in a snap.
         // This allows Ghostty to further launch additional snaps.
