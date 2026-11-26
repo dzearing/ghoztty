@@ -5,6 +5,12 @@
 # `macos-window-mode = single` the person sees ONE toplevel. Every later
 # window is a workspace of it that keeps its own Window; only its content
 # moves into the toplevel on show and out (held, unmapped) when parked.
+# T3652 (L11k5, "Closing"): closing the workspace on show hands the window to
+# the one shown before it, a parked one closes in place, the toplevel's own
+# workspace closing keeps its GtkWindow as the frame (one window, never a
+# second), the frame's close button closes the workspace on show, the last
+# close closes the window, and a close that asks puts a parked workspace on
+# show first with its confirmation inside the shared window (K8d-K12c).
 #
 # Run it ONLY through the wrapper, from this box:
 #
@@ -157,12 +163,75 @@ for _ in 1 2 3; do
     cli +close --target="$first" --force >/dev/null 2>&1
     sleep 0.5
 done
-hl_wait_for 10 wsis "(1, 'four', 'four', 'four', True)" 'len(d["order"]), d["toplevel"], d["active"], d["content"], d["toplevel_mapped"]'
-hl_check "K8d the toplevel's own workspace closing hands four a window of its own, whole" $? "$(cat "$XDG_RUNTIME_DIR/ws-last" 2>/dev/null)"
+hl_wait_for 10 wsis "(1, None, True, 'four', 'four', True, False, 1, 2)" 'len(d["order"]), d["toplevel"], d["toplevel_frame"], d["active"], d["content"], d["toplevel_mapped"], row["four"]["mapped"], d["mapped_windows"], d["gtk_windows"]'
+hl_check "K8d T3652: the toplevel's own workspace closing keeps its window as the frame, four on show in it - one window mapped, four's own never" $? "$(cat "$XDG_RUNTIME_DIR/ws-last" 2>/dev/null)"
 alive "$APP"; hl_check "K8e the app is alive" $?
+o=$(cli +list 2>&1)
+! printf '%s' "$o" | grep -q "$first"
+hl_check "K8f the frame is no window +list shows ($first is gone from it)" $? "$o"
+
+# ---- 6b. T3652: the frame's close button, the hand-off order, the last ----
+cli +new-window --target=five >/dev/null 2>&1
+cli +new-window --target=six --focus >/dev/null 2>&1
+hl_wait_for 10 wsis "('six', 'six', 3)" 'd["active"], d["content"], len(d["order"])'
+hl_check "K10a six on show, four and five behind it" $? "$(cat "$XDG_RUNTIME_DIR/ws-last" 2>/dev/null)"
+wsis "('six', 'four', 'five')" 'tuple(o["window"] for o in d["order"])'
+hl_check "K10b the order is six, then four (shown before it), then five (never shown)" $? "$(cat "$XDG_RUNTIME_DIR/ws-last" 2>/dev/null)"
+o=$(hl_ipc close-dialog --target=six --op=frame 2>&1)
+hl_wait_for 10 wsis "(2, 'four', 'four', True, True, 1)" 'len(d["order"]), d["active"], d["content"], row["five"]["parked"], d["toplevel_frame"], d["mapped_windows"]'
+hl_check "K10 the shared window's close button closes the workspace on show (six) and hands the window to four, shown before it; five stays parked" $? "$o / $(cat "$XDG_RUNTIME_DIR/ws-last" 2>/dev/null)"
+grep -q "workspace: close window=six hands the shared window to four" "$APP_LOG"
+hl_check "K10c the close hand-off is logged" $? "$(grep 'workspace:' "$APP_LOG" | tail -4)"
+wsis "True" 'd["desk"] is not None'
+hl_check "K10d the frame still draws a desk (the workspace on show's)" $? "$(cat "$XDG_RUNTIME_DIR/ws-last" 2>/dev/null)"
+
+o=$(cli +close --target=five --force 2>&1)
+hl_wait_for 10 wsis "(1, 'four', 'four', 1)" 'len(d["order"]), d["active"], d["content"], d["mapped_windows"]'
+hl_check "K11a the parked five closes in place, four untouched in the frame" $? "$o / $(cat "$XDG_RUNTIME_DIR/ws-last" 2>/dev/null)"
+o=$(hl_ipc close-dialog --target=four --op=frame 2>&1)
+hl_wait_for 10 wsis "(0, None, 0)" 'len(d["order"]), d["toplevel"], d["gtk_windows"]'
+hl_check "K11 the last workspace's close (the frame's close button) closes the window: no workspace, no GtkWindow left" $? "$o / $(cat "$XDG_RUNTIME_DIR/ws-last" 2>/dev/null)"
+grep -q "workspace: the last workspace closed; the shared window closes" "$APP_LOG"
+hl_check "K11b ...and logs it" $? "$(grep 'workspace:' "$APP_LOG" | tail -3)"
+alive "$APP"; hl_check "K11c the app is alive (quit-after-last-window-closed = false)" $?
 
 grep -E 'workspace:|close request|closing|close' "$APP_LOG" | tail -30
 stop_app "$APP"
+
+# ---- 6c. T3652: a close that asks puts a parked workspace on show first ----
+{
+    echo 'window-width = 90'
+    echo 'window-height = 24'
+    echo 'quit-after-last-window-closed = false'
+    echo 'confirm-close-surface = true'
+    echo 'macos-window-mode = single'
+} > "$cfg"
+rm -f "$(hl_socket)"
+hl_launch APP3 "$app" --gtk-single-instance=false
+hl_wait_for 30 test -S "$(hl_socket)"
+hl_wait_for 10 wsis True 'd["toplevel_mapped"]'
+first3=$(ws 'd["toplevel"]')
+cli +new-window --target=asker >/dev/null 2>&1
+hl_wait_for 10 wsis "('$first3', True)" 'd["active"], row["asker"]["parked"]'
+cli +send-keys --target=asker "sleep 600
+" >/dev/null 2>&1
+sleep 1
+o=$(hl_ipc close-dialog --target=asker --op=window 2>&1)
+hl_wait_for 10 wsis "('asker', 'asker')" 'd["active"], d["content"]'
+hl_check "K12a closing the parked, busy asker puts it on show first" $? "$o / $(cat "$XDG_RUNTIME_DIR/ws-last" 2>/dev/null)"
+o=$(hl_ipc close-dialog --target=asker 2>&1)
+printf '%s' "$o" | grep -q '"open":true' && printf '%s' "$o" | grep -q '"scope":"window"'
+hl_check "K12 ...with its Close Window? confirmation up inside the shared window" $? "$o"
+hl_ipc close-dialog --target=asker --answer=cancel >/dev/null 2>&1
+sleep 0.5
+wsis "(2, 'asker')" 'len(d["order"]), d["active"]'
+hl_check "K12b Cancel keeps it, on show" $? "$(cat "$XDG_RUNTIME_DIR/ws-last" 2>/dev/null)"
+hl_ipc close-dialog --target=asker --op=window >/dev/null 2>&1
+sleep 0.5
+o=$(hl_ipc close-dialog --target=asker --answer=close 2>&1)
+hl_wait_for 10 wsis "(1, '$first3', '$first3', 1)" 'len(d["order"]), d["active"], d["content"], d["mapped_windows"]'
+hl_check "K12c Close closes it and hands the window back to $first3" $? "$o / $(cat "$XDG_RUNTIME_DIR/ws-last" 2>/dev/null)"
+stop_app "$APP3"
 
 # ---- 7. negative control: separate mode makes no workspaces ----------------
 write_cfg ''

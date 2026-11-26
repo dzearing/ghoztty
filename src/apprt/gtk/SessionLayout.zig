@@ -118,6 +118,8 @@ pub fn capture(arena: Allocator, app: *Application, snapshots: bool) Allocator.E
         const obj: *gobject.Object = @ptrCast(@alignCast(n.f_data orelse continue));
         const window = gobject.ext.cast(Window, obj) orelse continue;
         if (window.isQuickTerminal()) continue;
+        // T3652: a single-window frame holds no workspace of its own.
+        if (window.isFrame()) continue;
         // T3597: a remote machine's window is not this machine's layout -
         // its sessions live on THAT machine's agent, and re-attaching them
         // on the local one would open wrong panes. Bringing remote windows

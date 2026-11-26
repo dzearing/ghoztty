@@ -1046,6 +1046,19 @@ fn workspacesSeam(app: Context, request: Request) Allocator.Error![]u8 {
     };
     var list_names: std.ArrayListUnmanaged(?[]const u8) = .empty;
     for (try @import("PaneSidebar.zig").listOrder(arena)) |f| try list_names.append(arena, windowName(app, f.win));
+    const counts: struct { all: usize, mapped: usize } = counts: {
+        var all: usize = 0;
+        var mapped: usize = 0;
+        var node: ?*glib.List = app.as(gtk.Application).getWindows();
+        while (node) |n| : (node = n.f_next) {
+            const obj: *gobject.Object = @ptrCast(@alignCast(n.f_data orelse continue));
+            const w = gobject.ext.cast(Window, obj) orelse continue;
+            if (w.isQuickTerminal()) continue;
+            all += 1;
+            if (w.as(gtk.Widget).getMapped() != 0) mapped += 1;
+        }
+        break :counts .{ .all = all, .mapped = mapped };
+    };
 
     var out: std.Io.Writer.Allocating = .init(c_alloc);
     defer out.deinit();
@@ -1053,8 +1066,15 @@ fn workspacesSeam(app: Context, request: Request) Allocator.Error![]u8 {
         .success = true,
         .data = .{
             .mode = @tagName(window_mode.current()),
-            .toplevel = if (snap.toplevel) |t| windowName(app, t) else null,
+            .toplevel = if (snap.toplevel) |t| (if (t.isFrame()) null else windowName(app, t)) else null,
             .toplevel_mapped = if (snap.toplevel) |t| t.as(gtk.Widget).getMapped() != 0 else false,
+            // T3652: the toplevel is only the frame - its own workspace
+            // closed while others were open.
+            .toplevel_frame = if (snap.toplevel) |t| t.isFrame() else false,
+            // T3652: every terminal GtkWindow of the app (frames included)
+            // and how many of them are mapped - one window, whatever closed.
+            .gtk_windows = counts.all,
+            .mapped_windows = counts.mapped,
             .toplevel_title = toplevel_title,
             .active = if (snap.active) |a| windowName(app, a) else null,
             .content = content_name,
@@ -1317,7 +1337,13 @@ fn closeDialogSeam(app: Context, request: Request) Allocator.Error![]u8 {
     const window = target.window_();
     if (op_arg) |op| {
         if (std.mem.eql(u8, op, "window")) {
-            window.as(gtk.Window).close();
+            // T3652: the TARGET's own close, as its close button would ask
+            // (a request on the shared toplevel would close the workspace
+            // on show instead). `--op=frame` is the toplevel's close button.
+            window.requestClose();
+        } else if (std.mem.eql(u8, op, "frame")) {
+            const t = @import("Workspaces.zig").physical() orelse window;
+            t.as(gtk.Window).close();
         } else if (std.mem.eql(u8, op, "tab")) {
             const tab = window.getSelectedTab() orelse
                 return server.errorResponse(c_alloc, "the window has no tab", .{});
@@ -1327,7 +1353,7 @@ fn closeDialogSeam(app: Context, request: Request) Allocator.Error![]u8 {
             const surface = target.surface() orelse
                 return server.errorResponse(c_alloc, "--op=pane needs a pane --target", .{});
             surface.close();
-        } else return server.errorResponse(c_alloc, "--op must be pane, tab or window", .{});
+        } else return server.errorResponse(c_alloc, "--op must be pane, tab, window or frame", .{});
     }
     const Rep = struct {
         success: bool = true,
@@ -2793,7 +2819,11 @@ const WindowIterator = struct {
         while (self.node) |n| {
             self.node = n.f_next;
             const obj: *gobject.Object = @ptrCast(@alignCast(n.f_data orelse continue));
-            if (gobject.ext.cast(Window, obj)) |w| return w;
+            const w = gobject.ext.cast(Window, obj) orelse continue;
+            // T3652: the shared toplevel kept as a frame after its own
+            // workspace closed is no window anybody can name or list.
+            if (w.isFrame()) continue;
+            return w;
         }
         return null;
     }
@@ -3228,7 +3258,9 @@ pub fn closeTarget(_: Context, target: Target, force: bool) bool {
             defer CloseUndo.bypass = was;
             return tab.getSplitTree().closeSurfaceNow(p.surface);
         },
-        .window => |w| w.as(gtk.Window).destroy(),
+        // T3652: through the workspace close, so the shared toplevel's own
+        // workspace closing keeps the window for the others.
+        .window => |w| w.closeNow(),
     }
     return true;
 }

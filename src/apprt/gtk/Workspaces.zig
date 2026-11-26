@@ -40,10 +40,20 @@
 //! (`deskOwner`), and a hand-off crossfades from the old workspace's
 //! gradient to the new one's over 0.35s (`Window.beginDeskFade`).
 //!
-//! Not here (their own cards): closing semantics and the toplevel's close button (T3652), the
-//! CLI (T3653), rolled-up activity (T3654), persistence (T3655). Until T3652
-//! a workspace close is only made SAFE here (`forget`): its content never
-//! goes down with a toplevel it was borrowing.
+//! Closing (T3652): closing the workspace on show hands the window to the
+//! one shown before it, a parked one closes in place, the last one's close
+//! closes the window. The toplevel's close button closes the workspace on
+//! show (`closeRequestTarget`), a confirmation puts a parked workspace on
+//! show first and is presented inside the toplevel (`dialogParent`), and
+//! when the toplevel's OWN workspace closes while others are open its
+//! GtkWindow stays on as their frame (`retire`, `Window.becomeFrame`) -
+//! GTK cannot move a GtkWindow between `Window` objects the way AppKit
+//! moves an NSWindow between controllers, so the window that would
+//! otherwise go is kept, emptied, and closed with the last workspace.
+//! Undo of a workspace close waits on GTK window-close undo (T3665).
+//!
+//! Not here (their own cards): the CLI (T3653), rolled-up activity (T3654),
+//! persistence (T3655).
 const Workspaces = @This();
 
 const std = @import("std");
@@ -423,12 +433,101 @@ pub fn newTabIsWindow(win: *Window, parent: anytype) bool {
     return true;
 }
 
+// ---- Closing (T3652) -----------------------------------------------------
+
+/// The workspace a close request on `win`'s own GtkWindow is for (T3652):
+/// the shared toplevel's close button and the compositor's close act on the
+/// workspace ON SHOW in it (Mac: the red button is the window controller's,
+/// and the window controller is the workspace on show's). Null when the
+/// request is `win`'s own.
+pub fn closeRequestTarget(win: *Window) ?*Window {
+    if (toplevel != win) return null;
+    const a = host.active orelse return null;
+    if (a == win) return null;
+    return a;
+}
+
+/// The widget a workspace's dialog is presented over: inside the shared
+/// toplevel while it is on show there (an `Adw.Dialog` lands in its
+/// widget's root), else its own window.
+pub fn dialogParent(win: *Window) *gtk.Widget {
+    if (host.manages(win) and !host.isParked(win)) if (toplevel) |t| if (t != win)
+        return win.contentRoot();
+    return win.as(gtk.Widget);
+}
+
+/// The window a workspace's open dialog is up over: the shared toplevel
+/// for the workspace on show, none for a parked one or a frame (the
+/// toplevel's own window holds the dialog of whichever workspace is on
+/// show, which is not theirs). `win` itself when it is no workspace.
+pub fn dialogHost(win: *Window) ?*Window {
+    if (win.isFrame()) return null;
+    if (!host.manages(win)) return win;
+    if (host.isParked(win)) return null;
+    return toplevel orelse win;
+}
+
+/// `win` is closing for good (`Window.closeNow`). When it is the shared
+/// toplevel's own workspace and others are open, close the WORKSPACE and keep
+/// its GtkWindow as their frame (Mac: the NSWindow outlives the controller
+/// that loaded it; win32 T3184 hands the same HWND on). On show, it first
+/// hands the window to the workspace shown before it. True when it was
+/// retired, so the caller must not destroy the window.
+pub fn retire(win: *Window) bool {
+    if (toplevel != win or !host.manages(win) or win.isFrame()) return false;
+    if (host.count() < 2) return false;
+    if (Application.default().isQuitting()) return false;
+    switch (host.close(win)) {
+        .hand_to => |next| {
+            win.holdContent();
+            adopt(win, win, next);
+            log.info("workspace: close window={s} hands the shared window to {s}", .{ name(win), name(next) });
+        },
+        .in_place => log.info("workspace: close parked window={s} (the shared window's own) in place", .{name(win)}),
+        .close_window, .not_managed => return false,
+    }
+    win.becomeFrame();
+    return true;
+}
+
+/// `to` adopts the toplevel `t` after `from` left it (a close hand-off):
+/// content, title, shade fade, seen, focus, sidebar - as `handOff` does.
+fn adopt(t: *Window, from: *Window, to: *Window) void {
+    if (to == t) to.releaseContent() else to.releaseContentInto(t);
+    if (to.currentTitle()) |title| t.as(gtk.Window).setTitle(title);
+    t.beginDeskFade(from.deskVariant(), to.deskVariant());
+    to.syncSeen();
+    if (to.getActiveSurface()) |s| s.grabFocus();
+    t.queueSidebarRefresh();
+    to.queueSidebarRefresh();
+}
+
+/// No workspace is left: the frame goes too, on the next idle - never from
+/// inside the disposing workspace's own teardown.
+fn dropFrameIfEmpty() void {
+    if (host.count() != 0) return;
+    const t = toplevel orelse return;
+    if (!t.isFrame()) return;
+    toplevel = null;
+    _ = t.as(gobject.Object).ref();
+    _ = glib.idleAdd(destroyFrame, t);
+    log.info("workspace: the last workspace closed; the shared window closes", .{});
+}
+
+fn destroyFrame(data: ?*anyopaque) callconv(.c) c_int {
+    const t: *Window = @ptrCast(@alignCast(data orelse return 0));
+    t.as(gtk.Window).destroy();
+    t.as(gobject.Object).unref();
+    return 0;
+}
+
 /// `win` is being disposed. Its content must never go down with a toplevel
 /// it was borrowing, nor take another workspace's content down with its own
-/// toplevel. The closing EXPERIENCE (hand the window to the one shown before
-/// it, ask first, undo) is T3652; this only keeps every workspace whole.
+/// toplevel. A close of the workspace on show hands the window to the one
+/// shown before it (T3652); the last one's close takes the frame with it.
 pub fn forget(win: *Window) void {
     if (!host.manages(win)) return;
+    defer dropFrameIfEmpty();
     const quitting = Application.default().isQuitting();
     const t = toplevel;
     const was_active = if (host.active) |a| a == win else false;
@@ -459,9 +558,10 @@ pub fn forget(win: *Window) void {
         win.releaseContent();
         switch (host.close(win)) {
             .hand_to => |next| if (t) |tw| {
-                if (next == tw) next.releaseContent() else next.releaseContentInto(tw);
-                if (next.currentTitle()) |title| tw.as(gtk.Window).setTitle(title);
-                next.syncSeen();
+                if (!quitting) {
+                    adopt(tw, win, next);
+                    log.info("workspace: close window={s} hands the shared window to {s}", .{ name(win), name(next) });
+                } else if (next == tw) next.releaseContent() else next.releaseContentInto(tw);
             },
             .close_window => _ = host.windowDidClose(win, true),
             .in_place, .not_managed => {},

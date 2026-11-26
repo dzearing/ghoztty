@@ -271,6 +271,14 @@ pub const Window = extern struct {
         /// it is out of every window (parked), held by this reference.
         held_content: ?*gtk.Widget = null,
 
+        /// Single-window mode (T3652): this window's own workspace has
+        /// closed, but its GtkWindow is the shared toplevel and stays on as
+        /// the FRAME the other workspaces are shown in (Mac: the NSWindow
+        /// outlives the controller that loaded it). It has no tabs, no
+        /// sidebar and no name; nothing lists it; it goes with the last
+        /// workspace.
+        frame_only: bool = false,
+
         /// A title composed while the window was hidden and not yet set on
         /// it (T3571): it lands when the window shows, or when
         /// `held_title_timer` fires. Owned.
@@ -2523,30 +2531,93 @@ pub const Window = extern struct {
         _: *gtk.Window,
         self: *Self,
     ) callconv(.c) c_int {
-        // T3563: a window on a remote machine asks even when idle, and
-        // offers Disconnect.
+        // T3652: the shared toplevel's close button (or the compositor's
+        // close) closes the workspace ON SHOW in it, not the toplevel's own
+        // workspace - which may be parked, or already gone (a frame).
+        if (Workspaces.closeRequestTarget(self)) |target| {
+            log.info("window close request on the shared window: it closes the workspace on show", .{});
+            target.requestClose();
+            return @intFromBool(true);
+        }
+        self.requestClose();
+        return @intFromBool(true);
+    }
+
+    /// Close this window's own workspace as its close button would: ask
+    /// first when something runs (T3563: a window on a remote machine asks
+    /// even when idle, and offers Disconnect), else close it now.
+    pub fn requestClose(self: *Self) void {
+        if (self.private().frame_only) {
+            // A frame with nothing on show in it has nothing to ask about.
+            self.as(gtk.Window).destroy();
+            return;
+        }
         const offer = self.disconnectOffer();
         const step = disconnect_offer.step(self.getNeedsConfirmQuit(), offer);
         log.info("window close request: {s} ({d} remote session(s) to spare)", .{ @tagName(step), offer.count });
         switch (step) {
-            .close => {},
-            .ask_running => {
-                self.askToClose(null);
-                return @intFromBool(true);
-            },
-            .ask_disconnect => {
-                self.askToClose(offer);
-                return @intFromBool(true);
-            },
+            .close => self.closeNow(),
+            .ask_running => self.askToClose(null),
+            .ask_disconnect => self.askToClose(offer),
         }
+    }
 
+    /// Close this window now, no question asked. In single-window mode the
+    /// shared toplevel's own workspace closing while others are open closes
+    /// the WORKSPACE and keeps the GtkWindow as their frame (T3652), so the
+    /// person never sees the window go and another come.
+    pub fn closeNow(self: *Self) void {
+        if (Workspaces.retire(self)) return;
         self.as(gtk.Window).destroy();
-        return @intFromBool(false);
+    }
+
+    /// Whether this window is only the shared toplevel's frame (T3652).
+    pub fn isFrame(self: *Self) bool {
+        return self.private().frame_only;
+    }
+
+    /// The shared toplevel's own workspace closed while others are open
+    /// (T3652, `Workspaces.retire`): its content is already out of the
+    /// window; end the workspace - its tabs, its undo entries, its sidebar,
+    /// its relay record - and keep the GtkWindow as the frame.
+    pub fn becomeFrame(self: *Self) void {
+        const priv = self.private();
+        if (priv.frame_only) return;
+        priv.frame_only = true;
+
+        // Its tabs end as a closed window's do (the close was confirmed
+        // already); with undo on each is parked, and `dropWindow` below
+        // ends them - window-close undo is T3665.
+        const tab_view = priv.tab_view;
+        while (tab_view.getNPages() > 0) {
+            const page = tab_view.getNthPage(tab_view.getNPages() - 1);
+            const tab = gobject.ext.cast(Tab, page.getChild()) orelse {
+                tab_view.closePageFinish(page, @intFromBool(true));
+                continue;
+            };
+            if (!self.closeTabNow(tab)) break;
+        }
+        CloseUndo.dropWindow(self);
+        RelayWindows.windowDisposed(self, false);
+        self.cancelTabDwell();
+        if (priv.pane_sidebar) |s| {
+            s.destroy();
+            priv.pane_sidebar = null;
+        }
+        // The held content's `win` group references this window: drop the
+        // cycle, as `leaveWorkspace` does.
+        self.contentRoot().insertActionGroup("win", null);
+        self.setIpcName(null);
+        queueAllSidebarRefresh();
+        log.info("workspace: the shared window's own workspace closed; the window stays as the frame", .{});
     }
 
     /// Put the "Close Window?" confirmation up over this window, offering
-    /// Disconnect when `offer` counts remote sessions (T3563).
+    /// Disconnect when `offer` counts remote sessions (T3563). In
+    /// single-window mode a parked workspace comes on show first, so the
+    /// dialog has a window and the person sees what closes (T3652).
     fn askToClose(self: *Self, offer: ?disconnect_offer.Offer) void {
+        if (Workspaces.isParked(self)) _ = Workspaces.show(self, true);
         const dialog: *CloseConfirmationDialog = .new(.window);
         _ = CloseConfirmationDialog.signals.@"close-request".connect(
             dialog,
@@ -2565,7 +2636,7 @@ pub const Window = extern struct {
                 .{},
             );
         }
-        dialog.present(self.as(gtk.Widget));
+        dialog.present(Workspaces.dialogParent(self));
     }
 
     /// Disconnect (T3563): close the window, its remote sessions pinned so
@@ -2581,7 +2652,7 @@ pub const Window = extern struct {
             const tab = gobject.ext.cast(Tab, tab_view.getNthPage(@intCast(i)).getChild()) orelse continue;
             tab.getSplitTree().pinRemoteDetach();
         }
-        self.as(gtk.Window).destroy();
+        self.closeNow();
     }
 
     /// The GType name of the dialog up over this window, if any (the
@@ -2638,13 +2709,16 @@ pub const Window = extern struct {
     const OpenDialog = union(enum) { adw: *adw.Dialog, window: *gtk.Window };
 
     fn openDialog(self: *Self) ?OpenDialog {
+        // T3652: a workspace on show has its dialogs in the shared
+        // toplevel; a parked one (and a frame) has none up.
+        const host = Workspaces.dialogHost(self) orelse return null;
         // libadwaita 1.5+ hosts dialogs inside the window.
         if (comptime adw_version.supportsDialogs()) {
-            if (self.as(adw.ApplicationWindow).getVisibleDialog()) |d| return .{ .adw = d };
+            if (host.as(adw.ApplicationWindow).getVisibleDialog()) |d| return .{ .adw = d };
         }
         // Before it (and for any plain transient window): a toplevel whose
         // transient-for is this window.
-        const me = self.as(gtk.Window);
+        const me = host.as(gtk.Window);
         const head: ?*glib.List = gtk.Window.listToplevels();
         defer if (head) |n| n.free();
         var it = head;
@@ -2661,7 +2735,7 @@ pub const Window = extern struct {
         _: *CloseConfirmationDialog,
         self: *Self,
     ) callconv(.c) void {
-        self.as(gtk.Window).destroy();
+        self.closeNow();
     }
 
     fn closeConfirmationCloseTab(
@@ -3229,7 +3303,13 @@ pub const Window = extern struct {
             // won't cause Ghostty to exit.
             if (priv.tab_overview.getOpen() != 0) return;
 
-            self.as(gtk.Window).close();
+            // T3652: a frame's tabs were closed on purpose; it stays.
+            if (priv.frame_only) return;
+
+            // Its OWN close, never routed: in single-window mode the shared
+            // toplevel's close button closes the workspace on show, but a
+            // parked toplevel workspace whose last pane went closes itself.
+            self.requestClose();
         }
     }
     fn setupTabMenu(
@@ -3439,7 +3519,9 @@ pub const Window = extern struct {
         _: ?*glib.Variant,
         self: *Self,
     ) callconv(.c) void {
-        self.as(gtk.Window).close();
+        // T3652: the `win` group a key or menu reached is the workspace's
+        // own, so this closes this workspace, on show or parked.
+        self.requestClose();
     }
 
     fn actionCloseTab(

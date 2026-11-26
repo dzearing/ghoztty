@@ -2973,7 +2973,7 @@ const Action = struct {
         while (node) |n| : (node = n.f_next) {
             const obj: *gobject.Object = @ptrCast(@alignCast(n.f_data orelse continue));
             const other = gobject.ext.cast(Window, obj) orelse continue;
-            if (other == win or other.isQuickTerminal()) continue;
+            if (other == win or other.isQuickTerminal() or other.isFrame()) continue;
             return;
         }
         const now = self.private().config.get().@"macos-window-mode";
