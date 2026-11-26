@@ -60,21 +60,28 @@ pub fn open(window: *Window, spec: []const u8) void {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
+    const inherit = apprt.surface.shouldInheritWorkingDirectory(.tab, &app.config);
+    const parent: ?*Surface = if (inherit) window.getActiveSurface() else null;
     const old_cwd: ?[]const u8 = folder: {
-        if (!apprt.surface.shouldInheritWorkingDirectory(.tab, &app.config)) break :folder null;
-        const parent = window.getActiveSurface() orelse break :folder null;
-        if (parent.remote_is_local_agent) {
+        const p = parent orelse break :folder null;
+        if (p.remote_is_local_agent) {
             const conn = window.local_agent_conn orelse break :folder null;
-            break :folder Window.inheritedCwd(arena, conn, parent);
+            break :folder Window.inheritedCwd(arena, conn, p);
         }
-        break :folder parent.livePwd(arena) orelse parent.pwd;
+        break :folder p.livePwd(arena) orelse p.pwd;
     };
-    const cwd = restart_shell.carriedCwd(spec, old_cwd);
+    // T3754: the folder follows only a shell of the same family.
+    const parent_family: apprt.ipc.shell_family.Family = if (parent) |p| p.shell_family else .windows;
+    const cwd = restart_shell.carriedCwd(spec, parent_family, old_cwd);
+    const wsl_folder: ?[]const u8 = if (parent) |p|
+        (restart_shell.carriedWslFolder(arena, spec, p.shell_family, p.reportedPwd(arena) orelse p.pwd) catch null)
+    else
+        null;
 
     var env: std.ArrayList(Surface.Overrides.EnvVar) = .empty;
     if (window.ipc_name) |wn| env.append(arena, .{ .key = "GHOZTTY_WINDOW_NAME", .value = wn }) catch return;
 
-    var ov = pane_restart.shellOverrides(arena, window.local_agent_conn, spec, cwd, null, env.items) catch |err| {
+    var ov = pane_restart.shellOverrides(arena, window.local_agent_conn, spec, cwd, wsl_folder, null, env.items) catch |err| {
         log.warn("new tab on {s}: overrides failed err={}", .{ spec, err });
         return;
     };

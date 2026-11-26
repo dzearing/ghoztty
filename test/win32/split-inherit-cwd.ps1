@@ -39,6 +39,11 @@
 #   E  (T3135) that agent-backed split answered from the parent shell's own
 #      directory, never with a GET_CWD round trip to the agent - read from the
 #      app's `inherit cwd: source=...` log line.
+#   F  (T3754) a folder crosses only within its shell family, against a stub
+#      `wsl.exe` (cmd.exe renamed - WSL itself is never started): a Windows
+#      split of a WSL pane does not take its folder, a WSL split of a WSL pane
+#      starts at its OSC 7 Linux folder (`--cd /home/...`), and the CLI passes
+#      a Linux `--working-directory` through for a WSL shell only.
 #
 # `-NegativeControl` inverts B's assertion to the pre-fix expectation (the split
 # lands in the FAR directory), so a green run is only evidence because the
@@ -323,6 +328,102 @@ try {
         Assert ($agentAnswers.Count -eq 0) "and the agent was never asked for the cwd (agent answers $($agentAnswers.Count))"
     }
 
+    # --- F (T3754): a folder crosses only within its shell family ----------
+    # WSL is never started (CLAUDE.md): the "WSL" pane is a copy of cmd.exe
+    # named wsl.exe in a temp folder - the family is read off the program's
+    # NAME (`shell_family.ofProgram`), and cmd ignores the `--cd <folder>`
+    # the app hands a WSL shell. Its twin `notwsl.exe` is the same bytes under
+    # another name, the control that the stub itself inherits normally.
+    $stubDir = Join-Path $tmp 'stub'
+    New-Item -ItemType Directory -Force $stubDir | Out-Null
+    $stubWsl = Join-Path $stubDir 'wsl.exe'
+    $stubWin = Join-Path $stubDir 'notwsl.exe'
+    Copy-Item (Join-Path $env:SystemRoot 'System32\cmd.exe') $stubWsl -Force
+    Copy-Item (Join-Path $env:SystemRoot 'System32\cmd.exe') $stubWin -Force
+    # The command lines of the processes the app started from one stub.
+    function Get-StubCommandLines([string]$stub) {
+        return @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
+            Where-Object { $_.ExecutablePath -and ($_.ExecutablePath -ieq $stub) } |
+            ForEach-Object { $_.CommandLine })
+    }
+    function Wait-StubCommandLine([string]$stub, [string]$pattern, [int]$TimeoutMs = 15000) {
+        $deadline = (Get-Date).AddMilliseconds($TimeoutMs)
+        while ((Get-Date) -lt $deadline) {
+            $hit = @(Get-StubCommandLines $stub | Where-Object { $_ -like $pattern })
+            if ($hit.Count -gt 0) { return $hit[0] }
+            Start-Sleep -Milliseconds 250
+        }
+        return $null
+    }
+
+    $wslTarget = "t3754wsl$PID"
+    $winTarget = "t3754win$PID"
+    $r = Run-CliArgs @('+new-window', "--target=$wslTarget", "--shell=$stubWsl", "--working-directory=$near")
+    Assert ($r.Code -eq 0) "F: a window on the stub WSL shell opens (got '$($r.Code)' $($r.Text))"
+    $r = Run-CliArgs @('+new-window', "--target=$winTarget", "--shell=$stubWin", "--working-directory=$near")
+    Assert ($r.Code -eq 0) "F: a window on the stub Windows shell opens (got '$($r.Code)')"
+    $wslLeaves = @(Wait-PaneCount $wslTarget 1)
+    $winLeaves = @(Wait-PaneCount $winTarget 1)
+    Assert (($wslLeaves.Count -ge 1) -and ($winLeaves.Count -ge 1)) 'F: both stub windows have a pane'
+    $launched = Wait-StubCommandLine $stubWsl "*--cd*$near*"
+    Assert ($null -ne $launched) "F control: the stub WSL pane was launched the WSL way, wsl --cd <folder> (got '$launched')"
+
+    if (($wslLeaves.Count -ge 1) -and ($winLeaves.Count -ge 1)) {
+        $wslPane = $wslLeaves[0].id
+        $winPane = $winLeaves[0].id
+        $wslCwd = Wait-LeafCwd $wslTarget $wslPane $near
+        Assert (Test-SameDir $wslCwd $near) "F control: the stub WSL pane's process sits in the near directory (got '$wslCwd')"
+
+        # F1 control: a plain split of the Windows-family stub inherits.
+        $known = @(@(Get-WindowLeaves $winTarget) | ForEach-Object { $_.id })
+        $r = Run-CliArgs @('+split', "--pane=$winPane")
+        [void](Wait-PaneCount $winTarget 2)
+        $s = New-LeafOf $winTarget $known
+        $sCwd = ''
+        if ($null -ne $s) { $sCwd = Wait-LeafCwd $winTarget $s.id $near }
+        Assert (Test-SameDir $sCwd $near) "F1 control: a split of a Windows-shell pane opens in its folder (got '$sCwd')"
+
+        # F2: the same split of the WSL-family pane does NOT take the Windows
+        # folder wsl.exe was started in - the new Windows shell starts in its
+        # own default. Before T3754 this read the near directory.
+        $known = @(@(Get-WindowLeaves $wslTarget) | ForEach-Object { $_.id })
+        $r = Run-CliArgs @('+split', "--pane=$wslPane")
+        Assert ($r.Code -eq 0) "F2: +split of the WSL pane exits 0 (got '$($r.Code)')"
+        [void](Wait-PaneCount $wslTarget 2)
+        $s = New-LeafOf $wslTarget $known
+        $sCwd = ''
+        if ($null -ne $s) { $sCwd = Wait-LeafCwd $wslTarget $s.id '' 4000 }
+        Assert (($null -ne $s) -and $sCwd -and -not (Test-SameDir $sCwd $near)) "F2: a Windows split of a WSL pane does not inherit its folder (got '$sCwd')"
+
+        # F3: a WSL pane reports a Linux folder (OSC 7, here from cmd's
+        # prompt), and a WSL split of it starts there: `--cd /home/...`.
+        $osc = 'prompt $E]7;file://localhost/home/t3754/src$E\$G'
+        $keys = Join-Path $tmp 'osc7.txt'
+        [System.IO.File]::WriteAllText($keys, $osc)
+        $r = Run-CliArgs @('+send-keys', "--target=$wslPane", "--keys-file=$keys", 'Enter')
+        Assert ($r.Code -eq 0) "F3: the OSC 7 prompt was typed into the WSL pane (got '$($r.Code)')"
+        # Wait on the report itself (+list reads it back), never a clock.
+        $reported = Wait-LeafCwd $wslTarget $wslPane '/home/t3754/src'
+        Assert (Test-SameDir $reported '/home/t3754/src') "F3: the WSL pane reports the Linux folder (got '$reported')"
+        $r = Run-CliArgs @('+split', "--pane=$wslPane", "--shell=$stubWsl")
+        Assert ($r.Code -eq 0) "F3: +split --shell=<wsl> of the WSL pane exits 0 (got '$($r.Code)')"
+        $kept = Wait-StubCommandLine $stubWsl '*--cd /home/t3754/src*'
+        Assert ($null -ne $kept) "F3: the WSL split started in the WSL pane's Linux folder (got '$kept')"
+
+        # F4: the CLI passes a Linux --working-directory through for a WSL
+        # shell (before T3754 it realpath'd it on Windows and failed) ...
+        # (No `/c`, `/k` or `/r` anywhere in the folder: the stub is cmd.exe,
+        # which finds those switches INSIDE a token - `/home/x/cli` ran `li`.)
+        $r = Run-CliArgs @('+new-window', "--target=t3754lin$PID", "--shell=$stubWsl", '--working-directory=/home/t3754/new')
+        Assert ($r.Code -eq 0) "F4: +new-window --shell=<wsl> --working-directory=/home/... exits 0 (got '$($r.Code)' $($r.Text))"
+        $cli = Wait-StubCommandLine $stubWsl '*--cd /home/t3754/new*'
+        $seen = (@(Get-StubCommandLines $stubWsl) | ForEach-Object { ($_ -split 'stub\\')[-1] }) -join ' | '
+        Assert ($null -ne $cli) "F4: that window's WSL shell started at the Linux folder (got '$cli'; stub processes: $seen)"
+        # ... and still refuses one that names nothing for a Windows shell.
+        $r = Run-CliArgs @('+new-window', "--target=t3754bad$PID", "--shell=$stubWin", '--working-directory=/t3754-no-such-folder')
+        Assert ($r.Code -ne 0) "F4: the same Linux folder for a Windows shell is refused (got '$($r.Code)')"
+    }
+
     Assert (-not (Test-TestDesktopLeak -ProcessId $app.Pid)) 'the run never took the interactive desktop'
 } catch {
     Write-Host "FAIL  harness error: $_" -ForegroundColor Red
@@ -350,4 +451,4 @@ if ($script:fail -eq 0 -and -not $NegativeControl) {
 }
 
 Write-Host ''
-Write-TestVerdict -Pass $script:pass -Fail $script:fail -Label 'split-inherit-cwd' -MinPass 19
+Write-TestVerdict -Pass $script:pass -Fail $script:fail -Label 'split-inherit-cwd' -MinPass 33

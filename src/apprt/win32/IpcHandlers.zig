@@ -213,6 +213,7 @@ pub fn missingResponse(
 // normalization, layout validation) lives in apprt/ipc/args.zig where it
 // is unit tested in the none-runtime build.
 const verb_args = apprt.ipc.args;
+const shell_family = apprt.ipc.shell_family;
 const wsl_distros = @import("wsl_distros.zig");
 const split_name_collision = apprt.ipc.split_name_collision;
 
@@ -323,27 +324,60 @@ fn execArgv(
 /// shell chosen in a menu and one named on the CLI cannot open differently -
 /// a WSL spec opens `wsl.exe [-d <distro>] --cd ~`, anything else that
 /// program. `conn` is the window's local session-persistence agent, or null
-/// for a plain ConPTY pane; `cwd` is a WINDOWS folder for the process (a WSL
-/// pane still starts at `~` inside its distro), or null for the default.
+/// for a plain ConPTY pane; `cwd` is a WINDOWS folder for the process, or null
+/// for the default. `wsl_folder` is the Linux folder a WSL pane starts in
+/// (`wsl --cd`, T3754: a WSL pane opened from a WSL pane keeps its folder), or
+/// null for `~`; a Windows shell ignores it.
 pub fn shellPaneOverrides(
     app: *App,
     arena: Allocator,
     conn: ?*remote_connection.Connection,
     spec: []const u8,
     cwd: ?[]const u8,
+    wsl_folder: ?[]const u8,
 ) Allocator.Error!Surface.Overrides {
     const ctx: Context = .{ .app = app, .alloc = arena };
     if (conn) |c| return .{ .remote = .{
         .connection = c,
         .working_directory = cwd,
         .shell = agentShell(spec),
-        .command_argv = try localAgentArgv(ctx, arena, &.{}, spec, null, null),
+        .command_argv = try localAgentArgv(ctx, arena, &.{}, spec, null, wsl_folder),
         .local_agent = true,
     } };
     return .{
-        .command_argv = try execArgv(ctx, arena, &.{}, null, spec, null),
+        .command_argv = try execArgv(ctx, arena, &.{}, null, spec, wsl_folder),
         .working_directory = cwd,
     };
+}
+
+/// The folder a verb's pane PROCESS starts in (T3754): `--working-directory`,
+/// unless it is a Linux path - that one only means something to `wsl --cd`,
+/// which carries it in the argv, and as a Windows process cwd it would fail
+/// the spawn.
+fn processFolder(wd: ?[]const u8) ?[]const u8 {
+    const w = nonEmpty(wd) orelse return null;
+    return if (shell_family.isLinuxPath(w)) null else w;
+}
+
+/// The shell family of the pane a verb opens (T3754): `--shell`, else `-e`'s
+/// program, else the scripted shell a `--command` runs through, else the
+/// configured default shell.
+fn childFamily(ctx: Context, args: VerbArgs, command: ?[]const u8) shell_family.Family {
+    if (nonEmpty(args.shell)) |s| return shell_family.ofProgram(s);
+    if (args.e_args.len > 0) return shell_family.ofProgram(args.e_args[0]);
+    if (nonEmpty(command) != null)
+        return shell_family.ofProgram(ctx.app.config.@"command-shell" orelse "cmd.exe");
+    return Surface.defaultFamily(ctx.app);
+}
+
+/// The reason a verb refuses when its `--working-directory` cannot be the
+/// starting folder of the shell it opens (T3754): a Linux path for a Windows
+/// shell. Null when the folder is fine (or absent). A pane on another machine
+/// is that machine's business, so only local panes are asked.
+fn folderRefusal(ctx: Context, args: VerbArgs, command: ?[]const u8) Allocator.Error!?[]const u8 {
+    const wd = explicitFolder(args) orelse return null;
+    const problem = shell_family.folderProblem(childFamily(ctx, args, command), wd) orelse return null;
+    return try std.fmt.allocPrint(ctx.alloc, "--working-directory={s} {s}", .{ wd, problem });
 }
 
 /// The LOCAL-agent half of `wrapCommandArgv` (T468): the same per-flavor
@@ -399,6 +433,7 @@ fn localAgentArgv(
 ) Allocator.Error!?[]const []const u8 {
     if (wslInteractive(e_args, command, shell_flag)) |spec| {
         const argv = try verb_args.wslInteractiveArgv(arena, spec, nonEmpty(working_directory));
+        log.info("wsl shell pane: spec={s} --cd {s}", .{ spec, argv[argv.len - 1] });
         const out = try arena.alloc([]const u8, argv.len);
         for (argv, 0..) |a, i| out[i] = a;
         return out;
@@ -579,6 +614,9 @@ pub fn openWindow(
 ) Allocator.Error!verbs.Opened {
     const app = ctx.app;
     const first_pane_name = plan.first_pane_name;
+    if (args.view == null) {
+        if (try folderRefusal(ctx, args, args.command)) |reason| return .{ .failed = reason };
+    }
 
     // Environment for the first surface: --env flags plus the window/pane
     // name vars the Mac injects for named windows. A `--name` for the first
@@ -637,7 +675,7 @@ pub fn openWindow(
         break :ov .{
             .remote = .{
                 .connection = conn,
-                .working_directory = nonEmpty(args.working_directory),
+                .working_directory = processFolder(args.working_directory),
                 .shell = agentShell(args.shell),
                 .command = remote_command,
                 .command_argv = try localAgentArgv(ctx, arena, args.e_args, args.shell, args.command, explicitFolder(args)),
@@ -647,7 +685,7 @@ pub fn openWindow(
         };
     } else .{
         .command_argv = try execArgv(ctx, arena, args.e_args, args.command, args.shell, explicitFolder(args)),
-        .working_directory = args.working_directory,
+        .working_directory = processFolder(args.working_directory),
         .env = env.items,
     };
 
@@ -942,16 +980,31 @@ pub fn createSplit(
     // `Window.buildRemoteInherit` uses. Only when there IS an override to fill:
     // with nothing explicit the branches break to a null baton and
     // `buildRemoteInherit` does this itself.
-    const split_cwd: ?[]const u8 = nonEmpty(args.working_directory) orelse inherited: {
+    //
+    // T3754: on THIS machine the parent's folder crosses only within its shell
+    // family (`shell_family.inherit`) - a WSL pane's folder means nothing to a
+    // Windows shell - and a Linux `--working-directory` is never a process
+    // cwd: a WSL shell takes it as `--cd` (`wsl_folder` below).
+    const family = childFamily(ctx, args, command);
+    const split_cwd: ?[]const u8 = if (window.remote_dialed != null)
+        nonEmpty(args.working_directory)
+    else
+        processFolder(args.working_directory);
+    const process_cwd: ?[]const u8 = split_cwd orelse inherited: {
+        if (nonEmpty(args.working_directory) != null) break :inherited null;
         if (remote_command == null and nonEmpty(args.shell) == null) break :inherited null;
         const parent = at.surface() orelse break :inherited null;
-        const conn: *remote_connection.Connection = if (window.remote_dialed) |d|
-            d.conn()
-        else if (window.local_agent_conn) |c|
-            c
-        else
-            break :inherited null;
-        break :inherited Window.inheritedCwd(arena, conn, parent);
+        if (window.remote_dialed) |d| break :inherited Window.inheritedCwd(arena, d.conn(), parent);
+        const conn = window.local_agent_conn orelse break :inherited null;
+        if (family != .windows) break :inherited null;
+        break :inherited parent.inheritFolder(arena, .windows, Window.inheritedCwd(arena, conn, parent));
+    };
+    // The Linux folder a WSL pane starts in: the one asked for, else - opened
+    // from a WSL pane - that pane's own (its OSC 7 report), else `~`.
+    const wsl_folder: ?[]const u8 = explicitFolder(args) orelse inherited: {
+        if (family != .wsl or window.remote_dialed != null) break :inherited null;
+        const parent = at.surface() orelse break :inherited null;
+        break :inherited parent.inheritFolder(arena, .wsl, parent.reportedPwd(arena));
     };
 
     const overrides: ?Surface.Overrides = if (window.remote_dialed) |dialed| ov: {
@@ -961,7 +1014,7 @@ pub fn createSplit(
         break :ov .{
             .remote = .{
                 .connection = dialed.conn(),
-                .working_directory = split_cwd,
+                .working_directory = process_cwd,
                 .shell = nonEmpty(args.shell),
                 .command = remote_command,
             },
@@ -980,17 +1033,17 @@ pub fn createSplit(
         break :ov .{
             .remote = .{
                 .connection = conn,
-                .working_directory = split_cwd,
+                .working_directory = process_cwd,
                 .shell = agentShell(args.shell),
                 .command = remote_command,
-                .command_argv = try localAgentArgv(ctx, arena, args.e_args, args.shell, command, explicitFolder(args)),
+                .command_argv = try localAgentArgv(ctx, arena, args.e_args, args.shell, command, wsl_folder),
                 .local_agent = true,
             },
             .env = env.items,
         };
     } else .{
-        .command_argv = try execArgv(ctx, arena, args.e_args, command, args.shell, explicitFolder(args)),
-        .working_directory = args.working_directory,
+        .command_argv = try execArgv(ctx, arena, args.e_args, command, args.shell, wsl_folder),
+        .working_directory = split_cwd,
         .env = env.items,
     };
 

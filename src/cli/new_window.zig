@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const Allocator = std.mem.Allocator;
 const ArenaAllocator = std.heap.ArenaAllocator;
 const Action = @import("../cli.zig").ghostty.Action;
@@ -11,6 +12,40 @@ const verb_flags = @import("verb_flags.zig");
 const homedir = @import("../os/homedir.zig");
 const global = &@import("../global.zig").state;
 
+/// A `/`-rooted path that is not a `//` UNC one: on Windows, a Linux path a
+/// WSL shell starts in (T3754).
+fn isRootedPosix(path: []const u8) bool {
+    return path.len > 0 and path[0] == '/' and (path.len == 1 or path[1] != '/');
+}
+
+/// Whether the forwarded arguments ask for a WSL shell: a `--shell=` before
+/// any `-e` that names one (`wsl`, `wsl.exe`, `wsl:<distro>`).
+fn wslShellRequested(arguments: []const [:0]const u8) bool {
+    for (arguments) |a| {
+        if (std.mem.eql(u8, a, "-e")) return false;
+        const spec = lib.cutPrefix(u8, a, "--shell=") orelse continue;
+        if (apprt.ipc.shell_family.ofProgram(spec) == .wsl) return true;
+    }
+    return false;
+}
+
+test "isRootedPosix: a Linux root path, never UNC or relative (T3754)" {
+    try std.testing.expect(isRootedPosix("/home/me/src"));
+    try std.testing.expect(isRootedPosix("/"));
+    try std.testing.expect(!isRootedPosix("//server/share"));
+    try std.testing.expect(!isRootedPosix("C:\\src"));
+    try std.testing.expect(!isRootedPosix("src"));
+    try std.testing.expect(!isRootedPosix(""));
+}
+
+test "wslShellRequested: a WSL --shell before -e (T3754)" {
+    try std.testing.expect(wslShellRequested(&.{ "--title=x", "--shell=wsl:Ubuntu" }));
+    try std.testing.expect(wslShellRequested(&.{"--shell=wsl.exe"}));
+    try std.testing.expect(!wslShellRequested(&.{"--shell=pwsh"}));
+    try std.testing.expect(!wslShellRequested(&.{}));
+    try std.testing.expect(!wslShellRequested(&.{ "-e", "--shell=wsl:Ubuntu" }));
+}
+
 pub const Options = struct {
     /// This is set by the CLI parser for deinit.
     _arena: ?ArenaAllocator = null,
@@ -20,6 +55,12 @@ pub const Options = struct {
 
     /// Did the user specify a `--working-directory` argument on the command line?
     _working_directory_seen: bool = false,
+
+    /// Windows: a `--working-directory` that is a Linux path (`/home/me/src`),
+    /// held back until every argument is read (T3754). It is a WSL shell's
+    /// starting folder and is sent as-is when `--shell` names WSL; otherwise
+    /// it is resolved as a Windows path, as it always was.
+    _linux_working_directory: ?[]const u8 = null,
 
     /// All of the arguments after `+new-window`. They will be sent to Ghosttty
     /// for processing.
@@ -89,6 +130,13 @@ pub const Options = struct {
             const stripped = std.mem.trim(u8, rest, &std.ascii.whitespace);
             if (std.mem.eql(u8, stripped, "home")) return try alloc.dupeZ(u8, arg);
             if (std.mem.eql(u8, stripped, "inherit")) return try alloc.dupeZ(u8, arg);
+            if (comptime builtin.os.tag == .windows) {
+                if (isRootedPosix(stripped)) {
+                    self._linux_working_directory = try alloc.dupe(u8, stripped);
+                    self._working_directory_seen = true;
+                    return null;
+                }
+            }
             const cwd: std.fs.Dir = std.fs.cwd();
             var expandhome_buf: [std.fs.max_path_bytes]u8 = undefined;
             const expanded = try homedir.expandHome(stripped, &expandhome_buf);
@@ -99,6 +147,21 @@ pub const Options = struct {
         }
 
         return try alloc.dupeZ(u8, arg);
+    }
+
+    /// Resolve a held-back Linux `--working-directory` (T3754) once every
+    /// argument is in: sent as-is for a WSL shell, realpath'd as a Windows
+    /// path otherwise (the pre-T3754 behavior, error and all).
+    fn resolveLinuxWorkingDirectory(self: *Options, alloc: Allocator) (std.fs.Dir.RealPathError || Allocator.Error)!void {
+        const raw = self._linux_working_directory orelse return;
+        const value: []const u8 = if (wslShellRequested(self._arguments.items))
+            raw
+        else value: {
+            var realpath_buf: [std.fs.max_path_bytes]u8 = undefined;
+            break :value try alloc.dupe(u8, try std.fs.cwd().realpath(raw, &realpath_buf));
+        };
+        // At the front, ahead of any `-e`, like the implicit cwd.
+        try self._arguments.insert(alloc, 0, try std.fmt.allocPrintSentinel(alloc, "--working-directory={s}", .{value}, 0));
     }
 
     fn isValidColor(value: []const u8) bool {
@@ -310,6 +373,11 @@ fn runArgs(
     // window and then be reported.
     if (opts._flags.help_requested) return Action.help_error;
     if (try opts._flags.report(stderr)) return 1;
+
+    opts.resolveLinuxWorkingDirectory(opts._arena.?.allocator()) catch |err| {
+        try stderr.print("Error parsing args: {}\n", .{err});
+        return 1;
+    };
 
     if (!opts._working_directory_seen) {
         const alloc = opts._arena.?.allocator();

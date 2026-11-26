@@ -215,6 +215,7 @@ const pane_layout = @import("pane_layout.zig");
 const workspace_host = @import("workspace_host.zig");
 const pane_relocate = @import("pane_relocate.zig");
 const inherit_cwd = @import("inherit_cwd.zig");
+const shell_family = apprt.ipc.shell_family;
 const drop_highlight = @import("drop_highlight.zig");
 const DropHighlight = @import("DropHighlight.zig");
 const PaneDragGhost = @import("PaneDragGhost.zig");
@@ -4157,6 +4158,23 @@ fn buildRemoteInherit(self: *Window, parent: ?*Surface) ?RemoteInherit {
         // parent is.
         if (!is_local_agent) command = p.core_surface.remoteCommand();
         cwd = inheritedCwd(self.app.core_app.alloc, conn, p);
+        // T3754: on THIS machine a folder crosses only within its shell
+        // family. The new pane runs the default shell; a WSL parent's folder
+        // (a Linux report, or the Windows folder wsl.exe started in) means
+        // nothing to it, and a WSL default shell takes its folder from its
+        // own `--cd`, never the process cwd. A cross-machine pane's folder is
+        // that machine's business and is left alone.
+        if (is_local_agent and cwd != null) {
+            const c = cwd.?;
+            const keep = p.shell_family == .windows and
+                Surface.defaultFamily(self.app) == .windows and
+                shell_family.isWindowsPath(c);
+            if (!keep) {
+                log.info("inherit cwd: dropped across shell families parent={s}", .{@tagName(p.shell_family)});
+                self.app.core_app.alloc.free(c);
+                cwd = null;
+            }
+        }
     }
 
     // T174: a tab/split OPENs a fresh session on the same machine, so the
@@ -17764,7 +17782,11 @@ pub fn newSplitAt(
         if (!self.app.config.@"split-inherit-working-directory") break :cwd null;
         const parent = at.surface() orelse break :cwd null;
         owned_parent_cwd = paneCwd(parent, alloc);
-        break :cwd owned_parent_cwd;
+        // T3754: the same shell-family rule `buildRemoteInherit` applies.
+        const dir = owned_parent_cwd orelse break :cwd null;
+        if (parent.shell_family != .windows or Surface.defaultFamily(self.app) != .windows or
+            !shell_family.isWindowsPath(dir)) break :cwd null;
+        break :cwd dir;
     };
 
     // What a LOCAL (non-agent) new pane inherits. The remote legs below keep

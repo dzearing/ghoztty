@@ -618,6 +618,13 @@ remote_shell: ?[]const u8 = null,
 /// arena owns it and `termio.Remote.init` dupes what it keeps.
 remote_command_argv: ?[]const []const u8 = null,
 
+/// Which family this pane's shell is - Windows or WSL (T3754). Decided once at
+/// init from what the pane was launched with (an explicit argv, the agent
+/// OPEN's shell, else the configured `command`), because the launch argv is
+/// cleared right after init. A new pane inherits this one's folder only within
+/// the same family (`shell_family.inherit`).
+shell_family: apprt.ipc.shell_family.Family = .windows,
+
 /// Config values this pane was opened with that the app config does not carry
 /// (T1957). Every app-wide config push lays them back over the app config for
 /// this pane (`App.pushConfigToSurfaces`), so a low-power switch or a reload
@@ -1135,6 +1142,15 @@ fn initOnce(
     // exec and agent panes alike.
     if (apprt.surface.shouldInheritWorkingDirectory(context, &app.config)) live: {
         const prev = app.core_app.focusedSurface() orelse break :live;
+        // T3754: a folder crosses only within its shell family. A WSL pane's
+        // OSC 7 report (`\home\me`) and the Windows folder `wsl.exe` started
+        // in are both meaningless to a Windows shell, so a new pane opened
+        // from one falls back to its own starting folder - the configured
+        // `working-directory`, which `newConfig` overwrote.
+        if (prev.rt_surface.shell_family != .windows or defaultFamily(app) != .windows) {
+            config.@"working-directory" = app.config.@"working-directory";
+            break :live;
+        }
         const carena = config._arena.?.allocator();
         const live = prev.rt_surface.livePwd(carena) orelse break :live;
         config.@"working-directory" = .{ .path = live };
@@ -1234,6 +1250,7 @@ fn initOnce(
             }
         }
     }
+    self.shell_family = launchFamily(self.remote_command_argv, self.remote_shell, config.command);
 
     // T113: bake `$GHOZTTY_PANE_ID` into the pane's environment, the way the
     // Mac apprt does via `surface_cfg.environmentVariables`. This rides the
@@ -3093,6 +3110,54 @@ pub fn livePwd(self: *Surface, alloc: Allocator) ?[]u8 {
     return internal_os.process_cwd.fromPid(pid, alloc);
 }
 
+/// The shell family a pane launched with `argv` (an explicit argv), `shell`
+/// (the agent OPEN's program) or `command` (the configured default) runs
+/// (T3754), first one given wins.
+fn launchFamily(
+    argv: ?[]const []const u8,
+    shell: ?[]const u8,
+    command: ?configpkg.Command,
+) apprt.ipc.shell_family.Family {
+    const sf = apprt.ipc.shell_family;
+    if (argv) |a| if (a.len > 0) return sf.ofProgram(a[0]);
+    if (shell) |s| if (s.len > 0) return sf.ofProgram(s);
+    const c = command orelse return .windows;
+    return switch (c) {
+        .direct => |d| if (d.len > 0) sf.ofProgram(d[0]) else .windows,
+        .shell => |s| sf.ofCommandLine(s),
+    };
+}
+
+/// The folder a new `child`-family pane opened from this one inherits
+/// (T3754): this pane's live or reported folder, kept only when both panes are
+/// the same family (`shell_family.inherit`). A WSL child gets this WSL pane's
+/// OSC 7 report as a Linux path; a Windows child of a WSL pane gets null - its
+/// own starting folder - rather than a Linux path or the Windows folder
+/// `wsl.exe` was started in. Owned by `alloc` (an arena in every caller).
+pub fn inheritFolder(
+    self: *Surface,
+    alloc: Allocator,
+    child: apprt.ipc.shell_family.Family,
+    folder: ?[]const u8,
+) ?[]const u8 {
+    return apprt.ipc.shell_family.inherit(alloc, self.shell_family, child, folder) catch null;
+}
+
+/// This pane's reported folder (its OSC 7), or null when it has reported none.
+/// For a WSL pane that is the Linux folder its prompt is in (T3754); the
+/// process read `livePwd` makes is the Windows folder `wsl.exe` started in,
+/// which is never the answer for one.
+pub fn reportedPwd(self: *Surface, alloc: Allocator) ?[]const u8 {
+    if (!self.pwd_reported) return null;
+    return self.core_surface.pwd(alloc) catch null;
+}
+
+/// The family a plain new tab/split/window opens: the configured default
+/// shell's (T3754).
+pub fn defaultFamily(app: *App) apprt.ipc.shell_family.Family {
+    return launchFamily(null, null, app.config.command);
+}
+
 /// Fold the shell's REAL working directory into the cache (T758).
 ///
 /// A no-op for a shell that reports OSC 7 — `livePwd` stands down for those,
@@ -4331,17 +4396,25 @@ pub fn openWithShell(self: *Surface, target: commands.ShellTarget, spec: []const
     else
         window.local_agent_conn;
 
-    const cwd: ?[]const u8 = if (apprt.ipc.args.isWslShell(spec)) null else cwd: {
+    // T3754: the folder crosses only within its shell family. A Windows shell
+    // opened from a Windows pane starts in that pane's folder; a WSL one
+    // opened from a WSL pane in that pane's Linux folder (its OSC 7 report,
+    // as `wsl --cd`); across families each starts in its own default.
+    const child = apprt.ipc.shell_family.ofProgram(spec);
+    const cwd: ?[]const u8 = if (child == .wsl) null else cwd: {
         const here: ?[]const u8 = if (window.local_agent_conn) |c|
             Window.inheritedCwd(arena, c, self)
         else
             null;
         const folder = here orelse self.livePwd(arena) orelse self.pwd orelse break :cwd null;
-        // A Linux path (a WSL pane's OSC 7) means nothing to a Windows shell.
-        break :cwd if (std.fs.path.isAbsoluteWindows(folder)) folder else null;
+        break :cwd self.inheritFolder(arena, .windows, folder);
     };
+    const wsl_folder: ?[]const u8 = if (child == .wsl)
+        self.inheritFolder(arena, .wsl, self.reportedPwd(arena) orelse self.pwd)
+    else
+        null;
 
-    var ov = IpcHandlers.shellPaneOverrides(self.app, arena, conn, spec, cwd) catch |err| {
+    var ov = IpcHandlers.shellPaneOverrides(self.app, arena, conn, spec, cwd, wsl_folder) catch |err| {
         log.warn("open with shell failed err={}", .{err});
         return;
     };

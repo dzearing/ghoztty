@@ -16,6 +16,7 @@
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+const shell_family = @import("../ipc/shell_family.zig");
 
 /// One entry a picker offers.
 pub const Choice = struct {
@@ -84,17 +85,35 @@ pub fn isWslSpec(spec: []const u8) bool {
     return spec.len > 4 and std.ascii.eqlIgnoreCase(spec[0..4], "wsl:");
 }
 
-/// The folder the new shell starts in, given the folder the old one was in.
+/// The Windows folder the new shell's process starts in, given the family of
+/// the pane it comes from and that pane's folder.
 ///
-/// A WSL shell starts in the distro's home (null: `wsl.exe --cd ~`, T3749),
-/// never in the slow `/mnt/c` mirror of a Windows folder. A Windows shell
-/// keeps the old folder when it IS a Windows folder; a Linux path from a WSL
-/// pane means nothing to cmd or PowerShell, so it falls back to the shell's
-/// default (null). Per-shell starting folders are T3754.
-pub fn carriedCwd(spec: []const u8, old_cwd: ?[]const u8) ?[]const u8 {
+/// A WSL shell's process takes no folder: it starts where its `--cd` says
+/// (`carriedWslFolder`), never in the slow `/mnt/c` mirror of a Windows
+/// folder. A Windows shell keeps the old folder only when the old pane was a
+/// Windows shell too and the folder IS a Windows folder (T3754): a WSL pane's
+/// Linux report, and the Windows folder `wsl.exe` itself was started in, both
+/// mean nothing to cmd or PowerShell, so it falls back to the shell's default
+/// (null).
+pub fn carriedCwd(spec: []const u8, parent: shell_family.Family, old_cwd: ?[]const u8) ?[]const u8 {
     if (isWslSpec(spec)) return null;
+    if (parent != .windows) return null;
     const cwd = old_cwd orelse return null;
     return if (isWindowsPath(cwd)) cwd else null;
+}
+
+/// The Linux folder a new WSL shell starts in (`wsl --cd`), given the family
+/// of the pane it comes from and that pane's REPORTED folder (OSC 7): a WSL
+/// pane's own Linux folder carries over (T3754); anything else is null, the
+/// distro's home. Null for a Windows shell.
+pub fn carriedWslFolder(
+    arena: Allocator,
+    spec: []const u8,
+    parent: shell_family.Family,
+    reported: ?[]const u8,
+) Allocator.Error!?[]const u8 {
+    if (!isWslSpec(spec)) return null;
+    return shell_family.inherit(arena, parent, .wsl, reported);
 }
 
 /// `C:\...`, `C:/...` or a UNC `\\server\share`.
@@ -154,16 +173,30 @@ test "choices: capped at max_choices" {
     try testing.expectEqual(max_choices, got.len);
 }
 
-test "carriedCwd: WSL starts at home, Windows keeps a Windows folder only" {
-    try testing.expect(carriedCwd("wsl:Ubuntu", "C:\\src") == null);
-    try testing.expect(carriedCwd("wsl", "C:\\src") == null);
-    try testing.expectEqualStrings("C:\\src", carriedCwd("pwsh.exe", "C:\\src").?);
-    try testing.expectEqualStrings("D:/git", carriedCwd("cmd.exe", "D:/git").?);
-    try testing.expectEqualStrings("\\\\nas\\share", carriedCwd("cmd.exe", "\\\\nas\\share").?);
+test "carriedCwd: WSL takes no process folder, Windows keeps a Windows folder from a Windows pane only" {
+    try testing.expect(carriedCwd("wsl:Ubuntu", .windows, "C:\\src") == null);
+    try testing.expect(carriedCwd("wsl", .windows, "C:\\src") == null);
+    try testing.expectEqualStrings("C:\\src", carriedCwd("pwsh.exe", .windows, "C:\\src").?);
+    try testing.expectEqualStrings("D:/git", carriedCwd("cmd.exe", .windows, "D:/git").?);
+    try testing.expectEqualStrings("\\\\nas\\share", carriedCwd("cmd.exe", .windows, "\\\\nas\\share").?);
     // A Linux cwd from a WSL pane means nothing to cmd.
-    try testing.expect(carriedCwd("cmd.exe", "/home/me") == null);
-    try testing.expect(carriedCwd("cmd.exe", "\\\\?\\C:\\x") == null);
-    try testing.expect(carriedCwd("cmd.exe", null) == null);
+    try testing.expect(carriedCwd("cmd.exe", .windows, "/home/me") == null);
+    try testing.expect(carriedCwd("cmd.exe", .windows, "\\\\?\\C:\\x") == null);
+    try testing.expect(carriedCwd("cmd.exe", .windows, null) == null);
+    // T3754: nor does the Windows folder wsl.exe itself was started in.
+    try testing.expect(carriedCwd("cmd.exe", .wsl, "C:\\Users\\me") == null);
+}
+
+test "carriedWslFolder: a WSL pane's Linux folder follows a WSL shell only (T3754)" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    try testing.expectEqualStrings("/home/me/src", (try carriedWslFolder(arena, "wsl:Ubuntu", .wsl, "\\home\\me\\src")).?);
+    try testing.expectEqualStrings("/srv", (try carriedWslFolder(arena, "wsl.exe", .wsl, "/srv")).?);
+    try testing.expect((try carriedWslFolder(arena, "wsl:Ubuntu", .windows, "C:\\src")) == null);
+    try testing.expect((try carriedWslFolder(arena, "wsl:Ubuntu", .wsl, "C:\\Users\\me")) == null);
+    try testing.expect((try carriedWslFolder(arena, "wsl:Ubuntu", .wsl, null)) == null);
+    try testing.expect((try carriedWslFolder(arena, "pwsh.exe", .wsl, "/home/me")) == null);
 }
 
 test "isWslSpec" {

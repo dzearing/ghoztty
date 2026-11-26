@@ -135,14 +135,16 @@ pub fn restart(app: *App, pane: *PaneView, spec: []const u8, mode: Mode) Outcome
         (if (window.local_agent_conn) |conn| Window.inheritedCwd(arena, conn, old) else null)
     else
         (old.livePwd(arena) orelse old.pwd);
-    const cwd = restart_shell.carriedCwd(spec, old_cwd);
+    const cwd = restart_shell.carriedCwd(spec, old.shell_family, old_cwd);
+    const wsl_folder = restart_shell.carriedWslFolder(arena, spec, old.shell_family, old.reportedPwd(arena) orelse old.pwd) catch
+        return .failed;
     const kept_stack = window.stackPersisted(arena, tab);
 
     var env: std.ArrayList(Surface.Overrides.EnvVar) = .empty;
     if (window.ipc_name) |wn| env.append(arena, .{ .key = "GHOZTTY_WINDOW_NAME", .value = wn }) catch return .failed;
     if (name) |n| env.append(arena, .{ .key = "GHOZTTY_PANE_NAME", .value = n }) catch return .failed;
 
-    var ov = shellOverrides(arena, window.local_agent_conn, spec, cwd, id, env.items) catch
+    var ov = shellOverrides(arena, window.local_agent_conn, spec, cwd, wsl_folder, id, env.items) catch
         return .failed;
 
     // A restart ENDS the old session. Marked before the swap releases the
@@ -174,19 +176,21 @@ pub fn restart(app: *App, pane: *PaneView, spec: []const u8, mode: Mode) Outcome
 /// chosen shell (`new_tab_shell.zig`, T3753) both hand the new surface, so the
 /// two cannot open one choice two ways. `conn` is the window's local agent, or
 /// null for a plain ConPTY pane. A WSL spec opens `wsl.exe [-d <distro>] --cd
-/// ~` (T3749); `cwd` is the folder a Windows shell starts in (null: its
+/// <wsl_folder>` (T3749; `~` when null, T3754 carries a WSL pane's own Linux
+/// folder); `cwd` is the folder a Windows shell starts in (null: its
 /// default). Strings are borrowed or allocated in `arena`.
 pub fn shellOverrides(
     arena: Allocator,
     conn: ?*remote_connection.Connection,
     spec: []const u8,
     cwd: ?[]const u8,
+    wsl_folder: ?[]const u8,
     pane_id: ?[]const u8,
     env: []const Surface.Overrides.EnvVar,
 ) Allocator.Error!Surface.Overrides {
     const wsl = verb_args.isWslShell(spec);
     const exec_argv: []const [:0]const u8 = if (wsl)
-        try verb_args.wslInteractiveArgv(arena, spec, null)
+        try verb_args.wslInteractiveArgv(arena, spec, wsl_folder)
     else argv: {
         const one = try arena.alloc([:0]const u8, 1);
         one[0] = try arena.dupeZ(u8, spec);
