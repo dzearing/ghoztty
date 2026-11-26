@@ -40991,3 +40991,7 @@ WebKitGTK's script message carries no frame, and a page-world handler is visible
 - What: re-verified before building. The 2026-10-28 zero-assertion run no longer happens: the harness was reworked six times since, and it stays classified `parallel`.
 - Evidence: 23 of 23 surviving parallel logs (11-15 to 11-26, 5-9 scripts beside it) assert 95-106 times; fresh run 20261126-142755 beside ipc-p1 and pane-sidebar-glide ALL PASS (106). Inherited due guards re-run green: unwired-hook audit, scoped harness floor.
 - Filed: none.
+## 2026-11-26 14:45 lane b - T2443 closed: the sidebar all-windows test catches the low-power line beside other scripts
+- What: section 9 wrote the remote-session seam and only then took its log mark. The app's 250 ms visibility poll reads the seam too, so under load the "effects off" line landed before the mark and the wait missed it. The mark now comes first. Test-only change (ff1edb5ab0).
+- Evidence: three paired `acceptance-parallel run` passes with pane-sidebar-drag.ps1, all ALL PASS (188 + 132 each); scoped harness floor and unwired-hook audit green and stamped.
+- Filed: none.
