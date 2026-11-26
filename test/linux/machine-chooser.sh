@@ -152,6 +152,21 @@ device_online() { [ "$(q "$(mc)" '[m["presence"] for m in d["machines"] if m["id
 # sessions_n <n>: the selected machine's roster shows <n> sessions.
 sessions_n() { local s; s=$(mc); [ "$(q "$s" 'd.get("roster_state")')" = loaded ] && [ "$(q "$s" 'len(d["sessions"])')" = "$1" ]; }
 pid_listed() { [ "$(q "$(mc)" '[x["pid"] for x in d["sessions"] if x["pid"]=='"$1"'][0]')" = "$1" ]; }
+# A LOCAL session's pid is the top of its process tree (the agent's wrapper),
+# so a local shell is matched by ancestry. local_sid <json> <shell pid>: the
+# id of the roster row whose session holds that shell.
+local_sid() {
+    local id pid
+    while read -r id pid; do
+        [ -n "$pid" ] && is_ancestor "$pid" "$2" && { printf '%s' "$id"; return 0; }
+    done <<EOF
+$(q "$1" '"\n".join(x["id"] + " " + str(x["pid"]) for x in d["sessions"])')
+EOF
+    return 1
+}
+local_listed() { local_sid "$(mc)" "$1" > /dev/null; }
+# sfield <json> <session id> <field>: one field of that roster row.
+sfield() { q "$1" '[x["'"$3"'"] for x in d["sessions"] if x["id"]=="'"$2"'"][0]'; }
 
 # --- K: the chord ---------------------------------------------------------------
 out=$(mc --op=chord --key=ctrl+n)
@@ -178,12 +193,13 @@ out=$(mc)
 [ "$(q "$out" '[m["title"] for m in d["machines"] if m["id"]=="'"$dev_id"'"][0]')" = chooser-box ]
 hl_check "M3 the relay's device is listed by name and online" $? "out=$out"
 hl_wait_for 15 roster_loaded
-hl_wait_for 10 pid_listed "$local1"
+hl_wait_for 10 local_listed "$local1"
 out=$(mc)
-[ "$(q "$out" '[x["action"] for x in d["sessions"] if x["pid"]=='"$local1"'][0]')" = Show ] &&
-    [ "$(q "$out" '[x["action_tooltip"] for x in d["sessions"] if x["pid"]=='"$local1"'][0]')" = "Bring this session's window to the front" ] &&
-    [ "$(q "$out" '[x["end_tooltip"] for x in d["sessions"] if x["pid"]=='"$local1"'][0]')" = "End this session (terminates its process)" ]
-hl_check "M4 Local's roster lists the app's own pane as Show, with Mac's tooltips" $? "local=$local1 out=$out"
+lsid0=$(local_sid "$out" "$local1")
+[ -n "$lsid0" ] && [ "$(sfield "$out" "$lsid0" action)" = Show ] &&
+    [ "$(sfield "$out" "$lsid0" action_tooltip)" = "Bring this session's window to the front" ] &&
+    [ "$(sfield "$out" "$lsid0" end_tooltip)" = "End this session (terminates its process)" ]
+hl_check "M4 Local's roster lists the app's own pane as Show, with Mac's tooltips" $? "local=$local1 sid=$lsid0 out=$out"
 
 out=$(mc --op=select --value="$dev_id")
 hl_wait_for 15 roster_loaded
@@ -301,15 +317,26 @@ chmod +x "$HL_RUNTIME/local2.sh"
 hl_launch APP2 "$app" --gtk-single-instance=false -e "$HL_RUNTIME/local2.sh"
 hl_wait_for 30 sh -c "env -u GHOZTTY_IPC_SOCKET -u GHOZTTY_PANE_ID '$app' +list > /dev/null 2>&1"
 hl_check "L2 a second app serves its socket" $? "$(tail -20 "$APP2_LOG" 2>/dev/null | tr '\n' ' ')"
+# A pane of this app holds the local shell: some pane's pid is it or above it.
+local_has() {
+    local p
+    for p in $(cli +list --json 2>/dev/null | grep -o '"pid":[0-9]*' | cut -d: -f2); do
+        [ "$p" != 0 ] && is_ancestor "$p" "$local1" && return 0
+    done
+    return 1
+}
+! local_has
+hl_check "L3a no pane of the new app holds the orphaned shell yet" $?
 mc --op=open > /dev/null
-hl_wait_for 20 pid_listed "$local1"
+hl_wait_for 20 local_listed "$local1"
 out=$(mc)
-lsid=$(q "$out" '[x["id"] for x in d["sessions"] if x["pid"]=='"$local1"'][0]')
-[ -n "$lsid" ] && [ "$(q "$out" '[x["action"] for x in d["sessions"] if x["pid"]=='"$local1"'][0]')" = Resume ]
+lsid=$(local_sid "$out" "$local1")
+[ -n "$lsid" ] && [ "$(sfield "$out" "$lsid" action)" = Resume ] && [ "$(sfield "$out" "$lsid" attached)" = false ]
 hl_check "L3 Local lists the orphaned session as Resume" $? "sid=$lsid out=$out"
 mc --op=resume --value="$lsid" > /dev/null
-local_has() { cli +list --json 2>/dev/null | grep -q "\"pid\":$local1"; }
 hl_wait_for 20 local_has
 hl_check "L4 Resume re-attaches that same local shell in a new window" $? "pid=$local1 $(cli +list --json 2>/dev/null | head -c 400)"
+alive "$local1"
+hl_check "L5 the re-attached local shell is still the same live process" $? "pid=$local1"
 
 hl_finish "$L"
