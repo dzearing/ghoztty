@@ -1,0 +1,15 @@
+{
+  "version": "1.56.31",
+  "sections": [
+    { "title": "New",
+      "items": [
+        { "text": "After a restart, each pane comes back on the shell it was opened on, in its folder." },
+        { "text": "Linux single-window mode keeps one window: every later window is a workspace that hands the one toplevel over." }
+      ] },
+    { "title": "Fixes",
+      "items": [
+        { "text": "The session agent's memory climb per closed pane is Debug allocator overhead, not a leak, and the Linux close-memory check now measures what the agent really keeps." },
+        { "text": "Panes in windows nobody is using draw at a capped rate: fifty busy cascaded windows go from ~11 cores to ~1.4." }
+      ] }
+  ]
+}
