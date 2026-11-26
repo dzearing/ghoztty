@@ -45,6 +45,8 @@ const color_math = @import("../../win32/color_math.zig");
 const RemoteLink = @import("../RemoteLink.zig");
 const Workspaces = @import("../Workspaces.zig");
 const desk_fade = @import("../../win32/desk_fade.zig");
+const window_chord = @import("../../win32/window_chord.zig");
+const MachineChooser = @import("../MachineChooser.zig");
 
 const log = std.log.scoped(.gtk_ghostty_window);
 
@@ -515,6 +517,7 @@ pub const Window = extern struct {
             .init("close-tab", actionCloseTab, s_variant_type),
             .init("new-tab", actionNewTab, null),
             .init("new-window", actionNewWindow, null),
+            .init("new-remote-window", actionNewRemoteWindow, null),
             .init("prompt-surface-title", actionPromptSurfaceTitle, null),
             .init("prompt-tab-title", actionPromptTabTitle, null),
             .init("prompt-context-tab-title", actionPromptContextTabTitle, null),
@@ -1693,7 +1696,41 @@ pub const Window = extern struct {
         // The controller is on the GtkWindow: in single-window mode that is
         // the shared toplevel, and the key is for the workspace on show in
         // it, not the toplevel's own (T3649).
-        return @intFromBool(Workspaces.keyTarget(self).rearrangeKey(keyval, state));
+        const target = Workspaces.keyTarget(self);
+        if (target.chooserChord(keyval, state)) return 1;
+        return @intFromBool(target.rearrangeKey(keyval, state));
+    }
+
+    /// Ctrl+Shift+N opens the machine chooser (T3674), whatever in the window
+    /// holds the keyboard - win32's `window_chord` rule (T746), and the same
+    /// table: the chord shadows the cross-platform `ctrl+shift+n ->
+    /// new_window` default, Ctrl+N still opens a local window, and an extra
+    /// Alt or Super is not the chord. Seen in the capture phase, before the
+    /// focused pane's terminal would take it.
+    pub fn chooserChord(self: *Self, keyval: c_uint, state: c_uint) bool {
+        const key: u16 = switch (keyval) {
+            'N', 'n' => 'N',
+            else => return false,
+        };
+        const mods: input.Mods = .{
+            .shift = state & (1 << 0) != 0,
+            .ctrl = state & (1 << 2) != 0,
+            .alt = state & (1 << 3) != 0,
+            .super = state & (1 << 26) != 0,
+        };
+        const chord = window_chord.classify(key, mods, .{}) orelse return false;
+        if (chord != .new_remote_window) return false;
+        log.info("machine chooser: opening via ctrl+shift+n", .{});
+        MachineChooser.open(Application.default(), self);
+        return true;
+    }
+
+    fn actionNewRemoteWindow(
+        _: *gio.SimpleAction,
+        _: ?*glib.Variant,
+        self: *Window,
+    ) callconv(.c) void {
+        MachineChooser.open(Application.default(), self);
     }
 
     // ---- Pane drops on the tab bar, and the tab dwell (T3615) -----------------

@@ -22,9 +22,8 @@
 //! (`machine_cache`), so showing the page touches no network; one background
 //! fetch (a worker thread: the account's token, then the relay's device list)
 //! confirms who is online, and a 401 empties the list and the cache (Mac's
-//! `clearRelayMachines`). Mac's "New Remote Window..." button is not drawn
-//! until the GTK machine chooser exists (T3674) - a button with nothing
-//! behind it would be a dead control.
+//! `clearRelayMachines`). Mac's "New Remote Window..." button sits on the
+//! account row and opens the machine chooser (`MachineChooser.zig`, T3674).
 const SettingsLive = @This();
 
 const std = @import("std");
@@ -75,6 +74,8 @@ fetched: bool = false,
 gen: u64 = 0,
 remote_group: ?*wk.GtkWidget = null,
 account_row: ?*wk.GtkWidget = null,
+/// "New Remote Window..." on the account row (T3674).
+new_remote_button: ?*wk.GtkWidget = null,
 machine_rows: std.ArrayListUnmanaged(MachineRow) = .empty,
 
 const AgentRows = struct {
@@ -160,8 +161,21 @@ pub fn buildRemote(self: *SettingsLive, group: *wk.GtkWidget) void {
     const row = wk.adw_action_row_new();
     wk.adw_preferences_row_set_use_markup(row, 0);
     wk.adw_preferences_row_set_title(row, "Not signed in");
+    // Mac's "New Remote Window..." beside the account (T3674): the chooser,
+    // over the front terminal window (win32 `settings_remote_view`).
+    const button = wk.gtk_button_new_with_label("New Remote Window\u{2026}");
+    wk.gtk_widget_set_valign(button, 3);
+    _ = wk.g_signal_connect_data(button, "clicked", @ptrCast(&onNewRemoteWindow), null, null, 0);
+    wk.adw_action_row_add_suffix(row, button);
+    self.new_remote_button = button;
     wk.adw_preferences_group_add(group, row);
     self.account_row = row;
+}
+
+fn onNewRemoteWindow(_: *wk.GtkWidget, _: ?*anyopaque) callconv(.c) void {
+    const w = SettingsWindow.current() orelse return;
+    const front = @import("IpcHandlers.zig").frontWindowOf(w.app) orelse return;
+    @import("MachineChooser.zig").open(w.app, front);
 }
 
 // ---------------------------------------------------------------------

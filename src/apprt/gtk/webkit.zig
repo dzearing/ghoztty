@@ -630,6 +630,18 @@ pub const adw_response_suggested: c_int = 1;
 pub extern fn adw_dialog_present(dialog: *GtkWidget, parent: ?*GtkWidget) void;
 pub extern fn adw_dialog_force_close(dialog: *GtkWidget) void;
 
+// --- The machine chooser (T3674) ---------------------------------------------
+
+pub extern fn adw_dialog_new() *GtkWidget;
+pub extern fn adw_dialog_set_child(dialog: *GtkWidget, child: ?*GtkWidget) void;
+pub extern fn adw_dialog_set_title(dialog: *GtkWidget, title: [*:0]const u8) void;
+pub extern fn adw_dialog_set_content_width(dialog: *GtkWidget, width: c_int) void;
+pub extern fn adw_dialog_set_content_height(dialog: *GtkWidget, height: c_int) void;
+pub extern fn adw_toolbar_view_new() *GtkWidget;
+pub extern fn adw_toolbar_view_add_top_bar(view: *GtkWidget, widget: *GtkWidget) void;
+pub extern fn adw_toolbar_view_set_content(view: *GtkWidget, content: ?*GtkWidget) void;
+pub extern fn adw_header_bar_new() *GtkWidget;
+
 // --- Pane rearrange mode and pane drag-and-drop (T3564) ----------------------
 
 pub const GdkDrop = opaque {};

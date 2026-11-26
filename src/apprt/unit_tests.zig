@@ -1063,6 +1063,11 @@ test {
     // over win32's pure `session_disconnect` policy. No GTK imports.
     _ = @import("gtk/disconnect_offer.zig");
 
+    // The Linux machine chooser's model (T3674): its rows, detail lines and
+    // which sessions it shows in what order, over win32's pure chooser
+    // modules. No GTK imports.
+    _ = @import("gtk/machine_chooser_rules.zig");
+
     // Pure win32 refresh policy: whether a tick should re-persist the panes'
     // screens, wait for their output to go quiet, or do nothing at all (T922),
     // same no-OS-imports deal — it is arithmetic over a cursor and a clock.

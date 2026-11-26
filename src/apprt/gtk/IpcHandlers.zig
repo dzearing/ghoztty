@@ -223,6 +223,7 @@ pub fn handleSeam(app: Context, request: Request) Allocator.Error!server.SeamRep
     if (std.mem.eql(u8, request.action, "main-menu")) return .{ .reply = try mainMenuSeam(app, request) };
     if (std.mem.eql(u8, request.action, "command-palette")) return .{ .reply = try commandPaletteSeam(app, request) };
     if (std.mem.eql(u8, request.action, "label-weights")) return .{ .reply = try labelWeightsSeam(app, request) };
+    if (std.mem.eql(u8, request.action, "machine-chooser")) return .{ .reply = try @import("ipc_machine_chooser.zig").seam(app, request) };
     if (!std.mem.eql(u8, request.action, "capture-pane")) return .unhandled;
     return .{ .reply = try capturePane(app, request) };
 }
@@ -3113,6 +3114,40 @@ pub fn missingResponse(
 
 /// The window a default-target verb means: the active one, else the most
 /// recently created (the head of GTK's window list is the most recent).
+/// The pane of ours that holds agent session `session_id` (T3674, the
+/// machine chooser's Show): with `device` null a LOCAL pane (no remote link),
+/// else a pane riding relay device `device`. A session id is only unique on
+/// its own agent, so the machine is part of the question.
+pub fn paneHoldingSession(app: Context, session_id: []const u8, device: ?[]const u8) ?PaneAt {
+    if (session_id.len == 0) return null;
+    var it = paneIterator(app);
+    while (it.next()) |p| {
+        const sid = p.surface.agentSessionId() orelse continue;
+        if (!std.mem.eql(u8, sid, session_id)) continue;
+        const link = p.surface.remoteLink();
+        if (device) |d| {
+            const l = link orelse continue;
+            switch (l.machine) {
+                .relay => |r| if (std.mem.eql(u8, r.device, d)) return p,
+                .tcp => {},
+            }
+        } else if (link == null) return p;
+    }
+    return null;
+}
+
+/// Bring `p`'s pane forward: its tab, its window, the keyboard.
+pub fn focusPane(p: PaneAt) void {
+    if (tabOf(p.window, p.surface)) |tab| tab.getSplitTree().focusSurface(p.surface);
+    p.surface.present();
+}
+
+/// The window a seam with no `--target` acts on: the active one, else the
+/// first.
+pub fn frontWindowOf(app: Context) ?*Window {
+    return frontWindow(app);
+}
+
 fn frontWindow(app: Context) ?*Window {
     var first: ?*Window = null;
     var windows = windowIterator(app);
