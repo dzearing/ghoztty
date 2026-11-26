@@ -1187,6 +1187,23 @@ fn initOnce(
     // explicit `--working-directory` still wins. The same config value is
     // what T144 forwards to the local agent's OPEN, so the override covers
     // exec and agent panes alike.
+    // T3772: the Linux folder a WSL pane opened from a WSL pane starts in -
+    // the parent's OSC 7 report. The T185 read below only ever produces a
+    // Windows process cwd, which a WSL shell cannot use (its folder rides
+    // `wsl --cd`), so a plain split or new tab of a WSL pane on a WSL default
+    // shell used to land in `~`. Read here, while the focused pane is still
+    // the one the user opened us from; applied once the pane's shell is known.
+    const inherited_wsl_folder: ?[]const u8 = wsl: {
+        if (!apprt.surface.shouldInheritWorkingDirectory(context, &app.config)) break :wsl null;
+        // A split asks its own parent (`Window.split_parent`); a tab or
+        // window opens from the focused pane, as the T185 read does.
+        const rt: *Surface = parent.split_parent orelse
+            (app.core_app.focusedSurface() orelse break :wsl null).rt_surface;
+        if (rt.shell_family != .wsl) break :wsl null;
+        const carena = config._arena.?.allocator();
+        break :wsl rt.inheritFolder(carena, .wsl, rt.reportedPwd(carena) orelse rt.pwd);
+    };
+
     if (apprt.surface.shouldInheritWorkingDirectory(context, &app.config)) live: {
         const prev = app.core_app.focusedSurface() orelse break :live;
         // T3754: a folder crosses only within its shell family. A WSL pane's
@@ -1323,7 +1340,22 @@ fn initOnce(
     // folders belong to that machine, and a re-attached session is already
     // somewhere.
     const local = self.remote_conn == null or self.remote_is_local_agent;
-    if (local and !attaching and !folder_explicit) {
+    // T3772: a WSL pane opened from a WSL pane keeps that pane's folder, ahead
+    // of its shell's own starting folder (T3770: a pane opened from a pane of
+    // the same kind follows it). Only for a pane on the default shell: a shell
+    // picked by name (`--shell`, the palette, the + menu) was handed its
+    // folder by whoever picked it.
+    var inherited = false;
+    if (local and !attaching and !folder_explicit and self.shell_family == .wsl and self.shellSpec() == null) {
+        if (inherited_wsl_folder) |f| {
+            inherited = self.applyWslFolder(&config, f) catch |err| err: {
+                log.warn("inherited wsl folder not applied err={}", .{err});
+                break :err false;
+            };
+            log.info("inherit cwd: wsl folder={s} applied={}", .{ f, inherited });
+        }
+    }
+    if (local and !attaching and !folder_explicit and !inherited) {
         self.applyShellStartingFolder(&config, wd_untouched and !windows_folder_given) catch |err|
             log.warn("shell-working-directory not applied err={}", .{err});
     }
@@ -3267,28 +3299,47 @@ fn applyShellStartingFolder(self: *Surface, config: *configpkg.Config, wd_untouc
             }
             config.@"working-directory" = .{ .path = try carena.dupe(u8, folder) };
         },
-        .wsl => {
-            if (self.remote_command_argv) |a| {
-                if (try sf.withWslFolder(carena, a, folder)) |next| {
-                    const plain = try carena.alloc([]const u8, next.len);
-                    for (next, 0..) |n, i| plain[i] = n;
-                    self.remote_command_argv = plain;
-                }
-                return;
-            }
-            const a = command_argv orelse return;
-            const next = (try sf.withWslFolder(carena, a, folder)) orelse return;
-            // Keep the command's own form: a `.shell` line is what the agent
-            // path execs as its words (T3750), so it stays a line.
-            config.command = switch (config.command.?) {
-                .direct => .{ .direct = next },
-                .shell => .{ .shell = (try sf.joinCommandLine(carena, next)) orelse {
-                    log.warn("shell-working-directory {s}: a folder with spaces cannot ride a shell command line, ignored", .{folder});
-                    return;
-                } },
-            };
-        },
+        .wsl => _ = try self.applyWslFolder(config, folder),
     }
+}
+
+/// Start this WSL pane in the Linux `folder` (T3770's per-shell folder, or
+/// T3772's inherited one): the shell's default `--cd ~` becomes `--cd
+/// <folder>`, and an interactive `wsl.exe` that names no folder gets one
+/// (`shell_folder.withWslStartFolder`). Rewrites whichever argv this pane will
+/// actually run - the IPC-built `remote_command_argv`, else the configured
+/// `command`, kept in its own form (a `.shell` line is what the agent path
+/// execs as its words, T3750). False when nothing changed: the argv already
+/// names another folder, runs a command, or is a line a spaced folder cannot
+/// ride.
+fn applyWslFolder(self: *Surface, config: *configpkg.Config, folder: []const u8) !bool {
+    const sf = apprt.ipc.shell_folder;
+    const carena = config._arena.?.allocator();
+    if (self.remote_command_argv) |a| {
+        const next = (try sf.withWslStartFolder(carena, a, folder)) orelse return false;
+        const plain = try carena.alloc([]const u8, next.len);
+        for (next, 0..) |n, i| plain[i] = n;
+        self.remote_command_argv = plain;
+        return true;
+    }
+    const command = config.command orelse return false;
+    const a: []const []const u8 = switch (command) {
+        .direct => |d| argv: {
+            const out = try carena.alloc([]const u8, d.len);
+            for (d, 0..) |w, i| out[i] = w;
+            break :argv out;
+        },
+        .shell => |s| try sf.splitCommandLine(carena, s),
+    };
+    const next = (try sf.withWslStartFolder(carena, a, folder)) orelse return false;
+    config.command = switch (command) {
+        .direct => .{ .direct = next },
+        .shell => .{ .shell = (try sf.joinCommandLine(carena, next)) orelse {
+            log.warn("wsl folder {s}: a folder with spaces cannot ride a shell command line, ignored", .{folder});
+            return false;
+        } },
+    };
+    return true;
 }
 
 /// The folder a new `child`-family pane opened from this one inherits

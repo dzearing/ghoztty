@@ -1,15 +1,15 @@
 {
     "guard":  "window-count-scale",
     "script":  "test/win32/window-count-scale.ps1",
-    "generated":  "2026-11-26T03:39:38-08:00",
-    "commit":  "0ab782ec30",
+    "generated":  "2026-11-26T06:46:39-08:00",
+    "commit":  "a1d2c57317",
     "uncommitted":  [
                         "src/apprt/win32/Window.zig"
                     ],
     "files":  {
                   "src/apprt/win32/App.zig":  "6948f68068eebb8647f7855265d0f4de0ef725a5d387487274faba5c5a5082e9",
                   "src/apprt/win32/occlusion.zig":  "6f49e880e753900a0ef7cc46d71a50237bb9159af49bb2ddf3f66a426c7caa24",
-                  "src/apprt/win32/Window.zig":  "96c6120f308d14495a23bed0098aa845a7bed03f4fe379012bdb2df4448c60dc",
+                  "src/apprt/win32/Window.zig":  "9e36a2f4380e08caf48cb15e1df9c3523f59f4fb6bea4ded4b574398a0e6573c",
                   "src/renderer/Thread.zig":  "1de7cfcabea0d5adb638d73d329791642ada45fa295244193aa139d1417b8fac",
                   "test/win32/window-count-scale.ps1":  "eaaf377dc04d8fb75de69f88c357cc69932c8d85f84f25058260dd0e59f7006f"
               },

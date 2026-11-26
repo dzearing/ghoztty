@@ -194,6 +194,42 @@ pub fn withWslFolder(
     return out;
 }
 
+/// `argv` starting in `folder` (T3772): a WSL shell's default `--cd ~`
+/// replaced the way `withWslFolder` does, or, for an interactive `wsl.exe`
+/// that names no folder at all (`wsl.exe`, `wsl.exe -d Ubuntu`), `--cd
+/// <folder>` appended. Null when the argv already names another folder, or
+/// runs a command - any word that is not one of wsl.exe's own options starts
+/// the command line, and a `--cd` after it would be that command's argument.
+pub fn withWslStartFolder(
+    alloc: Allocator,
+    argv: anytype,
+    folder: []const u8,
+) Allocator.Error!?[]const [:0]const u8 {
+    if (try withWslFolder(alloc, argv, folder)) |out| return out;
+    if (argv.len == 0) return null;
+    var i: usize = 1;
+    while (i < argv.len) : (i += 1) {
+        const a: []const u8 = argv[i];
+        const takes_value = for ([_][]const u8{ "-d", "--distribution", "-u", "--user", "--shell-type" }) |o| {
+            if (std.mem.eql(u8, a, o)) break true;
+        } else false;
+        if (takes_value) {
+            if (i + 1 >= argv.len) return null;
+            i += 1;
+            continue;
+        }
+        if (std.mem.eql(u8, a, "--system")) continue;
+        // `--cd` (already a folder), `-e`/`--exec`/`--` (a command) or a
+        // command word: not ours to add to.
+        return null;
+    }
+    const out = try alloc.alloc([:0]const u8, argv.len + 2);
+    for (argv, 0..) |a, n| out[n] = try alloc.dupeZ(u8, a);
+    out[argv.len] = try alloc.dupeZ(u8, "--cd");
+    out[argv.len + 1] = try alloc.dupeZ(u8, folder);
+    return out;
+}
+
 /// `argv` back as the whitespace-split command line `splitCommandLine`
 /// reads: the program quoted when it holds a space. Null when any later word
 /// holds whitespace - that line would split it in two.
@@ -326,4 +362,33 @@ test "withWslFolder replaces only the default ~" {
     try testing.expect((try withWslFolder(arena, @as(A, &.{ "wsl.exe", "--cd", "/home/me/src" }), "/srv")) == null);
     try testing.expect((try withWslFolder(arena, @as(A, &.{"wsl.exe"}), "/srv")) == null);
     try testing.expect((try withWslFolder(arena, @as(A, &.{ "wsl.exe", "--cd" }), "/srv")) == null);
+}
+
+test "T3772 withWslStartFolder: replaces ~, appends to a folderless shell, leaves a command alone" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const home = (try withWslStartFolder(arena, @as(A, &.{ "wsl.exe", "-d", "Ubuntu", "--cd", "~" }), "/srv/app")).?;
+    try testing.expectEqual(@as(usize, 5), home.len);
+    try testing.expectEqualStrings("/srv/app", home[4]);
+
+    const bare = (try withWslStartFolder(arena, @as(A, &.{"wsl.exe"}), "/srv")).?;
+    try testing.expectEqual(@as(usize, 3), bare.len);
+    try testing.expectEqualStrings("--cd", bare[1]);
+    try testing.expectEqualStrings("/srv", bare[2]);
+
+    const distro = (try withWslStartFolder(arena, @as(A, &.{ "wsl.exe", "-d", "Debian", "-u", "me", "--system" }), "/srv")).?;
+    try testing.expectEqual(@as(usize, 8), distro.len);
+    try testing.expectEqualStrings("Debian", distro[2]);
+    try testing.expectEqualStrings("--cd", distro[6]);
+    try testing.expectEqualStrings("/srv", distro[7]);
+
+    // Already somewhere else, a command, or a dangling option: untouched.
+    try testing.expect((try withWslStartFolder(arena, @as(A, &.{ "wsl.exe", "--cd", "/home/me" }), "/srv")) == null);
+    try testing.expect((try withWslStartFolder(arena, @as(A, &.{ "wsl.exe", "-e", "htop" }), "/srv")) == null);
+    try testing.expect((try withWslStartFolder(arena, @as(A, &.{ "wsl.exe", "--", "ls" }), "/srv")) == null);
+    try testing.expect((try withWslStartFolder(arena, @as(A, &.{ "wsl.exe", "ls", "-l" }), "/srv")) == null);
+    try testing.expect((try withWslStartFolder(arena, @as(A, &.{ "wsl.exe", "-d" }), "/srv")) == null);
+    try testing.expect((try withWslStartFolder(arena, @as(A, &.{}), "/srv")) == null);
 }

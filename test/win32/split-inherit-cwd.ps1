@@ -44,6 +44,9 @@
 #      split of a WSL pane does not take its folder, a WSL split of a WSL pane
 #      starts at its OSC 7 Linux folder (`--cd /home/...`), and the CLI passes
 #      a Linux `--working-directory` through for a WSL shell only.
+#   G  (T3772) the same with WSL as the DEFAULT shell (`command = <stub wsl>
+#      --cd ~`): a plain `+split` and a plain ctrl+d split of a WSL pane start
+#      at its reported Linux folder instead of `~`.
 #
 # `-NegativeControl` inverts B's assertion to the pre-fix expectation (the split
 # lands in the FAR directory), so a green run is only evidence because the
@@ -424,6 +427,84 @@ try {
         Assert ($r.Code -ne 0) "F4: the same Linux folder for a Windows shell is refused (got '$($r.Code)')"
     }
 
+    # --- G (T3772): WSL as the DEFAULT shell --------------------------------
+    # F3 names the shell (`--shell=<wsl>`). Here nothing does: the app's own
+    # `command` is the stub WSL, written the way Settings > Shell writes a
+    # distro (`<wsl> --cd ~`), so a plain split and a plain ctrl+d split run
+    # the default shell. Before T3772 both started at `--cd ~`, because the
+    # parent's folder only ever reached a Windows process cwd.
+    Reset-RepoState
+    Remove-Item $errlog -ErrorAction SilentlyContinue
+    $script:app = Start-OnTestDesktop -Exe $exe -Arguments @("--command=$stubWsl --cd ~") -StdErr $errlog
+    $top = Wait-TestWindow -ProcessId $app.Pid -Class 'GhozttyWindow'
+    Assert ($top -ne [IntPtr]::Zero) 'G: the app came up with the stub WSL as its default shell'
+    $defTarget = "t3772def$PID"
+    $r = Run-CliArgs @('+new-window', "--target=$defTarget")
+    Assert ($r.Code -eq 0) "G: a window on the default (stub WSL) shell opens (got '$($r.Code)' $($r.Text))"
+    $defLeaves = @(Wait-PaneCount $defTarget 1)
+    $atHome = Wait-StubCommandLine $stubWsl '*--cd ~*'
+    Assert ($null -ne $atHome) "G control: the default pane ran the default shell at its home, --cd ~ (got '$atHome')"
+    if ($defLeaves.Count -ge 1) {
+        $defPane = $defLeaves[0].id
+        $keys = Join-Path $tmp 'osc7-g.txt'
+        $osc = 'prompt $E]7;file://localhost/home/t3772/src$E\$G'
+        [System.IO.File]::WriteAllText($keys, $osc)
+        $r = Run-CliArgs @('+send-keys', "--target=$defPane", "--keys-file=$keys", 'Enter')
+        Assert ($r.Code -eq 0) "G: the OSC 7 prompt was typed into the default WSL pane (got '$($r.Code)')"
+        $reported = Wait-LeafCwd $defTarget $defPane '/home/t3772/src'
+        Assert (Test-SameDir $reported '/home/t3772/src') "G: the default WSL pane reports the Linux folder (got '$reported')"
+
+        # G1: an IPC split with no --shell keeps the parent's Linux folder.
+        $known = @(@(Get-WindowLeaves $defTarget) | ForEach-Object { $_.id })
+        $r = Run-CliArgs @('+split', "--pane=$defPane")
+        Assert ($r.Code -eq 0) "G1: +split of the default WSL pane exits 0 (got '$($r.Code)')"
+        [void](Wait-PaneCount $defTarget 2)
+        $kept = Wait-StubCommandLine $stubWsl '*--cd /home/t3772/src*'
+        Assert ($null -ne $kept) "G1: the split of a WSL pane on a WSL default shell started in its Linux folder (got '$kept')"
+
+        # G2: the keybind leg - ctrl+d splits the focused pane, the user's
+        # actual gesture. The parent reports a second folder first, so a hit
+        # cannot be G1's process.
+        $osc = 'prompt $E]7;file://localhost/home/t3772/kb$E\$G'
+        [System.IO.File]::WriteAllText($keys, $osc)
+        $r = Run-CliArgs @('+send-keys', "--target=$defPane", "--keys-file=$keys", 'Enter')
+        $reported = Wait-LeafCwd $defTarget $defPane '/home/t3772/kb'
+        Assert (Test-SameDir $reported '/home/t3772/kb') "G2: the parent now reports the second folder (got '$reported')"
+        # ctrl+d splits the FOCUSED pane, so G1's split (which may hold focus)
+        # is closed first and the parent is the only pane left to split.
+        $g1 = New-LeafOf $defTarget $known
+        if ($null -ne $g1) { [void](Run-CliArgs @('+close', "--target=$($g1.id)")) }
+        $defWin = [IntPtr]::Zero
+        foreach ($w in @(Get-Windows | Where-Object { $_.target -eq $defTarget })) { $defWin = [IntPtr][int64]$w.id }
+        if ($defWin -ne [IntPtr]::Zero) {
+            Focus-TestWindow -Window $defWin | Out-Null
+            $active = [IntPtr](Wait-TestFocusedWindow -Window $defWin -Class 'GhozttyTerminal')
+            Assert (Send-TestKeys -Window $defWin -Target $active -Modifiers ctrl -Key D) 'G2: ctrl+d injected'
+            $kb = Wait-StubCommandLine $stubWsl '*--cd /home/t3772/kb*'
+            Assert ($null -ne $kb) "G2: a ctrl+d split of the WSL pane started in its Linux folder (got '$kb')"
+
+            # G3: a new tab (ctrl+shift+t) opens from the focused pane - the
+            # ctrl+d split, which now reports a third folder of its own.
+            [void](Wait-PaneCount $defTarget 2)
+            $kbPane = New-LeafOf $defTarget @($defPane)
+            if ($null -ne $kbPane) {
+                $osc = 'prompt $E]7;file://localhost/home/t3772/tab$E\$G'
+                [System.IO.File]::WriteAllText($keys, $osc)
+                [void](Run-CliArgs @('+send-keys', "--target=$($kbPane.id)", "--keys-file=$keys", 'Enter'))
+                $reported = Wait-LeafCwd $defTarget $kbPane.id '/home/t3772/tab'
+                Assert (Test-SameDir $reported '/home/t3772/tab') "G3: the focused split reports the third folder (got '$reported')"
+                $active = [IntPtr](Wait-TestFocusedWindow -Window $defWin -Class 'GhozttyTerminal')
+                Assert (Send-TestKeys -Window $defWin -Target $active -Modifiers ctrl, shift -Key T) 'G3: ctrl+shift+t injected'
+                $tab = Wait-StubCommandLine $stubWsl '*--cd /home/t3772/tab*'
+                Assert ($null -ne $tab) "G3: a new tab of the WSL pane started in its Linux folder (got '$tab')"
+            } else {
+                Assert $false 'G3: found the ctrl+d split pane'
+            }
+        } else {
+            Assert $false 'G2: found the default window HWND for the keybind leg'
+        }
+    }
+
     Assert (-not (Test-TestDesktopLeak -ProcessId $app.Pid)) 'the run never took the interactive desktop'
 } catch {
     Write-Host "FAIL  harness error: $_" -ForegroundColor Red
@@ -451,4 +532,4 @@ if ($script:fail -eq 0 -and -not $NegativeControl) {
 }
 
 Write-Host ''
-Write-TestVerdict -Pass $script:pass -Fail $script:fail -Label 'split-inherit-cwd' -MinPass 33
+Write-TestVerdict -Pass $script:pass -Fail $script:fail -Label 'split-inherit-cwd' -MinPass 45

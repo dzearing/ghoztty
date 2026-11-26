@@ -1,25 +1,21 @@
 {
     "guard":  "shell-starting-folder",
     "script":  "test/win32/shell-starting-folder.ps1",
-    "generated":  "2026-11-25T22:23:57-08:00",
-    "commit":  "bbacdece43",
+    "generated":  "2026-11-26T06:38:29-08:00",
+    "commit":  "a1d2c57317",
     "uncommitted":  [
                         "src/apprt/ipc/shell_folder.zig",
-                        "src/apprt/win32/ipc_settings.zig",
-                        "src/apprt/win32/IpcHandlers.zig",
-                        "src/apprt/win32/SettingsWindow.zig",
-                        "src/apprt/win32/Surface.zig",
-                        "test/win32/shell-starting-folder.ps1"
+                        "src/apprt/win32/Surface.zig"
                     ],
     "files":  {
-                  "src/apprt/ipc/shell_folder.zig":  "a9153af378a45ad3dada950c761856085ffab3bd7d5e713fec0e9544a05adbdb",
+                  "src/apprt/ipc/shell_folder.zig":  "d1362d255ab8670a2dc80b122db6903f3c03e99a88a50bc128f6dd35d1f01741",
                   "src/apprt/win32/ipc_settings.zig":  "ef12fe96344dd8f29eb30daef0d269e6c7bcc161abb1130ae9ed72630c81a68c",
                   "src/apprt/win32/IpcHandlers.zig":  "f7ff6d0aef3d5d5adcacbd6878dcc38e5be6203236a8b4c581a3b93614145ba3",
                   "src/apprt/win32/SettingsWindow.zig":  "ad1799a9e54362ba27bfd02a42a8644b994f5a0d5107bb41070864033f14685a",
-                  "src/apprt/win32/Surface.zig":  "e9611d3c7898a7feaf4eb116931723fe8882da030474b403d02f43f6b78fe1f1",
+                  "src/apprt/win32/Surface.zig":  "6bc3ceeb360f9ab1904671efc7c2200a954ad64a5a60993e4f2cd05e6fd3c65b",
                   "test/win32/shell-starting-folder.ps1":  "5b7ff11760cfc8f98304ab88112630eb20e9e5c461528d0761d51cd9ab7914a0"
               },
     "code":  {
-                 "test/win32/shell-starting-folder.ps1":  "code1:4906ef920683a67e5887c8b25ff6505f71b088da76189ed6c161802930932ae5"
+                 "test/win32/shell-starting-folder.ps1":  "code1:e28e04600e57650bad66533a18dacff7ff1623293397888657d2c1655e658bcb"
              }
 }

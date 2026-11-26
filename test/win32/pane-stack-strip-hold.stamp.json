@@ -1,19 +1,18 @@
 {
     "guard":  "pane-stack-strip-hold",
     "script":  "test/win32/pane-stack-strip-hold.ps1",
-    "generated":  "2026-11-26T03:27:49-08:00",
-    "commit":  "0ab782ec30",
+    "generated":  "2026-11-26T06:34:43-08:00",
+    "commit":  "a1d2c57317",
     "uncommitted":  [
-                        "src/apprt/win32/Window.zig",
-                        "test/win32/pane-stack-strip-hold.ps1"
+                        "src/apprt/win32/Window.zig"
                     ],
     "files":  {
                   "src/apprt/win32/pane_stack_layout.zig":  "e35dd1daa83dcc3a692c106acea8d793c2602dd24ede85ab907b5b5423562470",
                   "src/apprt/win32/pane_stack_slide.zig":  "326e35a603232edc82b1bab57c2ab44696da45dd326d194565f8a27a6d4c8a33",
-                  "src/apprt/win32/Window.zig":  "96c6120f308d14495a23bed0098aa845a7bed03f4fe379012bdb2df4448c60dc",
+                  "src/apprt/win32/Window.zig":  "9e36a2f4380e08caf48cb15e1df9c3523f59f4fb6bea4ded4b574398a0e6573c",
                   "test/win32/pane-stack-strip-hold.ps1":  "cae00176ad9e2160778c3caecf98cfd40961a4c263621b1ce1d8141ad644539b"
               },
     "code":  {
-                 "test/win32/pane-stack-strip-hold.ps1":  "code1:15b5587bd4f2fca300735d26855ecaa526d8c812b827c352cd1d024fc2f8df52"
+                 "test/win32/pane-stack-strip-hold.ps1":  "code1:506b5c814756fe27a3798cde9e1bc8ea69ff41aae92e0fbe0ec8854a6e00e206"
              }
 }

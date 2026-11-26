@@ -1453,6 +1453,14 @@ last_activated_ms: i64 = 0,
 /// by the IPC server; creation is synchronous so borrowed strings are fine.
 pending_surface_overrides: ?*const Surface.Overrides = null,
 
+/// The pane the NEXT Surface.init in this window is being split from (T3772),
+/// set by `newSplitAt` around that synchronous init. A WSL split reads its
+/// parent's Linux folder from here; without it the only answer is the app's
+/// focused pane, which for a `+split --pane=<id>` aimed at another window is
+/// the wrong pane (the T760 shape). Null: a tab or window, which open from the
+/// focused pane.
+split_parent: ?*Surface = null,
+
 /// The dialed remote-agent transport this window rides on
 /// (`+new-remote-window`), or null for a local window. OWNED: torn down in
 /// deinit strictly AFTER every surface (each `termio.Remote` borrows
@@ -18014,6 +18022,8 @@ pub fn newSplitAt(
     // the whole function would run on top of that `defer` and free it twice
     // if `split` below failed.)
     const new_surface = try alloc.create(Surface);
+    self.split_parent = at.surface();
+    defer self.split_parent = null;
     new_surface.init(self.app, self, .split) catch |err| {
         alloc.destroy(new_surface);
         return err;
