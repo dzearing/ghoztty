@@ -27,13 +27,24 @@
 //! held here keeps its split tree, and every pane and session in it, alive.
 //! Undo puts it back at the position it had, selected. Closing a tab's only
 //! pane is closing that tab, so it parks as a tab, whole. Close Other Tabs
-//! and Close Tabs to the Right are ONE undo (a group). A window closing - or
-//! its last tab, which closes it - is not undoable here yet (T3665).
+//! and Close Tabs to the Right are ONE undo (a group).
+//!
+//! A closed WINDOW parks too (T3665, win32 T1874) - closed by its close
+//! button, `win.close`, `+close`, or its last tab or last pane going. It is
+//! hidden and taken out of the application's window list, which every
+//! window walk reads (`+list`, targeting, sidebars, session layout), while
+//! every tab, pane and shell in it stays as it was. Its entry is owned by
+//! `shared_owner`: the window it would be scoped to is the one that closed,
+//! so any other window's undo reaches it, in recency order with that
+//! window's own closes. The last window is never parked - with nothing left
+//! on screen there is nowhere to press undo. A single-window-mode workspace
+//! is not parked here (T3790).
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
 const glib = @import("glib");
+const gobject = @import("gobject");
 const gtk = @import("gtk");
 
 const ext = @import("ext.zig");
@@ -42,6 +53,7 @@ const Surface = @import("class/surface.zig").Surface;
 const SplitTree = @import("class/split_tree.zig").SplitTree;
 const Tab = @import("class/tab.zig").Tab;
 const Window = @import("class/window.zig").Window;
+const Workspaces = @import("Workspaces.zig");
 const WeakRef = @import("weak_ref.zig").WeakRef;
 const close_undo = @import("../win32/close_undo.zig");
 const layout_undo = @import("../win32/layout_undo.zig");
@@ -61,6 +73,13 @@ const Home = WeakRef(SplitTree);
 
 /// A tab a redo closes again, held weakly (boxed, as `Home`).
 const TabRef = WeakRef(Tab);
+
+/// A window a redo closes again, held weakly (boxed, as `Home`).
+const WindowRef = WeakRef(Window);
+
+/// The owner key of an entry no window scopes: a closed window's own close
+/// (T3665). Never a real window's key (`owner` is a pointer).
+const shared_owner: usize = 0;
 
 const Entry = union(enum) {
     /// Undo: put a closed pane back.
@@ -89,12 +108,19 @@ const Entry = union(enum) {
         /// Where it was in its window's tab view.
         position: c_int,
     },
+    /// Undo: show a closed window again (T3665). Owned by `shared_owner`.
+    window: struct {
+        /// Holds ONE reference; parked (hidden, out of the app's list).
+        window: *Window,
+    },
     /// Redo: close that pane again.
     pane_redo: struct { id: pane_id.Buf, home: *Home },
     /// Redo: close that tab again.
     tab_redo: struct { tab: *TabRef },
     /// Redo: put the rearranged layout back.
     layout_redo: struct { after: Shape, home: *Home },
+    /// Redo: close that window again (T3665).
+    window_redo: struct { window: *WindowRef },
 };
 
 const Stack = close_undo.Stack(Entry);
@@ -208,6 +234,46 @@ fn freeTabRef(ref: *TabRef) void {
     gpa().destroy(ref);
 }
 
+fn newWindowRef(window: *Window) Allocator.Error!*WindowRef {
+    const ref = try gpa().create(WindowRef);
+    ref.* = .empty;
+    ref.set(window);
+    return ref;
+}
+
+fn freeWindowRef(ref: *WindowRef) void {
+    ref.set(null);
+    gpa().destroy(ref);
+}
+
+/// Every pane of every tab of `window`.
+fn forEachPane(window: *Window, comptime f: fn (*Surface) void) void {
+    const tab_view = window.getTabView();
+    const n: usize = @intCast(tab_view.getNPages());
+    for (0..n) |i| {
+        const tab = gobject.ext.cast(Tab, tab_view.getNthPage(@intCast(i)).getChild()) orelse continue;
+        const tree = tab.getSurfaceTree() orelse continue;
+        var it = tree.iterator();
+        while (it.next()) |entry| f(entry.view);
+    }
+}
+
+fn markClose(s: *Surface) void {
+    s.markSessionClose();
+}
+
+fn clearPin(s: *Surface) void {
+    s.clearDetachPin();
+}
+
+/// A parked window's teardown: every pane ends as a close would end it,
+/// then the window goes.
+fn endWindow(window: *Window) void {
+    forEachPane(window, markClose);
+    window.endParked();
+    window.unref();
+}
+
 /// Free an entry for good, ending whatever it kept alive.
 fn finalize(entry: *Entry) void {
     const alloc = gpa();
@@ -225,6 +291,8 @@ fn finalize(entry: *Entry) void {
             freeHome(l.home);
         },
         .tab => |*t| endTab(t.tab),
+        .window => |*w| endWindow(w.window),
+        .window_redo => |*r| freeWindowRef(r.window),
         .pane_redo => |*r| freeHome(r.home),
         .tab_redo => |*r| freeTabRef(r.tab),
         .layout_redo => |*r| {
@@ -391,6 +459,68 @@ fn anyRunning(tree: *const Tree) bool {
     return false;
 }
 
+/// Whether closing `window` now would park it (T3665): undo on, an
+/// ordinary window (not the quick terminal, not a single-window-mode
+/// workspace or frame, not already parked), another window still open to
+/// press undo in, and a shell still running in it.
+pub fn canParkWindow(window: *Window) bool {
+    if (timeoutMs() == null) return false;
+    if (window.isQuickTerminal() or window.isFrame() or window.isParkedForUndo()) return false;
+    // A workspace close's undo is T3790.
+    if (Workspaces.applies(window) or Workspaces.manages(window)) return false;
+    const others = others: {
+        var node: ?*glib.List = Application.default().as(gtk.Application).getWindows();
+        while (node) |n| {
+            node = n.f_next;
+            const obj: *gobject.Object = @ptrCast(@alignCast(n.f_data orelse continue));
+            const w = gobject.ext.cast(Window, obj) orelse continue;
+            if (w != window and !w.isFrame()) break :others true;
+        }
+        break :others false;
+    };
+    if (!others) return false;
+    const tab_view = window.getTabView();
+    const n: usize = @intCast(tab_view.getNPages());
+    for (0..n) |i| {
+        const tab = gobject.ext.cast(Tab, tab_view.getNthPage(@intCast(i)).getChild()) orelse continue;
+        const tree = tab.getSurfaceTree() orelse continue;
+        if (anyRunning(tree)) return true;
+    }
+    return false;
+}
+
+/// Park `window`, which the user just closed (T3665, win32 T1874). True
+/// means it is hidden and out of the application's window list with every
+/// tab and shell intact, and the caller must NOT close it; false means
+/// close it as before (see `canParkWindow`).
+pub fn parkWindow(window: *Window) bool {
+    if (!canParkWindow(window)) return false;
+    if (!push(&undos, shared_owner, .{ .window = .{ .window = window.ref() } })) {
+        window.unref();
+        return false;
+    }
+    clearRedos(shared_owner);
+    window.parkForUndo();
+    log.info("parked closed window for undo", .{});
+    return true;
+}
+
+fn isWindowEntry(target: *Window, entry: *const Entry) bool {
+    return switch (entry.*) {
+        .window => |w| w.window == target,
+        else => false,
+    };
+}
+
+/// A parked window is closing for real (its last shell exited while it
+/// waited): its undo goes, without the teardown - the caller runs that.
+pub fn forgetWindow(window: *Window) void {
+    if (undos.takeMatching(window, isWindowEntry)) |item| {
+        item.payload.window.window.unref();
+        arm();
+    }
+}
+
 /// The close of the pane at `handle` when it is its tab's only one: with
 /// undo on, close the TAB instead, its tree intact, so the tab parks whole
 /// (T3590; win32 closes the tab from the same spot). True when it did - the
@@ -408,7 +538,9 @@ pub fn closeTabInstead(split_tree: *SplitTree, tree: *const Tree, handle: Tree.N
     if (surface.hasChildExited()) return false;
     const tab = ext.getAncestor(Tab, split_tree.as(gtk.Widget)) orelse return false;
     const window = ext.getAncestor(Window, split_tree.as(gtk.Widget)) orelse return false;
-    if (window.getTabView().getNPages() <= 1) return false;
+    // The window's last tab closing closes the window: that parks it whole
+    // when it can (T3665), and is the pane close it always was when not.
+    if (window.getTabView().getNPages() <= 1 and !canParkWindow(window)) return false;
     return window.closeTabNow(tab);
 }
 
@@ -484,22 +616,24 @@ const Panes = struct {
     }
 };
 
-/// The window an undo with this target acts on: the surface's window, or for
-/// the app target the window of the most recent entry anywhere.
-fn ownerFor(stack: *const Stack, target: ?*Surface) ?usize {
+/// The most recent entry an undo (or redo) with this target acts on: one of
+/// the surface's window, or a closed window's (`shared_owner`, T3665); for
+/// the app target, the most recent entry anywhere.
+fn popFirst(stack: *Stack, target: ?*Surface) ?Stack.Item {
     if (target) |s| {
         const window = ext.getAncestor(Window, s.as(gtk.Widget)) orelse return null;
-        return @intFromPtr(window);
+        return stack.popForEither(@intFromPtr(window), shared_owner);
     }
-    return stack.topOwner();
+    const top = stack.topOwner() orelse return null;
+    return stack.popFor(top);
 }
 
 /// Undo the most recent close or rearrange in `target`'s window (the app
 /// target: anywhere). An entry whose tab has closed since is ended and the
 /// next one tried. False when nothing was undone.
 pub fn undo(target: ?*Surface) bool {
-    const owner = ownerFor(&undos, target) orelse return false;
-    while (undos.popFor(owner)) |first| {
+    while (popFirst(&undos, target)) |first| {
+        const owner = first.owner;
         // A group (Close Other Tabs) comes back as one, and its redo closes
         // them again as one.
         const g = first.group;
@@ -522,14 +656,15 @@ fn undoOne(owner: usize, item: Stack.Item) bool {
         .pane => restorePane(owner, &it.payload),
         .layout => restoreLayout(owner, &it.payload),
         .tab => restoreTab(owner, &it.payload),
-        .pane_redo, .layout_redo, .tab_redo => unreachable,
+        .window => restoreWindow(&it.payload),
+        .pane_redo, .layout_redo, .tab_redo, .window_redo => unreachable,
     };
 }
 
 /// Redo the most recently undone close or rearrange in `target`'s window.
 pub fn redo(target: ?*Surface) bool {
-    const owner = ownerFor(&redos, target) orelse return false;
-    while (redos.popFor(owner)) |first| {
+    while (popFirst(&redos, target)) |first| {
+        const owner = first.owner;
         const g = first.group;
         const was = group;
         group = if (g != 0) takeGroupId() else 0;
@@ -550,8 +685,44 @@ fn redoOne(item: Stack.Item) bool {
         .pane_redo => reclosePane(&it.payload),
         .layout_redo => reapplyLayout(&it.payload),
         .tab_redo => recloseTab(&it.payload),
-        .pane, .layout, .tab => unreachable,
+        .window_redo => recloseWindow(&it.payload),
+        .pane, .layout, .tab, .window => unreachable,
     };
+}
+
+/// Consumes `entry`. Back in the application, shown, the same tabs and
+/// shells (T3665).
+fn restoreWindow(entry: *Entry) bool {
+    const window = entry.window.window;
+    // Every shell in it exited while it waited: nothing to bring back.
+    if (window.getTabView().getNPages() == 0) {
+        finalize(entry);
+        return false;
+    }
+    window.unparkFromUndo();
+    // T3563: back in a live window, a later close is a close again.
+    forEachPane(window, clearPin);
+    log.info("undo: closed window restored with {d} tab(s)", .{window.getTabView().getNPages()});
+    const ref = newWindowRef(window) catch null;
+    window.unref(); // the application holds it now
+    if (ref) |r| {
+        if (!push(&redos, shared_owner, .{ .window_redo = .{ .window = r } })) freeWindowRef(r);
+    }
+    return true;
+}
+
+/// Consumes `entry`.
+fn recloseWindow(entry: *Entry) bool {
+    const r = &entry.window_redo;
+    defer finalize(entry);
+    const window = r.window.get() orelse return false;
+    defer window.unref();
+    if (window.isParkedForUndo()) return false;
+    in_redo = true;
+    defer in_redo = false;
+    log.info("redo: closing window again", .{});
+    window.closeNow();
+    return true;
 }
 
 /// Consumes `entry`. The owner IS the window: `dropWindow` ends every entry

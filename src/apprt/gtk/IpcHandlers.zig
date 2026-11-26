@@ -3364,7 +3364,13 @@ pub fn closeTarget(_: Context, target: Target, force: bool) bool {
         },
         // T3652: through the workspace close, so the shared toplevel's own
         // workspace closing keeps the window for the others.
-        .window => |w| w.closeNow(),
+        // T3665: parked for undo like any window close, unless `--force`.
+        .window => |w| {
+            const was = CloseUndo.bypass;
+            CloseUndo.bypass = force;
+            defer CloseUndo.bypass = was;
+            w.closeNow();
+        },
     }
     return true;
 }

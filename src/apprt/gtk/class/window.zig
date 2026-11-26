@@ -280,6 +280,12 @@ pub const Window = extern struct {
         /// workspace.
         frame_only: bool = false,
 
+        /// Closed, and waiting for its undo (T3665, win32 T1874): hidden and
+        /// out of the application's window list - so `+list`, targeting,
+        /// the sidebars and the session layout all see it gone - with every
+        /// tab and shell intact. `CloseUndo` owns the reference that keeps it.
+        parked_for_undo: bool = false,
+
         /// A title composed while the window was hidden and not yet set on
         /// it (T3571): it lands when the window shows, or when
         /// `held_title_timer` fires. Owned.
@@ -774,6 +780,12 @@ pub const Window = extern struct {
     /// parking its tab for undo first when undo is on (T3590).
     fn finishTabClose(self: *Self, page: *adw.TabPage) void {
         const tab_view = self.private().tab_view;
+        // T3665 (win32 T1874): the LAST tab closing closes its window, so it
+        // is the window that waits for the undo - whole, this tab still in it.
+        if (tab_view.getNPages() == 1 and CloseUndo.parkWindow(self)) {
+            tab_view.closePageFinish(page, @intFromBool(false));
+            return;
+        }
         if (gobject.ext.cast(Tab, page.getChild())) |tab| {
             _ = CloseUndo.parkTab(self, tab, tab_view.getPagePosition(page));
         }
@@ -2572,8 +2584,49 @@ pub const Window = extern struct {
     /// shared toplevel's own workspace closing while others are open closes
     /// the WORKSPACE and keeps the GtkWindow as their frame (T3652), so the
     /// person never sees the window go and another come.
+    ///
+    /// With undo on, a window closed while another is open is PARKED instead
+    /// (T3665, `CloseUndo.parkWindow`). A parked window closed again - its
+    /// last shell exited while it waited - drops its undo and closes for
+    /// real.
     pub fn closeNow(self: *Self) void {
+        if (self.private().parked_for_undo) {
+            CloseUndo.forgetWindow(self);
+        } else if (CloseUndo.parkWindow(self)) return;
         if (Workspaces.retire(self)) return;
+        self.as(gtk.Window).destroy();
+    }
+
+    /// Whether this window is closed and waiting for its undo (T3665).
+    pub fn isParkedForUndo(self: *Self) bool {
+        return self.private().parked_for_undo;
+    }
+
+    /// Park this window for its undo (T3665): hidden, and out of the
+    /// application's window list, which every window walk reads. Only
+    /// `CloseUndo` calls it, holding a reference.
+    pub fn parkForUndo(self: *Self) void {
+        const priv = self.private();
+        priv.parked_for_undo = true;
+        self.as(gtk.Widget).setVisible(@intFromBool(false));
+        Application.default().as(gtk.Application).removeWindow(self.as(gtk.Window));
+        queueAllSidebarRefresh();
+    }
+
+    /// Bring a parked window back (T3665): in the application again, shown,
+    /// focus on the pane it had.
+    pub fn unparkFromUndo(self: *Self) void {
+        const priv = self.private();
+        priv.parked_for_undo = false;
+        Application.default().as(gtk.Application).addWindow(self.as(gtk.Window));
+        self.as(gtk.Window).present();
+        if (self.getActiveSurface()) |s| s.grabFocus();
+        queueAllSidebarRefresh();
+    }
+
+    /// End a parked window for good (its undo expired, or the app quits).
+    pub fn endParked(self: *Self) void {
+        self.private().parked_for_undo = false;
         self.as(gtk.Window).destroy();
     }
 
