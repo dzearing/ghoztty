@@ -2534,6 +2534,11 @@ lookup decide which binary a test drives.
 
 ## Crash diagnostics
 
+**gdb is installed since 2026-11-26** (T3656, `apt-get install gdb`): attach to
+a hung app with `DEBUGINFOD_URLS= gdb -p <pid> -batch -ex 'thread apply all
+bt 40'` from inside the step (the step runs as root, so ptrace is allowed).
+That is how T3656's quit hang was traced into Mesa's d3d12 driver.
+
 Measured 2026-11-21 in the distro: no `gdb`, no `coredumpctl`, `ulimit -c` is
 0, and `core_pattern` is `|/wsl-capture-crash %t %E %p %s` (WSL's own crash
 collector). So a crashing Linux build leaves no core by default, and:
