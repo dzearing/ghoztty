@@ -40984,3 +40984,5 @@ WebKitGTK's script message carries no frame, and a page-world handler is visible
 - What: re-verified before building. frame-clock.ps1 has been @timing-sensitive since T2365, so the 2026-10-28 15.7 ms glow tick was the other lane's load, not the paint or the budget. No code change.
 - Evidence: exclusive run 20261126-141507: section D PASS (glow mean 2253us, max 8282us vs 7981us period), E PASS (0% skipped vs 77% on the 16 ms timer). The same run's G1/G2 red is T2820's (open, holds the guard ack). Inherited due guards re-run green: thread-join, self-spawn, unwired-hook, seam audits and the scoped harness floor.
 - Filed: none.
+- **2026-11-26 (lane b) T2431 done (already fixed): pane-stack-strip D6 was the same mis-aimed strip probe T2918 fixed on 2026-11-11 (2cc31dff26).** Two tucked strips read as one, so D6 pressed on s3; the app was moving the right pane. Closed against T2918's commit.
+  - Validation: pane-stack-strip ALL PASS (34) at HEAD, `D6: it holds the dragged pane s2 (1: s2)`. No code change.
