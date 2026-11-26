@@ -183,10 +183,10 @@ fn onClosed(_: *wk.GtkWidget, self: *MachineChooser) callconv(.c) void {
     c_alloc.destroy(self);
 }
 
-fn setText(label: *wk.GtkWidget, text: []const u8) void {
+fn setText(lbl: *wk.GtkWidget, text: []const u8) void {
     var zb: [1024]u8 = undefined;
     const z = std.fmt.bufPrintZ(&zb, "{s}", .{text}) catch return;
-    wk.gtk_label_set_text(label, z.ptr);
+    wk.gtk_label_set_text(lbl, z.ptr);
 }
 
 fn setTip(w: *wk.GtkWidget, text: []const u8) void {
