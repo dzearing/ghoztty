@@ -1,8 +1,8 @@
 {
     "guard":  "pane-sidebar-drag",
     "script":  "test/win32/pane-sidebar-drag.ps1",
-    "generated":  "2026-11-26T11:01:05-08:00",
-    "commit":  "bbff56176c",
+    "generated":  "2026-11-26T12:21:12-08:00",
+    "commit":  "03cc32a186",
     "uncommitted":  [
 
                     ],

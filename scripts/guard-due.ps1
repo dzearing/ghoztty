@@ -2445,6 +2445,24 @@ $GuardTable = @(
             'src\apprt\surface.zig'
         )
     },
+    # Every new pane gets its own fresh shell and every closed pane's shell is
+    # really gone (T3820, the user's open/echo/close lifecycle test). The
+    # covered files are the ones that decide whether a pane can meet another
+    # pane's shell: the parked-window pool a new pane takes its HWND from, the
+    # close-undo park a closed pane's shell waits in, and the WSL argv rewrite.
+    # The stamp is the powershell arm; the -Wsl arm is opt-in (real WSL).
+    [pscustomobject]@{
+        Name   = 'wsl-pane-lifecycle'
+        Script = 'test\win32\wsl-pane-lifecycle.ps1'
+        Stamp  = 'test\win32\wsl-pane-lifecycle.stamp.json'
+        Covers = @(
+            'test\win32\wsl-pane-lifecycle.ps1',
+            'src\apprt\win32\pane_pool.zig',
+            'src\apprt\win32\CloseUndo.zig',
+            'src\apprt\win32\close_undo.zig',
+            'src\apprt\ipc\shell_folder.zig'
+        )
+    },
     # A starting folder per shell (T3770): the pure matcher, the one seam in
     # `Surface.init` that applies it, the IPC sites that mark an explicit
     # folder, and the Settings row that validates a value as it is typed.

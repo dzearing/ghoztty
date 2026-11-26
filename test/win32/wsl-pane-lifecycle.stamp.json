@@ -1,0 +1,19 @@
+{
+    "guard":  "wsl-pane-lifecycle",
+    "script":  "test/win32/wsl-pane-lifecycle.ps1",
+    "generated":  "2026-11-26T12:06:17-08:00",
+    "commit":  "03cc32a186",
+    "uncommitted":  [
+                        "test/win32/wsl-pane-lifecycle.ps1"
+                    ],
+    "files":  {
+                  "src/apprt/ipc/shell_folder.zig":  "d1362d255ab8670a2dc80b122db6903f3c03e99a88a50bc128f6dd35d1f01741",
+                  "src/apprt/win32/close_undo.zig":  "8316a81b0aeb43382d0f196c37933a101b1503bbe022c9a25b3e62937e221910",
+                  "src/apprt/win32/CloseUndo.zig":  "9210f8638e65623f49300a63518ddb622ff3a24f18859497b60be1dae8458159",
+                  "src/apprt/win32/pane_pool.zig":  "7051701d9ae20fb4545cb30cc23d896443debacaaa11aef43c32a8e82278bd65",
+                  "test/win32/wsl-pane-lifecycle.ps1":  "bba604776a3db7a99c2e56c61ec764617a78ce66463c593a3fe57533416326dd"
+              },
+    "code":  {
+                 "test/win32/wsl-pane-lifecycle.ps1":  "code1:35dfda90eea4805ade034012afe3dee4ade4541212ebf338ce0c0ce6f9d651a0"
+             }
+}

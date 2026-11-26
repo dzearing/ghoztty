@@ -1,8 +1,8 @@
 {
     "guard":  "window-count-scale",
     "script":  "test/win32/window-count-scale.ps1",
-    "generated":  "2026-11-26T11:10:09-08:00",
-    "commit":  "bbff56176c",
+    "generated":  "2026-11-26T12:30:21-08:00",
+    "commit":  "03cc32a186",
     "uncommitted":  [
 
                     ],

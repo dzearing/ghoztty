@@ -1,8 +1,8 @@
 {
     "guard":  "pane-sidebar-glide",
     "script":  "test/win32/pane-sidebar-glide.ps1",
-    "generated":  "2026-11-26T11:14:01-08:00",
-    "commit":  "bbff56176c",
+    "generated":  "2026-11-26T12:32:17-08:00",
+    "commit":  "03cc32a186",
     "uncommitted":  [
 
                     ],

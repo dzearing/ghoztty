@@ -1,8 +1,8 @@
 {
     "guard":  "pane-sidebar-add",
     "script":  "test/win32/pane-sidebar-add.ps1",
-    "generated":  "2026-11-26T10:59:19-08:00",
-    "commit":  "bbff56176c",
+    "generated":  "2026-11-26T12:19:14-08:00",
+    "commit":  "03cc32a186",
     "uncommitted":  [
 
                     ],

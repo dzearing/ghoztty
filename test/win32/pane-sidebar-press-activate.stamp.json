@@ -1,8 +1,8 @@
 {
     "guard":  "pane-sidebar-press-activate",
     "script":  "test/win32/pane-sidebar-press-activate.ps1",
-    "generated":  "2026-11-26T10:56:47-08:00",
-    "commit":  "bbff56176c",
+    "generated":  "2026-11-26T12:16:57-08:00",
+    "commit":  "03cc32a186",
     "uncommitted":  [
 
                     ],
