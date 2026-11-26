@@ -1,0 +1,18 @@
+{
+  "version": "1.56.34",
+  "sections": [
+    { "title": "New",
+      "items": [
+        { "text": "Linux single-window mode: closing a workspace keeps the one window - the one on show hands it to the one shown before it, the toplevel's close button closes the workspace on show, and the last close closes the window." },
+        { "text": "Linux single-window mode: the window reports the most urgent activity of all its workspaces, and a parked workspace waiting on a question marks the window urgent." }
+      ] },
+    { "title": "Fixes",
+      "items": [
+        { "text": "Linux chrome titles at the Mac's semibold: header-bar title, .heading, strip labels, guide badges and the picked theme tile draw at 600, not Adwaita's bold." },
+        { "text": "label-weights.sh finds the header title by its text: AdwWindowTitle's .title label sits in a box, not directly in windowtitle." },
+        { "text": "label-weights.sh B6 names the reload reply and the custom-css log lines." },
+        { "text": "label-weights.sh reloads with +reload --config, the verb's config form." },
+        { "text": "The commit guard no longer leaves the shared tree mid-rebase when its pull hits the other window's index.lock." }
+      ] }
+  ]
+}
