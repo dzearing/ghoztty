@@ -41140,3 +41140,7 @@ WebKitGTK's script message carries no frame, and a page-world handler is visible
 - What: pane-banner.ps1's composition-path gap was closed in passing by c5d633d330 (T2747), five days after this card was filed. Sections 1-12 pin the popup path, which is still the no-interop fallback. Section 13 runs the banner with `GHOZTTY_COMP_PRESENT=1` and reads the card's geometry from the app's own log. No code change this turn: the deliverable was the validation run.
 - Evidence: acceptance-parallel run pane-banner.ps1 ALL PASS (206 assertions, 0 skipped). All 11 section-13 assertions ran for real: visual path, 0 popups, 83->149 px growth, 10-line cap 380/380, split keeps both cards. comp-present.ps1 H/J/K already cover clicks on that path.
 - Filed: none.
+## 2026-11-27 00:30 lane b - T2620: closed as already fixed by T2836
+- What: stack-fold-slide F13's all-black strip-face photo was fixed on 2026-11-09 by b6f5c0105 (T2836). That fix makes the check retake a pure-black PrintWindow photo before scoring it. The card was never closed. No code change this turn: the deliverable was the re-verification.
+- Evidence: 4 of 4 exclusive standalone runs ALL PASS (48 assertions) on HEAD f3dd358b1a; the old rate was about 8 in 10 red. F13 commonest pixel 23272e is inside the logged band, covering 98% of the face. The guard has been stamped green since T2836.
+- Filed: none.
