@@ -1,19 +1,19 @@
 {
     "guard":  "doc-claims",
     "script":  "test/win32/doc-claims.ps1",
-    "generated":  "2026-11-26T20:50:41-08:00",
-    "commit":  "b3a1d42eb2",
+    "generated":  "2026-11-26T21:08:23-08:00",
+    "commit":  "909bdbed3e",
     "uncommitted":  [
-                        "docs/claude/linux.md"
+
                     ],
     "files":  {
                   "CLAUDE.md":  "d36c55011e0aaa79791f102a88c900fe847edb05aa35518e44aa0dcf5e5e39af",
                   "docs/claude/build.md":  "4030dcb825def93b623b9450485ef04f54bd4ea018a2ee44df6424f41cd1d112",
                   "docs/claude/cli.md":  "44731d3a071a72ffe2e0394d4ba0303bfbce64909d129b4b26dc233ed3a2997d",
-                  "docs/claude/linux.md":  "ac0f428d0d209d571df9f73f73284cf93b7a8bf791ccc03437b23977a306c911",
+                  "docs/claude/linux.md":  "b782fafd952031b8d1a92788d10d96891ea0679091f8e6672b0d7859fa6e2a59",
                   "docs/claude/remote.md":  "8fab00e61609bd6a0e94e08c582def1af623cb6287e8fa7cd664162ba4347e50",
                   "docs/claude/sessions.md":  "9be06e891730189d2ed1c56a49836a910d8c65a872f29ac7779f6a42bf6e15bd",
-                  "docs/claude/testing.md":  "c4d7dc980f7f2a86ea504480a67666212129e172afe15261e155fd6f1b301b37",
+                  "docs/claude/testing.md":  "f03e96c66281beefb32f093085bc24f4519ba0f25f4f4ec146df2a64d036b487",
                   "docs/claude/viewers.md":  "de51d9dcfe632a8b9b947120b8952648fdb3829444b162bc04e072f210308333",
                   "docs/claude/win32-ui.md":  "0d161ccd181de4fdb54cf6a4b434abc75dcc00f65094c681df21dfab7ac05e55",
                   "go.md":  "ca1be588f5cec28f827b60f6efe00925ce4139b21929dfe05e57933e109434a4",

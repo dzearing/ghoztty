@@ -340,6 +340,7 @@ if ($ScoreOnly) {
         }
     }
     Exit-IfOccludedDisplay -Root $OutDir
+    if ($script:passes -eq 0) { "FAIL no assertion passed - no film was scored under $OutDir"; exit 1 }
     if ($script:failures -eq 0) { "ALL PASS ($script:passes)"; exit 0 }
     "$script:failures FAILURE(S), $script:passes pass"
     exit 1
@@ -483,6 +484,10 @@ try {
 $summary
 "  films kept in $OutDir"
 Exit-IfOccludedDisplay -Root $OutDir
+# T2560: a run that asserted nothing proved nothing. A setup throw inside the
+# try (a missing helper, a refused exe) used to fall through to here and print
+# "ALL PASS (0)" with exit 0.
+if ($script:passes -eq 0) { "FAIL no assertion passed - the run never reached a scored film (read the errors above)"; exit 1 }
 if ($script:failures -eq 0) { "ALL PASS ($script:passes)"; exit 0 }
 "$script:failures FAILURE(S), $script:passes pass"
 exit 1
