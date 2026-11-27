@@ -896,14 +896,38 @@ private runtime dir, so a test app can never meet the user's.
   `AdwTab` button wears `pane-drag-dwell` (an accent wash), dropped when
   the clock is cancelled or fires (`Window.lightDwell`, referenced so a tab
   closed mid-dwell cannot dangle). Not yet: the new-tab caret on the tab
-  bar and a strip's slot caret (T3841), and the hover handle with the mode
-  off (T3709). Acceptance: `wsl-run.ps1 -CommandFile
+  bar and a strip's slot caret (T3841). Acceptance: `wsl-run.ps1 -CommandFile
   test\linux\pane-drop-preview.sh`, ends `PANE DROP PREVIEW: ALL PASS` (19
   checks; V13 compares a window capture's pixel with and without it); `NEGATIVE=1` hovers over the dragged pane itself and must fail
-  V4-V7, V10 and V13 (6). Debug seam:
+  V4-V7, V10 and V13 (6). **The hover grab handle (T3709, Mac
+  `PaneGrabHandle`, win32 `pane_grab_handle.zig`)**: with the mode OFF,
+  every pane - terminal or viewer - carries `PaneGrabHandle.Handle`, a
+  `GtkPicture` overlaid on the surface's `terminal_page` overlay, centred at
+  the top edge. A CAPTURE-phase motion controller on that overlay sees the
+  pointer over the terminal and over a WebKit page alike: in the pane's top
+  band (the top fifth, never under 24 px) the grip is `hinted`, on its 80x24
+  hit box `engaged`, and it is hidden otherwise - and always hidden in
+  rearrange mode (the header drags), in a fullscreen window holding one
+  pane, while the pointer is hidden for typing, and while another drag is in
+  flight. Every rule and pixel is win32's pure `pane_grab_handle.zig`
+  (`band`, `layout`, `state`, `render`), shared, not copied: the capsule is
+  rendered into a premultiplied BGRA buffer at the widget's device scale and
+  shown as a memory texture, so the Linux grip is the Windows one. Hidden,
+  the picture is not visible and takes no press from the terminal under it.
+  Dragging it is the header's drag exactly: both are a `PaneDrag.Source`
+  (same mime type, ghost card, drop targets and preview, release-over-nothing
+  pop-out), with `hooks` keeping the grip engaged while it is the thing being
+  dragged. Log category `gtk_pane_grab` (debug: `grab handle pane=...
+  hidden -> hinted`). Acceptance: `wsl-run.ps1 -CommandFile
+  test\linux\pane-grab-handle.sh`, ends `PANE GRAB HANDLE: ALL PASS` (18
+  checks; G8 compares a window capture's pixel engaged and hidden);
+  `NEGATIVE=1` puts the band pointer below the band and must fail G5-G8
+  (4). A real pointer drag is NOT RUN (no seat). Debug seam:
   `hl_ipc pane-drag --target=<pane> [--key=escape] [--drop-on=<pane>
   --fx=<0..1> --fy=<0..1> | --drop-at=<x>,<y> | --drop-tab=<n>]
   [--hover-tab=<n> | --hover-leave] [--bar-of=<pane>]
+  [--grab-at=<x>,<y> | --grab-leave] [--grab-begin | --grab-end]
+  [--release-nowhere --via-grab]
   [--hover-on=<pane> --hx=<0..1> --hy=<0..1> | --hover-at=<x>,<y> |
   --hover-end]
   [--release-nowhere | --pop-out] [--ghost | --ghost-png=<path>]`
@@ -923,8 +947,10 @@ private runtime dir, so a test app can never meet the user's.
   (`--bar-of` aims the
   tab-bar flags at that pane's window) replies with `mode`, `tabs_visible`,
   `tabs_autohide`, `key_effect`, every pane's header (`shown`, `height`,
-  `title`, `content_height`, `is_split`, and `rect`, the pane as drawn in
-  its split area), the drop (`target`, `side`,
+  `title`, `content_height`, `is_split`, `rect`, the pane as drawn in
+  its split area, and `grab`, its grab handle: `state`, `shown`, `dragging`,
+  the `planned` hit box and `band` in the pane's own coordinates, and
+  `widget` as laid out), the drop (`target`, `side`,
   `pane`, `index`, `outcome`), `tab_count`, `selected_tab`, `dwell_tab`,
   `dwell_lit` (the button wearing the dwell's light, read off the widgets)
   and `tab_buttons` of the window the target is in after the drop,
