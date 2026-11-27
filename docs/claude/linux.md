@@ -1298,7 +1298,9 @@ window (a `file://` link: reveal / side pane / its app).
   sections.
 - **Opening things**: the browser is `GtkUriLauncher`, a default app
   `GtkFileLauncher`, reveal the bar button's `open_containing_folder` road,
-  a split `SplitTree.newSplitAt(.right, ...)` from the pane's `Tab`, a window
+  a split `SplitTree.newSplitAt(.right, ..., .focus = false)` from the pane's
+  `Tab` - a SIDE PANE, like the Mac's `newViewerSplit` (T3748): the clicking
+  pane keeps the caret and the new pane is featured, so it is on show; a window
   `Application.newWindowForIpc` with the location as `view`.
 - **Nothing a test does may leave the app**: inside WSL `xdg-open` can
   reach the Windows browser. A debug build with `GHOZTTY_TEST_VIEWER_LINKS=<file>`
@@ -1318,7 +1320,8 @@ Acceptance:
 powershell -NoProfile -File scripts\linux\wsl-run.ps1 -CommandFile test\linux\viewer-links.sh
 ```
 
-Ends `VIEWER LINKS: ALL PASS` (42 checks).
+Ends `VIEWER LINKS: ALL PASS` (46 checks; K10a-K10c are T3748's caret and
+featuring of a link's side pane).
 
 ### Which frame posted: the private-world relay (T3554)
 
