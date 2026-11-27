@@ -190,7 +190,7 @@ barshot() {
     read -r x y w h <<< "$(rect_of "$s" barrect)"
     [ -n "$h" ] || { echo off; return; }
     f="$HL_RUNTIME/toc-bar-$1.png"
-    hl_screenshot doc "$f" --window > /dev/null 2>&1 || { echo off; return; }
+    hl_screenshot "$doc_pane" "$f" --window > "$HL_RUNTIME/toc-bar-$1.reply" 2>&1 || { echo "off"; return; }
     hl_png_pixel "$f" $((x + w / 2)) $((y + h / 4)) $((x + w / 2)) $((y + h / 2)) $((x + w / 2)) $((y + 3 * h / 4)) | tr '\n' ';'
 }
 # accent <r g b>: libadwaita's default accent (#3584e4) within 45 a channel.
@@ -209,9 +209,31 @@ bluish() {
 all_pts() {
     local pred=$1 p
     [ -n "$2" ] && [ "$2" != off ] || return 1
-    local IFS=';'
-    for p in $2; do "$pred" "$p" || return 1; done
+    # Split on ';' in a read, never through IFS: the predicate's own
+    # `set -- $1` would inherit it and see one word.
+    while IFS= read -r p; do
+        [ -n "$p" ] || continue
+        "$pred" "$p" || return 1
+    done <<< "$(printf '%s' "$2" | tr ';' '\n')"
 }
+# The viewer's pane id (capture-pane's target): the leaf named doc, or the
+# first leaf of the window named doc.
+doc_pane=$(cli +list --json 2>/dev/null | python3 -I -c '
+import json, sys
+d = json.load(sys.stdin)["data"]
+def walk(n):
+    if n["type"] == "split":
+        yield from walk(n["left"]); yield from walk(n["right"])
+    else:
+        yield n["terminal"]
+for w in d["windows"]:
+    for t in w["tabs"]:
+        for l in walk(t["splits"]):
+            if l.get("name") == "doc" or w.get("name") == "doc":
+                print(l.get("id", "")); sys.exit(0)
+' 2>/dev/null)
+[ -n "$doc_pane" ] || doc_pane=doc
+reply_of() { tr '\n' ' ' < "$HL_RUNTIME/toc-bar-$1.reply" 2>/dev/null | cut -c1-300; }
 hl_wait_for 120 grep -q '^mark bar-hover' "$out"
 hover_px=$(barshot hover)
 hl_wait_for 60 grep -q '^mark bar-held' "$out"
@@ -297,11 +319,11 @@ has "$s" "bar=none " && has "$s" "baropacity=0.00 " && has "$s" "width=300 "
 hl_check "C31 let go with the pointer gone, the bar goes out" $? "$s"
 
 all_pts accent "$held_px"
-hl_check "C32 the window draws the accent down the edge while it is held" $? "held=$held_px"
+hl_check "C32 the window draws the accent down the edge while it is held" $? "held=$held_px target=$doc_pane $(reply_of held)"
 all_pts bluish "$hover_px" && ! all_pts accent "$hover_px"
-hl_check "C33 hovered, the window draws the bar at half (blue, but not the full accent)" $? "hover=$hover_px held=$held_px"
+hl_check "C33 hovered, the window draws the bar at half (blue, but not the full accent)" $? "hover=$hover_px held=$held_px $(reply_of hover)"
 ! all_pts bluish "$out_px" && [ "$out_px" != off ] && [ -n "$out_px" ]
-hl_check "C34 once it is out the window draws no bar there" $? "out=$out_px"
+hl_check "C34 once it is out the window draws no bar there" $? "out=$out_px $(reply_of out)"
 
 s=$(tc 10)
 has "$s" "mode=compact " && has "$s" "open=false " && has "$s" "card=false " && has "$s" "button=true " && has "$s" "gutter=0 " && [ "$(pr 6)" = "probe OK pad=none" ]
