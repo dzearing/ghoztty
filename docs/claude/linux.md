@@ -1439,6 +1439,15 @@ A markdown pane with two or more headings gets a CONTENTS card
   document's background. The 7 px band right of the card drags the width
   (`GtkGestureDrag`); the saved width is the `viewer_prefs` one the diff
   panel shares.
+- **The edge lights the gutter bar** (T3732; Mac
+  `SidePanelResizeHandle.gutterBar`, win32 T2265): the band is a vertical
+  box holding a non-targetable 4px `.gutter-bar` (the stage's class, so the
+  same accent and glow), centred, the band's whole height. Its opacity is
+  `gutter_bar_rules.single(hovered, dragged)`: 0.5 while the motion
+  controller says the pointer is on it, 1 from `drag-begin` until
+  `drag-end` or the gesture's `cancel` (so the pointer running off the band
+  mid-drag keeps it lit), else 0. The bar is laid out inside the band, so
+  it moves with the edge and stops where the width clamps.
 - **Narrow pane**: an overlay over the document. The nav bar's first item
   (`sidebar-show-symbolic`) opens and closes it. Entering the narrow layout
   closes it, a row click dismisses it, and nothing is reserved.
@@ -1446,10 +1455,13 @@ A markdown pane with two or more headings gets a CONTENTS card
   (`can-target` off) whose `resize` reports the page area. A split divider
   drag or a window resize switches the layout either way.
 - The open state is never saved. Only the width is.
-- **Driving it headless**: the steps seam's `toc` prints `mode= open= card=
-  button= handle= rows= active= selected= width= cardw= shownw= gutter=
+- **Driving it headless**: the steps seam's `toc` prints `bar=none|hover|drag
+  baropacity= barrect=x,y,w,h edgerect=x,y,w,h` (window px) then `mode= open=
+  card= button= handle= rows= active= selected= width= cardw= shownw= gutter=
   pane=WxH`, `toc-rows` the `id:depth` list, `toc-row <id>` clicks a row,
-  `toc-drag <dx>` drags the edge, `click contents` the button, and
+  `toc-drag <dx>` drags the edge, `toc-hover on|off` is the band's
+  enter/leave, `toc-press <dx>` takes hold and moves it (held until
+  `toc-release <dx>`), `click contents` the button, and
   `resize WxH` resizes the window (`gtk_window_set_default_size`, which
   headless Weston honours). The page's padding is read with a `probe`.
 
@@ -1459,7 +1471,10 @@ Acceptance:
 powershell -NoProfile -File scripts\linux\wsl-run.ps1 -CommandFile test\linux\viewer-toc.sh
 ```
 
-Ends `VIEWER TOC: ALL PASS` (25 checks).
+Ends `VIEWER TOC: ALL PASS` (34 checks; C26-C34 are the bar, read from the
+seam and from a `capture-pane --window` picture at each strength - a
+capture taken just after the held edge re-lays out the page can find no
+frame yet, so the script retries it).
 
 ### The feedback button and worktree provenance (T3419)
 
