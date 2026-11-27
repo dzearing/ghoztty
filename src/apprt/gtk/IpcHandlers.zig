@@ -653,6 +653,16 @@ fn paneStack(app: Context, request: Request) Allocator.Error![]u8 {
 /// (`SplitTree.hoverAt` / `hoverEnd`) for the target pane; the reply's
 /// `preview` is that area's live drop preview, `dwell_lit` the tab button
 /// wearing the dwell's light, and each header carries its pane's `rect`.
+/// `--grab-at=<x>,<y>` / `--grab-leave` (T3709) are the target pane's hover
+/// grab handle's motion and leave calls (`PaneGrabHandle.pointerAt` /
+/// `pointerLeft`), in the pane's own coordinates; `--grab-begin` /
+/// `--grab-end` run what a drag from that handle runs as it begins and ends
+/// (`PaneDrag.Source.begin` / `end`: the pane becomes the drag in flight,
+/// the ghost card is set as the icon); `--via-grab` makes
+/// `--release-nowhere` the handle's release over nothing instead of the
+/// header's. Each header entry carries its pane's `grab`: `state`
+/// (hidden|hinted|engaged), `shown`, `dragging`, the `planned` hit box and
+/// `band`, and `widget`, the picture as laid out on the last frame.
 fn paneDrag(app: Context, request: Request) Allocator.Error![]u8 {
     var target_arg: ?[]const u8 = null;
     var key_arg: ?[]const u8 = null;
@@ -674,7 +684,17 @@ fn paneDrag(app: Context, request: Request) Allocator.Error![]u8 {
     var hover_end = false;
     var hx: f64 = 0.5;
     var hy: f64 = 0.5;
+    var grab_at_arg: ?[]const u8 = null;
+    var grab_leave = false;
+    var grab_begin = false;
+    var grab_end = false;
+    var via_grab = false;
     for (request.arguments orelse &.{}) |arg| {
+        if (std.mem.startsWith(u8, arg, "--grab-at=")) grab_at_arg = arg["--grab-at=".len..];
+        if (std.mem.eql(u8, arg, "--grab-leave")) grab_leave = true;
+        if (std.mem.eql(u8, arg, "--grab-begin")) grab_begin = true;
+        if (std.mem.eql(u8, arg, "--grab-end")) grab_end = true;
+        if (std.mem.eql(u8, arg, "--via-grab")) via_grab = true;
         if (std.mem.startsWith(u8, arg, "--hover-on=")) hover_on_arg = arg["--hover-on=".len..];
         if (std.mem.startsWith(u8, arg, "--hover-at=")) hover_at_arg = arg["--hover-at=".len..];
         if (std.mem.eql(u8, arg, "--hover-end")) hover_end = true;
@@ -718,6 +738,24 @@ fn paneDrag(app: Context, request: Request) Allocator.Error![]u8 {
     // The card a drag of the target would carry, built before any drop the
     // way a drag builds it at drag-begin (T3617).
     const ghost_rep: ?GhostRep = if (ghost_arg) ghostReport(arena, surface, ghost_png) else null;
+
+    // The hover grab handle (T3709): the pointer over the target pane, and
+    // a drag from its handle beginning or ending.
+    if (grab_at_arg != null or grab_leave or grab_begin or grab_end) {
+        const g = surface.grabHandle() orelse
+            return server.errorResponse(c_alloc, "pane '{s}' has no grab handle", .{target_name});
+        if (grab_at_arg) |at| {
+            var parts = std.mem.splitScalar(u8, at, ',');
+            const x = std.fmt.parseFloat(f64, parts.next() orelse "") catch
+                return server.errorResponse(c_alloc, "--grab-at must be <x>,<y>", .{});
+            const y = std.fmt.parseFloat(f64, parts.next() orelse "") catch
+                return server.errorResponse(c_alloc, "--grab-at must be <x>,<y>", .{});
+            g.pointerAt(x, y);
+        }
+        if (grab_leave) g.pointerLeft();
+        if (grab_begin) g.drag.begin();
+        if (grab_end) g.drag.end();
+    }
 
     var key_effect: ?[]const u8 = null;
     if (key_arg) |k| {
@@ -844,7 +882,13 @@ fn paneDrag(app: Context, request: Request) Allocator.Error![]u8 {
     // A release over nothing, or the header's pop-out button (T3618): the
     // pane into a new window. Both need the header, as a real one does - a
     // drag starts from it and the button is on it.
-    if (release_nowhere or pop_out) {
+    if (release_nowhere and via_grab) {
+        // A drag from the hover grab handle let go over nothing (T3709).
+        const g = surface.grabHandle() orelse
+            return server.errorResponse(c_alloc, "pane '{s}' has no grab handle", .{target_name});
+        const r = g.drag.releaseOverNothing();
+        drop = .{ .target = r.target, .outcome = r.outcome, .side = null, .pane = null, .index = null, .x = 0, .y = 0 };
+    } else if (release_nowhere or pop_out) {
         const h = surface.rearrangeHeader() orelse
             return server.errorResponse(c_alloc, "pane '{s}' has no rearrange header (the mode was never on)", .{target_name});
         const r: PaneDrag.DropResult = if (release_nowhere)
@@ -870,7 +914,8 @@ fn paneDrag(app: Context, request: Request) Allocator.Error![]u8 {
     const bar = window.tabBarCandidate(&bar_buf);
 
     // `rect`: the pane as drawn in its split area (T3708), `[left, top, right, bottom]`.
-    const HeaderRep = struct { pane: []const u8, shown: bool, height: c_int, title: []const u8, content_height: c_int, is_split: bool, pop_out: bool, rect: ?[4]i32 };
+    const GrabRep = struct { state: []const u8, shown: bool, dragging: bool, planned: ?[4]i32, band: [4]i32, widget: ?[4]i32 };
+    const HeaderRep = struct { pane: []const u8, shown: bool, height: c_int, title: []const u8, content_height: c_int, is_split: bool, pop_out: bool, rect: ?[4]i32, grab: ?GrabRep };
     var headers: std.ArrayList(HeaderRep) = .empty;
     var panes = paneIterator(app);
     while (panes.next()) |p| {
@@ -888,6 +933,18 @@ fn paneDrag(app: Context, request: Request) Allocator.Error![]u8 {
                 const t = ext.getAncestor(SplitTree, p.surface.as(gtk.Widget)) orelse break :rect null;
                 const r = t.paneRect(p.surface) orelse break :rect null;
                 break :rect .{ r.left, r.top, r.right, r.bottom };
+            },
+            .grab = grab: {
+                const g = p.surface.grabHandle() orelse break :grab null;
+                const b = g.band();
+                break :grab .{
+                    .state = @tagName(g.state()),
+                    .shown = wk.gtk_widget_get_visible(g.pic) != 0,
+                    .dragging = g.dragging,
+                    .planned = if (g.planned()) |r| .{ r.left, r.top, r.right, r.bottom } else null,
+                    .band = .{ b.left, b.top, b.right, b.bottom },
+                    .widget = if (g.laidOut()) |r| .{ r.left, r.top, r.right, r.bottom } else null,
+                };
             },
         });
     }

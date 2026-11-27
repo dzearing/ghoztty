@@ -570,6 +570,7 @@ pub const GSK_SCALING_FILTER_LINEAR: c_int = 0;
 pub extern fn gtk_picture_new_for_paintable(paintable: ?*anyopaque) *GtkWidget;
 pub extern fn gtk_picture_set_content_fit(picture: *GtkWidget, fit: c_int) void;
 pub extern fn gtk_picture_set_can_shrink(picture: *GtkWidget, can_shrink: c_int) void;
+pub extern fn gtk_picture_set_paintable(picture: *GtkWidget, paintable: ?*anyopaque) void;
 pub extern fn gtk_button_set_child(button: *GtkWidget, child: ?*GtkWidget) void;
 pub extern fn gtk_scrolled_window_get_child(sw: *GtkWidget) ?*GtkWidget;
 pub extern fn gtk_viewport_scroll_to(viewport: *GtkWidget, descendant: *GtkWidget, scroll: ?*anyopaque) void;

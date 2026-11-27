@@ -47,6 +47,7 @@ const IpcHandlers = @import("../IpcHandlers.zig");
 const PaneBanner = @import("../PaneBanner.zig");
 const PaneDrag = @import("../PaneDrag.zig");
 const PaneDragGhost = @import("../PaneDragGhost.zig");
+const PaneGrabHandle = @import("../PaneGrabHandle.zig");
 const RemoteLink = @import("../RemoteLink.zig");
 const RemoteReconnect = @import("../RemoteReconnect.zig");
 const disconnect_offer = @import("../disconnect_offer.zig");
@@ -867,6 +868,11 @@ pub const Surface = extern struct {
         /// above the banner; the struct is freed with the banner's.
         rearrange_header: ?*PaneDrag.Header = null,
 
+        /// The hover grab handle at the pane's top edge (T3709), made with
+        /// the surface. Its picture lives on `terminal_page`; the struct is
+        /// freed with the header's.
+        grab_handle: ?*PaneGrabHandle.Handle = null,
+
         /// Set when a restore put this pane's banner back (T3560): the
         /// backend is told its banner slot is taken, so the
         /// session-interrupted notice keeps to the scrollback instead of
@@ -1486,6 +1492,37 @@ pub const Surface = extern struct {
         if (header.isShown() == shown) return;
         header.setShown(shown);
         self.syncHeaderTitle();
+        // The mode owns the top edge while it is on (T3709).
+        if (priv.grab_handle) |g| g.refresh();
+    }
+
+    /// The hover grab handle (T3709; the `pane-drag` seam).
+    pub fn grabHandle(self: *Self) ?*PaneGrabHandle.Handle {
+        return self.private().grab_handle;
+    }
+
+    /// What the grab handle needs to know about this pane right now (Mac
+    /// `SurfaceGrabHandle.handleVisible`, win32 `pane_grab_handle.suppressed`):
+    /// no handle in rearrange mode, where the header already drags, nor in a
+    /// fullscreen window holding this pane alone, nor while the pointer is
+    /// hidden for typing.
+    fn grabEnv(owner: *anyopaque) PaneGrabHandle.Env {
+        const self: *Self = @ptrCast(@alignCast(owner));
+        const priv = self.private();
+        const window = ext.getAncestor(Window, self.as(gtk.Widget));
+        const rearrange = if (window) |w| w.rearrangeMode() else false;
+        const fullscreen = if (window) |w| w.as(gtk.Window).isFullscreen() != 0 else false;
+        const bg: color_math.Rgb = priv.background_tint orelse bg: {
+            const config_obj = Application.default().getConfig();
+            defer config_obj.unref();
+            const c = config_obj.get().background;
+            break :bg .{ .r = c.r, .g = c.g, .b = c.b };
+        };
+        return .{
+            .suppressed = rearrange or (fullscreen and !priv.is_split),
+            .cursor_visible = !priv.mouse_hidden,
+            .pane_bg = bg,
+        };
     }
 
     /// Enable or disable the header's pop-out button (T3618). A pane that
@@ -1516,8 +1553,8 @@ pub const Surface = extern struct {
         const parent = gl.getParent() orelse return null;
         const box = gobject.ext.cast(gtk.Box, parent) orelse return null;
         const header = PaneDrag.Header.create(std.heap.c_allocator, self.paneId()) catch return null;
-        header.ghost = .{ .owner = self, .build = &dragGhostThunk };
-        header.pop_out = .{ .owner = self, .pop = &popOutThunk };
+        header.drag.ghost = .{ .owner = self, .build = &dragGhostThunk };
+        header.drag.pop_out = .{ .owner = self, .pop = &popOutThunk };
         const box_w: *wk.GtkWidget = @ptrCast(box);
         wk.gtk_orientable_set_orientation(box_w, 1); // GTK_ORIENTATION_VERTICAL
         wk.gtk_box_prepend(box_w, header.box);
@@ -2958,6 +2995,20 @@ pub const Surface = extern struct {
         // Setup properties we can't set from our Blueprint file.
         self.as(gtk.Widget).setCursorFromName("text");
 
+        // The hover grab handle (T3709): with rearrange mode off, a grip at
+        // the pane's top edge that drags the pane the way the header does.
+        if (PaneGrabHandle.Handle.create(
+            std.heap.c_allocator,
+            @ptrCast(priv.terminal_page),
+            self.paneId(),
+            self,
+            &grabEnv,
+        )) |h| {
+            h.drag.ghost = .{ .owner = self, .build = &dragGhostThunk };
+            h.drag.pop_out = .{ .owner = self, .pop = &popOutThunk };
+            priv.grab_handle = h;
+        } else |err| log.warn("grab handle create failed err={}", .{err});
+
         // Initialize our config
         self.propConfig(undefined, null);
     }
@@ -3103,6 +3154,10 @@ pub const Surface = extern struct {
         if (priv.rearrange_header) |h| {
             std.heap.c_allocator.destroy(h);
             priv.rearrange_header = null;
+        }
+        if (priv.grab_handle) |h| {
+            std.heap.c_allocator.destroy(h);
+            priv.grab_handle = null;
         }
         if (priv.banner_menu_target) |t| {
             std.heap.c_allocator.free(t);
@@ -3637,6 +3692,9 @@ pub const Surface = extern struct {
         _: ?*anyopaque,
     ) callconv(.c) void {
         const priv = self.private();
+
+        // Typing hides the pointer, and the grab handle with it (T3709).
+        if (priv.grab_handle) |g| g.refresh();
 
         // If we're hidden we set it to "none"
         if (priv.mouse_hidden) {
