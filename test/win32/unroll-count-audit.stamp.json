@@ -1,12 +1,10 @@
 {
     "guard":  "unroll-count",
     "script":  "test/win32/unroll-count-audit.ps1",
-    "generated":  "2026-11-26T20:18:26-08:00",
-    "commit":  "f29f5e3e21",
+    "generated":  "2026-11-26T21:23:44-08:00",
+    "commit":  "a91c9c800c",
     "uncommitted":  [
-                        "scripts/acceptance-parallel.ps1",
-                        "scripts/guard-due.ps1",
-                        "scripts/lib/InputDesktopExceptions.ps1"
+
                     ],
     "files":  {
                   "scripts/acceptance-parallel.ps1":  "7cd02b3ad09cfe17adc20d49eebb85ce02ad135c8cbe368ec0d32a5f60a016dc",
@@ -20,7 +18,7 @@
                   "scripts/commit-pressure-probe.ps1":  "06ffbbf0dec3a89096ccd6820eb2503a4a0a1842c88e7cd82378a5a3a4e8a657",
                   "scripts/comp-blade-onscreen.ps1":  "2ed76959c0e192802717423664a9d0e0dddd64ab010e69b6fe4d8525ab970edb",
                   "scripts/comp-chrome-onscreen.ps1":  "17710196373f1cc76a97d4a3a6278cdef6006f71bdffff8e7c99e668ffddc0ec",
-                  "scripts/comp-desk-onscreen.ps1":  "aaab26f3dd26297f681e4736416e43a73636231adf51a7f048f772762d749c38",
+                  "scripts/comp-desk-onscreen.ps1":  "9304899b33d1269e769936708a98e5c211d6fa114c1eb853c3fe608b1f948cf2",
                   "scripts/comp-flat-onscreen.ps1":  "f4e677d04745196654ca641c7ffe5053b84320318a24f6c4621371136ca4bebc",
                   "scripts/comp-gl-baseline.ps1":  "b7f792f81e8cd6e6ad7b62ac7329665ec70edbf3a8bde0b37ff3157ec48e05ae",
                   "scripts/comp-glide-hold-onscreen.ps1":  "ecd7556d1b986fd76f777502200f8851f165af288e0ef3e8b911fdc9bbd8e635",

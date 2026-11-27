@@ -21,9 +21,9 @@
 # Everything runs inside the private headless sway (test/linux/lib/headless.sh),
 # so no window ever reaches WSLg or the user's desktop.
 #
-# NEGATIVE=1 never takes the keyboard, and must fail S6 and S7 (the
-# activation checks): the proof they can fail. S8 does not depend on it -
-# each wtype call brings its own short-lived keyboard.
+# NEGATIVE=1 never takes the keyboard, and must fail S6, S7 and S8: the
+# activation checks, and the typing (each wtype call brings its own
+# short-lived keyboard, but with no raise the text lands in another window).
 #
 # Output: one PASS/FAIL line per check, then 'CLI SEAT: ALL PASS' or
 # 'CLI SEAT: <n> FAILURE(S)'. Exit 0 only on ALL PASS.

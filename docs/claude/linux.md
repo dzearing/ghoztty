@@ -226,6 +226,7 @@ hl_finish "MY SCRIPT"                  # stops everything, '<LABEL>: ALL PASS', 
 | `hl_stop` | Kills every launched process and its children, then the compositor, then removes the runtime dir. Idempotent. |
 | `hl_start_seat [w] [h]` | `hl_start` with a headless **sway** instead of Weston (T3620), for a test that needs a `wl_seat` - Weston headless has none. Same runtime dir, isolation, refusals and cleanup; the socket is whatever sway picks inside the private dir (`HL_SOCKET` is read back), `SWAYSOCK` is exported, `HL_WESTON_PID` holds sway's pid. No input devices, no Xwayland, pixman renderer. See "A seat, for cross-client paste" below. |
 | `hl_key_serial` | Under `hl_start_seat` only (refuses otherwise): one `Shift_L` key event to the focused window through a short-lived virtual keyboard (`wtype`). Without it no copy ever leaves the app. |
+| `hl_seat_keyboard`, `hl_seat_has_keyboard`, `hl_seat_keyboard_stop` | Under `hl_start_seat` only (T3713): a keyboard that STAYS on the seat - a background `wtype` parked in a one-hour sleep between two `Shift_L` taps, killed by `hl_stop`. Without it the seat's capabilities are 0, no window ever gets `wl_keyboard.enter`, and GTK (whose is-active follows keyboard focus, not sway's own focus) never calls a window active. See "The seat checks" below. |
 
 Acceptance (it builds the GTK app, then proves the refusals and the isolation,
 and that a SIGTERMed harness leaves no Weston, app or dir behind):
@@ -258,6 +259,33 @@ press-key and pane-mouse seams do not help either: they inject inside the app,
 so Wayland never issues a serial for them. Packages: `sway wtype wl-clipboard`
 (in `setup-distro.sh`). The GTK app renders fine on the pixman sway, since
 the copy-reflow run captures panes under it as usual.
+
+**The seat checks (T3713): what the seat answers that Weston cannot.**
+Measured on sway 1.9 with no input devices: the seat reports capabilities 0,
+and sway focuses every newly mapped window itself, but with no keyboard no
+window ever gets `wl_keyboard.enter`, so GTK never calls one active and every
+`--focus` logs a decline. With `hl_seat_keyboard` holding a keyboard: a
+`+new-window --focus` is activated, a `--focus` on an existing, older window
+raises it (`hl_start_seat` writes `focus_on_window_activation focus`; sway's
+default `urgent` only marks the window), and text typed with `wtype` runs in
+the focused pane through the real `wl_keyboard` path. A popover (the
+sidebar's window menu) stays open - sway grants the `xdg_popup` grab even at
+serial 0, where Weston closes it at once. What it still cannot do: a pointer.
+`swaymsg seat seat0 cursor set|press|release` reaches no client while the seat
+has no pointer device, `wtype` makes only keyboards and `wlrctl`'s virtual
+pointer lives for one call, so a drag cannot be held - T3847 builds a held
+virtual pointer. Two sway facts a check must allow for: a raise sent while
+sway is still focusing a window it just mapped is lost (wait ~2s), and sway
+tiles windows side by side, so `workspace_layout tabbed` keeps each one wide
+enough for the sidebar to stay expanded.
+
+```powershell
+powershell -NoProfile -File scripts\linux\wsl-run.ps1 -CommandFile test\linux\cli-seat.sh
+```
+
+Ends `CLI SEAT: ALL PASS` (12 checks: S4-S5 the no-keyboard control, S6-S7
+activation, S8 real keys, S9-S10 the popover); `NEGATIVE=1` never takes the
+keyboard and must fail S6, S7 and S8.
 
 **Screenshots: `hl_screenshot` (T3359).** Weston headless has no capture a
 client can ask for and Wayland has no global one, so the picture comes from
@@ -578,7 +606,8 @@ private runtime dir, so a test app can never meet the user's.
   (`SplitTree.stashSurfaceAt`, `pane_stash.markAt`; a stashed row moves
   within the stash, the last pane on screen is refused), in the list a
   stashed pane is restored, focused, then placed. Stashed rows drag.
-  A real pointer drag is NOT RUN (no seat). Not yet: a pane drag (a header
+  A real pointer drag is NOT RUN (no pointer, even on the seat compositor:
+  T3847). Not yet: a pane drag (a header
   or a strip, so another window's pane) dropped on the sidebar (T3756), the
   order across a restore (T3700), the rows sliding to make room (parity is
   behavior here, not the glide).
@@ -614,7 +643,8 @@ private runtime dir, so a test app can never meet the user's.
   `editing`: `row`, `purpose`, `placeholder`, `text`, `shown`, `focused`).
   The headless Weston has no seat, so the popover closes at once for want of
   a grab; the menu's state lasts until a pick or the next open, which is
-  what `--menu-pick` acts on. Acceptance: `wsl-run.ps1 -CommandFile
+  what `--menu-pick` acts on. On the seat compositor it stays open (S9-S10
+  of `cli-seat.sh`, T3713). Acceptance: `wsl-run.ps1 -CommandFile
   test\linux\cli-sidebar-groups.sh`, ends `CLI SIDEBAR GROUPS: ALL PASS`
   (32 checks); `NEGATIVE=1` never presses Return and must fail G9/G9b. Not
   yet: the list keeping its place across a regroup (needs T3697's window
@@ -677,7 +707,9 @@ private runtime dir, so a test app can never meet the user's.
   not the active app, so the compositor may keep the window behind ...`, and
   a second after any `--focus` raise the app logs `focus: the compositor
   activated|declined to activate the window`. Weston headless has no seat, so
-  the harness always sees the decline (W20-W21 of `cli-windows.sh`). Not
+  the harness always sees the decline (W20-W21 of `cli-windows.sh`); the
+  activation itself, and a raise of an older window, are S6-S7 of
+  `cli-seat.sh` on the seat compositor with a held keyboard (T3713). Not
   done: forwarding a launcher's `$XDG_ACTIVATION_TOKEN` through the CLI,
   which would only help a command run from a freshly launched app.
 - **`+close` and `focus` (T3367)** follow win32's too: `+close` closes a pane
@@ -686,7 +718,8 @@ private runtime dir, so a test app can never meet the user's.
   over an open dialog unless `--force` (which dismisses it). `focus` has no
   CLI verb on any platform - it is the `ghoztty://` launcher's action - and
   never creates. Weston headless has no seat, so no window is ever ACTIVE in
-  the harness: a window raise cannot be asserted there, only pane focus. To
+  the harness: a window raise cannot be asserted there, only pane focus
+  (`cli-seat.sh` asserts one on the seat compositor, T3713). To
   stand a dialog over a window, a debug build opens the window whose
   `+new-window --target` equals `$GHOZTTY_TEST_ASK_TO_CLOSE` with its real
   close confirmation up. Acceptance: `wsl-run.ps1 -CommandFile
@@ -749,8 +782,9 @@ private runtime dir, so a test app can never meet the user's.
   window with no running shell, and a single-window-mode workspace (T3790).
   A parked window closed again (its last shell exited) drops its undo
   (`forgetWindow`) and closes for real.
-  **Pressing keys headless**: Wayland has no input injection and the harness
-  has no seat, so a debug build serves the `press-key` IPC seam - `hl_ipc
+  **Pressing keys headless**: Wayland has no input injection and the default
+  harness has no seat (on `hl_start_seat`, `wtype` types for real: S8 of
+  `cli-seat.sh`), so a debug build serves the `press-key` IPC seam - `hl_ipc
   press-key --target=<pane> --key=ctrl+shift+z` - which feeds one press and
   release through the pane's core `keyCallback`, so the configured binding
   table decides what it does; the reply's `effect` is `consumed`, `ignored`
