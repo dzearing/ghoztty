@@ -41136,3 +41136,7 @@ WebKitGTK's script message carries no frame, and a page-world handler is visible
 - Evidence: none-lane pure tests (filter blade, 101 passed); new test/linux/stack-blades.sh ALL PASS (B1-B12; shadow pixel 97 vs 125 inside the blade behind; glide collapses 0.1..0.41), NEGATIVE=1 fails B9; stacked-panes.sh and stack-glide.sh ALL PASS; Windows Debug build green; Linux floor lib/none/agentx/gtk PASS, agent red once under load then green alone. Real-screen look NOT RUN (user's to start).
 - Also: T3726 re-depped on T3718 (GTK has no remote-viewer mode yet; mirrors T3723 -> T3714) and returned to todo.
 - Filed: T3851 (Linux agent lane flakes under a loaded floor), T3852 (real-screen blade check, parked on the user).
+## 2026-11-27 00:20 lane b - T2619: closed as already fixed by T2747
+- What: pane-banner.ps1's composition-path gap was closed in passing by c5d633d330 (T2747), five days after this card was filed. Sections 1-12 pin the popup path, which is still the no-interop fallback. Section 13 runs the banner with `GHOZTTY_COMP_PRESENT=1` and reads the card's geometry from the app's own log. No code change this turn: the deliverable was the validation run.
+- Evidence: acceptance-parallel run pane-banner.ps1 ALL PASS (206 assertions, 0 skipped). All 11 section-13 assertions ran for real: visual path, 0 popups, 83->149 px growth, 10-line cap 380/380, split keeps both cards. comp-present.ps1 H/J/K already cover clicks on that path.
+- Filed: none.

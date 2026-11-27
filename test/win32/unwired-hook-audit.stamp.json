@@ -1,8 +1,8 @@
 {
     "guard":  "unwired-hook",
     "script":  "test/win32/unwired-hook-audit.ps1",
-    "generated":  "2026-11-27T00:05:33-08:00",
-    "commit":  "bd116ee558",
+    "generated":  "2026-11-27T00:16:52-08:00",
+    "commit":  "256460a536",
     "uncommitted":  [
 
                     ],
@@ -45,7 +45,7 @@
                   "src/apprt/gtk/class/key_state_overlay.zig":  "2ccdd2c9dfe09f0ea256f5df6a5b4ce39f9344f38a59eb73346365bcdafd7f15",
                   "src/apprt/gtk/class/resize_overlay.zig":  "28e96fba32fa79da6736d51965583f17655d59899fec3964a717b66364160a07",
                   "src/apprt/gtk/class/search_overlay.zig":  "d3e6ca662b546ccadcee62fa3d564addb1df6e7ea420eab6492bc06a89f08158",
-                  "src/apprt/gtk/class/split_tree.zig":  "3f61909ca038f54bf6fcd120d3a8a4eb4da90b79b0af08ecc81caaa496e3a35e",
+                  "src/apprt/gtk/class/split_tree.zig":  "f2d8d76002166a0c8747dad45e93e49886ab037af2d6af930ae93273d3969b54",
                   "src/apprt/gtk/class/surface.zig":  "6b3d2e6d2a9a376a7e046cf258f5754b11f4c56ac1c142d0ce8c3b0cac2cea5f",
                   "src/apprt/gtk/class/surface_child_exited.zig":  "6b4cf3d1ed4ed891ca02f841973bd1518acb76451830172e87ab9512e711ff1b",
                   "src/apprt/gtk/class/surface_scrolled_window.zig":  "88e36e9a7318aa492360697ec08c6914cd3c672f16d320c79f12ba3c85297d3c",
@@ -89,7 +89,7 @@
                   "src/apprt/gtk/pane_sidebar_all.zig":  "119c9cfc8e445f8dae886dd06901bc82b18cfe6788b29bb97e541bebf8e6a204",
                   "src/apprt/gtk/pane_sidebar_rows.zig":  "13fd02ad212f050bf17e9b3f9179fb86f812a326f5897340bd1e07fe21df8e25",
                   "src/apprt/gtk/pane_snapshot.zig":  "1ae68a786104731789761780642bc64a8ec794a2bafa9e9c7a723fc1242ad79f",
-                  "src/apprt/gtk/pane_stage_rules.zig":  "51a94120645034542ce58360428b12be6f7c0dd2574b757087a1b80082e373d2",
+                  "src/apprt/gtk/pane_stage_rules.zig":  "8c4cdd5c51abfc8e027d927a57ff18034339d455bf787f7e40fa3c3e0f7908fe",
                   "src/apprt/gtk/pane_style.zig":  "8f48fd3cf6e3dac77f71d2f80f6517945ceee856826c5de7fdb266c16b7a7c22",
                   "src/apprt/gtk/PaneBanner.zig":  "faa3384cfa2c0f189f9d4f9b6e39b50810d9afda50b33f33ff5a67693a3753c5",
                   "src/apprt/gtk/PaneDrag.zig":  "a1ebfc709f3ccc481eaec18b6b37fa2be57de8474312eb158be0d0025af61693",
