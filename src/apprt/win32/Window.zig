@@ -13690,6 +13690,12 @@ fn runStackSlide(self: *Window) void {
     self.glide_stall_due = !glideStallAtUnfold();
     self.glide_unfold_stalled = false;
     if (self.hwnd) |h| _ = FrameClock.arm(h, STACK_SLIDE_TIMER_ID, STACK_SLIDE_TICK_MS);
+    // T2480: when the glide was declared, on the clock the film's frames
+    // carry (QPC), so glide-start-latency can split click-to-first-motion
+    // into the click's pass, the wait for the first tick, and the compose.
+    var q: i64 = 0;
+    _ = w32.QueryPerformanceCounter(&q);
+    log.debug("stack glide armed qpc={d}", .{q});
 }
 
 /// `GHOZTTY_DEBUG_GLIDE_STALL_AT=unfold` (debug builds, T2779): the
@@ -14111,6 +14117,9 @@ fn stackSlideTick(self: *Window) void {
         self.stack_slide_fresh = false;
         const period_ms = @as(f64, @floatFromInt(FrameClock.periodNs())) / std.time.ns_per_ms;
         dt = frame_clock.firstFrame(dt, period_ms);
+        var q: i64 = 0;
+        _ = w32.QueryPerformanceCounter(&q);
+        log.debug("stack glide first tick qpc={d} period_us={d}", .{ q, FrameClock.periodNs() / std.time.ns_per_us });
     }
     self.stack_slide_last = now;
     // T2952: the tick's own CPU, its window blits and DWM's composes, for

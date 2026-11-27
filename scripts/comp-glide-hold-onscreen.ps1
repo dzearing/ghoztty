@@ -163,6 +163,14 @@
 #
 # -NegativeControl sets the slide to 0 ms (the instant re-layout from before
 # T2102): .5 must FAIL on every arm.
+#
+# START LATENCY (T2480, every main-path arm, reported, never scored): the
+# button-up of each strip click is stamped on QPC, the clock WGC stamps the
+# film's frames on, and click-to-first-motion is the first frame after it in
+# which a block moved. The app's debug stamps (`stack glide armed`, `... first
+# tick`, `... declared commit`) split it. -Clicks <n> films n-1 more clicks for
+# the spread and prints p50/p95 in ms and display refreshes:
+#   powershell -NoProfile -Command "& .\scripts\comp-glide-hold-onscreen.ps1 -Arms on,tree -Clicks 8 -SlideMs 400"
 
 param(
     [string]$Exe = (Join-Path $PSScriptRoot '..\zig-out\bin\ghoztty.exe'),
@@ -202,7 +210,12 @@ param(
     # T2870: GHOZTTY_STRIP_FACE_HOLD=0 drops the moving strip's face the
     # moment it catches up, though the glide's cards are still on their way -
     # the strip arm's .22c must then go red.
-    [switch]$NoFaceHold
+    [switch]$NoFaceHold,
+    # T2480: strip clicks per arm whose click-to-first-motion is measured
+    # (the first is the scored glide; the rest alternate between the tucked
+    # strips at either end). Reported as p50/p95 in ms and display refreshes,
+    # never scored: the measurement, not a gate.
+    [int]$Clicks = 1
 )
 
 $ErrorActionPreference = 'Continue'
@@ -314,6 +327,24 @@ public static class GhWin {
         PostMessageW(top, 0x0201, (IntPtr)1, lp);            // WM_LBUTTONDOWN, MK_LBUTTON
         System.Threading.Thread.Sleep(40);
         PostMessageW(top, 0x0202, IntPtr.Zero, lp);          // WM_LBUTTONUP
+    }
+    // T2480: Click, returning the moment the button-up - the strip's click
+    // (Window.endRearrangeDrag) - was posted, in the film's clock: QPC in 100 ns
+    // units, as WGC stamps a frame's SystemRelativeTime.
+    public static long ClickStamped(IntPtr top, int sx, int sy) {
+        var p = new POINT(); p.X = sx; p.Y = sy;
+        ScreenToClient(top, ref p);
+        IntPtr lp = (IntPtr)(((p.Y & 0xFFFF) << 16) | (p.X & 0xFFFF));
+        PostMessageW(top, 0x0200, IntPtr.Zero, lp);
+        System.Threading.Thread.Sleep(20);
+        PostMessageW(top, 0x0201, (IntPtr)1, lp);
+        System.Threading.Thread.Sleep(40);
+        long t = Qpc100(System.Diagnostics.Stopwatch.GetTimestamp());
+        PostMessageW(top, 0x0202, IntPtr.Zero, lp);
+        return t;
+    }
+    public static long Qpc100(long qpc) {
+        return (long)((decimal)qpc * 10000000m / System.Diagnostics.Stopwatch.Frequency);
     }
 }
 public static class Blocks {
@@ -554,6 +585,50 @@ function Score-Film($arm, $fdir) {
     if ($arm -eq 'tree') { Score-TreeFaces $arm $rows }
     if ($arm -in 'stall', 'live') { Score-Stall $arm $rows }
     if ($arm -eq 'unfold') { Score-StallUnfold $arm $rows ($StallMs / 4.0) }
+}
+
+# T2480: click-to-first-motion. $click is the button-up's post time in the
+# film's clock (100 ns QPC units). The picture before the click is the last
+# frame stamped at or before it (WGC delivers a frame only when the picture
+# changes, so that frame is what was on screen); the first frame after it in
+# which any block moved, grew or shrank is the glide's first motion. The app's
+# own stamps (`stack glide armed`, `stack glide first tick`, debug log) split
+# the wait into the click's layout pass, the wait for the clock's first tick,
+# and the rest - the commit, DWM's compose and the frame reaching the film.
+function Measure-StartLatency($fdir, [long]$click, $err) {
+    $rows = @(Get-Content (Join-Path $fdir 'frames.txt') -ErrorAction SilentlyContinue | Where-Object { $_ -match '^\d' } | ForEach-Object {
+            $p = $_ -split ' '
+            [pscustomobject]@{ I = [int]$p[0]; T = [long]$p[1] }
+        })
+    if ($rows.Count -lt 2) { return $null }
+    $before = @($rows | Where-Object { $_.T -le $click })
+    $ref = if ($before.Count -gt 0) { $before[-1] } else { $rows[0] }
+    $sig = { param($b) ($b | ForEach-Object { "$($_.Rows),$($_.LeftMin),$($_.RightMax)" }) -join ';' }
+    $refSig = & $sig (Measure-Frame (Join-Path $fdir ('f{0:d4}.bmp' -f $ref.I)))
+    $moved = $null
+    foreach ($f in @($rows | Where-Object { $_.T -gt $click })) {
+        if ((& $sig (Measure-Frame (Join-Path $fdir ('f{0:d4}.bmp' -f $f.I)))) -ne $refSig) { $moved = $f; break }
+    }
+    if (-not $moved) { return $null }
+    $text = Read-Text $err
+    $toT = { param($q) [GhWin]::Qpc100([long]$q) }
+    $armed = @([regex]::Matches($text, 'stack glide armed qpc=(\d+)') | ForEach-Object { & $toT $_.Groups[1].Value } | Where-Object { $_ -ge $click }) | Select-Object -First 1
+    $tick = $null; $period = $null
+    foreach ($m in [regex]::Matches($text, 'stack glide first tick qpc=(\d+) period_us=(\d+)')) {
+        $t = & $toT $m.Groups[1].Value
+        if ($t -ge $click) { $tick = $t; $period = [double]$m.Groups[2].Value / 1000.0; break }
+    }
+    $commit = @([regex]::Matches($text, 'stack glide declared commit qpc=(\d+)') | ForEach-Object { & $toT $_.Groups[1].Value } | Where-Object { $_ -ge $click }) | Select-Object -First 1
+    $ms = { param($a, $b) if ($null -eq $a -or $null -eq $b) { $null } else { [Math]::Round(($b - $a) / 10000.0, 1) } }
+    [pscustomobject]@{
+        Ms        = & $ms $click $moved.T
+        ArmMs     = & $ms $click $armed
+        TickMs    = & $ms $armed $tick
+        CommitMs  = & $ms $click $commit
+        FilmMs    = & $ms $commit $moved.T
+        PeriodMs  = $period
+        Frame     = $moved.I
+    }
 }
 
 # T2572: the card that travels furthest, frame by frame - the longest gap in
@@ -1150,7 +1225,7 @@ try {
         Assert "$arm.3a the film started" $ready
         Start-Sleep -Milliseconds 300
         $strip = [int][Math]::Floor(8 * $scale)
-        [GhWin]::Click($hw, $p.Left + [int]($strip / 2), $p.Top + [int](($p.Bottom - $p.Top) / 2))
+        $clickT = [GhWin]::ClickStamped($hw, $p.Left + [int]($strip / 2), $p.Top + [int](($p.Bottom - $p.Top) / 2))
         [void]$fp.WaitForExit(60000)
         $filmOut = (Read-Text $filmErr).Trim()
         "  $filmOut"
@@ -1159,6 +1234,9 @@ try {
         $me = @($after | Where-Object { $_.Hwnd -eq $p.Hwnd })
         Assert "$arm.3c the clicked pane came on show" ($me.Count -eq 1 -and $me[0].Visible)
 
+        $lat = @()
+        $l0 = Measure-StartLatency $fdir $clickT $err
+        if ($l0) { $lat += $l0 }
         Score-Film $arm $fdir
 
         # T2571: what the glide moved, from the pass that landed it.
@@ -1256,6 +1334,44 @@ try {
             $opened = [regex]::Matches($text, 'strip face glide declared [^\r\n]*opening=true content=true').Count
             Assert "$arm.16 the opening card's face was handed to the compositor with its frame ($opened declaration(s))" ($opened -ge 1)
         }
+
+        # T2480: more strip clicks, each filmed on its own, for the start
+        # latency's spread - alternately the furthest and the nearest tucked
+        # strip, so the glides run both ways.
+        for ($c = 2; $c -le $Clicks; $c++) {
+            Start-Sleep -Milliseconds 400
+            $tk = @(Get-Panes $hw | Where-Object { -not $_.Visible })
+            if ($tk.Count -lt 1) { "  click ${c}: no tucked strip to click"; break }
+            $q = if ($c % 2 -eq 0) { $tk[0] } else { $tk[-1] }
+            $cdir = Join-Path $dir "film-c$c"
+            $cerr = Join-Path $dir "film-c$c.txt"
+            $cp = Start-Process -FilePath $Spike -ArgumentList @("--film-hwnd=$([int64]$hw)", "--film-dir=`"$cdir`"", "--film-ms=$filmMs") `
+                -NoNewWindow -PassThru -RedirectStandardError $cerr
+            $ok = $false
+            for ($t = 0; $t -lt 100 -and -not $ok; $t++) { $ok = Test-Path (Join-Path $cdir 'ready'); if (-not $ok) { Start-Sleep -Milliseconds 50 } }
+            if (-not $ok) { "  click ${c}: the film never started"; continue }
+            Start-Sleep -Milliseconds 300
+            $ct = [GhWin]::ClickStamped($hw, $q.Left + [int]($strip / 2), $q.Top + [int](($q.Bottom - $q.Top) / 2))
+            [void]$cp.WaitForExit(60000)
+            $lc = Measure-StartLatency $cdir $ct $err
+            if ($lc) { $lat += $lc } else { "  click ${c}: no frame after the click moved" }
+            if (-not $KeepFrames) { Get-ChildItem $cdir -Filter 'f*.bmp' -ErrorAction SilentlyContinue | ForEach-Object { Remove-Item $_.FullName } }
+        }
+        if ($lat.Count -gt 0) {
+            # The display's refresh, not the frame clock's estimate: with two
+            # unsynced monitors DWM composes for both and the clock can read
+            # half the period (4 ms at 120 Hz).
+            $hz = @(Get-CimInstance Win32_VideoController -ErrorAction SilentlyContinue | Where-Object { $_.CurrentRefreshRate -gt 1 } | ForEach-Object { [int]$_.CurrentRefreshRate }) | Select-Object -First 1
+            $period = if ($hz) { [Math]::Round(1000.0 / $hz, 2) } else { @($lat | Where-Object { $_.PeriodMs } | ForEach-Object { $_.PeriodMs }) | Select-Object -First 1 }
+            foreach ($x in $lat) {
+                "  start latency: click-to-first-motion $($x.Ms) ms (armed +$($x.ArmMs), declared commit +$($x.CommitMs), commit to film $($x.FilmMs); first tick $($x.TickMs) after arming) frame f$($x.Frame)"
+            }
+            $sorted = @($lat | ForEach-Object { [double]$_.Ms } | Sort-Object)
+            $p50 = $sorted[[int][Math]::Floor(($sorted.Count - 1) * 0.5)]
+            $p95 = $sorted[[int][Math]::Ceiling(($sorted.Count - 1) * 0.95)]
+            $refr = if ($period) { " = $([Math]::Round($p50 / $period, 2)) / $([Math]::Round($p95 / $period, 2)) refreshes at $period ms" } else { '' }
+            "  START LATENCY $arm n=$($sorted.Count) p50=$p50 ms p95=$p95 ms$refr"
+        } elseif ($Clicks -gt 1) { "  START LATENCY ${arm} no click measured" }
 
         $fgPid = [uint32]0
         [void][GhWin]::GetWindowThreadProcessId([GhWin]::GetForegroundWindow(), [ref]$fgPid)

@@ -587,6 +587,9 @@ fn slot(comptime F: type, obj: Obj, index: usize) F {
 /// The step in progress and the HRESULT it failed with, for the log line.
 var stage: []const u8 = "";
 var last_hr: HRESULT = 0;
+/// T2480: the next device commit logs its QPC stamp - set when a pane's glide
+/// path is declared, so glide-start latency can say when the motion went up.
+pub var stamp_next_commit: bool = false;
 
 fn check(hr: HRESULT) Error!void {
     if (hr < 0) {
@@ -1328,6 +1331,12 @@ pub const Host = struct {
             return;
         }
         try check(slot(*const fn (Obj) callconv(.winapi) HRESULT, self.dcomp, slot_dcomp_device_commit)(self.dcomp));
+        if (stamp_next_commit) {
+            stamp_next_commit = false;
+            var q: i64 = 0;
+            _ = w32.QueryPerformanceCounter(&q);
+            log.debug("stack glide declared commit qpc={d}", .{q});
+        }
     }
 
     /// Start batching a paint's uploads into one commit.

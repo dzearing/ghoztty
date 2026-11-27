@@ -2601,6 +2601,8 @@ fn declareTreeGlide(self: *Surface, now: w32.RECT, now_shape: comp_tree.Shape, l
         return false;
     };
     self.tree_glide_decl = .{ .t0 = t, .from = from, .to = to, .dist = dist, .tau_s = tau_s };
+    // T2480: stamp the commit that carries this path up.
+    chrome_comp.stamp_next_commit = true;
     // The on-screen oracle reads this (comp-glide-hold-onscreen.ps1).
     log.debug("pane visual glide declared from={d:.1},{d:.1} to={d:.1},{d:.1} clip_right={d:.1}->{d:.1} span_ms={d:.0} retarget={} shadow={}", .{ from.x, from.y, to.x, to.y, from.clip.right, to.clip.right, span_s * 1000, retarget, ride != null });
     return true;
