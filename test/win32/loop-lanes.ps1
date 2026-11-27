@@ -34,6 +34,9 @@
 #      and lane c refuse with LANE REFUSED (exit 3) while lane a holds the
 #      loop; lane a owns it; lane b takes it when lane a is free or stopped.
 #      Negative control: the lane-b run pinned to lane a is not refused.
+#   G. Get-LoopLaneSessionPids (T2481) names every OTHER lane's live claude
+#      pid and never the asking lane's. Negative control: a lock whose pid is
+#      alive but whose start time differs (a recycled pid) is dropped.
 #
 # Hermetic: the fixture, its ledger and every log/state file live under
 # $env:TEMP. The real lock, ledger, watermark and installs are never written.
@@ -317,6 +320,31 @@ try {
     $r = Lane-Run $laneB 'morning-owner.ps1' @()
     Assert 'F6 with lane a stopped by request, lane b takes the block so the morning read still happens' (
         $r.Code -eq 0 -and $r.Out -match 'MORNING OWNER lane b - lane a is stopped') $r.Out
+
+    # ---- G. the other lanes' live sessions (T2481) ----------------------------
+    ''
+    'G. Get-LoopLaneSessionPids names the OTHER lanes'' live claude, never a recycled pid'
+    # Lane a's lock (section F) names this live process. Lane b's names this
+    # process too; lane c's names this pid with a start time an hour off - a
+    # recycled pid, which must not hide a stranger's tree.
+    $lockB = @{ claude_pid = $PID; claude_name = $me.ProcessName; claude_start = $me.StartTime.ToString('o') } | ConvertTo-Json
+    [IO.File]::WriteAllText((Join-Path $laneB 'temp\go-loop.lock.json'), $lockB, (New-Object Text.UTF8Encoding($false)))
+    New-Item -ItemType Directory -Force (Join-Path $laneC 'temp') | Out-Null
+    $lockC = @{ claude_pid = $PID; claude_name = $me.ProcessName; claude_start = $me.StartTime.AddHours(-1).ToString('o') } | ConvertTo-Json
+    [IO.File]::WriteAllText((Join-Path $laneC 'temp\go-loop.lock.json'), $lockC, (New-Object Text.UTF8Encoding($false)))
+    $fromA = @(Get-LoopLaneSessionPids -Repo $mainRoot)
+    Assert 'G1 from lane a: lane b''s live session is named, with its pid' (
+        @($fromA | Where-Object { $_.Lane -eq 'b' -and $_.Pid -eq $PID }).Count -eq 1) ($fromA | Out-String)
+    Assert 'G2 ...lane a itself is not (a lane never ignores its own work)' (
+        @($fromA | Where-Object { $_.Lane -eq 'a' }).Count -eq 0) ($fromA | Out-String)
+    Assert 'G3 negative control: lane c''s lock names a recycled pid (start time differs) and is dropped' (
+        @($fromA | Where-Object { $_.Lane -eq 'c' }).Count -eq 0) ($fromA | Out-String)
+    $fromB = @(Get-LoopLaneSessionPids -Repo $laneB)
+    Assert 'G4 from lane b: lane a is named and lane b is not' (
+        @($fromB | Where-Object { $_.Lane -eq 'a' }).Count -eq 1 -and @($fromB | Where-Object { $_.Lane -eq 'b' }).Count -eq 0) ($fromB | Out-String)
+    Remove-Item -LiteralPath (Join-Path $laneB 'temp\go-loop.lock.json') -Force
+    Assert 'G5 a lane with no lock contributes nothing' (
+        @(Get-LoopLaneSessionPids -Repo $mainRoot | Where-Object { $_.Lane -eq 'b' }).Count -eq 0)
     Complete-TestBody
 }
 finally {

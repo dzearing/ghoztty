@@ -297,13 +297,23 @@ try {
         Skip 'D3-D5 a full round under the stand-in' 'by -SkipSoakRound'
     } else {
         # The daemon yields to ANY foreground work, including the other loop
-        # lane's builds (correct, and not what this section measures), so a
-        # round that yielded to foreign work is retried a few times.
+        # lane's builds (correct, and not what this section measures). Three of
+        # three live attempts yielded to lane b 84-135s in (T2481), so the
+        # other lanes' claude sessions go in as -IgnoreTrees: their whole
+        # family - floor, sweep, zig - is not foreign work for THIS
+        # measurement. Anything else still yields, and is retried a few times.
+        . (Join-Path $Repo 'scripts\lib\LoopLane.ps1')
+        $otherLanes = @(Get-LoopLaneSessionPids -Repo $Repo)
+        $trees = (@($otherLanes | ForEach-Object { $_.Pid }) -join ',')
+        if ($otherLanes.Count -gt 0) {
+            Write-Host ("    ignoring the other loop lanes' trees: " + (@($otherLanes | ForEach-Object { "lane $($_.Lane) pid $($_.Pid)" }) -join ', '))
+        }
+        $treeArgs = @(if ($trees) { '-IgnoreTrees', $trees })
         for ($attempt = 1; $attempt -le 3; $attempt++) {
             $stateRun = Join-Path $Scratch "soak-round-$attempt"
             $r = Invoke-Watched -Script $daemon -TimeoutSeconds ($RoundTimeoutSeconds + 120) -Env @{ GHOZTTY_TEST_FORCE_USER_PRESENCE = 'absent' } -Arguments @(
                 'run', '-MaxRounds', '1', '-Lanes', 'win32-releasesafe', '-StateDir', ('"' + $stateRun + '"'),
-                '-IgnorePids', $ignore, '-RoundTimeoutSeconds', $RoundTimeoutSeconds, '-IdleWaitSeconds', '1')
+                '-IgnorePids', $ignore, '-RoundTimeoutSeconds', $RoundTimeoutSeconds, '-IdleWaitSeconds', '1') + $treeArgs
             $ledger = Join-Path $stateRun 'ledger.jsonl'
             $row = @(if (Test-Path -LiteralPath $ledger) { Get-Content -LiteralPath $ledger | Where-Object { $_.Trim() } | ForEach-Object { $_ | ConvertFrom-Json } }) | Select-Object -Last 1
             $outcome = if ($row) { [string]$row.outcome } else { '(none)' }

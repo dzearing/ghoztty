@@ -207,6 +207,35 @@ function Get-LoopLanes {
     return @($out | Sort-Object Id)
 }
 
+# The live claude session of every OTHER loop lane, as objects { Lane, Pid }
+# (T2481). Everything a lane's turn runs - its floor, its acceptance sweep,
+# its zig builds - descends from that process, so a caller that has to tell
+# "the other lane is using the box" apart from "something else is" hands these
+# pids to a process-family walk (the soak daemon's -IgnoreTrees). A lane whose
+# lock is missing, unreadable, or names a process that is not that same live
+# claude (pid recycled: name or start time differs) contributes nothing, so a
+# stale lock can never make a stranger's tree invisible.
+function Get-LoopLaneSessionPids {
+    param([string]$Repo)
+    if (-not (Get-Command Test-LoopProcAlive -ErrorAction SilentlyContinue)) {
+        . (Join-Path (Split-Path $PSScriptRoot -Parent) 'loop-session.ps1')
+    }
+    $out = @()
+    foreach ($lane in @(Get-LoopLanes -Repo $Repo)) {
+        if ($lane.Self) { continue }
+        if (-not (Test-Path -LiteralPath $lane.LockPath)) { continue }
+        $lock = $null
+        try { $lock = Get-Content -LiteralPath $lane.LockPath -Raw | ConvertFrom-Json } catch { continue }
+        if (-not $lock -or -not $lock.claude_pid) { continue }
+        $start = $null
+        try { $start = [datetime]::Parse([string]$lock.claude_start, [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::RoundtripKind).ToLocalTime() } catch { $start = $null }
+        $stamp = [pscustomobject]@{ Pid = [int]$lock.claude_pid; Name = [string]$lock.claude_name; Start = $start }
+        if (-not $start -or -not (Test-LoopProcAlive $stamp)) { continue }
+        $out += [pscustomobject]@{ Lane = $lane.Id; Pid = [int]$lock.claude_pid }
+    }
+    return @($out)
+}
+
 # Is lane $Lane's watchdog alive? Asked of its single-instance mutex, the same
 # question go-loop-watchdog.ps1 -Status asks of its own.
 function Test-LoopLaneWatchdogRunning {

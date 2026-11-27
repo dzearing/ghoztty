@@ -1,11 +1,10 @@
 {
     "guard":  "unroll-count",
     "script":  "test/win32/unroll-count-audit.ps1",
-    "generated":  "2026-11-26T14:54:45-08:00",
-    "commit":  "30c317a1a1",
+    "generated":  "2026-11-26T15:45:37-08:00",
+    "commit":  "d19f2893e0",
     "uncommitted":  [
-                        "scripts/acceptance-parallel.ps1",
-                        "scripts/guard-due.ps1"
+                        "scripts/lib/LoopLane.ps1"
                     ],
     "files":  {
                   "scripts/acceptance-parallel.ps1":  "5a624a3656c1504da3cb60d4c20797c568f1d9e8bc9c11dc7c1b12beda95f255",
@@ -85,7 +84,7 @@
                   "scripts/lib/LaneLeak.ps1":  "d89adfe019c541d2c285186e5f818760596be9d4f0385a4a6c12d81dbad1d987",
                   "scripts/lib/LaneSolo.ps1":  "3774871845d542b517f11f423a4ab8a4ce1fa4df14ed29c6b9b670381461bbf4",
                   "scripts/lib/LaneVerdict.ps1":  "49c3756b40ba706c911a7367605cb33b5cc932d5e659e56cd16e48f3c084bd56",
-                  "scripts/lib/LoopLane.ps1":  "867b1eef3ef55e20f317e5800fc8b5585ec75fb7933bff467f856624fbfb8897",
+                  "scripts/lib/LoopLane.ps1":  "5354efc2dee6bfcdce4701e2451b0861f203c024a53e793bfcba5ab7bf2f6bb6",
                   "scripts/lib/LoopLedger.ps1":  "009cc831d7dd98144a973784e1c12aa4a8ba0138baafe24b258e70e5ddb46bb7",
                   "scripts/lib/LoopMark.ps1":  "c43ed69bcfaec131c5f59aa0f570f9ecdf7cecc7b21027686ae86ff68843d71e",
                   "scripts/lib/LoopPaneSession.ps1":  "90a19ef1a37b5b5990c1f1f53ff2d69115ed61e125cddd9e04e3ac8646e4964b",
