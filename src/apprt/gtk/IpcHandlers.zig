@@ -648,6 +648,11 @@ fn paneStack(app: Context, request: Request) Allocator.Error![]u8 {
 /// the target pane's strip picked up, resolved with a strip's own targets
 /// (`pane_drop.resolveBlade`: `reorder` with its `side` and first `pane`,
 /// `top_level`, or nothing).
+/// `--hover-on=<pane> --hx= --hy=` / `--hover-at=<x>,<y>` / `--hover-end`
+/// (T3708) are the split area's drag-motion and drag-leave calls
+/// (`SplitTree.hoverAt` / `hoverEnd`) for the target pane; the reply's
+/// `preview` is that area's live drop preview, `dwell_lit` the tab button
+/// wearing the dwell's light, and each header carries its pane's `rect`.
 fn paneDrag(app: Context, request: Request) Allocator.Error![]u8 {
     var target_arg: ?[]const u8 = null;
     var key_arg: ?[]const u8 = null;

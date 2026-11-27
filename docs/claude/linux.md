@@ -878,11 +878,34 @@ private runtime dir, so a test app can never meet the user's.
   at <n>: kept for undo`, `pane move emptied a window: kept for undo`.
   Acceptance: `wsl-run.ps1 -CommandFile test\linux\pane-drag-undo.sh`, ends
   `PANE DRAG UNDO: ALL PASS` (28 checks); `NEGATIVE=1` turns undo off and
-  must fail 12 (listed in its header). Not yet: the drop preview, including lighting the dwelling
-  tab (T3708), and the hover handle with the mode off (T3709). Debug seam:
+  must fail 12 (listed in its header). **The drop preview (T3708, Mac
+  `PaneDropFeedbackView`, win32 `drop_highlight.zig`)**: every drag motion
+  over a split area calls `SplitTree.hoverAt`, which resolves the point
+  through the SAME `resolveDropAt` a release uses and draws win32's
+  `drop_highlight.forTarget` rect as an overlay child of the area
+  (`drop_preview` in `split-tree.blp`, `can-target: false`, so the drop
+  target keeps every event): a split fills the half of the pane it takes
+  and a top-level insert half the area, each with a 2px seam where the new
+  divider runs; a divider insert fills its landing area, seamed both sides
+  of that axis; a swap is the pane's centre box, rounded and outlined, with
+  a ⇄ glyph (accent at 30%, the Mac's values; classes and placement in the
+  pure `pane_drop_preview.zig`). A spot that would leave the pane where it
+  is shows nothing (`pane_drop_apply.wouldMove`, the rule `apply` answers
+  `in_place` by, unit-tested to agree). Leaving the area or releasing takes
+  it down. **The dwelling tab is lit**: while the 500ms clock runs, its
+  `AdwTab` button wears `pane-drag-dwell` (an accent wash), dropped when
+  the clock is cancelled or fires (`Window.lightDwell`, referenced so a tab
+  closed mid-dwell cannot dangle). Not yet: the new-tab caret on the tab
+  bar and a strip's slot caret (T3841), and the hover handle with the mode
+  off (T3709). Acceptance: `wsl-run.ps1 -CommandFile
+  test\linux\pane-drop-preview.sh`, ends `PANE DROP PREVIEW: ALL PASS` (19
+  checks; V13 compares a window capture's pixel with and without it); `NEGATIVE=1` hovers over the dragged pane itself and must fail
+  V4-V7, V10 and V13 (6). Debug seam:
   `hl_ipc pane-drag --target=<pane> [--key=escape] [--drop-on=<pane>
   --fx=<0..1> --fy=<0..1> | --drop-at=<x>,<y> | --drop-tab=<n>]
   [--hover-tab=<n> | --hover-leave] [--bar-of=<pane>]
+  [--hover-on=<pane> --hx=<0..1> --hy=<0..1> | --hover-at=<x>,<y> |
+  --hover-end]
   [--release-nowhere | --pop-out] [--ghost | --ghost-png=<path>]`
   (`--release-nowhere` is the no-target cancel's call, `--pop-out` the
   button's own `clicked` - not `gtk_widget_activate`, which GTK4 animates and
@@ -900,10 +923,18 @@ private runtime dir, so a test app can never meet the user's.
   (`--bar-of` aims the
   tab-bar flags at that pane's window) replies with `mode`, `tabs_visible`,
   `tabs_autohide`, `key_effect`, every pane's header (`shown`, `height`,
-  `title`, `content_height`, `is_split`), the drop (`target`, `side`,
-  `pane`, `index`, `outcome`), `tab_count`, `selected_tab`, `dwell_tab` and
-  `tab_buttons` of the window the target is in after the drop, and
-  `window_count`. It drops the TARGET pane through the same
+  `title`, `content_height`, `is_split`, and `rect`, the pane as drawn in
+  its split area), the drop (`target`, `side`,
+  `pane`, `index`, `outcome`), `tab_count`, `selected_tab`, `dwell_tab`,
+  `dwell_lit` (the button wearing the dwell's light, read off the widgets)
+  and `tab_buttons` of the window the target is in after the drop,
+  `window_count`, and `preview` (T3708: `shown`, the split `area`, `kind`,
+  `seam`, `glyph`, the planned `rect`, the `widget` as laid out on the last
+  frame - so read it again after a hover - and its `classes`) of the area
+  the hover named, else the tab on show. `--hover-on`/`--hover-at` is the
+  split area's drag-motion call (`SplitTree.hoverAt`) for the TARGET pane,
+  `--hover-end` its drag-leave; a `--drop-on`/`--drop-at` takes the preview
+  down first, as a release does. It drops the TARGET pane through the same
   `SplitTree.dropPaneAt` (in the `--drop-on` pane's tab, else the tab on
   show) or `Window.dropOnTabBar` (`--drop-tab`, the middle of that tab's
   button) a release calls, and `--hover-tab` is the motion handler's
