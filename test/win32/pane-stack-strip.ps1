@@ -22,10 +22,13 @@
 #       laid over the tucked card's glass sheet, so the desk tints it: each
 #       strip reads the colour the desk beside it predicts, and the opaque
 #       colour would not be. T2505: that colour is the card's glass alone -
-#       no dark fill over it - so a blade is the same material as the pane
+#       no dark fill over it - so a blade is the same material as the pane.
+#       T2519: likewise the elevated leg without glass reads the card's own
+#       fill (#282c34), not the flat style's darkened bar
 #   D7) T2121: hovering a strip lightens its card's scrim - 45% to 20% - so the
 #       strip reads the lighter colour, and goes back when the pointer leaves.
-#       On glass (T2505) the strip keeps its glass and only the ink changes
+#       On glass (T2505) the strip keeps its glass and only the ink changes;
+#       T2519: so does an opaque card's (elevated leg), which is its fill
 #   D2) the strip's label follows the banner title: a long `## ...` title set
 #       with +set-banner runs further down the strip than a short one
 #   D9) T2988: the label follows the pane's OWN title too (banner cleared): a
@@ -456,7 +459,11 @@ try {
 
     # ---- D1: every tucked pane shows its strip ---------------------------------
     Say '== D1: strips painted'
-    $expected = Get-ExpectedStrip @(0x28, 0x2c, 0x34)
+    # T2519: in the elevated style the strip is the card itself (Mac
+    # `PaneStackTabFace.isFilled = !style.isCard`): the pane's own background,
+    # no dark bar and no scrim over it. Only the flat style has a bar.
+    $cardStrip = $PaneStyle -eq 'elevated'
+    $expected = if ($cardStrip) { @(0x28, 0x2c, 0x34) } else { Get-ExpectedStrip @(0x28, 0x2c, 0x34) }
     $minW = [int][math]::Floor(8 * $script:scale)
     $shot = Get-Shot $top
     $strips = @{}
@@ -549,7 +556,9 @@ try {
         Say '== D7: strip hover'
         $h = $tucked[0]
         $hw = $strips[$h.Pane.Hwnd].Width
-        $hoverExp = Get-ExpectedStrip @(0x28, 0x2c, 0x34) -Hovered
+        # T2519: a card's strip keeps its fill under the pointer - only the
+        # name's ink changes - so the flat bar is the only one that lightens.
+        $hoverExp = if ($cardStrip) { $expected } else { Get-ExpectedStrip @(0x28, 0x2c, 0x34) -Hovered }
         $restExp = $expected
         $tol = 1
         $my = $h.Pane.Top + [int](($h.Pane.Bottom - $h.Pane.Top) / 2)
@@ -597,7 +606,12 @@ try {
         if ($Glass) { Say ("      glass: desk beside the strip's middle {0}" -f (Format-Rgb $deskMid)) }
         Say ("      at rest {0}, hovered {1} (changed={5}), elsewhere {2}; expected rgb({3}) -> rgb({4}) {6}" -f (Format-Rgb $rest), (Format-Rgb $lit), (Format-Rgb $back), ($restExp -join ','), ($hoverExp -join ','), $(if ($hot) { $hot.Changed }), (Get-LastHoverCaptureError))
         Assert ($null -ne $hot -and $hot.Changed) "D7: hovering the strip changes the frame (changed=$(if ($hot) { $hot.Changed }))"
-        if ($Glass) {
+        if ($cardStrip -and -not $Glass) {
+            Assert (Test-Near $rest $restExp $tol) "D7: at rest the card's strip is the card, rgb($($restExp -join ',')) ($(Format-Rgb $rest))"
+            Assert (-not (Test-Near $rest (Get-ExpectedStrip @(0x28, 0x2c, 0x34)) 4)) "D7: and not the flat style's darkened bar ($(Format-Rgb $rest))"
+            Assert (Test-Near $lit $restExp $tol) "D7: hovered, the card's strip keeps its fill - only the ink changes ($(Format-Rgb $lit))"
+            Assert (Test-Near $back $restExp $tol) "D7: hovering a pane on show leaves the strip at rest ($(Format-Rgb $back))"
+        } elseif ($Glass) {
             # T2505: D1 proves the glass value against a clean desk sample; the
             # desk beside this row lies in the blade's own outward shadow. What
             # D7 owns on glass is that hover leaves the glass as it is.

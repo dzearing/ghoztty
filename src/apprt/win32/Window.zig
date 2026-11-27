@@ -11046,7 +11046,7 @@ fn paintStripFace(self: *Window, view: *PaneView) bool {
     // The band, as the strip paints it once the card is in: over the glass
     // sheet over the desk (T2160), else solid.
     const bg = self.stripBackground();
-    const strip_rgb = pane_stack_strip.stripRgb(bg, false);
+    const strip_rgb = self.stripFace(bg, false);
     if (self.glassDesk()) |g| {
         const lut = pane_stack_strip.GlassLut.init(.{ .bg = bg, .sheet = .{} });
         // Rows shared among the sheet workers (T2946): a 4K fold's widest
@@ -11344,7 +11344,7 @@ fn declareStripFace(
     const band_px = alloc.alloc(u32, @as(usize, @intCast(bw)) * @as(usize, @intCast(bh))) catch return false;
     defer alloc.free(band_px);
     const bg = self.stripBackground();
-    const strip_rgb = pane_stack_strip.stripRgb(bg, false);
+    const strip_rgb = self.stripFace(bg, false);
     {
         const fr: strip_face.Frame = .{ .pixels = band_px, .stride = @intCast(bw), .w = @intCast(bw), .h = @intCast(bh) };
         if (self.glassDesk()) |g| {
@@ -11548,7 +11548,7 @@ fn declareMovingStrip(self: *Window, view: *PaneView) bool {
     defer alloc.free(band_px);
     const bg = self.stripBackground();
     const hovered = if (self.strip_hover) |hv| hv == view else false;
-    const strip_rgb = pane_stack_strip.stripRgb(bg, hovered);
+    const strip_rgb = self.stripFace(bg, hovered);
     {
         const fr: strip_face.Frame = .{ .pixels = band_px, .stride = @intCast(bw), .w = @intCast(bw), .h = @intCast(bh) };
         if (self.glassDesk()) |g| {
@@ -14856,10 +14856,10 @@ fn paintStripBandsAndNames(self: *Window, hdc: w32.HDC, bands: bool) void {
 
     const bg = self.stripBackground();
     const light = color_math.isLight(bg);
-    // The hovered strip's card has a lighter scrim (T2121; Mac
-    // `PaneCardView.updateScrim`), which the strip lightens with.
-    const strip_rgb = pane_stack_strip.stripRgb(bg, false);
-    const hover_rgb = pane_stack_strip.stripRgb(bg, true);
+    // The flat style's strip is a bar that lightens while hovered (T2121); a
+    // card's is the card, whose hover changes only the ink (T2519).
+    const strip_rgb = self.stripFace(bg, false);
+    const hover_rgb = self.stripFace(bg, true);
     const brush = w32.CreateSolidBrush(w32.RGB(strip_rgb.r, strip_rgb.g, strip_rgb.b)) orelse return;
     defer _ = w32.DeleteObject(brush);
     const hover_brush = w32.CreateSolidBrush(w32.RGB(hover_rgb.r, hover_rgb.g, hover_rgb.b)) orelse return;
@@ -15040,6 +15040,15 @@ fn stripBackground(self: *Window) color_math.Rgb {
     return .{ .r = cfg_bg.r, .g = cfg_bg.g, .b = cfg_bg.b };
 }
 
+/// The colour a strip's name is inked against (T2519): an opaque card's own
+/// fill in the elevated style, the flat style's bar otherwise. A glass card's
+/// strip varies with the desk under it, so its names keep the bar's colour as
+/// their reference, as they did before (T2505).
+fn stripFace(self: *Window, bg: color_math.Rgb, hovered: bool) color_math.Rgb {
+    const card = self.paneStyle() == .elevated and !self.paneGlass();
+    return pane_stack_strip.faceRgb(bg, hovered, card);
+}
+
 /// The strip label's face (Mac's 11 pt semibold), turned `escapement`
 /// tenths of a degree. Caller deletes it.
 fn stripFont(self: *Window, escapement: i32) ?*anyopaque {
@@ -15155,8 +15164,8 @@ fn layDeskStripNames(
     const n = self.tuckedStrips(&strips);
     const bg = self.stripBackground();
     const light = color_math.isLight(bg);
-    const strip_rgb = pane_stack_strip.stripRgb(bg, false);
-    const hover_rgb = pane_stack_strip.stripRgb(bg, true);
+    const strip_rgb = self.stripFace(bg, false);
+    const hover_rgb = self.stripFace(bg, true);
     for (strips[0..n]) |s| {
         // As `paintStripBandsAndNames`: a gliding card's face carries its
         // name (T2288), and so does a strip moving on a declared face (T2825).
@@ -15590,7 +15599,8 @@ fn paintPaneDesk(self: *Window, hdc: w32.HDC) void {
                 .bottom = s.tab.bottom - area.top,
             },
             .axis = s.axis,
-            .rgb = pane_stack_strip.stripRgb(strip_bg, hovered),
+            // The desk is the card style's: the strip is the card (T2519).
+            .rgb = pane_stack_strip.faceRgb(strip_bg, hovered, true),
             // A glass card's strip is its sheet (T2160, T2505) - every
             // pane's is the same since T2281.
             .glass = if (glass) .{ .bg = strip_bg, .sheet = .{} } else null,

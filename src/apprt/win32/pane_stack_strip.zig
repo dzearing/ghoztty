@@ -59,6 +59,16 @@ pub fn stripOver(pane: Rgb, bg: Rgb, hovered: bool) Rgb {
     return color_math.mix(under, base, if (light) 0.85 else 0.82);
 }
 
+/// The opaque colour a strip shows over a pane of background `bg`, in the
+/// pane style `card` names (T2519). In the flat style it is `stripRgb`, a bar
+/// of its own. In the card style Mac lays no fill over the card
+/// (`PaneStackTabFace.isFilled = !style.isCard`) and no scrim either, so the
+/// strip is the tucked card itself - the background - and hovering it changes
+/// only the name's ink (`inkRgb`), never the fill.
+pub fn faceRgb(bg: Rgb, hovered: bool, card: bool) Rgb {
+    return if (card) bg else stripRgb(bg, hovered);
+}
+
 /// A strip on a glass pane (T2160): the pane's background and the sheet the
 /// tucked card shows (every pane's is the same since T2281).
 ///
@@ -85,6 +95,17 @@ pub const Rim = struct {
         return .{
             .rgb = if (is_light) black else white,
             .alpha = pane_elevation.rimAlpha(true, is_light, 0),
+            .width = pane_elevation.RIM_DIP * scale,
+        };
+    }
+
+    /// An unfocused opaque card's rim at `scale` (T2519): the strip of a card
+    /// without glass is that card, so it is edged the way `paintCards` edges
+    /// the card at rest.
+    pub fn card(is_light: bool, scale: f32) Rim {
+        return .{
+            .rgb = if (is_light) black else white,
+            .alpha = pane_elevation.rimAlpha(false, is_light, 0),
             .width = pane_elevation.RIM_DIP * scale,
         };
     }
@@ -179,6 +200,12 @@ pub const Band = struct {
 /// buffer; `radius` 0 paints a plain band.
 pub fn paintBand(buf: []u32, w: usize, h: usize, tab: Rect, axis: Direction, rgb: Rgb, radius: i32) void {
     paintWith(buf, w, h, tab, axis, radius, Solid{ .rgb = rgb }, null);
+}
+
+/// `paintBand` edged with `rim`: an opaque card's strip, which is the card
+/// at the strip's size (T2519).
+pub fn paintRimmedBand(buf: []u32, w: usize, h: usize, tab: Rect, axis: Direction, rgb: Rgb, radius: i32, rim: Rim) void {
+    paintWith(buf, w, h, tab, axis, radius, Solid{ .rgb = rgb }, rim);
 }
 
 /// `paintBand` on a glass pane (T2160): each pixel is the card's sheet over
@@ -460,6 +487,50 @@ test "pane_stack_strip: hovering a strip lightens its card's scrim, so the strip
     try testing.expect(color_math.luminance(stripRgb(light_bg, true)) > color_math.luminance(stripRgb(light_bg, false)));
     // Still darker than the pane itself.
     try testing.expect(color_math.luminance(dh) < color_math.luminance(dark_bg));
+}
+
+test "T2519: a card's strip is the card itself - its own fill, unchanged by hover; the flat style keeps its bar" {
+    const dark_bg: Rgb = .{ .r = 0x28, .g = 0x2c, .b = 0x34 };
+    const light_bg: Rgb = .{ .r = 0xfa, .g = 0xfa, .b = 0xfa };
+    for ([_]Rgb{ dark_bg, light_bg }) |bg| {
+        // Mac `PaneStackTabFace.isFilled = !style.isCard`: no fill, no scrim.
+        try testing.expectEqual(bg, faceRgb(bg, false, true));
+        try testing.expectEqual(bg, faceRgb(bg, true, true));
+        // The flat style is the bar it always was, lighter while hovered.
+        try testing.expectEqual(stripRgb(bg, false), faceRgb(bg, false, false));
+        try testing.expectEqual(stripRgb(bg, true), faceRgb(bg, true, false));
+    }
+    // So the card's strip is brighter than the flat bar on a dark theme -
+    // the defect was Windows laying the bar over the card.
+    try testing.expect(color_math.luminance(faceRgb(dark_bg, false, true)) > color_math.luminance(stripRgb(dark_bg, false)));
+    // The hover still reads, through the ink alone.
+    try testing.expect(inkRgb(dark_bg, false, true).r > inkRgb(dark_bg, false, false).r);
+}
+
+test "T2519: an opaque card's strip is edged with the card's own rim at rest" {
+    const dr = Rim.card(false, 2);
+    try testing.expectEqual(white, dr.rgb);
+    try testing.expectApproxEqAbs(@as(f32, 0.07), dr.alpha, 1e-6);
+    try testing.expectApproxEqAbs(pane_elevation.RIM_DIP * 2, dr.width, 1e-6);
+    const lr = Rim.card(true, 1);
+    try testing.expectEqual(black, lr.rgb);
+    try testing.expectApproxEqAbs(@as(f32, 0.06), lr.alpha, 1e-6);
+    // Fainter than a glass card's rim, as `paintCards` draws them.
+    try testing.expect(dr.alpha < Rim.glass(false, 2).alpha);
+
+    // Painted: the interior is the fill untouched; the edge pixel carries
+    // the rim (lighter than the fill on a dark card).
+    const w = 40;
+    const h = 60;
+    const desk: u32 = desk_palette.packRgb(10, 200, 10);
+    var buf = [_]u32{desk} ** (w * h);
+    const fill: Rgb = .{ .r = 0x28, .g = 0x2c, .b = 0x34 };
+    const tab: Rect = .{ .left = 10, .top = 10, .right = 30, .bottom = 50 };
+    paintRimmedBand(&buf, w, h, tab, .horizontal, fill, 6, dr);
+    const solid = desk_palette.packRgb(fill.r, fill.g, fill.b) | 0xFF00_0000;
+    try testing.expectEqual(solid, buf[30 * w + 20]);
+    const edge = buf[30 * w + 10];
+    try testing.expect(((edge >> 16) & 0xFF) > fill.r);
 }
 
 test "pane_stack_strip: an elevated band is a card at strip size - every corner rounded, antialiased" {

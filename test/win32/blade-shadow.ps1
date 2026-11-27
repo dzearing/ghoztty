@@ -107,17 +107,6 @@ function Format-Cols($cols) {
     return (($cols | ForEach-Object { "$($_.Left)-$($_.Right)$(if (-not $_.Visible) { '(hidden)' })" }) -join ' | ')
 }
 
-# The strip colour over the default background (#282c34): the pane's own
-# background at 65% under the card's 45% black scrim, 82% strip over that
-# (`pane_stack_strip.stripRgb`; pane-stack-strip.ps1's Get-ExpectedStrip).
-function Get-ExpectedStrip([int[]]$bg) {
-    $aw = [MidpointRounding]::AwayFromZero
-    return @($bg | ForEach-Object {
-        $base = [math]::Round($_ * 0.65, $aw)
-        $under = [math]::Round($_ * 0.55, $aw)
-        [int][math]::Round($under * 0.18 + $base * 0.82, $aw)
-    })
-}
 function Test-Near($c, [int[]]$rgb, [int]$tol) {
     if ($null -eq $c) { return $false }
     return ([math]::Abs($c.R - $rgb[0]) -le $tol -and [math]::Abs($c.G - $rgb[1]) -le $tol -and [math]::Abs($c.B - $rgb[2]) -le $tol)
@@ -207,7 +196,9 @@ try {
     $inner = $tucked[0]
 
     # ---- B: the row across both strips -----------------------------------------
-    $expected = Get-ExpectedStrip @(0x28, 0x2c, 0x34)
+    # T2519: glass off in the elevated style, a strip is its card - the
+    # pane's own background, edged with the card's rim - not the flat bar.
+    $expected = @(0x28, 0x2c, 0x34)
     $peek = (Px ($peekDip))
     # Well below the strips' rounded top corners and well above their names,
     # which are centred down their length.
@@ -241,7 +232,9 @@ try {
         Say ("      inner strip's colour ends at x={0}, {1} px from its left ({2:N1} DIP; the peek is {3} px)" -f $edge, $edgeOff, ($edgeOff / $script:scale), $peek)
 
         # B2: just past it, on the outer strip: darker than the outer face.
-        $near = Get-TestPixel -Shot $shot -X ($edge + (Px (1))) -Y $y
+        # Past the outer strip's leading rim (T2519: a card's strip is rimmed,
+        # a lighter hairline a pixel wide where the inner one ends).
+        $near = Get-TestPixel -Shot $shot -X ($edge + (Px (2))) -Y $y
         $farX = $edge + (Px (20))
         $far = Get-TestPixel -Shot $shot -X $farX -Y $y
         $drop = (Get-Sum $far) - (Get-Sum $near)

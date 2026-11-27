@@ -1958,11 +1958,12 @@ fn composeOver(
         if (s.blade) blade_shadow.paint(buf, w, h, s.tab, s.axis, s.leads, s.collapse, style.is_light, style.scale, radius);
         if (!s.band) continue;
         // On glass the band is the tucked card's sheet, so the desk reads
-        // through it (T2160, T2505), edged with the card's rim.
+        // through it (T2160, T2505), edged with the card's rim. Without glass
+        // it is the opaque card (T2519), rimmed as `paintCards` rims one.
         if (s.glass) |g|
             pane_stack_strip.paintGlassBand(buf, desk, w, h, s.tab, s.axis, g, radius, pane_stack_strip.Rim.glass(style.is_light, style.scale))
         else
-            pane_stack_strip.paintBand(buf, w, h, s.tab, s.axis, s.rgb, radius);
+            pane_stack_strip.paintRimmedBand(buf, w, h, s.tab, s.axis, s.rgb, radius, pane_stack_strip.Rim.card(style.is_light, style.scale));
     }
     if (bar) |b| gutter_bar.paint(buf, w, h, b.core, b.color, style.scale, b.strength);
 }

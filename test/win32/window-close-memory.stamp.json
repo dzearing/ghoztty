@@ -1,22 +1,22 @@
 {
     "guard":  "window-close-memory",
     "script":  "test/win32/window-close-memory.ps1",
-    "generated":  "2026-11-26T18:02:53-08:00",
-    "commit":  "bf91cdf74d",
+    "generated":  "2026-11-26T18:47:44-08:00",
+    "commit":  "fd62b6c19b",
     "uncommitted":  [
-                        "test/win32/lib/ProcessMemory.ps1",
-                        "test/win32/window-close-memory.ps1"
+                        "src/apprt/win32/PaneDesk.zig",
+                        "src/apprt/win32/Window.zig"
                     ],
     "files":  {
-                  "src/apprt/win32/PaneDesk.zig":  "44b600444b1e09e05b07a7bc3ec9fadad315e5f18c729bca689df35bde64d93d",
+                  "src/apprt/win32/PaneDesk.zig":  "51c08944a5ae1f1a50f4807699c4a5350e54b89b13a0b3b9adeaf9d1969b147e",
                   "src/apprt/win32/Surface.zig":  "265296300274a5222e4ac81f7875b2d21c5774b1c8ff77ba2246bb6614cb9aa2",
-                  "src/apprt/win32/Window.zig":  "46cc3f782542b3a6f14ef117a6b47c8335c531aedaf12c015397c261119a1339",
+                  "src/apprt/win32/Window.zig":  "fcc9e28b9dd764a02729f1f53f8d46ade8570bc86ba3104f136e058f66b6e3e9",
                   "src/renderer/gl_comp_present.zig":  "2682728e659969af8e077c7c938152d93f340d5d814bb3bfba127dabee56126b",
-                  "test/win32/lib/ProcessMemory.ps1":  "ac3b89e8511ead1936ce2fefb03a093aff5c43956cdddd202cc03eadc4e76863",
-                  "test/win32/window-close-memory.ps1":  "b0e94dbaf175deb48377a17599a1fd8fe1397cee62f02df71ee6a410f32d48ef"
+                  "test/win32/lib/ProcessMemory.ps1":  "50851e95a87f0ade1d2b60c89ec4bb94e145286ed765cb5fbe99f38513080ba7",
+                  "test/win32/window-close-memory.ps1":  "45e7e5c4550fc185547b07e3073e48c15e9817923bd00c3f0900e8749ee9f286"
               },
     "code":  {
-                 "test/win32/lib/ProcessMemory.ps1":  "code1:8b914efb9df95d05273bb39dcba0682d099a37feaf9f4df29035232955e55ff9",
-                 "test/win32/window-close-memory.ps1":  "code1:0fd189fd4138506d93cfe2d62efadd8f56565d7b2dec27232ea2dc002b136b6f"
+                 "test/win32/lib/ProcessMemory.ps1":  "code1:063fcdd86db46c12388af64a6d92c7dbb18f762d4b2b5a6281419811a56854e8",
+                 "test/win32/window-close-memory.ps1":  "code1:8f6c4b3581c65907b65ee836e1c371b5cb690abd7f0adb140e6e746c3bd39c80"
              }
 }
