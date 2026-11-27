@@ -191,10 +191,11 @@ r=$(pd --target="$b" --grab-end)
 hl_check "G12 its drop on a's lower half splits a downward; the drag ending hides the handle" $? "shape=$(shape_of) $r"
 
 # G13: a drag from the handle let go over nothing.
+wins=$(pf "$(pd --target="$b")" "d['window_count']")
 r=$(pd --target="$b" --release-nowhere --via-grab)
 [ "$(pf "$r" "d['drop']['target']")" = new_window ] && [ "$(pf "$r" "d['drop']['outcome']")" = moved ] \
-    && [ "$(pf "$r" "d['window_count']")" = 2 ]
-hl_check "G13 a handle drag let go over nothing pops b out into a new window of its own" $? "$r"
+    && [ "$(pf "$r" "d['window_count']")" = $(( ${wins:-0} + 1 )) ] && ! shape_is "V($a,b)"
+hl_check "G13 a handle drag let go over nothing pops b out of gh into a new window ($wins -> $(( ${wins:-0} + 1 )) windows)" $? "shape=$(shape_of) $r"
 
 # G14: b is now its window's only pane. Fullscreen that window.
 r=$(pd --target="$b" --grab-at="10,5")
