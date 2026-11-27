@@ -49,6 +49,7 @@ const RemoteReconnect = @import("../RemoteReconnect.zig");
 const Workspaces = @import("../Workspaces.zig");
 const desk_fade = @import("../../win32/desk_fade.zig");
 const window_chord = @import("../../win32/window_chord.zig");
+const window_title_owner = @import("../../win32/window_title_owner.zig");
 const MachineChooser = @import("../MachineChooser.zig");
 
 const log = std.log.scoped(.gtk_ghostty_window);
@@ -263,6 +264,12 @@ pub const Window = extern struct {
         /// set it wins over the active tab's title, as the Mac's
         /// `titleOverride` does. Owned.
         title_override: ?[:0]u8 = null,
+
+        /// Whether the USER set `title_override` (T3702, win32 T2404, Mac
+        /// `windowTitleSetByUser`): the pane sidebar's group move, Create
+        /// Group and Ungrouped pencil pin it as theirs, and a script's
+        /// `+rename` then leaves it alone. False whenever no pin is up.
+        title_set_by_user: bool = false,
 
         /// Whether the window can be seen (T3571, `window_seen.windowSeen`)
         /// as last computed: mapped, not minimized, not suspended.
@@ -1241,16 +1248,31 @@ pub const Window = extern struct {
         return self.private().title_override;
     }
 
-    /// Pin the window's title, or with null (or "") let the active tab's
-    /// title through again (T92: an empty title clears, never pins "").
+    /// Pin the window's title as a SCRIPT's (`+rename`, `+new-window
+    /// --title`, a restore of a script's pin), or with null (or "") let the
+    /// active tab's title through again (T92: an empty title clears, never
+    /// pins "").
     pub fn setTitleOverride(self: *Self, title: ?[]const u8) void {
+        self.setTitleOverrideBy(title, .script);
+    }
+
+    /// Pin the window's title and record who set it (T3702,
+    /// `window_title_owner`): a user's pin outranks every script's.
+    pub fn setTitleOverrideBy(self: *Self, title: ?[]const u8, setter: window_title_owner.Setter) void {
         const alloc = Application.default().allocator();
         const priv = self.private();
         if (priv.title_override) |v| alloc.free(v);
         priv.title_override = null;
         const t = title orelse "";
         if (t.len > 0) priv.title_override = alloc.dupeZ(u8, t) catch null;
+        priv.title_set_by_user = priv.title_override != null and window_title_owner.byUserAfterSet(t, setter);
         self.syncTitle();
+    }
+
+    /// Whether the user set the window's pinned title (T3702).
+    pub fn titleSetByUser(self: *Self) bool {
+        const priv = self.private();
+        return window_title_owner.keptFromScript(priv.title_override, priv.title_set_by_user) != null;
     }
 
     /// Returns the configuration for this window. The reference count

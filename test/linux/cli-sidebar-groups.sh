@@ -14,7 +14,10 @@
 #     not head a group (a `: ` of its own) changes nothing;
 #   - the field keeps what was typed across a redraw;
 #   - the Ungrouped header's pencil (first of its buttons) opens the same
-#     field, and Return names every lone window as that group.
+#     field, and Return names every lone window as that group;
+#   - a title the sidebar pinned is the user's (T3702): a script's +rename
+#     of that window is refused naming it - whether the pin is the window's
+#     own or its tab's - while a script's own title is still renamed.
 #
 # Run it ONLY through the wrapper, from this box:
 #
@@ -29,7 +32,7 @@
 # widgets' own code.
 #
 # NEGATIVE=1 never presses Return after typing the new group's name, which
-# must FAIL G9.
+# must FAIL G9 (and G17-G18, which rename the window that was to be grouped).
 #
 # Output: one PASS/FAIL line per check, then 'CLI SIDEBAR GROUPS: ALL PASS' or
 # 'CLI SIDEBAR GROUPS: <n> FAILURE(S)'. Exit 0 only on ALL PASS.
@@ -194,5 +197,28 @@ hl_wait_for 10 lst_is '"team: wa" in T' True
 hl_check "G16 each retitled <group>: <its title>" $? "$(lst 'T')"
 grep -q 'pane sidebar ungrouped grouped windows=' "$APP_LOG"
 hl_check "G16b logged" $?
+
+# ---- 5. a title the sidebar pinned is the user's (T3702) -----------------------
+# wb carried a script's window-wide pin (+new-window --title), so Create
+# Group rewrote THAT pin, as the user's.
+out=$(cli +rename --target=wb --title=scripted 2>&1); rc=$?
+[ $rc != 0 ] && printf '%s' "$out" | grep -q "was renamed by the user ('newg: wb')"
+hl_check "G17 +rename of a window the user grouped (window pin) is refused, naming its title" $? "rc=$rc out=$out"
+lst_is '("newg: wb" in T, "scripted" in T, W["wb"].get("title_set_by_user"))' "(True, False, True)"
+hl_check "G18 its title stays, and +list says the user set it" $? "$(lst '[(t, w.get("title"), w.get("title_set_by_user")) for t, w in W.items()]')"
+# The launch window had no window pin: the Ungrouped pencil pinned its TAB.
+lw=$(lst '[t for t, w in W.items() if (w.get("title") or "").startswith("team: ") and t != "wa"][0]')
+lt=$(lst "W['$lw']['title']")
+out=$(cli +rename --target="$lw" --title=scripted 2>&1); rc=$?
+[ -n "$lw" ] && [ $rc != 0 ] && printf '%s' "$out" | grep -q "was renamed by the user ('$lt')"
+hl_check "G19 +rename of a window whose tab the user grouped is refused, naming the tab's title" $? "lw=$lw lt=$lt rc=$rc out=$out"
+lst_is "(W['$lw']['title'], W['$lw'].get('title_set_by_user'))" "('$lt', False)"
+hl_check "G19b its title stays (the window itself carries no pin)" $? "$(lst "W.get('$lw')")"
+grep -q "IPC rename kept the user's title=$lt" "$APP_LOG"
+hl_check "G19c the refusal is logged" $? "$(grep -a 'IPC rename' "$APP_LOG" | tail -3 | tr '\n' ' ')"
+# Positive control: p1's title is still the script's own, so it renames.
+out=$(cli +rename --target=p1 --title=scripted 2>&1); rc=$?
+hl_wait_for 10 lst_is '(W["p1"]["title"], W["p1"].get("title_set_by_user"))' "('scripted', False)"
+hl_check "G20 a script's own title is still renamed by a script" $? "rc=$rc out=$out $(lst 'W.get("p1")')"
 
 hl_finish "$L"

@@ -1626,7 +1626,8 @@ fn retitleIntoGroup(key: u64, project: ?[]const u8) bool {
 fn pinWindowName(key: u64, name: []const u8) bool {
     const f = findTab(key) orelse return false;
     if (f.win.titleOverride()) |o| if (o.len > 0) {
-        f.win.setTitleOverride(name);
+        // The user's now (T3702): a script's `+rename` leaves it alone.
+        f.win.setTitleOverrideBy(name, .user);
         return true;
     };
     var zb: [name_cap + 65]u8 = undefined;

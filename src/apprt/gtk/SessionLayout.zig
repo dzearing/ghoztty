@@ -60,6 +60,7 @@ const gtk = @import("gtk");
 const build_config = @import("../../build_config.zig");
 const schema = @import("../win32/session_layout.zig");
 const pane_stash = @import("../win32/pane_stash.zig");
+const window_title_owner = @import("../win32/window_title_owner.zig");
 const agent_lineage = @import("../../remote/agent_lineage.zig");
 const connection = @import("../../remote/connection.zig");
 
@@ -225,6 +226,8 @@ fn captureWindow(
         .id = if (name) |n| try arena.dupe(u8, n) else try std.fmt.allocPrint(arena, "win-{d}", .{index}),
         .ipc_name = if (name) |n| try arena.dupe(u8, n) else null,
         .title_override = if (window.titleOverride()) |t| try arena.dupe(u8, t) else null,
+        // Whether the user set it (T3702): true or absent, as win32 writes it.
+        .title_set_by_user = if (window.titleSetByUser()) true else null,
         .frame = frameFromSize(dw, dh),
         .maximized = maximized,
         .active_tab = active_tab,
@@ -495,7 +498,7 @@ fn restoreWindow(app: *Application, ctx: *Ctx, win: schema.Window) bool {
     // ocean - never the fresh random one a hand-opened window would draw.
     w.setDeskVariant(if (rules.deskSeedToRestore(win)) |seed| .{ .seed = seed } else null);
     if (win.ipc_name) |n| w.setIpcName(n);
-    if (win.title_override) |title| w.setTitleOverride(title);
+    if (win.title_override) |title| w.setTitleOverrideBy(title, window_title_owner.restoredSetter(win.title_set_by_user));
     if (win.maximized) w.as(gtk.Window).maximize();
     const tv = w.getTabView();
     const pages = tv.getNPages();

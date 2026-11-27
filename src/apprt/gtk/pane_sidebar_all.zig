@@ -41,6 +41,7 @@ const search_field = @import("../win32/pane_sidebar_search.zig");
 const ps = @import("../win32/pane_sidebar.zig");
 const window_order = @import("../win32/pane_sidebar_window_order.zig");
 const cross_drop = @import("../win32/pane_sidebar_cross_drop.zig");
+const window_title_owner = @import("../win32/window_title_owner.zig");
 const rows = @import("pane_sidebar_rows.zig");
 
 pub const Shared = shared_mod.Shared;
@@ -111,6 +112,29 @@ pub fn name(window_pinned: ?[]const u8, tab_pinned: ?[]const u8, tab_title: ?[]c
     if (window_pinned) |w| if (w.len > 0) return w;
     if (tab_pinned) |t| if (t.len > 0) return t;
     return ps.displayTitle(tab_title, pwd, "Window");
+}
+
+/// The title a script's `+rename` of a window must leave alone, or null when
+/// the rename may go ahead (T3702; win32 T2404, Mac `windowTitleIsUsers`).
+/// A rename pins the WINDOW, and that pin outranks every tab's in `name`, so
+/// it would hide whatever the user put up: a window pin they set (the
+/// sidebar's group move, Create Group, the Ungrouped pencil on a window that
+/// already carries a window-wide pin), or a tab's pin - which only the user
+/// sets here (Change Tab Title, the same sidebar moves, a restore of one).
+/// The targeted tab's pin is the one named; another tab's is named when the
+/// targeted tab has none. A script's own window pin already hides every
+/// tab's, so another script may replace it.
+pub fn renameKept(
+    window_pinned: ?[]const u8,
+    window_by_user: bool,
+    target_tab_pinned: ?[]const u8,
+    other_tab_pinned: ?[]const u8,
+) ?[]const u8 {
+    if (window_pinned) |w| if (w.len > 0)
+        return window_title_owner.keptFromScript(w, window_by_user);
+    if (target_tab_pinned) |t| if (t.len > 0) return t;
+    if (other_tab_pinned) |t| if (t.len > 0) return t;
+    return null;
 }
 
 /// Whether the search filters the list now: there is a query, the scope is
@@ -576,6 +600,21 @@ fn kinds(items: []const Item, buf: []u8) []const u8 {
         .pane => 'p',
     };
     return buf[0..items.len];
+}
+
+test "T3702: a script rename leaves the user's window or tab title alone" {
+    // A window pin the user set wins; a script's may be replaced.
+    try testing.expectEqualStrings("app: build", renameKept("app: build", true, null, null).?);
+    try testing.expect(renameKept("deploy", false, null, null) == null);
+    // A script's window pin already hides the tabs' pins.
+    try testing.expect(renameKept("deploy", false, "app: build", null) == null);
+    // With no window pin, a tab's pin is the user's: the targeted tab's first.
+    try testing.expectEqualStrings("app: build", renameKept(null, false, "app: build", "other").?);
+    try testing.expectEqualStrings("other", renameKept(null, false, null, "other").?);
+    try testing.expectEqualStrings("other", renameKept("", false, "", "other").?);
+    // Nothing pinned: the rename goes ahead.
+    try testing.expect(renameKept(null, false, null, null) == null);
+    try testing.expect(renameKept("", true, "", "") == null);
 }
 
 test "T3558: every window folds to its row when the scope turns on, and unfolds to its panes" {

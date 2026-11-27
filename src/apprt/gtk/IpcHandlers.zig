@@ -73,6 +73,7 @@ const BannerEditor = @import("BannerEditor.zig");
 const pane_banner_rules = @import("pane_banner_rules.zig");
 const viewer_links = @import("viewer_links.zig");
 const Tab = @import("class/tab.zig").Tab;
+const pane_sidebar_all = @import("pane_sidebar_all.zig");
 const Surface = @import("class/surface.zig").Surface;
 const SplitTree = @import("class/split_tree.zig").SplitTree;
 const ext = @import("ext.zig");
@@ -3732,11 +3733,34 @@ fn resolveColor(value: ?[]const u8) ?color_math.Rgb {
     return color_math.parseHex(v);
 }
 
-/// Pin `title` on the target's window (null clears it, T92). The GTK app has
-/// no user-set WINDOW title yet (its prompts title a tab or a pane), so
-/// T2404's "the user's title outranks a script's" has nothing to keep here.
+/// Pin `title` on the target's window (null clears it, T92). T3702 (win32
+/// T2404, Mac `windowTitleIsUsers`): a title the user put up - a window pin
+/// the sidebar set, or any tab's pin - outranks a script's, so it is left
+/// alone and reported (`pane_sidebar_all.renameKept`). Checked and set on
+/// this one main-loop turn, so a user rename cannot land between them.
 pub fn renameWindow(_: Context, target: Target, title: ?[]const u8) verbs.Renamed {
-    target.window_().setTitleOverride(title);
+    const window = target.window_();
+    const target_tab: ?*Tab = switch (target) {
+        .window => |w| w.getSelectedTab(),
+        .pane => |p| tabOf(p.window, p.surface),
+    };
+    var other_pin: ?[]const u8 = null;
+    const tab_view = window.getTabView();
+    const pages: usize = @intCast(@max(tab_view.getNPages(), 0));
+    for (0..pages) |i| {
+        const tab = gobject.ext.cast(Tab, tab_view.getNthPage(@intCast(i)).getChild()) orelse continue;
+        if (target_tab != null and tab == target_tab.?) continue;
+        if (tab.titleOverride()) |t| if (t.len > 0) {
+            other_pin = t;
+            break;
+        };
+    }
+    const target_pin: ?[]const u8 = if (target_tab) |t| t.titleOverride() else null;
+    if (pane_sidebar_all.renameKept(window.titleOverride(), window.titleSetByUser(), target_pin, other_pin)) |kept| {
+        log.info("IPC rename kept the user's title={s}", .{kept});
+        return .{ .kept = kept };
+    }
+    window.setTitleOverride(title);
     return .renamed;
 }
 
@@ -4133,6 +4157,9 @@ fn buildWindow(arena: Allocator, app: Context, window: *Window) Allocator.Error!
         .target = name,
         .focused = window.as(gtk.Window).isActive() != 0,
         .tabs = tabs,
+        // T3702: the window's pinned title is the user's (Mac
+        // `windowTitleSetByUser`), so a script's `+rename` is refused.
+        .title_set_by_user = window.titleSetByUser(),
         // T3597: a cross-machine window names its machine (T1557) and its
         // link's state (T609); a local window has neither field.
         .machine = if (remote) |l| List.machineField(try arena.dupe(u8, l.machine.displayName())) else null,
