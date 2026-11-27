@@ -2354,6 +2354,40 @@ Ends `SETTINGS LIVE: ALL PASS` (24 checks, against a python relay on
 loopback). `NEGATIVE=1` has the relay call every machine offline and must
 fail R3.
 
+## The command palette's "… with Shell" rows (T3737)
+
+"New Tab with Shell…", "New Window with Shell…", "Split Right with Shell…"
+and "Split Down with Shell…" (win32 T3751). Choosing one keeps the palette
+open, clears its search, sets its cue to "New tab with which shell?" and the
+like, and swaps the list for the installed shells. Escape goes back to the
+commands, and a second Escape closes the palette. Picking a shell emits the
+palette's `shell-picked` signal, and `Window.openWithShell` opens the target
+with command `[<path>]`, the same command `+new-window --shell=<path>` with no
+`--command` builds. The pane inherits the folder any new pane from the active
+one gets. In single-window mode a new tab is a new workspace (T3649). The rows
+are hidden while the window's active pane rides a remote link
+(`Window.isRemoteWindow`).
+
+The list is the **Settings > Shell list**, not `/etc/shells`:
+`shell_pick.catalog` resolves `settings_controls.posix_shells` (zsh, bash,
+fish, nu) on PATH, and Settings' own Shell menu reads the same catalog
+(`SettingsWindow.installedShells`). The pure half lives in
+`src/apprt/gtk/shell_pick.zig` and is tested in the none lane.
+
+The seam: `command-palette --op=escape` presses Escape in the search field,
+and the reply's `shell_step` names the step on show (`new_tab_with_shell`,
+...; null on the command list).
+
+```powershell
+powershell -NoProfile -File scripts\linux\wsl-run.ps1 -CommandFile test\linux\palette-shell-pick.sh
+```
+
+Ends `PALETTE SHELL PICK: ALL PASS`. Pass B runs with session persistence
+off (New Tab only) and pass A with it on (all four targets, agent-hosted).
+Each pass checks the pane's `/proc/<pid>/exe` (bash, under a `/bin/sh`
+default) and `/proc/<pid>/cwd`, and that the pane landed where its row says.
+`NEGATIVE=1` backs out instead of picking, so every `.8`-`.11` goes red.
+
 ## The keyboard shortcut guide (T3570)
 
 `show_keyboard_shortcuts` - **Ctrl+Shift+/** on Linux (GTK's Ctrl+?; plain
