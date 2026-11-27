@@ -112,6 +112,9 @@ hl_wait_for 5 more_act
 hl_check "S6 with a keyboard on the seat, +new-window --focus is activated" $? "activated=$a0->$(nact) declined=$(ndec) seat=$(swaymsg -t get_seats 2>&1 | tr -d ' \n' | head -c 160)"
 # The older window: --focus on a target that exists raises it (sway's
 # focus_on_window_activation is `focus` under hl_start_seat).
+# Let k1's own map and activation settle first: a raise sent while sway is
+# still focusing the window it just mapped is lost (measured: declined).
+sleep 2
 a0=$(nact)
 cli +new-window --target=s0 --focus > /dev/null 2>&1
 hl_wait_for 5 more_act
