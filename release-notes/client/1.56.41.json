@@ -1,0 +1,10 @@
+{
+  "version": "1.56.41",
+  "sections": [
+    { "title": "Improvements",
+      "items": [
+        { "text": "A viewer pane that moves into a window with no redirection surface now gets its own layer, and a harness checks every child window has one." },
+        { "text": "An unfocused banner pane's dim is drawn inside the pane now, banner included, instead of a floating window." }
+      ] }
+  ]
+}
