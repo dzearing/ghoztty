@@ -17,6 +17,8 @@
 #        diagnostic, and a value that is not a boolean at all is REPORTED -
 #        headless via +validate-config, then through the startup path where
 #        the swallowed value used to cost the user their setting.
+#   5. T3745: a RELATIVE XDG_CONFIG_HOME no longer crashes the app at
+#        launch - it is ignored (XDG spec) and a window comes up.
 #
 # Config isolation: XDG_CONFIG_HOME points at a temp dir for every launch
 # (xdg.zig prefers it over LOCALAPPDATA), so the box's real config never
@@ -287,6 +289,27 @@ try {
         Wait-Class $gpid 'GhozttyConfirmDialog' $false | Out-Null
     }
     Assert (-not ($g.App.Process -and $g.App.Process.HasExited)) 'app alive after case 4'
+    Stop-Process -Id $gpid -Force -ErrorAction SilentlyContinue
+    Start-Sleep -Milliseconds 500
+
+    # ------------------------------------------------------------- case 5:
+    # T3745 - a RELATIVE XDG_CONFIG_HOME used to reach Config.loadFile's
+    # assert(isAbsolute) and kill the app at launch (reachedUnreachable,
+    # .dumps/ghoztty-20261125-062819-0.dmp). xdg.zig now ignores it per the
+    # XDG spec and falls back to LOCALAPPDATA, so the app must come up. The
+    # fallback reads the box's real config read-only; nothing is written.
+    # Launched inline (not Launch-Gui) because a death here is the PRODUCT
+    # failure this case exists to catch, not a setup failure.
+    $env:XDG_CONFIG_HOME = 'relative-xdg-t3745'
+    try {
+        $app = Start-OnTestDesktop -Exe $exe -Arguments @('--session-persistence=false')
+    } finally { Remove-Item Env:XDG_CONFIG_HOME -ErrorAction SilentlyContinue }
+    Start-Sleep -Seconds 3
+    $died = [bool]($app.Process -and $app.Process.HasExited)
+    Assert (-not $died) 'relative XDG_CONFIG_HOME: the app survives launch (T3745)'
+    $top = if ($died) { [IntPtr]::Zero } else { Wait-TestWindow -ProcessId $app.Pid -Class 'GhozttyWindow' }
+    Assert ($top -ne [IntPtr]::Zero) 'relative XDG_CONFIG_HOME: a terminal window comes up (T3745)'
+    Stop-Process -Id $app.Pid -Force -ErrorAction SilentlyContinue
     # The try's last statement (body-complete-audit D1): an unwind above skips
     # it, so the verdict reads DID NOT FINISH instead of green.
     Complete-TestBody

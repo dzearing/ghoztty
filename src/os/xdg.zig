@@ -7,6 +7,7 @@ const Allocator = std.mem.Allocator;
 const posix = std.posix;
 const homedir = @import("homedir.zig");
 const env_os = @import("env.zig");
+const log = std.log.scoped(.xdg);
 
 pub const Options = struct {
     /// Subdirectories to join to the base. This avoids extra allocations
@@ -70,22 +71,31 @@ fn dir(
     // First check the env var. On Windows we have to allocate so this tracks
     // both whether we have the env var and whether we own it.
     // on Windows we treat `LOCALAPPDATA` as a fallback for `XDG_CONFIG_HOME`
-    const env_ = try env_os.getenvNotEmpty(alloc, internal_opts.env) orelse switch (builtin.os.tag) {
+    const xdg_ = try env_os.getenvNotEmpty(alloc, internal_opts.env);
+    defer if (xdg_) |env| env.deinit(alloc);
+    const win_ = switch (builtin.os.tag) {
         else => null,
         .windows => try env_os.getenvNotEmpty(alloc, internal_opts.windows_env),
     };
-    defer if (env_) |env| env.deinit(alloc);
+    defer if (win_) |env| env.deinit(alloc);
 
-    if (env_) |env| {
+    const xdg_value: ?[]const u8 = if (xdg_) |env| env.value else null;
+    const win_value: ?[]const u8 = if (win_) |env| env.value else null;
+    if (xdg_value) |v| if (!std.fs.path.isAbsolute(v)) log.warn(
+        "ignoring {s}={s}: the XDG spec requires an absolute path",
+        .{ internal_opts.env, v },
+    );
+
+    if (pickBase(xdg_value, win_value)) |base| {
         // If we have a subdir, then we use the env as-is to avoid a copy.
         if (opts.subdir) |subdir| {
             return try std.fs.path.join(alloc, &[_][]const u8{
-                env.value,
+                base,
                 subdir,
             });
         }
 
-        return try alloc.dupe(u8, env.value);
+        return try alloc.dupe(u8, base);
     }
 
     // Get our home dir
@@ -99,6 +109,37 @@ fn dir(
     }
 
     return error.NoHomeDir;
+}
+
+/// Choose the base directory from the XDG variable and (Windows only) its
+/// `LOCALAPPDATA` fallback, or null to fall back to the home directory.
+///
+/// The XDG spec says a relative value is invalid and must be ignored, and
+/// every consumer (Config.loadFile asserts it) needs an absolute path: a
+/// relative `XDG_CONFIG_HOME` used to kill the app at launch (T3745). So a
+/// relative value is skipped, exactly as an unset or empty one is.
+fn pickBase(xdg: ?[]const u8, fallback: ?[]const u8) ?[]const u8 {
+    if (xdg) |v| if (v.len > 0 and std.fs.path.isAbsolute(v)) return v;
+    if (fallback) |v| if (v.len > 0 and std.fs.path.isAbsolute(v)) return v;
+    return null;
+}
+
+test "pickBase: an absolute XDG value wins (T3745)" {
+    const abs = if (builtin.os.tag == .windows) "C:\\xdg" else "/xdg";
+    const fb = if (builtin.os.tag == .windows) "C:\\local" else "/local";
+    try std.testing.expectEqualStrings(abs, pickBase(abs, fb).?);
+    try std.testing.expectEqualStrings(abs, pickBase(abs, null).?);
+}
+
+test "pickBase: a relative or empty XDG value is ignored, never returned (T3745)" {
+    const fb = if (builtin.os.tag == .windows) "C:\\local" else "/local";
+    inline for (.{ "relative", "relative/dir", ".", "", "not-a-dir\\x" }) |bad| {
+        try std.testing.expectEqualStrings(fb, pickBase(bad, fb).?);
+        try std.testing.expect(pickBase(bad, null) == null);
+    }
+    // A relative fallback is no better than a relative XDG value.
+    try std.testing.expect(pickBase("relative", "also-relative") == null);
+    try std.testing.expect(pickBase(null, null) == null);
 }
 
 /// Parses the xdg-terminal-exec specification. This expects argv[0] to
@@ -284,6 +325,46 @@ test "fallback when xdg env empty and subdir" {
 
         try std.testing.expectEqualStrings(expected, actual);
     }
+}
+
+test "fallback when xdg env relative (T3745)" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+
+    const alloc = std.testing.allocator;
+
+    const saved_home = home: {
+        const home = std.posix.getenv("HOME") orelse break :home null;
+        break :home try alloc.dupeZ(u8, home);
+    };
+    defer env: {
+        const home = saved_home orelse {
+            _ = env_os.unsetenv("HOME");
+            break :env;
+        };
+        _ = env_os.setenv("HOME", home);
+        alloc.free(home);
+    }
+    const temp_home = "/tmp/ghostty-test-home";
+    _ = env_os.setenv("HOME", temp_home);
+
+    const saved_xdg = blk: {
+        const value = std.posix.getenv("XDG_CONFIG_HOME") orelse break :blk null;
+        break :blk try alloc.dupeZ(u8, value);
+    };
+    defer env: {
+        const value = saved_xdg orelse {
+            _ = env_os.unsetenv("XDG_CONFIG_HOME");
+            break :env;
+        };
+        _ = env_os.setenv("XDG_CONFIG_HOME", value);
+        alloc.free(value);
+    }
+
+    _ = env_os.setenv("XDG_CONFIG_HOME", "relative/config");
+    const actual = try config(alloc, .{ .subdir = "ghostty" });
+    defer alloc.free(actual);
+    try std.testing.expectEqualStrings("/tmp/ghostty-test-home/.config/ghostty", actual);
+    try std.testing.expect(std.fs.path.isAbsolute(actual));
 }
 
 test parseTerminalExec {
