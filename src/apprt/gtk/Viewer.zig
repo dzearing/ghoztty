@@ -2343,7 +2343,19 @@ fn serve(self: *Viewer, req: *wk.URISchemeRequest, uri: []const u8) !void {
         defer file.close();
         const stat = file.stat() catch continue;
         if (stat.kind != .file) continue;
-        const bytes = file.readToEndAlloc(std.heap.c_allocator, content.max_file_bytes) catch continue;
+        var bytes = file.readToEndAlloc(std.heap.c_allocator, content.max_file_bytes) catch continue;
+        // A template style sheet the page holds to the sheet's light/dark on
+        // glass (T3720): its `prefers-color-scheme` conditions are answered
+        // here, since the local scheme hides the rules from page script.
+        if (origin == .template and std.mem.endsWith(u8, path, ".css")) if (glass_scheme.schemeFromQuery(uri)) |s| {
+            if (glass_scheme.rewriteCss(std.heap.c_allocator, bytes, s)) |held| {
+                // An empty slice has no malloc'd pointer for the stream to free.
+                if (held.len > 0) {
+                    std.heap.c_allocator.free(bytes);
+                    bytes = held;
+                }
+            } else |_| {}
+        };
         // The stream owns the bytes and frees them with libc's `free`, which is
         // what `c_allocator` allocated them with.
         const stream = wk.g_memory_input_stream_new_from_data(bytes.ptr, @intCast(bytes.len), @ptrCast(&std.c.free));

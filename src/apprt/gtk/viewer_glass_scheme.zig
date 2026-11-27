@@ -13,6 +13,14 @@
 //! `prefers-color-scheme` media conditions to the forced answer and sets the
 //! root's `color-scheme` (form controls, scrollbars); `null` restores them.
 //!
+//! The template's style sheets come from our `ghoztty-viewer` scheme, which is
+//! registered LOCAL, so page script cannot read their rules (`cssRules`
+//! throws SecurityError, measured 2026-11-26). So the script re-points each
+//! template `<link>` at `?gz-scheme=<light|dark>` and the scheme handler,
+//! which serves those bytes anyway, rewrites the conditions in the CSS it
+//! returns (`schemeFromQuery`, `rewriteCss`). A `<link media=...>` attribute
+//! and an inline `<style>` the page CAN read are rewritten in place.
+//!
 //! Only template pages are held - they are the ones drawn on the sheet. A
 //! website or a rendered `.html` file keeps its own background, and its
 //! style sheets may not even be readable from the page (cross-origin), so it
@@ -43,16 +51,97 @@ pub fn applyJs(s: ?Scheme) []const u8 {
     } else script("");
 }
 
+/// The query parameter a held template style sheet is requested with.
+pub const query_key = "gz-scheme";
+
+/// The scheme a template style sheet request holds (`...css?gz-scheme=dark`),
+/// or null for an ordinary request.
+pub fn schemeFromQuery(uri: []const u8) ?Scheme {
+    const q = std.mem.indexOfScalar(u8, uri, '?') orelse return null;
+    var it = std.mem.splitScalar(u8, uri[q + 1 ..], '&');
+    while (it.next()) |pair| {
+        const eq = std.mem.indexOfScalar(u8, pair, '=') orelse continue;
+        if (!std.mem.eql(u8, pair[0..eq], query_key)) continue;
+        const v = pair[eq + 1 ..];
+        if (std.mem.eql(u8, v, "light")) return .light;
+        if (std.mem.eql(u8, v, "dark")) return .dark;
+        return null;
+    }
+    return null;
+}
+
+/// An always-true and an always-false media feature: what a held
+/// `(prefers-color-scheme: X)` becomes. A negative width is an invalid query,
+/// which a media list reads as `not all`.
+const cond_true = "(min-width:0px)";
+const cond_false = "(max-width:-1px)";
+
+/// `css` with every `(prefers-color-scheme: light|dark)` condition replaced
+/// by the answer `s` gives (whitespace and case as CSS allows). Caller owns
+/// the result.
+pub fn rewriteCss(alloc: std.mem.Allocator, css: []const u8, s: Scheme) ![]u8 {
+    var out: std.ArrayList(u8) = .empty;
+    errdefer out.deinit(alloc);
+    var i: usize = 0;
+    while (i < css.len) {
+        if (css[i] == '(') if (matchCondition(css[i..])) |m| {
+            try out.appendSlice(alloc, if (m.scheme == s) cond_true else cond_false);
+            i += m.len;
+            continue;
+        };
+        try out.append(alloc, css[i]);
+        i += 1;
+    }
+    return out.toOwnedSlice(alloc);
+}
+
+const Match = struct { scheme: Scheme, len: usize };
+
+/// `( prefers-color-scheme : light|dark )` at the start of `t`.
+fn matchCondition(t: []const u8) ?Match {
+    var i: usize = 1;
+    i = skipWs(t, i);
+    const name = "prefers-color-scheme";
+    if (t.len < i + name.len or !std.ascii.eqlIgnoreCase(t[i .. i + name.len], name)) return null;
+    i = skipWs(t, i + name.len);
+    if (i >= t.len or t[i] != ':') return null;
+    i = skipWs(t, i + 1);
+    var sch: Scheme = undefined;
+    if (t.len >= i + 5 and std.ascii.eqlIgnoreCase(t[i .. i + 5], "light")) {
+        sch = .light;
+        i += 5;
+    } else if (t.len >= i + 4 and std.ascii.eqlIgnoreCase(t[i .. i + 4], "dark")) {
+        sch = .dark;
+        i += 4;
+    } else return null;
+    i = skipWs(t, i);
+    if (i >= t.len or t[i] != ')') return null;
+    return .{ .scheme = sch, .len = i + 1 };
+}
+
+fn skipWs(t: []const u8, start: usize) usize {
+    var i = start;
+    while (i < t.len and std.ascii.isWhitespace(t[i])) i += 1;
+    return i;
+}
+
 fn script(comptime s: []const u8) []const u8 {
     return "(function(s){var R=window.__gzScheme;if(!R){if(!s)return 'os';" ++
-        "R=window.__gzScheme={m:new Map(),s:''};" ++
+        "R=window.__gzScheme={m:new Map(),l:new Map(),s:''};" ++
+        // Our template's <link>s: the media attribute in place, and the sheet
+        // itself re-requested held (the scheme handler rewrites it).
+        "R.link=function(l){var o=R.l.get(l);if(!o){o={h:l.getAttribute('href')||'',m:l.getAttribute('media')};R.l.set(l,o)}" ++
+        "if(o.m&&/prefers-color-scheme/i.test(o.m)){var nm=R.q(o.m);if(l.getAttribute('media')!==nm)l.setAttribute('media',nm)}" ++
+        "if(l.href.indexOf('ghoztty-viewer:')!==0||!/\\.css($|[?#])/i.test(o.h))return;" ++
+        "var nh=R.s?o.h+(o.h.indexOf('?')<0?'?':'&')+'" ++ query_key ++ "='+R.s:o.h;if(l.getAttribute('href')!==nh)l.setAttribute('href',nh)};" ++
         "R.q=function(o){return R.s?o.replace(/\\(\\s*prefers-color-scheme\\s*:\\s*(light|dark)\\s*\\)/gi," ++
         "function(_,v){return v.toLowerCase()===R.s?'(min-width:0px)':'(max-width:-1px)'}):o};" ++
         "R.one=function(l){if(!l)return;var o=R.m.get(l);if(o===undefined){o=l.mediaText;" ++
         "if(!/prefers-color-scheme/i.test(o))return;R.m.set(l,o)}var n=R.q(o);if(l.mediaText!==n)l.mediaText=n};" ++
         "R.walk=function(rs){if(!rs)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.media)R.one(r.media);" ++
         "if(r.cssRules)R.walk(r.cssRules)}};" ++
-        "R.fix=function(){var ss=document.styleSheets;for(var i=0;i<ss.length;i++){var sh=ss[i];R.one(sh.media);" ++
+        "R.fix=function(){var ls=document.querySelectorAll('link[rel~=stylesheet]');for(var j=0;j<ls.length;j++)R.link(ls[j]);" ++
+        "var ss=document.styleSheets;for(var i=0;i<ss.length;i++){var sh=ss[i];if(sh.ownerNode&&sh.ownerNode.tagName==='LINK')continue;R.one(sh.media);" ++
         "var rs=null;try{rs=sh.cssRules}catch(e){}R.walk(rs)}" ++
         "if(document.documentElement)document.documentElement.style.colorScheme=R.s||''};" ++
         "new MutationObserver(function(){R.fix()}).observe(document.head||document.documentElement,{childList:true,subtree:true});" ++
@@ -77,6 +166,36 @@ test "T3720: off glass, and for a website or an html file, the page follows the 
     try testing.expectEqual(@as(?Scheme, null), forced(false, .markdown, light_bg));
     try testing.expectEqual(@as(?Scheme, null), forced(true, .web, light_bg));
     try testing.expectEqual(@as(?Scheme, null), forced(true, .html, light_bg));
+}
+
+test "T3720: a held style sheet request names its scheme in the query" {
+    try testing.expectEqual(@as(?Scheme, .dark), schemeFromQuery("ghoztty-viewer://page/viewer.css?gz-scheme=dark"));
+    try testing.expectEqual(@as(?Scheme, .light), schemeFromQuery("ghoztty-viewer://page/vendor/x.css?v=1&gz-scheme=light"));
+    try testing.expectEqual(@as(?Scheme, null), schemeFromQuery("ghoztty-viewer://page/viewer.css"));
+    try testing.expectEqual(@as(?Scheme, null), schemeFromQuery("ghoztty-viewer://page/viewer.css?gz-scheme=blue"));
+    try testing.expectEqual(@as(?Scheme, null), schemeFromQuery("ghoztty-viewer://page/viewer.css?other=dark"));
+}
+
+test "T3720: the CSS rewrite answers every prefers-color-scheme condition and leaves the rest" {
+    const a = testing.allocator;
+    const css =
+        "@media (prefers-color-scheme: dark) { a { color: #fff } }\n" ++
+        "@media ( PREFERS-COLOR-SCHEME:light ){b{}}\n" ++
+        "@media screen and (prefers-color-scheme: dark), print {c{}}\n" ++
+        "@media (prefers-reduced-motion: reduce) {d{}} e { width: calc(1px + (2px)) }";
+    const dark = try rewriteCss(a, css, .dark);
+    defer a.free(dark);
+    try testing.expectEqualStrings(
+        "@media (min-width:0px) { a { color: #fff } }\n" ++
+            "@media (max-width:-1px){b{}}\n" ++
+            "@media screen and (min-width:0px), print {c{}}\n" ++
+            "@media (prefers-reduced-motion: reduce) {d{}} e { width: calc(1px + (2px)) }",
+        dark,
+    );
+    const light = try rewriteCss(a, css, .light);
+    defer a.free(light);
+    try testing.expect(std.mem.startsWith(u8, light, "@media (max-width:-1px) {"));
+    try testing.expect(std.mem.indexOf(u8, light, "prefers-color-scheme") == null);
 }
 
 test "T3720: the page script names the scheme it holds, and a release names none" {
