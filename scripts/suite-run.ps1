@@ -83,6 +83,16 @@
   times = a product-defect candidate. `-NoConfirm` skips it; `confirm -Resume
   <run>` fills the same fields into a summary that already exists.
 
+  NEVER THE USER'S SCREEN (T3844). A script on the @input-desktop-exception
+  list in test\win32\lib\TestDesktop.ps1 can only run on the user's input
+  desktop, and go.md forbids the loop to start one. It is dropped before
+  anything starts - serial and -Jobs alike - and scored `skip` with
+  "NOT RUN (input-desktop-exception)" and its declared reason, through the
+  same reader acceptance-parallel.ps1 uses (scripts\lib\InputDesktopExceptions.ps1).
+  A '-Live only' entry refuses only a -Live run, and this runner passes none.
+  A person running the suite by hand while nobody is at the box passes
+  -AllowInputDesktop to run them.
+
   ORDER INDEPENDENCE is the property T267 could not check: run the suite
   forward, forward again, and reverse, then
 
@@ -180,6 +190,14 @@ param(
     # pass over the red rows, serially, exactly as a serial sweep would. The
     # summary is the same schema, so `compare` sets -Jobs 4 against -Jobs 1.
     [int]$Jobs = 1,
+
+    # T3844: a script on the @input-desktop-exception list
+    # (test\win32\lib\TestDesktop.ps1) is never started by default - go.md
+    # forbids the loop to run one, because it takes the user's real screen. It
+    # is scored `skip` with "NOT RUN (input-desktop-exception)" and its declared
+    # reason. A PERSON running the suite by hand while nobody is at the box
+    # passes this to run them anyway; the run says loudly that it did.
+    [switch]$AllowInputDesktop,
 
     [switch]$DryRun,
     [string]$Repo
@@ -361,6 +379,37 @@ function Sort-SuiteOrder {
 # parameters those are. In the literal checkout nothing is added.
 . (Join-Path $PSScriptRoot 'lib\AcceptanceParallel.ps1')
 . (Join-Path $PSScriptRoot 'lib\TreeIdle.ps1')
+# T3844: the same reader acceptance-parallel.ps1 gates on (T3839), so the set
+# this runner refuses and the set the per-turn sweep refuses cannot drift.
+. (Join-Path $PSScriptRoot 'lib\InputDesktopExceptions.ps1')
+
+<#
+The row for a script this run refuses to start because it can only run on the
+user's input desktop (T3844). Scored `skip` - the loop could not answer it, and
+it is not a failure - so the skipped table names it with its reason, the confirm
+pass never re-runs it, and the suite's colour does not depend on it.
+#>
+function New-InputDesktopNotRunRow {
+    param([object]$Script, [object]$Exception, [int]$Index)
+    [pscustomobject]@{
+        Name    = $Script.Name
+        Class   = $Script.Class
+        Verdict = 'skip'
+        Line    = "NOT RUN (input-desktop-exception): $($Exception.Reason) - the loop never starts it; a person runs it by hand with -AllowInputDesktop while the user is away"
+        Seconds = 0
+        Exit    = 0
+        Leaked  = 0
+        Modals  = 0
+        Log     = ''
+        Index   = $Index
+        Alone      = ''
+        AloneLine  = ''
+        Reproduced = ''
+        Timeout  = 0
+        Declared = $Script.Declared
+        Lane     = 'input-desktop'
+    }
+}
 function Get-SuiteRerootArgs {
     param([string]$ScriptPath, [string]$Root)
     if (Test-ApSamePath $Root $script:ApRepoLiteral) { return @() }
@@ -1016,8 +1065,16 @@ function Invoke-ParallelSweep {
 
     $out = New-Object System.Collections.ArrayList
     foreach ($r in $rows) { if ($done.ContainsKey($r.Name)) { [void]$out.Add($done[$r.Name]) } }
+    # T3844: never handed to the engine, which would start it in a worker.
+    foreach ($r in $rows) {
+        if ($deskNotRun.ContainsKey($r.Name)) {
+            $row = New-InputDesktopNotRunRow -Script $r -Exception $deskNotRun[$r.Name] -Index $index[$r.Name]
+            [void]$out.Add($row)
+            Write-ResultLine -Row $row -Index $out.Count -Total $rows.Count
+        }
+    }
     $repoPrefix = $Repo.TrimEnd('\') + '\'
-    $jobList = @($rows | Where-Object { -not $done.ContainsKey($_.Name) } | ForEach-Object {
+    $jobList = @($rows | Where-Object { -not $done.ContainsKey($_.Name) -and -not $deskNotRun.ContainsKey($_.Name) } | ForEach-Object {
             $rel = $_.Path
             if ($rel.StartsWith($repoPrefix, [StringComparison]::OrdinalIgnoreCase)) { $rel = $rel.Substring($repoPrefix.Length) }
             [pscustomobject]@{ Script = $rel; Args = '' }
@@ -1103,6 +1160,22 @@ if ($Resume) {
     }
 }
 
+# T3844: decided BEFORE anything starts, for both the serial loop and -Jobs.
+# Read from the checkout under test (-Repo), so a fixture declares its own - the
+# same rule acceptance-parallel.ps1 follows. A row already recorded by -Resume
+# keeps its recorded verdict. Keyed by name -> the refusing declaration.
+$deskNotRun = @{}
+if (-not $AllowInputDesktop) {
+    $deskList = @(Get-InputDesktopExceptions -Path (Join-Path $TestRoot 'lib\TestDesktop.ps1'))
+    foreach ($r in $rows) {
+        if ($done.ContainsKey($r.Name)) { continue }
+        # suite-run passes a script no arguments, so a flag-gated entry (one
+        # input-desktop-only under -Live, say) never refuses its default run.
+        $e = Get-InputDesktopExceptionFor -Script $r.Name -RunArgs '' -Exceptions $deskList
+        if ($e) { $deskNotRun[$r.Name] = $e }
+    }
+}
+
 if (-not $OutDir) {
     $stamp = (Get-Date).ToString('yyyyMMdd-HHmmss')
     $OutDir = Join-Path $Repo "temp\suite-runs\$stamp"
@@ -1151,10 +1224,20 @@ foreach ($r in @($rows | Where-Object { $_.TimeoutProblem })) {
     Write-Host "  WARNING: $($r.Name) $($r.TimeoutProblem)" -ForegroundColor Yellow
 }
 if ($Resume) { "  resuming: $($done.Count) already recorded" }
+if ($deskNotRun.Count -gt 0) {
+    "  input-desktop-exception: $($deskNotRun.Count) script(s) will NOT RUN (TestDesktop.ps1 list; -AllowInputDesktop runs them): $(@($rows | Where-Object { $deskNotRun.ContainsKey($_.Name) } | ForEach-Object { $_.Name }) -join ', ')"
+}
+if ($AllowInputDesktop) {
+    Write-Host "  -AllowInputDesktop: @input-desktop-exception scripts WILL run and take the real screen - only while nobody is at the box" -ForegroundColor Yellow
+}
 ''
 
 if ($DryRun) {
     foreach ($r in $rows) {
+        if ($deskNotRun.ContainsKey($r.Name)) {
+            '  NOT RUN   {0,-4} {1,-42} input-desktop-exception: {2}' -f $r.Class, $r.Name, $deskNotRun[$r.Name].Reason
+            continue
+        }
         $cap = Resolve-ScriptTimeout -Declared $r.Declared -Default $TimeoutSec -Max $MaxTimeoutSec
         '  would run {0,-4} {1,-42} timeout {2}s' -f $r.Class, $r.Name, $cap
     }
@@ -1176,6 +1259,13 @@ foreach ($r in $rows) {
         $results += $prevRow
         Write-Host ('[{0,3}/{1}] {2} {3,7}  {4,-42} (from resume)' -f `
                 $i, $rows.Count, $VerdictTag[$prevRow.Verdict], (Format-Duration $prevRow.Seconds), $r.Name) -ForegroundColor DarkGray
+        continue
+    }
+    if ($deskNotRun.ContainsKey($r.Name)) {
+        $row = New-InputDesktopNotRunRow -Script $r -Exception $deskNotRun[$r.Name] -Index $i
+        $results += $row
+        Write-ResultLine -Row $row -Index $i -Total $rows.Count
+        Save-Summary -Path $summaryPath -Meta $meta -Rows $results
         continue
     }
 

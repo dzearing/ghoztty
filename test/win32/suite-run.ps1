@@ -46,6 +46,10 @@
        on a background desktop, no SendInput off the input desktop) is scored
        apart from both pass and fail, counted apart, listed by name, and not
        re-run by the confirm pass (T1100).
+    X. A script on the @input-desktop-exception list (TestDesktop.ps1) is never
+       started, serial or -Jobs: scored skip, NOT RUN with its reason; a
+       '-Live only' entry still runs its default; -AllowInputDesktop and an
+       empty list are the controls that it otherwise runs (T3844).
     W. -Jobs N - the whole selected set runs N at a time through the T1960
        worker engine (T1092): scripts really overlap (measured from their own
        timestamps), a `# @timing-sensitive` one overlaps nothing, a red row is
@@ -990,6 +994,98 @@ exit 0
         "exit $($rS2.Exit)"
     Check 'S9 and the skip is not in the not-green table' `
         ($rS2.Text -notmatch '(?m)^\s*skip\s+s-skip\.ps1') $rS2.Text
+
+    # --- X. @input-desktop-exception scripts are never started (T3844) -----
+    Write-Host ''
+    Write-Host '-- X. a script on the TestDesktop.ps1 exception list is NOT RUN, serial and -Jobs'
+
+    # WHY. go.md forbids the loop to start any script the
+    # @input-desktop-exception list names: it takes the user's real screen.
+    # T3839 gated acceptance-parallel.ps1's CLI only, so a whole-suite run from
+    # here still launched translucent-window.ps1 and the rest. The fixture
+    # carries a COPY of this checkout's real list, so the names refused are the
+    # names the loop is actually forbidden, and fixture scripts NAMED after
+    # them record whether they were started.
+    $fixLib = Join-Path $FixTests 'lib\TestDesktop.ps1'
+    Copy-Item -LiteralPath (Join-Path $Repo 'test\win32\lib\TestDesktop.ps1') -Destination $fixLib -Force
+    $passBody = @'
+"ALL PASS (1 assertions)"
+exit 0
+'@
+    try {
+        Set-Content -LiteralPath $RunLog -Value '' -Encoding ASCII
+        Set-FixtureScript 'translucent-window.ps1' $passBody
+        Set-FixtureScript 'frame-lab.ps1' $passBody
+        # Flag-gated entry ('-Live only'): its DEFAULT run is synthetic, and the
+        # runner passes no arguments, so it must still run.
+        Set-FixtureScript 'divider-flicker.ps1' $passBody
+        $xSet = @('-Include', 'translucent-window.ps1,frame-lab.ps1,divider-flicker.ps1,b-pass.ps1', '-TimeoutSec', '60')
+
+        $dirX1 = Join-Path $Fixture 'runX1'
+        $rX1 = Invoke-Runner ($xSet + @('-OutDir', $dirX1))
+        $sX1 = Get-Summary $dirX1
+        Check 'X1 serial: a listed script is never started' `
+            (((Get-InvocationCount 'translucent-window.ps1') -eq 0) -and ((Get-InvocationCount 'frame-lab.ps1') -eq 0)) `
+            "invocations tw=$(Get-InvocationCount 'translucent-window.ps1') fl=$(Get-InvocationCount 'frame-lab.ps1')"
+        Check 'X2 serial: it is scored skip, never red' `
+            (((Get-Verdict $sX1 'translucent-window.ps1') -eq 'skip') -and ((Get-Verdict $sX1 'frame-lab.ps1') -eq 'skip')) `
+            "$(Get-Verdict $sX1 'translucent-window.ps1') / $(Get-Verdict $sX1 'frame-lab.ps1')"
+        $twRow = @(@($sX1.results) | Where-Object { $_.Name -eq 'translucent-window.ps1' })
+        Check 'X3 serial: the row says NOT RUN (input-desktop-exception) with the declared reason' `
+            (($twRow.Count -eq 1) -and ($twRow[0].Line -match 'NOT RUN \(input-desktop-exception\)') -and ($twRow[0].Line -match 'T1787')) `
+            $(if ($twRow.Count) { $twRow[0].Line } else { '(no row)' })
+        Check 'X4 serial: the run stays green and counts them as skipped' `
+            (($rX1.Exit -eq 0) -and ($rX1.Text -match 'SUITE ALL PASS \(4 scripts, 2 SKIPPED')) "exit $($rX1.Exit)"
+        Check 'X5 serial: a -Live-only entry still runs its default (synthetic) run' `
+            (((Get-InvocationCount 'divider-flicker.ps1') -eq 1) -and ((Get-Verdict $sX1 'divider-flicker.ps1') -eq 'pass')) `
+            "invocations=$(Get-InvocationCount 'divider-flicker.ps1') verdict=$(Get-Verdict $sX1 'divider-flicker.ps1')"
+        Check 'X6 the header names what will not run' `
+            ($rX1.Text -match 'input-desktop-exception: 2 script\(s\) will NOT RUN') $rX1.Text
+
+        Set-Content -LiteralPath $RunLog -Value '' -Encoding ASCII
+        $dirX2 = Join-Path $Fixture 'runX2'
+        $rX2 = Invoke-Runner ($xSet + @('-Jobs', '2', '-OutDir', $dirX2))
+        $sX2 = Get-Summary $dirX2
+        Check 'X7 -Jobs: a listed script is never handed to a worker' `
+            (((Get-InvocationCount 'translucent-window.ps1') -eq 0) -and ((Get-InvocationCount 'frame-lab.ps1') -eq 0)) `
+            "invocations tw=$(Get-InvocationCount 'translucent-window.ps1') fl=$(Get-InvocationCount 'frame-lab.ps1')"
+        Check 'X8 -Jobs: scored skip, the others still run, the run stays green' `
+            (((Get-Verdict $sX2 'translucent-window.ps1') -eq 'skip') -and ((Get-Verdict $sX2 'b-pass.ps1') -eq 'pass') -and
+                ((Get-InvocationCount 'divider-flicker.ps1') -eq 1) -and ($rX2.Exit -eq 0)) `
+            "tw=$(Get-Verdict $sX2 'translucent-window.ps1') b=$(Get-Verdict $sX2 'b-pass.ps1') exit=$($rX2.Exit)"
+        Check 'X9 -Jobs: four rows in the summary, none lost' (@($sX2.results).Count -eq 4) "rows=$(@($sX2.results).Count)"
+
+        $dirX3 = Join-Path $Fixture 'runX3'
+        $rX3 = Invoke-Runner ($xSet + @('-OutDir', $dirX3, '-DryRun'))
+        Check 'X10 -DryRun lists a listed script as NOT RUN, not as would-run' `
+            (($rX3.Text -match '(?m)^\s*NOT RUN\s+\S+\s+translucent-window\.ps1') -and ($rX3.Text -notmatch 'would run\s+\S+\s+translucent-window\.ps1')) $rX3.Text
+
+        # Positive control: the opt-in a PERSON passes does start it, so the
+        # refusal above is the gate and not a fixture that cannot run.
+        Set-Content -LiteralPath $RunLog -Value '' -Encoding ASCII
+        $dirX4 = Join-Path $Fixture 'runX4'
+        $rX4 = Invoke-Runner ($xSet + @('-OutDir', $dirX4, '-AllowInputDesktop'))
+        $sX4 = Get-Summary $dirX4
+        Check 'X11 control: -AllowInputDesktop starts it and it passes' `
+            (((Get-InvocationCount 'translucent-window.ps1') -eq 1) -and ((Get-Verdict $sX4 'translucent-window.ps1') -eq 'pass')) `
+            "invocations=$(Get-InvocationCount 'translucent-window.ps1') verdict=$(Get-Verdict $sX4 'translucent-window.ps1')"
+        Check 'X12 control: and says loudly that it did' ($rX4.Text -match '-AllowInputDesktop: @input-desktop-exception scripts WILL run') $rX4.Text
+
+        # Negative control: an UNLISTED name is started - the list decides, not
+        # anything about the fixture script.
+        Set-Content -LiteralPath $fixLib -Value '# no declarations here' -Encoding ASCII
+        Set-Content -LiteralPath $RunLog -Value '' -Encoding ASCII
+        $dirX5 = Join-Path $Fixture 'runX5'
+        $null = Invoke-Runner (@('-Include', 'translucent-window.ps1', '-TimeoutSec', '60', '-OutDir', $dirX5))
+        Check 'X13 control: with nothing declared, the same script IS started' `
+            ((Get-InvocationCount 'translucent-window.ps1') -eq 1) "invocations=$(Get-InvocationCount 'translucent-window.ps1')"
+    }
+    finally {
+        Remove-Item -LiteralPath $fixLib -Force -ErrorAction SilentlyContinue
+        foreach ($n in @('translucent-window.ps1', 'frame-lab.ps1', 'divider-flicker.ps1')) {
+            Remove-Item -LiteralPath (Join-Path $FixTests $n) -Force -ErrorAction SilentlyContinue
+        }
+    }
     # --- V. the commit a run measured (T617) -------------------------------
     Write-Host ''
     Write-Host '-- V. every run is anchored to the code it measured'
