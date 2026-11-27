@@ -1,14 +1,14 @@
 {
     "guard":  "blade-shadow",
     "script":  "test/win32/blade-shadow.ps1",
-    "generated":  "2026-11-23T10:17:28-08:00",
-    "commit":  "7ae87964f",
+    "generated":  "2026-11-26T16:51:38-08:00",
+    "commit":  "6f07650c4d",
     "uncommitted":  [
                         "src/apprt/win32/PaneDesk.zig"
                     ],
     "files":  {
                   "src/apprt/win32/blade_shadow.zig":  "f86a1b8856b64aa638e06107fea9e3ffaf57741165c10f5055d41f36d281b666",
-                  "src/apprt/win32/PaneDesk.zig":  "6ae44d4c6d7339a88ed2c02c2c5bac3c4f1393a530ba582fc4262fe5a4d927f6",
+                  "src/apprt/win32/PaneDesk.zig":  "44b600444b1e09e05b07a7bc3ec9fadad315e5f18c729bca689df35bde64d93d",
                   "test/win32/blade-shadow.ps1":  "a324592e11e92841a183b026f3b38c397bc340c9205fbc3f583040f913de7b7c"
               },
     "code":  {

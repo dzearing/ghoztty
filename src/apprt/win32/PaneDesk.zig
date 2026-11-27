@@ -1382,7 +1382,7 @@ pub fn paint(
                 if (laid) for (self.names.?.rects) |r| sh.add(r.left, r.top, r.right, r.bottom);
                 if (sh.area() * 4 <= @as(i64, w) * h * 3) {
                     var timer2 = std.time.Timer.start() catch null;
-                    for (sh.slice()) |r| self.blitRect(hdc, origin_x, origin_y, comp, desk, opacity, r);
+                    self.blitShown(hdc, origin_x, origin_y, comp, desk, opacity, sh.slice());
                     if (timer2) |*t| self.blit_ns +|= t.read();
                     self.last_blit = sh;
                     self.settleDebt(false, &sh);
@@ -1453,7 +1453,7 @@ pub fn paint(
             if (laid) for (self.names.?.rects) |r| sh.add(r.left, r.top, r.right, r.bottom);
             if (sh.area() * 4 <= @as(i64, w) * h * 3) {
                 var timer2 = std.time.Timer.start() catch null;
-                for (sh.slice()) |r| self.blitRect(hdc, origin_x, origin_y, comp, desk, opacity, r);
+                self.blitShown(hdc, origin_x, origin_y, comp, desk, opacity, sh.slice());
                 if (timer2) |*t| self.blit_ns +|= t.read();
                 self.last_blit = sh.*;
                 self.settleDebt(true, sh);
@@ -1511,25 +1511,36 @@ fn addLightStrips(self: *const PaneDesk, rects: *Memo.Rects, comp: Dib) void {
     }
 }
 
-/// One rectangle of `comp` onto the window, through `out` on a translucent
-/// one (T2454).
-fn blitRect(self: *PaneDesk, hdc: w32.HDC, origin_x: i32, origin_y: i32, comp: Dib, desk: Desk, opacity: ?u8, r: busy_light.Rect) void {
-    if (r.right <= r.left or r.bottom <= r.top) return;
-    if (opacity) |o| {
-        const out = self.ensureOut(comp.w, comp.h) orelse return;
-        const cw: usize = @intCast(comp.w);
-        var y = r.top;
-        while (y < r.bottom) : (y += 1) {
-            const a: usize = @as(usize, @intCast(y)) * cw + @as(usize, @intCast(r.left));
-            const b: usize = a + @as(usize, @intCast(r.right - r.left));
+/// `rects` of `comp` onto the window, through `out` on a translucent one
+/// (T2454). There every rect is rebuilt into `out` first and this paint's
+/// names laid on them once (T2496: the callers put the names' rects among
+/// `rects`), and only then does anything go to the window.
+fn blitShown(self: *PaneDesk, hdc: w32.HDC, origin_x: i32, origin_y: i32, comp: Dib, desk: Desk, opacity: ?u8, rects: []const busy_light.Rect) void {
+    const o = opacity orelse {
+        for (rects) |r| {
+            if (r.right <= r.left or r.bottom <= r.top) continue;
+            blitPixels(hdc, origin_x, origin_y, comp, r);
+        }
+        return;
+    };
+    const out = self.ensureOut(comp.w, comp.h) orelse return;
+    const cw: usize = @intCast(comp.w);
+    for (rects) |r| {
+        const c = clipTo(r, comp.w, comp.h) orelse continue;
+        var y = c.top;
+        while (y < c.bottom) : (y += 1) {
+            const a: usize = @as(usize, @intCast(y)) * cw + @as(usize, @intCast(c.left));
+            const b: usize = a + @as(usize, @intCast(c.right - c.left));
             desk_palette.translucentSpan(out.pixels()[a..b], comp.pixels()[a..b], desk.pixels()[a..b], o);
         }
-        const lap = stall_probe.blitBegin(.bitblt, r.right - r.left, r.bottom - r.top);
-        defer lap.end();
-        _ = w32.BitBlt(hdc, origin_x + r.left, origin_y + r.top, r.right - r.left, r.bottom - r.top, out.dc, r.left, r.top, w32.SRCCOPY);
-        return;
     }
-    blitPixels(hdc, origin_x, origin_y, comp, r);
+    if (self.names_in_out) |org| self.layNamesOut(out, org[0], org[1]);
+    for (rects) |r| {
+        const c = clipTo(r, comp.w, comp.h) orelse continue;
+        const lap = stall_probe.blitBegin(.bitblt, c.right - c.left, c.bottom - c.top);
+        defer lap.end();
+        _ = w32.BitBlt(hdc, origin_x + c.left, origin_y + c.top, c.right - c.left, c.bottom - c.top, out.dc, c.left, c.top, w32.SRCCOPY);
+    }
 }
 
 /// `comp`, or `rects` of it, to the sink, timed as the blit it replaces.
@@ -1632,8 +1643,10 @@ fn layNames(self: *PaneDesk, comp: Dib, origin_x: i32, origin_y: i32, opacity: ?
     const n = self.names orelse return false;
     if (n.rects.len == 0) return false;
     if (opacity != null) {
-        // Translucent: only for the sink, and into `out` as it goes (T2541).
-        if (self.sink == null) return false;
+        // Translucent: into `out` as it goes, after its spans are rebuilt
+        // from `comp` - by `toSink` for the compositor (T2541), and by the
+        // window's own blit otherwise (T2496), which used to leave the names
+        // to an alpha-blended pass of their own after the desk was up.
         self.names_in_out = .{ origin_x, origin_y };
         self.names_laid = true;
         return true;
@@ -2412,6 +2425,8 @@ fn blit(self: *PaneDesk, hdc: w32.HDC, origin_x: i32, origin_y: i32, w: i32, h: 
         const out = self.ensureOut(w, h) orelse return;
         desk_palette.translucentSpan(out.pixels(), comp.pixels(), desk.pixels(), o);
         self.out_synced = o;
+        // The names go up in this same blit (T2496).
+        if (self.names_in_out) |org| self.layNamesOut(out, org[0], org[1]);
         // Through the DC: its alpha is the window's, and a DIB blit from
         // memory is not held to keep that byte.
         _ = w32.BitBlt(hdc, origin_x, origin_y, w, h, out.dc, 0, 0, w32.SRCCOPY);
@@ -3426,6 +3441,73 @@ test "T2541: a translucent window's sink is sent the premultiplied picture, the 
     try testing.expectEqual(@as(u32, 1), rec.whole);
     const j: usize = 200 * w + 395;
     try testing.expectEqual(desk_palette.translucentPixel(comp.pixels()[j], desk.pixels()[j], o), pd.out.?.pixels()[j]);
+}
+
+test "T2496: a translucent window's own blit carries the strip names, whole and changed-only" {
+    const testing = std.testing;
+    const NAME: u32 = 0xFF112233;
+    const Hook = struct {
+        lays: u32 = 0,
+        fn draw(ctx: *anyopaque, hdc: w32.HDC) void {
+            _ = ctx;
+            _ = hdc;
+        }
+        fn lay(ctx: *anyopaque, px: []u32, w: i32, h: i32, ox: i32, oy: i32, rects: []const busy_light.Rect) bool {
+            const k: *@This() = @ptrCast(@alignCast(ctx));
+            _ = h;
+            _ = ox;
+            _ = oy;
+            k.lays += 1;
+            for (rects) |r| {
+                var y = r.top;
+                while (y < r.bottom) : (y += 1) {
+                    var x = r.left;
+                    while (x < r.right) : (x += 1) px[@as(usize, @intCast(y * w + x))] = NAME;
+                }
+            }
+            return true;
+        }
+    };
+    const w = 800;
+    const h = 400;
+    var pd: PaneDesk = .{};
+    defer pd.deinit();
+    // The window: no sink, so the desk goes out through GDI (T1852's path).
+    const win = Dib.create(w, h, null) orelse return error.SkipZigTest;
+    defer win.destroy();
+    var hook: Hook = .{};
+    const name_rects = [_]busy_light.Rect{.{ .left = 100, .top = 385, .right = 140, .bottom = 395 }};
+    pd.names = .{ .ctx = &hook, .rects = &name_rects, .draw = Hook.draw, .lay = Hook.lay };
+    pd.blit_changed_only = true;
+    const style: pane_elevation.CardStyle = .{ .fill = .{ .r = 24, .g = 26, .b = 30 }, .is_light = false, .scale = 1 };
+    var cards = [_]pane_elevation.Card{
+        .{ .left = 20, .top = 20, .right = 390, .bottom = 380 },
+        .{ .left = 410, .top = 20, .right = 780, .bottom = 380 },
+    };
+    const o: u8 = 204; // background-opacity 0.8
+    const at: usize = 390 * w + 120;
+    // A whole blit: the name is in what reached the window, and laid there by
+    // the desk - so the window's own strip pass has nothing left to draw.
+    pd.paint(win.dc, 0, 0, w, h, &cards, &.{}, style, null, &.{}, 0, null, o);
+    _ = w32.GdiFlush();
+    try testing.expect(pd.names_laid);
+    try testing.expectEqual(NAME, win.pixels()[at]);
+    // The cached picture never keeps it.
+    try testing.expect(pd.comp.?.pixels()[at] != NAME);
+    // A divider step blits only what changed, and the name goes with it.
+    win.pixels()[at] = 0;
+    cards[0].right += 12;
+    cards[1].left += 12;
+    pd.paint(win.dc, 0, 0, w, h, &cards, &.{}, style, null, &.{}, 0, null, o);
+    _ = w32.GdiFlush();
+    try testing.expect(pd.last_blit != null);
+    try testing.expectEqual(NAME, win.pixels()[at]);
+    try testing.expect(pd.comp.?.pixels()[at] != NAME);
+    // Laid once per paint, however many rects went up.
+    try testing.expectEqual(@as(u32, 2), hook.lays);
+    // What moved went up premultiplied, as before.
+    const j: usize = 200 * w + 395;
+    try testing.expectEqual(desk_palette.translucentPixel(pd.comp.?.pixels()[j], pd.desk.?.pixels()[j], o), win.pixels()[j]);
 }
 
 test "T2541: a name drawn over premultiplied pixels keeps the alpha it was drawn on" {

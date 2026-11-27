@@ -1,14 +1,14 @@
 {
     "guard":  "maximize-restore-memory",
     "script":  "test/win32/maximize-restore-memory.ps1",
-    "generated":  "2026-11-26T15:33:36-08:00",
-    "commit":  "4a13c2a0a8",
+    "generated":  "2026-11-26T16:57:21-08:00",
+    "commit":  "6f07650c4d",
     "uncommitted":  [
-                        "src/apprt/win32/chrome_comp.zig"
+                        "src/apprt/win32/PaneDesk.zig"
                     ],
     "files":  {
                   "src/apprt/win32/chrome_comp.zig":  "5fb3639c6a42d880d8cb75f53d4ab3ec320048abf8e5127089c946d82dacf35c",
-                  "src/apprt/win32/PaneDesk.zig":  "6ae44d4c6d7339a88ed2c02c2c5bac3c4f1393a530ba582fc4262fe5a4d927f6",
+                  "src/apprt/win32/PaneDesk.zig":  "44b600444b1e09e05b07a7bc3ec9fadad315e5f18c729bca689df35bde64d93d",
                   "test/win32/lib/ProcessMemory.ps1":  "50851e95a87f0ade1d2b60c89ec4bb94e145286ed765cb5fbe99f38513080ba7",
                   "test/win32/maximize-restore-memory.ps1":  "b1b9968c5225dffc03c465532507ee6e64f65df9bfd5f326de5c29aea14622e2"
               },
