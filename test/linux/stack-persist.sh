@@ -160,8 +160,9 @@ n3() { sq "$(st3)" 'len(s.get("panes", []))'; }
 printf 'macos-pane-min-width = 200\nwindow-width = 150\nwindow-height = 30\n' > "$XDG_CONFIG_HOME/ghostty/config.ghostty"
 cli +reload --config > /dev/null 2>&1
 cli +new-window --target=sx --name=qa > /dev/null 2>&1
-cli +split --target=qa --name=qc --direction=right --focus > /dev/null 2>&1
 cli +split --target=qa --name=qb --direction=right --focus > /dev/null 2>&1
+# Without --focus: qc goes in beside qb and the caret stays in qb.
+cli +split --target=qb --name=qc --direction=right > /dev/null 2>&1
 hl_wait_for 15 eval '[ "$(n3)" = 3 ]'
 hl_wait_for 5 state3_is "qa:0/0 qb:0/1 qc:0/0"
 rc=$?
