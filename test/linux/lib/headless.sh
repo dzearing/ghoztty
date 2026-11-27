@@ -128,7 +128,11 @@ hl_start_seat() { HL_WANT_COMPOSITOR=sway hl_start "$@"; }
 # name, which is WSLg's).
 hl_start_sway_() {
     local _ s
-    printf 'xwayland disable\noutput HEADLESS-1 resolution %sx%s\n' "$1" "$2" > "$HL_RUNTIME/sway.cfg"
+    # focus_on_window_activation focus (T3713): honour an xdg-activation
+    # request the way a desktop does for a token it accepts. sway's default,
+    # `urgent`, only marks the window, so a --focus raise of an existing
+    # window could never be seen to work.
+    printf 'xwayland disable\nfocus_on_window_activation focus\noutput HEADLESS-1 resolution %sx%s\n' "$1" "$2" > "$HL_RUNTIME/sway.cfg"
     env -u WAYLAND_DISPLAY -u SWAYSOCK -u I3SOCK WLR_BACKENDS=headless WLR_LIBINPUT_NO_DEVICES=1 \
         WLR_RENDERER=pixman sway -c "$HL_RUNTIME/sway.cfg" > "$HL_WESTON_LOG" 2>&1 &
     HL_WESTON_PID=$!
@@ -157,6 +161,33 @@ hl_key_serial() {
     command -v wtype >/dev/null 2>&1 || { echo "hl_key_serial: wtype is not installed (run scripts/linux/setup-distro.sh)" >&2; return 1; }
     hl_assert_isolated
     wtype -k Shift_L
+}
+
+# hl_seat_keyboard (T3713): give the seat a keyboard that STAYS, under
+# hl_start_seat only. Why: with no input devices the seat's capabilities are 0,
+# so no window ever gets wl_keyboard.enter - and GTK's is-active follows
+# keyboard focus, not sway's own focus (sway does focus every new window), so
+# no window is ever ACTIVE and every --focus reads as declined. hl_key_serial's
+# keyboard is gone as soon as its one key is sent. This one is a background
+# wtype parked in a one-hour sleep between two Shift_L taps; hl_stop (or
+# hl_seat_keyboard_stop) kills it. Shift alone types nothing into a pane.
+# Returns 0 once sway reports the keyboard on seat0.
+HL_SEAT_KBD_PID=""
+hl_seat_keyboard() {
+    [ "${HL_COMPOSITOR:-}" = sway ] || { echo "hl_seat_keyboard: needs hl_start_seat (Weston headless has no seat)" >&2; return 1; }
+    command -v wtype >/dev/null 2>&1 || { echo "hl_seat_keyboard: wtype is not installed (run scripts/linux/setup-distro.sh)" >&2; return 1; }
+    hl_assert_isolated
+    [ -n "$HL_SEAT_KBD_PID" ] && kill -0 "$HL_SEAT_KBD_PID" 2>/dev/null && return 0
+    wtype -k Shift_L -s 3600000 -k Shift_L > /dev/null 2>&1 &
+    HL_SEAT_KBD_PID=$!
+    hl_wait_for 5 hl_seat_has_keyboard
+}
+# hl_seat_has_keyboard: sway's seat0 has a keyboard device right now.
+hl_seat_has_keyboard() { swaymsg -t get_seats 2>/dev/null | grep -q '"type": "keyboard"'; }
+hl_seat_keyboard_stop() {
+    [ -n "$HL_SEAT_KBD_PID" ] || return 0
+    kill "$HL_SEAT_KBD_PID" 2>/dev/null; wait "$HL_SEAT_KBD_PID" 2>/dev/null
+    HL_SEAT_KBD_PID=""
 }
 
 # hl_isolation_problem: print the first reason the current environment could
@@ -460,6 +491,7 @@ hl_stop() {
         hl_report_crash_ "$p" $?
     done
     HL_PIDS=""
+    hl_seat_keyboard_stop
     hl_stop_agent
     if [ -n "${HL_WESTON_PID:-}" ]; then kill "$HL_WESTON_PID" 2>/dev/null; wait "$HL_WESTON_PID" 2>/dev/null; HL_WESTON_PID=""; fi
     if [ -n "${HL_RUNTIME:-}" ] && [ -d "$HL_RUNTIME" ]; then
