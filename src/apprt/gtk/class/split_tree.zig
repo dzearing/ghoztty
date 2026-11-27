@@ -1753,6 +1753,21 @@ pub const SplitTree = extern struct {
         priv.last_focused.set(target);
     }
 
+    /// The pane a close's caret goes to instead of `candidate` now that the
+    /// rows changed from `before` (win32 `paneOnShowAfter`): `candidate`
+    /// itself unless it is a strip of a collapsed row, when it is the pane on
+    /// show nearest it, focused last. `before` null (no stacked state, or it
+    /// could not be read) keeps `candidate`.
+    fn paneOnShowAfterClose(self: *Self, candidate: *Surface, before: ?pane_stack_state.Rows, a: Allocator) *Surface {
+        const old = before orelse return candidate;
+        const state = if (self.private().stacks) |*s| s else return candidate;
+        const after = self.stackRowsNow(a) catch return candidate;
+        const id = state.paneOnShow(paneKey(candidate), old, after) catch return candidate;
+        const target = self.surfaceByKey(id) orelse return candidate;
+        if (target != candidate) log.info("closed pane's focus goes to the pane on show, not a strip", .{});
+        return target;
+    }
+
     fn relayoutStage(self: *Self) void {
         if (self.private().stage) |s| wk.gtk_widget_queue_allocate(s);
     }
@@ -3543,6 +3558,16 @@ pub const SplitTree = extern struct {
         // only pane is not: closing that is closing the tab.
         _ = CloseUndo.parkClosedPane(self, old_tree, handle);
 
+        // The rows as they stand before the removal, for the caret to keep
+        // off a collapsed row's strip below (T3744). Read now, while
+        // `priv.tree` is still `old_tree`.
+        var rows_arena = std.heap.ArenaAllocator.init(Application.default().allocator());
+        defer rows_arena.deinit();
+        const rows_before: ?pane_stack_state.Rows = if (priv.stacks != null)
+            self.stackRowsNow(rows_arena.allocator()) catch null
+        else
+            null;
+
         // Remove it from the tree.
         var new_tree = old_tree.remove(
             Application.default().allocator(),
@@ -3558,7 +3583,11 @@ pub const SplitTree = extern struct {
         // focus will be set when the tree is redrawn. A close that left only
         // stashed panes brought the top one back (`normalize`): it takes it.
         if (next_focus) |v| {
-            priv.last_focused.set(v);
+            // Never into a pane minimized in a collapsed row (T3744, win32
+            // `paneOnShowAfter`, Mac 3090ac2aa): focusing it would bring the
+            // strip back out and undo the user's collapse. The pane on show
+            // nearest it, focused last, takes the caret instead.
+            priv.last_focused.set(self.paneOnShowAfterClose(v, rows_before, rows_arena.allocator()));
         } else if (had_stash) {
             if (self.getTree()) |t| {
                 if (pane_stash.keepOrFirstVisible(t.*, null)) |v| priv.last_focused.set(v);

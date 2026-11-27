@@ -164,7 +164,10 @@ cli +split --target=qa --name=qc --direction=right --focus > /dev/null 2>&1
 cli +split --target=qa --name=qb --direction=right --focus > /dev/null 2>&1
 hl_wait_for 15 eval '[ "$(n3)" = 3 ]'
 hl_wait_for 5 state3_is "qa:0/0 qb:0/1 qc:0/0"
-hl_check "P16 qa, qb and qc fit side by side, qb (between them) focused" $? "$(state3)"
+rc=$?
+order=$(sq "$(st3)" '" ".join(sorted(("qa", "qb", "qc"), key=lambda n: N[n]["frame"][0]))')
+[ $rc = 0 ] && [ "$order" = "qa qb qc" ]
+hl_check "P16 qa, qb and qc fit side by side in that order, qb (between them) focused" $? "$(state3) order=$order"
 
 r=$(st3)
 # The gutter between qa and qb: the leftmost vertical seam of the row.
@@ -183,6 +186,10 @@ hl_check "P19 the caret goes to qc, the pane on show, and qa stays a strip (not 
 sleep 1
 state3_is "qa:1/0 qc:0/1"
 hl_check "P20 a second on, qa is still a strip and qc still has the caret" $? "$(state3)"
+# The close itself names qc (paneOnShow), rather than handing the caret to the
+# strip and leaning on GTK declining to focus it.
+grep -q "closed pane's focus goes to the pane on show" "$APP2_LOG"
+hl_check "P21 the close sent its focus to the pane on show, not the strip (the app says so)" $? "$(grep -m1 'focus goes' "$APP2_LOG")"
 
 ! grep -E "Gtk-CRITICAL|Allocation (width|height) too small" "$APP_LOG" "$APP2_LOG" > /dev/null
 hl_check "P15 neither run logged a GTK critical or allocation warning" $? "$(grep -h -m3 -E 'Gtk-CRITICAL|too small' "$APP_LOG" "$APP2_LOG")"
