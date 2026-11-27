@@ -1,0 +1,16 @@
+{
+  "version": "1.56.42",
+  "sections": [
+    { "title": "Fixes",
+      "items": [
+        { "text": "A pane the window presenter is not composing no longer stalls 40ms per frame and drops it." },
+        { "text": "A pane without its own layer now shows background along its growing edge during a divider drag." },
+        { "text": "A relative XDG_CONFIG_HOME no longer crashes the app at launch." }
+      ] },
+    { "title": "Improvements",
+      "items": [
+        { "text": "The focus glow fade is filmed on screen, and a pane focused from the CLI in a background window now takes the glow." },
+        { "text": "A busy light's ring is drawn over the focus glow on the compositor, as the window draws it." }
+      ] }
+  ]
+}
