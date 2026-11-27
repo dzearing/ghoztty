@@ -190,7 +190,14 @@ barshot() {
     read -r x y w h <<< "$(rect_of "$s" barrect)"
     [ -n "$h" ] || { echo off; return; }
     f="$HL_RUNTIME/toc-bar-$1.png"
-    hl_screenshot "$doc_pane" "$f" --window > "$HL_RUNTIME/toc-bar-$1.reply" 2>&1 || { echo "off"; return; }
+    # A capture taken just after the page re-laid out (the held edge moved
+    # the gutter) can find no frame yet: try again a beat later.
+    local i ok=1
+    for i in 1 2 3 4 5; do
+        hl_screenshot "$doc_pane" "$f" --window > "$HL_RUNTIME/toc-bar-$1.reply" 2>&1 && { ok=0; break; }
+        sleep 0.3
+    done
+    [ $ok = 0 ] || { echo "off"; return; }
     hl_png_pixel "$f" $((x + w / 2)) $((y + h / 4)) $((x + w / 2)) $((y + h / 2)) $((x + w / 2)) $((y + 3 * h / 4)) | tr '\n' ';'
 }
 # accent <r g b>: libadwaita's default accent (#3584e4) within 45 a channel.
