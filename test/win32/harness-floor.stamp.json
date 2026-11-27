@@ -1,10 +1,10 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-11-27T02:37:12-08:00",
-    "commit":  "16d143b2d9",
+    "generated":  "2026-11-27T03:41:22-08:00",
+    "commit":  "bd47188ae9",
     "uncommitted":  [
-                        "test/win32/focus-glow-comp.ps1"
+
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "cfa23792d110d499fa4086697daa516d218d0d110e594a7452167a81220ee15e",
@@ -682,7 +682,7 @@
                   "test/win32/window-name-env.ps1":  "378ec47be1d71dc47404f575789b838b123ba8cd48e0566889d031cf93a77612",
                   "test/win32/window-name-restore.ps1":  "127404766c05165a9f9a57cf1bbaa9cf876eff77d8547ef70fbff538cd2cd0f0",
                   "test/win32/window-placement-isolation.ps1":  "9cb338dbb4798ef759e79de7486f207f9f048b5d80d6a2d2bf857a0672948daa",
-                  "test/win32/window-presenter.ps1":  "5cd3cb6d7813cb05c9748387abbaf915060bfe81ea2758c33d844b00ea4f2493",
+                  "test/win32/window-presenter.ps1":  "b06942b30d4485bf9012e5530b2ef5c55c34af792beca40e3c16f56f9d44b3c5",
                   "test/win32/window-size-memory.ps1":  "de44d45b030df89128ff89acd7bf09556272820bb433cf54a1ce9834ca4b25a8",
                   "test/win32/window-title.ps1":  "e648149d63cc562e8047298986f4e9008d2db024db71fb5139d79ed505890b32",
                   "test/win32/wmi-bound-audit.ps1":  "054555b6b278d56f99f41989e1b8aa7bac1b95b3eb460d0d59c6c03b8ab6220d",
