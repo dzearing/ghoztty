@@ -230,7 +230,17 @@ if ($Release) {
     $running = @(Get-WslDistros -Running)
     if (-not ($running -contains $Distro)) {
         Remove-WslLease $root
-        if ($running.Count -eq 0) { Write-Host "WSL-RUN RELEASED nothing to stop: the VM is already down; lease cleared" }
+        if ($running.Count -eq 0) {
+            # No distro runs, but the utility VM (vmmemWSL) outlives an idle
+            # distro: WSL stops a distro with no processes after a few seconds
+            # and, under the user's vmIdleTimeout=-1, never stops the VM. So
+            # "no distro running" is not "the VM is down" - the 2026-11-26 real
+            # run (T3722) left vmmemWSL holding 1.8 GB after this branch said
+            # "already down". With nothing running, a shutdown can kill no
+            # session, and on a VM that really is down it is a no-op.
+            Invoke-WslChange @('--shutdown')
+            Write-Host "WSL-RUN RELEASED $Distro had already stopped by itself; VM shut down; lease cleared"
+        }
         else { Write-Host "WSL-RUN RELEASED nothing to stop: $Distro is not running (VM kept for: $($running -join ', ')); lease cleared" }
         exit 0
     }

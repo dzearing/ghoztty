@@ -192,7 +192,11 @@ Check 'L12 another distro running: terminate only, the VM is kept for it' (($r.T
 
 Set-TestLease 'b1'
 $r = Invoke-Wrapper @('-Release', '-FakeRunning', 'none', '-FakeBootId', 'b1', '-FakeAttached', '0') $le
-Check 'L13 the VM already down: nothing to stop, lease cleared' (($r.Code -eq 0) -and ($r.Text -match 'nothing to stop: the VM is already down') -and ($r.Text -notmatch 'would run') -and -not (Test-Path $leaseFile)) $r.Text
+Check 'L13 our distro already idled out: the VM it leaves behind is still shut down, lease cleared (T3722)' (($r.Code -eq 0) -and ($r.Text -match 'had already stopped by itself; VM shut down') -and ($r.Text -match 'would run: wsl\.exe --shutdown') -and ($r.Text -notmatch '--terminate') -and -not (Test-Path $leaseFile)) $r.Text
+
+Set-TestLease 'b1'
+$r = Invoke-Wrapper @('-Release', '-FakeRunning', 'docker-desktop', '-FakeBootId', 'b1', '-FakeAttached', '0') $le
+Check 'L16 our distro idled out but another distro runs: nothing stopped, the VM is kept for it' (($r.Code -eq 0) -and ($r.Text -match 'VM kept for: docker-desktop') -and ($r.Text -notmatch 'would run') -and -not (Test-Path $leaseFile)) $r.Text
 
 [System.IO.File]::WriteAllText($leaseFile, '{not json')
 $r = Invoke-Wrapper @('-LeaseStatus') $le
