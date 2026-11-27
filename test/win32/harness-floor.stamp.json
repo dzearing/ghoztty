@@ -1,17 +1,18 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-11-26T20:07:00-08:00",
-    "commit":  "765d4bd501",
+    "generated":  "2026-11-26T20:36:40-08:00",
+    "commit":  "f29f5e3e21",
     "uncommitted":  [
-
+                        "test/win32/acceptance-parallel.ps1",
+                        "test/win32/guard-due.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "cfa23792d110d499fa4086697daa516d218d0d110e594a7452167a81220ee15e",
                   "scripts/lib/HarnessFloor.ps1":  "01bb2070f33c670359a93275a510f38d74feda84c55069fe5433d91aaec71cd5",
                   "scripts/vt-escape-scan.ps1":  "a23758e33821d194e040b24ac5e9811b705f53c5fc0313633aa1478f11567ced",
                   "test/win32/about-links.ps1":  "cb6ba712f258265f9a5d03dc219567a0025a1f081a2b7d2029586140247906eb",
-                  "test/win32/acceptance-parallel.ps1":  "168b64fe36c79ceb90cb24c2edbd2a9dd7a0977cd174423927f31fc9f34306cd",
+                  "test/win32/acceptance-parallel.ps1":  "1411d4b664aa6543f14e9e0cb66700c60fa7638b9ebf984c136ac6f92237b5b2",
                   "test/win32/activity-help-tooltips.ps1":  "42d9242fc8112d637b503eaa181a24a02d767e33fec7fe0fba1d9fe6d765df1c",
                   "test/win32/activity-monitor.ps1":  "af2f81e39cbce6a5978e0e5550c5599198982097ee743c1c9c7ebcd0c1f951ab",
                   "test/win32/activity-monitor-dialed.ps1":  "e8d248a8d5507c68b3a67fd0f15692a98868d2542cbc6f0cdb714c9ee98ade99",
@@ -206,7 +207,7 @@
                   "test/win32/go-loop-resume.ps1":  "6295cd2d72a24a6150d414e1c831c6a9581868d66ae6e17fa821a27d08696b78",
                   "test/win32/go-loop-uptime.ps1":  "7c2ceea601e716ffba45f0054228e1925a0932a14a100dd7f0a34f4765e12a20",
                   "test/win32/goto-window.ps1":  "46d315222e373a99e41e10787bf31cbd847e3cd8c383da93e902008f549627a1",
-                  "test/win32/guard-due.ps1":  "f32bba80075ab29f3f54a393efa8bce66ebff065c30d52d03cbc4c40338d7d1e",
+                  "test/win32/guard-due.ps1":  "277db6843d429f54d65f2f8fa1b5774078ab287141af0f8142c43a5a6477d2ef",
                   "test/win32/gui-launch-command.ps1":  "ae1b5135ab76c9262ffd63808f6448588ac33f6b897fbf3b47c23725631c3044",
                   "test/win32/gui-postmortem.ps1":  "b9cce844222cd55e667a85aedba38109eeacdc8576524998be403b558b782ba4",
                   "test/win32/hard-delete-sites.ps1":  "f0e6c5b18f1e786cab6acf996e3bcb9d8b1da46d99c9bfbc7f5664a12dacd71c",

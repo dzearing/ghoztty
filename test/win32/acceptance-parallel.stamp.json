@@ -1,27 +1,33 @@
 {
     "guard":  "acceptance-parallel",
     "script":  "test/win32/acceptance-parallel.ps1",
-    "generated":  "2026-11-26T14:49:56-08:00",
-    "commit":  "30c317a1a1",
+    "generated":  "2026-11-26T19:44:43-08:00",
+    "commit":  "f29f5e3e21",
     "uncommitted":  [
-                        "scripts/acceptance-parallel.ps1"
+                        "scripts/acceptance-parallel.ps1",
+                        "scripts/lib/InputDesktopExceptions.ps1",
+                        "test/win32/acceptance-parallel.ps1"
                     ],
     "files":  {
-                  "scripts/acceptance-parallel.ps1":  "5a624a3656c1504da3cb60d4c20797c568f1d9e8bc9c11dc7c1b12beda95f255",
+                  "scripts/acceptance-parallel.ps1":  "7cd02b3ad09cfe17adc20d49eebb85ce02ad135c8cbe368ec0d32a5f60a016dc",
                   "scripts/lib/AcceptanceFresh.ps1":  "6cca87511a61fdad80d2a407552895a85edd2134a0e0426cd6fa0f37ad055f8b",
                   "scripts/lib/AcceptanceParallel.ps1":  "1541915aede06c44569971faada90f316c3a2cb3d89abfe20200451012372bd7",
+                  "scripts/lib/InputDesktopExceptions.ps1":  "212affd5e01acbcc2e81fd1b0ea9c3d97e6d8cdb81c0c8d927a0615c7c205a03",
                   "scripts/lib/RunVerdict.ps1":  "ed6bb40ba6413b29c93c3dfffddd61dbe0fd36068ae92429442ae07dd4a7cb4e",
-                  "test/win32/acceptance-parallel.ps1":  "168b64fe36c79ceb90cb24c2edbd2a9dd7a0977cd174423927f31fc9f34306cd",
+                  "test/win32/acceptance-parallel.ps1":  "1411d4b664aa6543f14e9e0cb66700c60fa7638b9ebf984c136ac6f92237b5b2",
                   "test/win32/lib/BuildFresh.ps1":  "8ef3d35b374882e3e7538823ec18773a0a84ddf63de421bf7d291a7f8a08f23a",
-                  "test/win32/lib/CleanSlate.ps1":  "f7bfe9a4e3d0fb4f8e1c66b980a38230f18357cb0672a602b5cfd10de53b0aa4"
+                  "test/win32/lib/CleanSlate.ps1":  "f7bfe9a4e3d0fb4f8e1c66b980a38230f18357cb0672a602b5cfd10de53b0aa4",
+                  "test/win32/lib/ForegroundAudit.ps1":  "b47d5a5915dcac0a495c1ac13f441cd017f11c5b7d98efcd51c2e1bba72f5876"
               },
     "code":  {
-                 "scripts/acceptance-parallel.ps1":  "code1:1a32eb378fd11e0615af491be04f0758408653c82e4f3a630035e075a05e58a7",
+                 "scripts/acceptance-parallel.ps1":  "code1:accabcd0dd148e6fc447d64f8ee018a01824494305b1fdaf8bb97694924bafb8",
                  "scripts/lib/AcceptanceFresh.ps1":  "code1:54d03f0c3549318f49b5f57457372dfa025f61d3e66da08e0a7f193497a57ee5",
                  "scripts/lib/AcceptanceParallel.ps1":  "code1:4248104c431e5b6f3e328dbbd841c3773410bf462d94448b23b72ce00fbccaec",
+                 "scripts/lib/InputDesktopExceptions.ps1":  "code1:5ca32e995c6ab9783fa3a1f1ed5906c60942a3dc6d05c971642fb2fb15fe7163",
                  "scripts/lib/RunVerdict.ps1":  "code1:a9bf680631c6f457555c6cd48ba497cc2e021110e8054a13c5f5860db0f40e92",
-                 "test/win32/acceptance-parallel.ps1":  "code1:3339ed7fa1bc3b2dee1a5deca4188eb9c4fedff5081d737021dd95a0cd33fc6e",
+                 "test/win32/acceptance-parallel.ps1":  "code1:be40bd82d1eae6a73839fada8d9c372d266e5275045145285c1551b0c62852d6",
                  "test/win32/lib/BuildFresh.ps1":  "code1:5bff1e27e4835bcf0b2a4a95d4d9c3e7d253770831ae5b60240db35a7d41e35e",
-                 "test/win32/lib/CleanSlate.ps1":  "code1:3da9fc1734e02b8f8a245c44a13cd0d99433a9583feb3b396d12e3e3859af61f"
+                 "test/win32/lib/CleanSlate.ps1":  "code1:3da9fc1734e02b8f8a245c44a13cd0d99433a9583feb3b396d12e3e3859af61f",
+                 "test/win32/lib/ForegroundAudit.ps1":  "code1:315568cedb3e96d5f620e500671b1705b6c0b21f6710b32bb4e66f59c13a179b"
              }
 }

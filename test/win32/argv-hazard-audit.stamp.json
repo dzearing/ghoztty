@@ -1,13 +1,15 @@
 {
     "guard":  "argv-hazard",
     "script":  "test/win32/argv-hazard-audit.ps1",
-    "generated":  "2026-11-26T19:41:12-08:00",
-    "commit":  "b150f81d52",
+    "generated":  "2026-11-26T20:14:59-08:00",
+    "commit":  "f29f5e3e21",
     "uncommitted":  [
-                        "scripts/comp-desk-onscreen.ps1"
+                        "scripts/acceptance-parallel.ps1",
+                        "scripts/guard-due.ps1",
+                        "scripts/lib/InputDesktopExceptions.ps1"
                     ],
     "files":  {
-                  "scripts/acceptance-parallel.ps1":  "5a624a3656c1504da3cb60d4c20797c568f1d9e8bc9c11dc7c1b12beda95f255",
+                  "scripts/acceptance-parallel.ps1":  "7cd02b3ad09cfe17adc20d49eebb85ce02ad135c8cbe368ec0d32a5f60a016dc",
                   "scripts/agent-stamp-inputs.ps1":  "c124afe82a09be3273f4c9c09e5461fc91b2ea23d03fbe1f9575b5993e1243a5",
                   "scripts/arp-version-check.ps1":  "5b54ae7cb88d3517dc9c5d250e95c44d7a02a34fdc31ac57656d09b17d088615",
                   "scripts/bell-fade-onscreen.ps1":  "13b481236a845edaab2ae60a6d7ebcf08082c764cc3db6a687c6c60182075f3f",
@@ -18,7 +20,7 @@
                   "scripts/commit-pressure-probe.ps1":  "06ffbbf0dec3a89096ccd6820eb2503a4a0a1842c88e7cd82378a5a3a4e8a657",
                   "scripts/comp-blade-onscreen.ps1":  "2ed76959c0e192802717423664a9d0e0dddd64ab010e69b6fe4d8525ab970edb",
                   "scripts/comp-chrome-onscreen.ps1":  "17710196373f1cc76a97d4a3a6278cdef6006f71bdffff8e7c99e668ffddc0ec",
-                  "scripts/comp-desk-onscreen.ps1":  "9304899b33d1269e769936708a98e5c211d6fa114c1eb853c3fe608b1f948cf2",
+                  "scripts/comp-desk-onscreen.ps1":  "aaab26f3dd26297f681e4736416e43a73636231adf51a7f048f772762d749c38",
                   "scripts/comp-flat-onscreen.ps1":  "f4e677d04745196654ca641c7ffe5053b84320318a24f6c4621371136ca4bebc",
                   "scripts/comp-gl-baseline.ps1":  "b7f792f81e8cd6e6ad7b62ac7329665ec70edbf3a8bde0b37ff3157ec48e05ae",
                   "scripts/comp-glide-hold-onscreen.ps1":  "ecd7556d1b986fd76f777502200f8851f165af288e0ef3e8b911fdc9bbd8e635",
@@ -53,7 +55,7 @@
                   "scripts/go-loop-lock.ps1":  "eda6fc5f2bc851e11a9718ddbdd529d9fb9a5ce06637703e93800f37ccc0a2bb",
                   "scripts/go-loop-pane-probe.ps1":  "e491be3477c3236c4e10af70db2f40e9d632c45f83bf860f4b09fe6eeda5e2b7",
                   "scripts/go-loop-watchdog.ps1":  "37f19f9ce08a701645b7267fea8411125b9112d83ef5ff0cbddb8e380f058d67",
-                  "scripts/guard-due.ps1":  "5f2674cdae6d4d7a0db9d13d1bd468f667e7a3da0e87bc1e747d1e4205df3ad7",
+                  "scripts/guard-due.ps1":  "ddeecc7a215321aaa9c93e53a88354d94fe4ad1b013b9c5d4023f67179e79b7d",
                   "scripts/harness-floor.ps1":  "cfa23792d110d499fa4086697daa516d218d0d110e594a7452167a81220ee15e",
                   "scripts/hero-glide-onscreen.ps1":  "46d211f7ec7843d13506f4e3bd13933630339adb8aff13b5c97d69ae3fd248a7",
                   "scripts/hidden-windows-cpu.ps1":  "61551ac8760570d16a46ab2ef235c9792a2e29fb9e9d116ebbc23a5ce9051876",
@@ -80,6 +82,7 @@
                   "scripts/lib/FloorSource.ps1":  "eeb267775ca4dee7dc562cfb195c008937fee9ab0de4ee469083da3f45bba14e",
                   "scripts/lib/HardDelete.ps1":  "78ca1c0b521f9ae991e6b8f5304eb2a4e30a7a8ef1e3ba93839de8b740ea88b2",
                   "scripts/lib/HarnessFloor.ps1":  "01bb2070f33c670359a93275a510f38d74feda84c55069fe5433d91aaec71cd5",
+                  "scripts/lib/InputDesktopExceptions.ps1":  "212affd5e01acbcc2e81fd1b0ea9c3d97e6d8cdb81c0c8d927a0615c7c205a03",
                   "scripts/lib/LaneDesktop.ps1":  "eba72a217797149f3d24226023a839ec9beb8ebccfbc25a94f10bfd248594353",
                   "scripts/lib/LaneLeak.ps1":  "d89adfe019c541d2c285186e5f818760596be9d4f0385a4a6c12d81dbad1d987",
                   "scripts/lib/LaneSolo.ps1":  "3774871845d542b517f11f423a4ab8a4ce1fa4df14ed29c6b9b670381461bbf4",

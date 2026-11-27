@@ -23,6 +23,12 @@
   beside it, and exits 0 without checking the build or starting anything
   (T1086). A red row's summary line names its log file.
 
+  A script on the @input-desktop-exception list (test\win32\lib\TestDesktop.ps1)
+  is never started, by `due` or `run` (T3839): go.md forbids the loop to run
+  one. It prints as NOT RUN (input-desktop-exception) with its declared reason
+  and does not make the run red; a person runs it directly while the user is
+  away. Rules: scripts\lib\InputDesktopExceptions.ps1.
+
   -Width 1 runs the same set strictly one at a time, from the real repo, with
   your environment - the serial baseline, for comparing verdicts.
 
@@ -85,7 +91,11 @@ param(
     [switch]$NoStateCheck,
     [int]$StateSettleSeconds = 15,
     [switch]$Json,
-    [string]$Repo
+    [string]$Repo,
+    # T3839: the @input-desktop-exception declarations to honour. Default: the
+    # -Repo checkout's test\win32\lib\TestDesktop.ps1. The harness passes a
+    # fixture list (its fake repo's lib is a junction to the real one).
+    [string]$InputDesktopList
 )
 
 $ErrorActionPreference = 'Stop'
@@ -97,6 +107,7 @@ $Repo = (Resolve-Path $Repo).Path
 . (Join-Path $PSScriptRoot 'lib\AcceptanceFresh.ps1')
 . (Join-Path $PSScriptRoot '..\test\win32\lib\PersistentState.ps1')
 . (Join-Path $PSScriptRoot 'lib\MachineLock.ps1')
+. (Join-Path $PSScriptRoot 'lib\InputDesktopExceptions.ps1')
 
 function Resolve-ApScript {
     param([string]$Name)
@@ -141,6 +152,30 @@ if ($Action -eq 'run') {
     try { $jobs = @(Get-AcceptanceDueJobs -GuardJson ($raw -join "`n")) }
     catch { throw "guard-due check -Json did not answer JSON: $($raw | Select-Object -First 3)" }
     if ($jobs.Count -eq 0) { "ACCEPTANCE DUE: nothing is due."; exit 0 }
+}
+
+# T3839: a script on the TestDesktop.ps1 @input-desktop-exception list is never
+# started from here - go.md forbids the loop to run one, and on 2026-11-26 the
+# per-turn sweep ran translucent-window.ps1 over the user's screen. It is
+# reported NOT RUN with its declared reason, never scored red; a person runs it
+# by hand, directly, while the user is away. The list is read from the checkout
+# under test (-Repo), so a fixture repo declares its own.
+if (-not $InputDesktopList) { $InputDesktopList = Join-Path $Repo 'test\win32\lib\TestDesktop.ps1' }
+$inputDesk = @(Get-InputDesktopExceptions -Path $InputDesktopList)
+$deskNotRun = @()
+$kept = @()
+foreach ($j in $jobs) {
+    $e = Get-InputDesktopExceptionFor -Script $j.Script -RunArgs $j.Args -Exceptions $inputDesk
+    if ($e) { $deskNotRun += [pscustomobject]@{ Script = $j.Script; Args = $j.Args; Reason = $e.Reason } } else { $kept += $j }
+}
+$jobs = @($kept)
+foreach ($d in $deskNotRun) {
+    "  NOT RUN (input-desktop-exception) {0}{1}: {2} - the loop never starts it; run it by hand while the user is away" -f `
+        (Split-Path -Leaf $d.Script), $(if ($d.Args) { " $($d.Args)" } else { '' }), $d.Reason
+}
+if ($jobs.Count -eq 0) {
+    "ACCEPTANCE {0}: nothing runnable - {1} script(s) NOT RUN (input-desktop-exception)" -f $Action.ToUpper(), $deskNotRun.Count
+    exit 0
 }
 
 # T1086: the queue, in run order, and nothing else - no build check, no launch.
@@ -215,6 +250,7 @@ $summary = [pscustomobject]@{
     commit = $(try { & { $ErrorActionPreference = 'Continue'; git -C $Repo rev-parse --short HEAD 2>$null } } catch { $null })
     wallSeconds = [int]$clock.Elapsed.TotalSeconds; scriptSeconds = [int]$busy
     build = $fresh.State; notRun = $notRun
+    inputDesktopNotRun = @($deskNotRun | ForEach-Object { Split-Path -Leaf $_.Script })
     final = $final; runs = @($results | Select-Object Seq, Name, Class, Slot, Phase, Kind, Line, ExitCode,
             @{ n = 'Started'; e = { $_.Started.ToString('o') } }, @{ n = 'Ended'; e = { $_.Ended.ToString('o') } }, Log, ErrLog)
     scheduleViolations = $overlap
@@ -245,6 +281,7 @@ foreach ($c in $stateChanges) { "PERSISTENT STATE CHANGED: $(Format-PersistentSt
 $red = @($final | Where-Object { $_.Kind -notin @('pass', 'skip') })
 $counts = ($final | Group-Object Kind | Sort-Object Name | ForEach-Object { "$($_.Name)=$($_.Count)" }) -join ' '
 if ($notRun.Count -gt 0) { $counts += " not-run=$($notRun.Count)" }
+if ($deskNotRun.Count -gt 0) { $counts += " input-desktop-not-run=$($deskNotRun.Count)" }
 if ($stateChanges.Count -gt 0) { $counts += " state-changes=$($stateChanges.Count)" }
 "ACCEPTANCE {0}: {1} in {2:N0}s wall ({3:N0}s of script time, width {4}) - {5}" -f $(if ($red.Count -eq 0 -and $overlap.Count -eq 0 -and $notRun.Count -eq 0 -and $stateChanges.Count -eq 0) { 'GREEN' } else { 'RED' }),
     $final.Count, $clock.Elapsed.TotalSeconds, $busy, $Width, $counts

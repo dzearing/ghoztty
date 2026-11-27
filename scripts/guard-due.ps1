@@ -5552,6 +5552,8 @@ $GuardTable = @(
         Covers = @(
             'scripts\acceptance-parallel.ps1',
             'scripts\lib\AcceptanceParallel.ps1',
+            'scripts\lib\InputDesktopExceptions.ps1',
+            'test\win32\lib\ForegroundAudit.ps1',
             'scripts\lib\AcceptanceFresh.ps1',
             'test\win32\lib\BuildFresh.ps1',
             'scripts\lib\RunVerdict.ps1',
@@ -9229,6 +9231,7 @@ $GuardTable = @(
         Stamp  = 'test\win32\guard-due.stamp.json'
         Covers = @(
             'scripts\guard-due.ps1',
+            'scripts\lib\InputDesktopExceptions.ps1',
             'test\win32\guard-due.ps1'
         )
     }
@@ -10468,6 +10471,31 @@ function Write-Stamp($row, $Provenance) {
     [System.IO.File]::WriteAllText($path, ($json -replace "`r`n", "`n") + "`n",
         (New-Object System.Text.UTF8Encoding($false)))
     return [pscustomobject]@{ Written = $true; Files = @($live.Keys) }
+}
+
+# T3839: a row whose harness is on the @input-desktop-exception list (with the
+# row's own run arguments, so divider-flicker's synthetic default stays
+# blocking and only a -Live row would match) can be cleared only by a person
+# running it while the user is away - the loop is forbidden to, and
+# acceptance-parallel refuses to start it. Blocking, it would sit owed forever
+# and wedge `validate` after every edit to what it covers (translucent-window
+# did, and the sweep ran it over the user's screen). So it is ADVISORY by
+# construction: reported as `GUARD DUE (advisory)` until that run, never a gate.
+# This script is otherwise self-contained, and test\win32\guard-due.ps1 runs a
+# spliced copy of it from a bare fixture tree; there the lib is absent and no
+# row is promoted (no real harness lives there to promote).
+$script:InputDesktopExceptions = @()
+$idxLib = Join-Path $PSScriptRoot 'lib\InputDesktopExceptions.ps1'
+if (Test-Path -LiteralPath $idxLib) {
+    . $idxLib
+    $script:InputDesktopExceptions = @(Get-InputDesktopExceptions)
+}
+foreach ($row in $GuardTable) {
+    if ($row.Advisory) { continue }
+    if ($script:InputDesktopExceptions.Count -eq 0) { break }
+    if (Get-InputDesktopExceptionFor -Script $row.Script -RunArgs ([string]$row.RunArgs) -Exceptions $script:InputDesktopExceptions) {
+        $row | Add-Member -NotePropertyName Advisory -NotePropertyValue $true -Force
+    }
 }
 
 $rows = @($GuardTable)

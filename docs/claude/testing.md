@@ -1065,6 +1065,14 @@ leak counts, builds, nested harnesses — nothing runs beside it). Rules for you
   the red is still confirmed alone, and `NOT RUN (...)` names the rest (exit 1 -
   a run that skipped scripts is never GREEN). `due` orders the most specific
   harness (fewest covered files) first. go.md step 3 has the turn's order.
+- **An `@input-desktop-exception` script is never started** (T3839), by `due`
+  or `run`: the list in `test\win32\lib\TestDesktop.ps1` is read through
+  `scripts\lib\InputDesktopExceptions.ps1`, and such a job prints
+  `NOT RUN (input-desktop-exception) <script>: <reason>` without making the run
+  red. guard-due reads its row as advisory for the same reason, so it is owed
+  until a person runs the script directly while the user is away. An entry
+  whose reason opens `(T<id>) -<Flag> only:` refuses only the run carrying that
+  switch (divider-flicker's `-Live`).
 - `-Width 1` is the serial baseline (every script from the real repo, your
   environment), for comparing verdicts. `SCHEDULE VIOLATION` / exit 3 is a
   runner defect, never a script's. Acceptance: `test\win32\acceptance-parallel.ps1`

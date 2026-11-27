@@ -76,6 +76,12 @@
        planted tree killer fails the way taskkill did is still scored, names
        what could not be killed, has what is left of its tree (the script's
        powershell under the job's cmd.exe root) stopped, and the next row runs.
+    K  T3839. A script on the @input-desktop-exception list is never started:
+       a planted declared fixture is named NOT RUN with its reason and the run
+       stays green; a run of only such scripts starts nothing; undeclared, the
+       same script runs and is red (negative control); a "-Live only" entry
+       refuses only the -Live run; and on the real list translucent-window.ps1
+       is refused while guard-due reads its row as advisory.
 
   The "app" here is a renamed copy of ping.exe started with no window, and the
   scripts are fixtures written into a throwaway repo under %TEMP%, so the run
@@ -716,6 +722,62 @@ onexistent\ghoztty-agent.exe') } finally { $rk.Close() }
     $r = Invoke-Runner "run -Scripts probe.ps1 -Width 1 -NoRebuild"
     Check 'I4 positive control: a script that leaves nothing behind is GREEN with no state line' `
         ($r.Code -eq 0 -and $r.Text -match 'ACCEPTANCE GREEN' -and $r.Text -notmatch 'PERSISTENT STATE') ("exit=$($r.Code) :: $($r.Text)")
+
+    # ---- K: an @input-desktop-exception script is never started (T3839) ----------
+    # The fake repo's test\win32\lib is a JUNCTION to the real one, so the
+    # fixture declaration list lives in $fixLog and is passed explicitly; nothing
+    # here may write under $fake\test\win32\lib. idesk.ps1 leaves a marker if it runs.
+    $kDecl = Join-Path $fixLog 'TestDesktop-fixture.ps1'
+    $kMark = Join-Path $fixLog 'idesk-ran.txt'
+    $kTwMark = Join-Path $fixLog 'tw-ran.txt'
+    Write-Fixture (Join-Path $fake 'test\win32\idesk.ps1') "Set-Content -LiteralPath (Join-Path `$env:AP_FIXTURE_LOG 'idesk-ran.txt') -Value ran`n'1 FAILURE(S)'`nexit 1`n"
+    Write-Fixture (Join-Path $fake 'test\win32\translucent-window.ps1') "Set-Content -LiteralPath (Join-Path `$env:AP_FIXTURE_LOG 'tw-ran.txt') -Value ran`n'1 FAILURE(S)'`nexit 1`n"
+    Write-Fixture $kDecl "# @input-desktop-exception: idesk.ps1 -- (T3839) fixture: photographs the input desktop.`n"
+    Remove-Item -LiteralPath $marker, $kMark, $kTwMark -Force -ErrorAction SilentlyContinue
+    $r = Invoke-Runner "run -Scripts 'idesk.ps1,probe.ps1' -Width 1 -NoRebuild -NoStateCheck -InputDesktopList '$kDecl'"
+    Check 'K1 THE PLANTED INPUT-DESKTOP SCRIPT is never started, is named NOT RUN with its reason, and the run stays GREEN' `
+        ($r.Code -eq 0 -and $r.Text -match 'NOT RUN \(input-desktop-exception\) idesk\.ps1: \(T3839\) fixture' -and
+        $r.Text -match 'ACCEPTANCE GREEN' -and $r.Text -match 'input-desktop-not-run=1' -and
+        -not (Test-Path $kMark) -and (Test-Path $marker)) ("exit=$($r.Code) ideskRan=$(Test-Path $kMark) probeRan=$(Test-Path $marker) :: $($r.Text)")
+    $r = Invoke-Runner "run -Scripts idesk.ps1 -Width 1 -NoRebuild -NoStateCheck -InputDesktopList '$kDecl'"
+    Check 'K2 a run holding ONLY input-desktop scripts starts nothing and exits 0' `
+        ($r.Code -eq 0 -and $r.Text -match 'nothing runnable - 1 script\(s\) NOT RUN' -and $r.Text -notmatch 'BUILD ' -and -not (Test-Path $kMark)) ("exit=$($r.Code) :: $($r.Text)")
+    # The DEFAULT list is the checkout's own TestDesktop.ps1 (here, the real one
+    # through the junction): a script named translucent-window.ps1 is refused.
+    $r = Invoke-Runner "run -Scripts translucent-window.ps1 -Width 1 -NoRebuild -NoStateCheck"
+    Check 'K2b with no -InputDesktopList the checkout''s own list applies: translucent-window.ps1 is never started' `
+        ($r.Code -eq 0 -and $r.Text -match 'NOT RUN \(input-desktop-exception\) translucent-window\.ps1: \(T1787\)' -and -not (Test-Path $kTwMark)) ("exit=$($r.Code) :: $($r.Text)")
+    # Negative control: drop the declaration and the same script runs (and is red).
+    Write-Fixture $kDecl "# nothing declared`n"
+    $r = Invoke-Runner "run -Scripts idesk.ps1 -Width 1 -NoRebuild -NoStateCheck -InputDesktopList '$kDecl'"
+    Check 'K3 negative control: undeclared, the same script IS started and scores red' `
+        ($r.Code -eq 1 -and (Test-Path $kMark) -and $r.Text -match 'ACCEPTANCE RED' -and $r.Text -notmatch 'input-desktop-exception') ("exit=$($r.Code) :: $($r.Text)")
+    Remove-Item -LiteralPath $kDecl, $kMark, $kTwMark -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath (Join-Path $fake 'test\win32\translucent-window.ps1'), (Join-Path $fake 'test\win32\idesk.ps1') -Force -ErrorAction SilentlyContinue
+    Check 'K7 the real TestDesktop.ps1 is untouched by this section' `
+        ((Test-Path -LiteralPath (Join-Path $RepoRoot 'test\win32\lib\TestDesktop.ps1')) -and
+        (Get-Content -Raw (Join-Path $RepoRoot 'test\win32\lib\TestDesktop.ps1')) -match '@input-desktop-exception: translucent-window\.ps1') ''
+
+    # A flag-gated entry (divider-flicker's -Live shape) refuses only the gated run.
+    . (Join-Path $RepoRoot 'scripts\lib\InputDesktopExceptions.ps1')
+    $kEx = @(Get-InputDesktopExceptions -Text @('# @input-desktop-exception: iflag.ps1 -- (T3839) -Live only: fixture.'))
+    $kPlain = Get-InputDesktopExceptionFor -Script 'test\win32\iflag.ps1' -RunArgs '' -Exceptions $kEx
+    $kLive = Get-InputDesktopExceptionFor -Script 'test\win32\iflag.ps1' -RunArgs '-Seed 3 -Live' -Exceptions $kEx
+    Check 'K4 a "-Live only" entry refuses the -Live run and lets the default run through' `
+        ($kEx.Count -eq 1 -and $kEx[0].Flag -eq '-Live' -and $null -eq $kPlain -and $null -ne $kLive) ("flag=$($kEx[0].Flag) plain=$([bool]$kPlain) live=$([bool]$kLive)")
+
+    # The real list and the real guard table: translucent-window.ps1 is refused,
+    # divider-flicker's default run is not, and guard-due reads such a row as
+    # ADVISORY so it never wedges validate.
+    $kReal = @(Get-InputDesktopExceptions)
+    $kTw = Get-InputDesktopExceptionFor -Script 'test\win32\translucent-window.ps1' -Exceptions $kReal
+    $kDf = Get-InputDesktopExceptionFor -Script 'test\win32\divider-flicker.ps1' -Exceptions $kReal
+    Check 'K5 the real TestDesktop.ps1 list refuses translucent-window.ps1 and not divider-flicker''s default run' `
+        ($null -ne $kTw -and $null -eq $kDf -and $kReal.Count -ge 5) ("listed=$($kReal.Count) tw=$([bool]$kTw) df=$([bool]$kDf)")
+    $kGd = & { $ErrorActionPreference = 'Continue'; & powershell -NoProfile -File (Join-Path $RepoRoot 'scripts\guard-due.ps1') check -Json -Guard translucent-window -Repo $RepoRoot 2>$null }
+    $kRow = @(($kGd -join "`n") | ConvertFrom-Json | ForEach-Object { $_ })
+    Check 'K6 guard-due reads the translucent-window row as ADVISORY (reported, never a validate gate)' `
+        ($kRow.Count -eq 1 -and $kRow[0].Advisory -eq $true) ("rows=$($kRow.Count) advisory=$($kRow[0].Advisory)")
 }
 catch { Write-Host "FAIL  the harness threw: $($_.Exception.Message) at $($_.InvocationInfo.ScriptLineNumber)"; $script:Failures++ }
 finally {

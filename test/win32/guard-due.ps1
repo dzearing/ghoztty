@@ -1041,7 +1041,7 @@ $rows
     Check 'N1 the live table has a guard-due row run by this harness' `
         ($realTableText -match "(?s)Name\s*=\s*'guard-due'\s*\r?\n\s*Script\s*=\s*'test\\win32\\guard-due\.ps1'") $realTableText
     Check 'N2 and it covers the gate itself and this harness' `
-        ($realTableText -match "(?s)Name\s*=\s*'guard-due'.*?Covers\s*=\s*@\(\s*'scripts\\guard-due\.ps1',\s*'test\\win32\\guard-due\.ps1'\s*\)") $realTableText
+        ($realTableText -match "(?s)Name\s*=\s*'guard-due'.*?Covers\s*=\s*@\(\s*'scripts\\guard-due\.ps1',(\s*'[^']+',)*\s*'test\\win32\\guard-due\.ps1'\s*\)") $realTableText
     $selfSrc = [System.IO.File]::ReadAllText($PSCommandPath)
     Check 'N3 this harness stamps its row only inside a failures-eq-0 branch' `
         ($selfSrc -match '(?s)if \(\$script:failures -eq 0\) \{\s*\r?\n\s*&[^\r\n]*\$Due `\s*\r?\n\s*update -Guard guard-due') ''
