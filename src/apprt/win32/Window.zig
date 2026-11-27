@@ -1929,13 +1929,11 @@ pub fn syncTranslucency(self: *Window) void {
     // Panes are being torn down under a closing window (T1356's guard).
     if (self.closing) return;
     const opacity = self.app.config.@"background-opacity";
-    if (opacity < 1.0) {
-        for (0..self.tab_count) |tab| {
-            var it = self.tab_trees[tab].iterator();
-            while (it.next()) |entry| {
-                if (entry.view.viewer()) |v| v.composeOpaque();
-            }
-        }
+    // T2576: also on a window with no redirection surface, which a parked
+    // workspace's panes arrive in at `adoptWindow` - created while parked,
+    // their viewer chrome was never layered and would compose black.
+    if (self.gdiChildrenLayered()) {
+        self.eachPane(self, layerArrivingPane);
         if (self.rename_edit) |edit| composeOpaqueLayer(edit, "tab rename box");
     }
     const want = opacity_mode.wantsTranslucent(opacity, self.toggled_opaque);
@@ -1954,6 +1952,18 @@ pub fn syncTranslucency(self: *Window) void {
 /// for it to paint into (T2548) - there a plain GDI child composes black.
 fn gdiChildrenLayered(self: *const Window) bool {
     return self.noredir or self.app.config.@"background-opacity" < 1.0;
+}
+
+/// Lift a pane's GDI chrome (the viewer host and everything it parents: nav,
+/// find, feedback and contents bars) onto an opaque layer when it is in, or
+/// arrives in, a window that needs one (T2576). A pane is born layered only
+/// if the window it was born in needed it; a pane dragged in from a
+/// redirected window, or a workspace's panes made while it was parked, come
+/// without. A terminal pane paints nothing with GDI on the paths that allow
+/// no redirection surface, so only a viewer is touched.
+fn layerArrivingPane(self: *Window, view: *PaneView) void {
+    if (!self.gdiChildrenLayered()) return;
+    if (view.viewer()) |v| v.composeOpaque();
 }
 
 /// Compose a GDI-painted CHILD window fully opaque inside a per-pixel-alpha
@@ -7795,6 +7805,7 @@ fn adoptPane(view: *PaneView, dest: *Window) void {
     }
     view.reownPopups();
     view.setParentWindow(dest);
+    dest.layerArrivingPane(view);
     // The destination may be on a monitor with a different DPI, and a child
     // window is never sent `WM_DPICHANGED` - the same reason a window dragged
     // between monitors has it forwarded (T1579) rather than waiting to be told.
@@ -8040,6 +8051,7 @@ pub fn promoteToOwnWindow(self: *Window) !void {
     try self.createTopLevel(self.app, .{ .force_opaque = self.toggled_opaque });
     const hwnd = self.hwnd orelse return error.Win32Error;
     self.eachPane(hwnd, reparentPane);
+    self.eachPane(self, layerArrivingPane);
     self.eachPane({}, refreshPaneDpi);
     self.updateTabBarVisibility();
     _ = w32.ShowWindow(hwnd, if (self.start_maximized) w32.SW_MAXIMIZE else w32.SW_SHOW);

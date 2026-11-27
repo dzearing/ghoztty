@@ -1,10 +1,10 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-11-26T23:08:16-08:00",
-    "commit":  "b7027f38db",
+    "generated":  "2026-11-26T23:55:18-08:00",
+    "commit":  "2179ead097",
     "uncommitted":  [
-                        "test/win32/edge-drag-rate.ps1"
+                        "test/win32/comp-chrome.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "cfa23792d110d499fa4086697daa516d218d0d110e594a7452167a81220ee15e",
@@ -119,7 +119,7 @@
                   "test/win32/command-registry.ps1":  "f4cb7125410302bde2dcfeb1f14cbb662e3a5772d67686f8c0d9e33b0ce12278",
                   "test/win32/command-resolve-audit.ps1":  "01120dbe18e6961dbb2a463fdbba0632e52388a374252a20b266a88be81e5125",
                   "test/win32/comp-box-state.ps1":  "f007f61ca91b34758b85ba37fe02d3f1bbf4fc596362f0783a400cb3991a43b6",
-                  "test/win32/comp-chrome.ps1":  "16799e71e24b6e5c546e426a140b0f865f2866ce36523381336e569eb98bd5c4",
+                  "test/win32/comp-chrome.ps1":  "01963c90d220b2bcb754df20aad815ca6e858e38a48c36d4bf85a4b7b3540218",
                   "test/win32/comp-present.ps1":  "87c68a43a4e09fed6829a4f4277bf64e78e760b4f41842e40ec14912e3a16ba3",
                   "test/win32/config-errors.ps1":  "63f39d05ae2b8bf1a0f5b31bed618f7d5ac44f4cbc42532666a7831deb4cc19b",
                   "test/win32/confirm-dialogs.ps1":  "418be175865abaad2bacd882d7507f158d95ed2fba11689563ea3e5c53290950",
@@ -158,7 +158,7 @@
                   "test/win32/drag-perf.ps1":  "4509e2e7575e64baf1fa98c68129848e9a8232f22cc06a9fd520378d6fcc539d",
                   "test/win32/drag-stall.ps1":  "4e44e4d0d58e32aec2e41699007c34b9d4029c6a5f090cec060dfcd17b0708ee",
                   "test/win32/echo-marker-audit.ps1":  "d4ba42c116403ba68c75e1962a7943f32f9001d1654cd604d6afa8ea2ea04396",
-                  "test/win32/edge-drag-rate.ps1":  "347f2a2b401ac9596622fb3bff430db896a07457a83af4ab9a7ee024eddd7917",
+                  "test/win32/edge-drag-rate.ps1":  "2fca304221d50b9ef944602b898f1b74374622f0c940916889130dc0acd4a32c",
                   "test/win32/exec-user-env.ps1":  "2320afd696e761ea6c0c3850cd3df9b0a893aedb1da9e9863df4014d35ee2ea1",
                   "test/win32/exit-reason.ps1":  "0ca75a25399950b555b7ba59118f8dab9a0313d5a4189296e88d4910e66e98ff",
                   "test/win32/fail-transcript.ps1":  "96961e5658923dda19ea6d47e0c671b62c31229a983dfc25f4ff9a0051831fbe",

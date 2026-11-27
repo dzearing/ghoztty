@@ -27,9 +27,14 @@
 #      (WS_EX_NOREDIRECTIONBITMAP on the top-level), puts the backstop up, and
 #      keeps working - a split, a resize, a viewer pane (its GDI chrome is a
 #      layered child), no failure.
+#      E7 (T2576) audits it: every visible child window has a layer of its
+#      own (or sits under one), bar the two GPU-presented pane classes.
 #   F. The gate: NOREDIR without GHOZTTY_COMP_PRESENT (panes on OpenGL child
 #      windows, which draw into the surface it would remove) leaves the window
 #      redirected and says nothing about it.
+#   G. (T2576) Single-window mode: a viewer split into a PARKED workspace is
+#      made under the park host with no layer; putting that workspace on show
+#      hands it the no-redirection window, and the same audit must pass.
 #
 # NOT asserted here: the on-screen ORDER (fill above the GDI chrome, below the
 # panes). This harness runs on a background desktop, which DWM never composes
@@ -142,15 +147,15 @@ $readyLine = 'chrome composition host ready: target_hr=0x00000000 d2d_hr=0x00000
 $anyHost = 'chrome composition'
 $unavailLine = 'chrome composition host unavailable'
 
-function Start-Arm($name) {
+function Start-Arm($name, [string[]]$Extra = @()) {
     [void](Stop-RepoGhoztty -Exe $Exe -SettleMs 600)
     $dir = Join-Path $root $name
     New-Item -ItemType Directory -Force $dir | Out-Null
     $env:LOCALAPPDATA = $dir
     $err = Join-Path $dir 'stderr.txt'
-    $app = Start-OnTestDesktop -Exe $Exe -Arguments @(
+    $app = Start-OnTestDesktop -Exe $Exe -Arguments (@(
         '--config-default-files=false', '--session-persistence=false',
-        "--title=t2508-$name") -StdErr $err
+        "--title=t2508-$name") + $Extra) -StdErr $err
     $top = Wait-TestWindow -ProcessId $app.Pid -Class 'GhozttyWindow' -TimeoutMs 30000
     & $Exe +new-window "--target=chrome$name" | Out-Null
     $win = Wait-Win "chrome$name"
@@ -165,8 +170,55 @@ using System.Runtime.InteropServices;
 public static class CcStyle {
     [DllImport("user32.dll")] public static extern int GetWindowLong(IntPtr h, int i);
     public static bool NoRedir(IntPtr h) { return (GetWindowLong(h, -20) & 0x00200000) != 0; }
+
+    // T2576: every visible child window of a top-level with no redirection
+    // surface must have a surface of its own - be layered, or sit under a
+    // layered ancestor below the top-level - or be one of the two classes
+    // that present on the GPU and paint nothing with GDI. Anything else
+    // composes black. Returns the offenders ("class@hwnd") and counts what
+    // it checked.
+    public delegate bool EnumProc(IntPtr h, IntPtr l);
+    [DllImport("user32.dll")] public static extern bool EnumChildWindows(IntPtr p, EnumProc f, IntPtr l);
+    [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr h);
+    [DllImport("user32.dll")] public static extern IntPtr GetParent(IntPtr h);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    public static extern int GetClassName(IntPtr h, System.Text.StringBuilder s, int n);
+    public static string ClassOf(IntPtr h) { var sb = new System.Text.StringBuilder(256); GetClassName(h, sb, 256); return sb.ToString(); }
+    public static int Checked;
+    public static int Layered;
+    public static string[] Unlayered(IntPtr top) {
+        var bad = new System.Collections.Generic.List<string>();
+        Checked = 0; Layered = 0;
+        EnumChildWindows(top, (h, l) => {
+            if (!IsWindowVisible(h)) return true;
+            Checked++;
+            string cls = ClassOf(h);
+            if (cls == "GhozttyTerminal" || cls == "GhozttyPresenter") return true;
+            for (IntPtr w = h; w != IntPtr.Zero && w != top; w = GetParent(w)) {
+                if ((GetWindowLong(w, -20) & 0x00080000) != 0) { Layered++; return true; }
+            }
+            bad.Add(cls + "@0x" + h.ToInt64().ToString("x"));
+            return true;
+        }, IntPtr.Zero);
+        return bad.ToArray();
+    }
+    public static int CountClass(IntPtr top, string want) {
+        int n = 0;
+        EnumChildWindows(top, (h, l) => { if (IsWindowVisible(h) && ClassOf(h) == want) n++; return true; }, IntPtr.Zero);
+        return n;
+    }
 }
 '@
+
+# The T2576 audit over a no-redirection window, as one assertion.
+function Assert-ChildrenLayered($label, $top, $wantViewer) {
+    $bad = @([CcStyle]::Unlayered($top))
+    $viewers = [CcStyle]::CountClass($top, 'GhozttyViewer')
+    "  audit: $([CcStyle]::Checked) visible children, $([CcStyle]::Layered) on a layer, $viewers viewer host(s)"
+    if ($bad.Count -gt 0) { "  unlayered: $($bad -join ', ')" }
+    Assert "$label every visible GDI child has a layer of its own ($($bad.Count) without)" `
+        ($bad.Count -eq 0 -and [CcStyle]::Checked -gt 0 -and (-not $wantViewer -or $viewers -ge 1))
+}
 
 $noredirLine = 'window created with no redirection surface'
 $backstopLine = 'chrome backstop attached: rgb=0x[0-9a-f]{6}'
@@ -272,6 +324,11 @@ try {
     }
     if ($rd -notmatch 'comp-noredir-t2548-2') { "  +read said: $(($rd.Trim() -split "`n" | Select-Object -Last 4) -join ' | ')" }
     Assert "E6 the panes still answer +read" ($rd -match 'comp-noredir-t2548-2')
+    # E7 (T2576): the window that holds the split and the viewer - the
+    # sidebar and the viewer's bars are the GDI children it shows.
+    $eTop = if ($e.Win) { [IntPtr][int64]$e.Win.id } else { [IntPtr]::Zero }
+    if ($eTop -eq [IntPtr]::Zero -or -not [CcStyle]::NoRedir($eTop)) { $eTop = $e.Top }
+    Assert-ChildrenLayered 'E7' $eTop $true
 
     # ========================================================================
     "== F: the gate - without composition present the window stays redirected"
@@ -283,6 +340,39 @@ try {
     Assert "F2 no window dropped its redirection surface" `
         ((Count-Log $f.Err $noredirLine) -eq 0 -and (Count-Log $f.Err 'backstop') -eq 0 -and -not [CcStyle]::NoRedir($f.Top))
     Assert "F3 the pane draws" (Test-DrawsText $f.Target)
+
+    # ========================================================================
+    "== G: a workspace's viewer made while PARKED is layered when it goes on show (T2576)"
+    # ========================================================================
+    # Single-window mode: Start-Arm's `+new-window --target=chromeg` parks a
+    # workspace behind the one on show. A viewer split into it is made under
+    # the park host, where nothing asks for a layer; putting the workspace on
+    # show hands it the shared no-redirection window (adoptWindow), and its
+    # viewer chrome must be lifted onto a layer there or it composes black.
+    Set-Knobs '1' $null $null '1' '1'
+    $g = Start-Arm 'g' @('--macos-window-mode=single')
+    Assert "G0 the arm's window came up without a redirection surface" `
+        ($g.Top -ne [IntPtr]::Zero -and [CcStyle]::NoRedir($g.Top) -and $null -ne $g.Win)
+    $ws = Invoke-GhozttyIpc -Action 'workspaces' -Arguments @('--op=state')
+    $row = @($ws.data.workspaces) | Where-Object { [string]$_.name -eq 'chromeg' } | Select-Object -First 1
+    Assert "G1 the second workspace is parked" ($null -ne $row -and $row.parked)
+    & $Exe +split '--target=chromeg' '--direction=right' "--view=$PSCommandPath" '--name=chromegv' 2>$null | Out-Null
+    # The parked workspace has the viewer once it reports two panes.
+    $panes = 0
+    for ($t = 0; $t -lt 50 -and $panes -lt 2; $t++) {
+        $st = Invoke-GhozttyIpc -Action 'workspaces' -Arguments @('--op=state')
+        $row = @($st.data.workspaces) | Where-Object { [string]$_.name -eq 'chromeg' } | Select-Object -First 1
+        $panes = if ($row) { [int]$row.panes } else { 0 }
+        if ($panes -lt 2) { Start-Sleep -Milliseconds 200 }
+    }
+    Assert "G2 the viewer was made in the parked workspace, not on show ($panes panes)" `
+        ($panes -ge 2 -and [CcStyle]::CountClass($g.Top, 'GhozttyViewer') -eq 0)
+    $ws = Invoke-GhozttyIpc -Action 'workspaces' -Arguments @('--op=show', '--target=chromeg')
+    Assert "G3 showing it hands it the shared window" ($ws -and $ws.data.shown -eq $true)
+    # The adopted viewer shows once its host is visible under the window.
+    for ($t = 0; $t -lt 50 -and [CcStyle]::CountClass($g.Top, 'GhozttyViewer') -lt 1; $t++) { Start-Sleep -Milliseconds 200 }
+    Assert-ChildrenLayered 'G4' $g.Top $true
+    Assert "G5 the app is still running" (Test-Alive $g)
 
     [void](Stop-RepoGhoztty -Exe $Exe -SettleMs 600)
 
