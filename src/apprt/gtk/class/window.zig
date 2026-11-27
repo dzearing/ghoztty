@@ -4085,10 +4085,12 @@ pub const Window = extern struct {
         switch (target) {
             // Single-window mode: a new tab is a new workspace (T3649),
             // which is a window.
-            .new_tab => if (Workspaces.applies(self))
-                _ = Application.default().newWindowWithCommand(core, command)
-            else {
-                _ = self.newTabPage(core, .tab, .{ .command = command });
+            .new_tab => {
+                if (Workspaces.applies(self)) {
+                    _ = Application.default().newWindowWithCommand(core, command);
+                } else {
+                    _ = self.newTabPage(core, .tab, .{ .command = command });
+                }
             },
             .new_window => _ = Application.default().newWindowWithCommand(core, command),
             .split_right, .split_down => {
