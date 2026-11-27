@@ -170,7 +170,11 @@ any(pane(s, "'"$gave"'")["gliding"] and pane(s, "'"$gave"'")["drawn"][2] < Bp["'
 hl_check "G10 its content is held at its size on show inside the narrowing card (cut, not squeezed)" $? \
     "$(judge "$samples" "$before" '[(pane(s, "'"$gave"'")["drawn"][2], pane(s, "'"$gave"'")["content_w"]) for t, s in G[:6]]')"
 
-[ "$(judge "$samples" "$before" 'all(p["resizes"] == Bp[p["pane"]]["resizes"] for t, s in G for p in s["panes"] if p["gliding"])')" = True ]
+# A terminal never sized before (split in and folded away before it was
+# first drawn; ~1 run in 6, T3733) takes its FIRST size while it glides out -
+# it has to draw something - and that is not a resize: it may go 0 -> 1, at
+# the size it lands at (G13 holds it to that one change).
+[ "$(judge "$samples" "$before" 'all(p["resizes"] == Bp[p["pane"]]["resizes"] or (Bp[p["pane"]]["resizes"] == 0 and p["resizes"] == 1 and abs(p["content_w"] - Ap[p["pane"]]["frame"][2]) <= 2) for t, s in G for p in s["panes"] if p["gliding"])')" = True ]
 hl_check "G11 no terminal is resized while its card is on the move" $? \
     "$(judge "$samples" "$before" '[(t, [(p["pane"][-4:], p["resizes"]) for p in s["panes"]]) for t, s in G[:4]]')"
 

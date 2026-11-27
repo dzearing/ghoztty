@@ -1406,9 +1406,20 @@ pub const SplitTree = extern struct {
                 const last: ?pane_stack_slide.Placed = for (before) |b| {
                     if (b.id == id) break b;
                 } else null;
-                const s = pane_stack_slide.hold(priv.held.get(id), last, p.rect);
-                priv.held.put(alloc, id, s) catch {};
-                at = pane_stack_slide.heldRect(p.rect, s);
+                // A terminal never sized (split in and folded away before
+                // it was first drawn, T3733) had no size on show: the
+                // layout planned one it never got. Hold it at its slot,
+                // tracking the layout until it is sized, so bringing it
+                // forward sizes it once, at the size it lands at - not at
+                // the planned size mid-glide and again on landing.
+                if (entry.view.sizeChanges() == 0) {
+                    _ = priv.held.remove(id);
+                    at = pane_stack_slide.heldRect(p.rect, pane_stack_slide.hold(null, null, p.rect));
+                } else {
+                    const s = pane_stack_slide.hold(priv.held.get(id), last, p.rect);
+                    priv.held.put(alloc, id, s) catch {};
+                    at = pane_stack_slide.heldRect(p.rect, s);
+                }
             } else _ = priv.held.remove(id);
             now[n] = .{
                 .id = id,
