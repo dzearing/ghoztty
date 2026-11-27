@@ -834,3 +834,12 @@ as the digest that showed them.
 - Closing a distro's last pane can give its memory back (a quiet offer to shut that WSL distro down when its last pane closes)
 - Windows you put away give their memory back (new angle on idle windows cost nothing: a window minimized or covered for minutes releases its drawing buffers and graphics memory, redraws on return)
 - A slow-starting shell shows where the time went (a pane that takes over a second to reach its prompt says why in its header tooltip, e.g. the PowerShell profile's load time)
+
+## 2026-11-27
+
+- Every pane shows how old its shell is (hovering a pane's header says "bash, started 12 s ago" or "re-attached, running since 09:14", so a fresh shell and a reused one are told apart at a glance)
+- The tab names the program, not only the title (while a shell runs vim, a test run or an agent, the tab shows that program's name with a small mark, and returns to the folder when it exits)
+- Reopen this whole window on another shell (new angle on Restart Pane with Shell: one command rebuilds every split of the window on WSL or PowerShell, each in its translated folder)
+- The new-tab menu shows which distros are awake (a running distro carries a dot, so you know which choice opens at once)
+- Old copies clean up after themselves (an update keeps only the last two app versions and says how much space it freed)
+- Opening the app never waits on the network (with no network or a sleeping network drive the window opens at once; sign-in and update checks catch up afterwards)
