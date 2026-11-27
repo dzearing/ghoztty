@@ -290,7 +290,7 @@ try {
     }
     Assert (-not ($g.App.Process -and $g.App.Process.HasExited)) 'app alive after case 4'
     Stop-Process -Id $gpid -Force -ErrorAction SilentlyContinue
-    Start-Sleep -Milliseconds 500
+    Wait-Process -Id $gpid -Timeout 10 -ErrorAction SilentlyContinue
 
     # ------------------------------------------------------------- case 5:
     # T3745 - a RELATIVE XDG_CONFIG_HOME used to reach Config.loadFile's
@@ -304,11 +304,12 @@ try {
     try {
         $app = Start-OnTestDesktop -Exe $exe -Arguments @('--session-persistence=false')
     } finally { Remove-Item Env:XDG_CONFIG_HOME -ErrorAction SilentlyContinue }
-    Start-Sleep -Seconds 3
+    # The window wait is the settle: the pre-fix build died before any window,
+    # so a window that comes up AND a process still alive after it is the pass.
+    $top = Wait-TestWindow -ProcessId $app.Pid -Class 'GhozttyWindow'
+    Assert ($top -ne [IntPtr]::Zero) 'relative XDG_CONFIG_HOME: a terminal window comes up (T3745)'
     $died = [bool]($app.Process -and $app.Process.HasExited)
     Assert (-not $died) 'relative XDG_CONFIG_HOME: the app survives launch (T3745)'
-    $top = if ($died) { [IntPtr]::Zero } else { Wait-TestWindow -ProcessId $app.Pid -Class 'GhozttyWindow' }
-    Assert ($top -ne [IntPtr]::Zero) 'relative XDG_CONFIG_HOME: a terminal window comes up (T3745)'
     Stop-Process -Id $app.Pid -Force -ErrorAction SilentlyContinue
     # The try's last statement (body-complete-audit D1): an unwind above skips
     # it, so the verdict reads DID NOT FINISH instead of green.
