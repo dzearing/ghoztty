@@ -287,6 +287,9 @@ pub const Report = struct {
         tools_shown: bool = false,
         /// The row drags to reorder (T3607): a pane on screen.
         draggable: bool = false,
+        /// A tray head lit in the accent: a drag held over the list would
+        /// land in the tray (T3698, T3756).
+        lit: bool = false,
         /// Where the row is laid out in the list, logical pixels from the
         /// list's top (-1 before layout): what a `--drag` y is read against.
         top: i32 = -1,
@@ -398,6 +401,58 @@ fn groupHolds(spans: []const Span, tab: u64, y: f64) bool {
     };
     const t = top orelse return false;
     return y >= t and y < bottom;
+}
+
+// ---------------------------------------------------------------------------
+// A pane drag on the sidebar (T3756; docs/reference/pane-sidebar.md "Drag to
+// reorder"; Mac `PaneDropResolver.sidebarHit` -> `.stash` / `.sidebarOrder`,
+// win32 `commitStashDrop` / `commitListDrop`)
+
+/// What a pane drag - a rearrange header, the grab handle or a strip, so
+/// possibly another window's pane - let go on a sidebar's list does.
+pub const PaneDrop = union(enum) {
+    /// The pane has a row drawn here: exactly what letting go of that row
+    /// at the same place does (its list, its tray, or another window's
+    /// rows to join).
+    row,
+    /// Over ANOTHER window's rows (the all-windows outline): it joins that
+    /// window, as a row would (T3699, Mac `.joinWindow`).
+    join: u64,
+    /// It arrives in this sidebar's window (`home`): onto its grid at the
+    /// top level on the right, then placed in its list or stashed in its
+    /// tray where it was let go (Mac `.sidebarOrder` cross-window and
+    /// `stashInOtherWindow`).
+    arrive,
+    /// Nothing: a pane of this very window that is not drawn here (its
+    /// group folded in the outline) has no place to read off the rows.
+    none,
+};
+
+/// Plan a pane drag let go on a sidebar whose window is `home`: `listed`
+/// says the pane has a row drawn in this list, `pane_tab` is the window it
+/// is in now, and `join` is `joinTab(spans, pane_tab, y)` at the release.
+pub fn paneDrop(listed: bool, pane_tab: u64, home: u64, join: ?u64) PaneDrop {
+    if (listed) return .row;
+    if (join) |t| if (t != home) return .{ .join = t };
+    if (pane_tab == home) return .none;
+    return .arrive;
+}
+
+test "T3756: a pane drag on the sidebar - a listed pane is its row, others join or arrive" {
+    const home: u64 = 0x10;
+    const other: u64 = 0x20;
+    const third: u64 = 0x30;
+    // Drawn here: whatever the row's own drop does, wherever it is let go.
+    try std.testing.expectEqual(PaneDrop.row, paneDrop(true, home, home, null));
+    try std.testing.expectEqual(PaneDrop.row, paneDrop(true, other, home, home));
+    // Another window's pane over this window's own rows, or anywhere off a
+    // group: it arrives here, to be placed or stashed at that point.
+    try std.testing.expectEqual(PaneDrop.arrive, paneDrop(false, other, home, home));
+    try std.testing.expectEqual(PaneDrop.arrive, paneDrop(false, other, home, null));
+    // Over a third window's rows it joins that one instead.
+    try std.testing.expectEqual(PaneDrop{ .join = third }, paneDrop(false, other, home, third));
+    // This window's own pane with no row drawn (a folded group): nothing.
+    try std.testing.expectEqual(PaneDrop.none, paneDrop(false, home, home, null));
 }
 
 /// The tray's caption (Mac: "Stashed" only while it holds panes, with their

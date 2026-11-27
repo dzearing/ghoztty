@@ -118,6 +118,7 @@ const Window = @import("class/window.zig").Window;
 const Surface = @import("class/surface.zig").Surface;
 const Tab = @import("class/tab.zig").Tab;
 const Workspaces = @import("Workspaces.zig");
+const PaneDrag = @import("PaneDrag.zig");
 
 const log = std.log.scoped(.gtk_pane_sidebar);
 
@@ -503,6 +504,14 @@ pub fn create(alloc: Allocator, window: *Window) Allocator.Error!*PaneSidebar {
     _ = wk.g_signal_connect_data(drop_target, "drag-motion", @ptrCast(&onListMotion), self, null, 0);
     _ = wk.g_signal_connect_data(drop_target, "drop", @ptrCast(&onListDrop), self, null, 0);
     _ = wk.g_signal_connect_data(drop_target, "drag-leave", @ptrCast(&onListLeave), self, null, 0);
+    // Pane drags land here too (T3756): a rearrange header, the grab handle
+    // or a strip - any window's pane - let go on the list is placed in it or
+    // stashed in its tray (`dropPaneAt`). Its own mime type, so the row
+    // target above never takes one, nor this one a row.
+    PaneDrag.installDropTargetHover(list, self, &paneDropFromTarget, .{
+        .motion = &paneHoverFromTarget,
+        .leave = &paneLeaveFromTarget,
+    });
     return self;
 }
 
@@ -2110,6 +2119,108 @@ pub fn dropRowAt(self: *PaneSidebar, id: []const u8, y: f64) ?usize {
     return index;
 }
 
+// ---- Pane drags on the sidebar (T3756) ----------------------------------------
+
+fn paneDropFromTarget(owner: *anyopaque, dragged_id: []const u8, _: f64, y: f64) PaneDrag.DropResult {
+    const self: *PaneSidebar = @ptrCast(@alignCast(owner));
+    return self.dropPaneAt(dragged_id, y);
+}
+
+fn paneHoverFromTarget(owner: *anyopaque, _: f64, y: f64) void {
+    const self: *PaneSidebar = @ptrCast(@alignCast(owner));
+    const id = PaneDrag.dragged() orelse return self.lightTray(false);
+    self.hoverPaneAt(id, y);
+}
+
+fn paneLeaveFromTarget(owner: *anyopaque) void {
+    const self: *PaneSidebar = @ptrCast(@alignCast(owner));
+    self.lightTray(false);
+}
+
+/// This sidebar's own window: the tab on show (a GTK tab is a Mac window).
+fn homeTab(self: *PaneSidebar) ?*Tab {
+    return self.window.getSelectedTab();
+}
+
+/// Where a pane drag of the pane `f` let go at `y` (the list's
+/// coordinates) goes: `rows.paneDrop` over the rows as laid out.
+fn planPaneDrop(self: *PaneSidebar, f: FoundPane, home: *Tab, y: f64) rows.PaneDrop {
+    const listed = if (self.rowById(f.surface.paneId())) |r| r.kind == .pane and r.draggable else false;
+    return rows.paneDrop(listed, @intFromPtr(f.tab), @intFromPtr(home), self.joinTabAt(@intFromPtr(f.tab), y));
+}
+
+/// A pane drag held at `y` over the list lights the tray when a release
+/// there would stash (T3756, as a row's does, T3698).
+pub fn hoverPaneAt(self: *PaneSidebar, pane_id: []const u8, y: f64) void {
+    const f = findPane(pane_id) orelse return self.lightTray(false);
+    const home = self.homeTab() orelse return self.lightTray(false);
+    const lit = switch (self.planPaneDrop(f, home, y)) {
+        .row => self.joinTabAt(@intFromPtr(f.tab), y) == null and rows.inTray(self.trayTop(@intFromPtr(f.tab)), y),
+        .arrive => rows.inTray(self.trayTop(@intFromPtr(home)), y),
+        .join, .none => false,
+    };
+    self.lightTray(lit);
+}
+
+/// A pane drag - a rearrange header, the grab handle or a strip, so any
+/// window's pane - let go at `y` of this list (T3756; Mac `sidebarHit` ->
+/// `.stash` / `.sidebarOrder`, win32 `commitStashDrop` / `commitListDrop`).
+/// A pane listed here does what its row would (`dropRowAt`: a place in its
+/// list, its tray, or another window's rows to join). Any other pane - from
+/// another window, or another tab of this one - arrives in this window on
+/// its grid's right edge at the top level, out of its old stash if it was
+/// stashed, and then takes the place it was let go at: in the list there,
+/// in the tray stashed at that gap. The live drop and the `pane-sidebar
+/// --pane-drop` seam both come here. `target` names what it did
+/// (`sidebar_order`, `stash`, `join_window`), `index` the place.
+pub fn dropPaneAt(self: *PaneSidebar, pane_id: []const u8, y: f64) PaneDrag.DropResult {
+    self.lightTray(false);
+    const f = findPane(pane_id) orelse return .{};
+    const home = self.homeTab() orelse return .{};
+    const plan = self.planPaneDrop(f, home, y);
+    log.info("pane sidebar pane drop pane={s} y={d:.0} plan={s}", .{ pane_id, y, @tagName(plan) });
+    switch (plan) {
+        .none => return .{ .outcome = "not_here" },
+        .row => {
+            const own: u64 = @intFromPtr(f.tab);
+            const joins = self.joinTabAt(own, y) != null;
+            const tray = !joins and rows.inTray(self.trayTop(own), y);
+            const target: []const u8 = if (joins) "join_window" else if (tray) "stash" else "sidebar_order";
+            const index = self.dropRowAt(pane_id, y) orelse return .{ .target = target, .outcome = "not_here" };
+            return .{ .target = target, .outcome = "moved", .index = index };
+        },
+        .join => |dest| {
+            const index = joinWindow(pane_id, dest) orelse return .{ .target = "join_window", .outcome = "not_here" };
+            return .{ .target = "join_window", .outcome = "moved", .index = index };
+        },
+        .arrive => {
+            const key: u64 = @intFromPtr(home);
+            const tray = rows.inTray(self.trayTop(key), y);
+            // The place, read off this window's rows before anything moves:
+            // the panes on screen for the list, the stashed ones for the tray.
+            var mids: [sidebar_order.max_ids]f64 = undefined;
+            var n: usize = 0;
+            for (self.drawn.items) |o| {
+                if (o.kind != .pane or o.tab != key or o.stashed != tray) continue;
+                const b = self.rowBounds(o) orelse continue;
+                if (n == mids.len) break;
+                mids[n] = b.y + b.h / 2;
+                n += 1;
+            }
+            const index = rows.dropIndex(mids[0..n], y);
+            const target: []const u8 = if (tray) "stash" else "sidebar_order";
+            // Onto this window's grid first - the slot a restore brings it
+            // back to (win32 `commitCrossWindowDrop` with `.top_level
+            // .right`) - then its place, in the same turn, so a stashed
+            // arrival is never drawn on screen here.
+            if (joinWindow(pane_id, key) == null) return .{ .target = target, .outcome = "not_here" };
+            const placed = if (tray) stashRowAt(pane_id, index) else self.moveRow(pane_id, index);
+            log.info("pane sidebar pane arrived pane={s} into={s} index={d} placed={}", .{ pane_id, if (tray) "tray" else "list", index, placed });
+            return .{ .target = target, .outcome = if (placed) "moved" else "not_here", .index = index };
+        },
+    }
+}
+
 /// The window (tab key) whose rows a pane row of window `own` let go at `y`
 /// is among, when that is another window's (T3699, `rows.joinTab`); null in
 /// its own window's rows, between windows, or in this window's own list.
@@ -2195,7 +2306,7 @@ fn stashRowAt(pane_id: []const u8, index: usize) bool {
 /// Mac: the empty tray's well "lit in the accent while a drag would land in
 /// it"). The class goes on the tray head, which the next redraw rebuilds
 /// unlit.
-fn lightTray(self: *PaneSidebar, on: bool) void {
+pub fn lightTray(self: *PaneSidebar, on: bool) void {
     for (self.drawn.items) |o| if (o.kind == .tray) {
         if (on) wk.gtk_widget_add_css_class(o.widget, "pane-sidebar-tray-lit") else wk.gtk_widget_remove_css_class(o.widget, "pane-sidebar-tray-lit");
     };
@@ -2683,6 +2794,7 @@ pub fn report(self: *PaneSidebar, arena: Allocator) Allocator.Error!rows.Report 
         .hovered = r.hovered,
         .tools_shown = if (r.tools_box) |b| wk.gtk_widget_get_visible(b) != 0 else false,
         .draggable = r.draggable,
+        .lit = r.kind == .tray and wk.gtk_widget_has_css_class(r.widget, "pane-sidebar-tray-lit") != 0,
         .top = if (self.rowBounds(r)) |b| @intFromFloat(@round(b.y)) else -1,
         .height = if (self.rowBounds(r)) |b| @intFromFloat(@round(b.h)) else 0,
     };

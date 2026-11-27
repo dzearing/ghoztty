@@ -267,6 +267,14 @@ pub fn handleSeam(app: Context, request: Request) Allocator.Error!server.SeamRep
 /// list has redrawn), and `--drag=<row id>:<y>` its release at `y`, read
 /// against the rows as then laid out, after which the folds come back.
 /// The reply's `index` is where it landed among its new siblings.
+///
+/// `--pane-hover=<pane id>:<y>`, `--pane-leave` and `--pane-drop=<pane
+/// id>:<y>` (T3756) are a PANE drag over the list - a rearrange header, the
+/// grab handle or a strip, any window's pane - through the list's pane drop
+/// target's own calls (`PaneSidebar.hoverPaneAt` / `dropPaneAt`): held at y
+/// (a tray head's `lit` says a release there would stash), off the list, or
+/// let go. Reply `drop`: `target` (`sidebar_order|stash|join_window|none`),
+/// `outcome` (`moved|not_here|none`) and `index`. Read like `--layout`.
 fn paneSidebar(app: Context, request: Request) Allocator.Error![]u8 {
     var target_arg: ?[]const u8 = null;
     var click_arg: ?[]const u8 = null;
@@ -280,7 +288,13 @@ fn paneSidebar(app: Context, request: Request) Allocator.Error![]u8 {
     var edit_arg: ?[]const u8 = null;
     var edit_key_arg: ?[]const u8 = null;
     var as_laid_out = false;
+    var pane_drop_arg: ?[]const u8 = null;
+    var pane_hover_arg: ?[]const u8 = null;
+    var pane_leave = false;
     for (request.arguments orelse &.{}) |arg| {
+        if (std.mem.startsWith(u8, arg, "--pane-drop=")) pane_drop_arg = arg["--pane-drop=".len..];
+        if (std.mem.startsWith(u8, arg, "--pane-hover=")) pane_hover_arg = arg["--pane-hover=".len..];
+        if (std.mem.eql(u8, arg, "--pane-leave")) pane_leave = true;
         if (std.mem.startsWith(u8, arg, "--drag=")) drag_arg = arg["--drag=".len..];
         if (std.mem.startsWith(u8, arg, "--lift=")) lift_arg = arg["--lift=".len..];
         if (std.mem.eql(u8, arg, "--layout")) as_laid_out = true;
@@ -309,6 +323,35 @@ fn paneSidebar(app: Context, request: Request) Allocator.Error![]u8 {
     const sidebar = target.window_().paneSidebar() orelse
         return server.errorResponse(c_alloc, "the window has no pane sidebar", .{});
 
+    // A pane drag over this list (T3756): held at a y (the tray lights when
+    // a release there would stash), leaving, or let go - through the live
+    // drop target's own calls. Read like `--layout`, with no redraw.
+    if (pane_drop_arg != null or pane_hover_arg != null or pane_leave) {
+        const PanePoint = struct { id: []const u8, y: f64 };
+        const parse = struct {
+            fn f(v: []const u8) ?PanePoint {
+                const colon = std.mem.lastIndexOfScalar(u8, v, ':') orelse return null;
+                const y = std.fmt.parseFloat(f64, v[colon + 1 ..]) catch return null;
+                return .{ .id = v[0..colon], .y = y };
+            }
+        }.f;
+        if (pane_leave) sidebar.lightTray(false);
+        if (pane_hover_arg) |h| {
+            const p = parse(h) orelse return server.errorResponse(c_alloc, "--pane-hover=<pane id>:<y>", .{});
+            sidebar.hoverPaneAt(p.id, p.y);
+        }
+        var drop: ?PaneDrag.DropResult = null;
+        if (pane_drop_arg) |d| {
+            const p = parse(d) orelse return server.errorResponse(c_alloc, "--pane-drop=<pane id>:<y>", .{});
+            // Copied: the drop moves the pane, and its id buffer with it.
+            const id = try arena.dupe(u8, p.id);
+            drop = sidebar.dropPaneAt(id, p.y);
+        }
+        const rep = try sidebar.report(arena);
+        var out: std.Io.Writer.Allocating = .init(arena);
+        std.json.Stringify.value(.{ .success = true, .drop = drop, .sidebar = rep }, .{}, &out.writer) catch return error.OutOfMemory;
+        return c_alloc.dupe(u8, out.written());
+    }
     if (drag_arg) |d| {
         const colon = std.mem.lastIndexOfScalar(u8, d, ':') orelse
             return server.errorResponse(c_alloc, "--drag=<row id>:<y>", .{});
