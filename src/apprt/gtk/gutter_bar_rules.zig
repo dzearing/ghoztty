@@ -104,6 +104,18 @@ pub fn lit(hovered: ?usize, dragged: ?usize, dragging: bool) ?Lit {
     return null;
 }
 
+/// The bar's thickness across its gutter (logical px).
+pub const thickness_dip = gutter_bar.thickness_dip;
+
+/// The bar on a view with ONE draggable edge - a side panel's (T3732: the
+/// viewer contents card's; Mac `SidePanelResizeHandle.gutterBar`, win32
+/// T2265 `gutter_bar.single`): full while that edge is dragged, half while
+/// it is hovered, else none. The drag outranks the hover, so the pointer
+/// running off the edge mid-drag keeps it lit until mouse-up.
+pub fn single(hovered: bool, dragged: bool) ?Strength {
+    return gutter_bar.single(hovered, dragged);
+}
+
 /// The bar's core in `gutter` (logical px): 4px across, centred, the
 /// gutter's whole length, never wider than the gutter (win32 `barIn`).
 pub fn barIn(gutter: PxRect, d: Direction) PxRect {
@@ -212,6 +224,15 @@ test "one bar at a time: a drag's outranks the hover, and a lost gutter lights n
     try testing.expect(lit(2, null, true) == null);
     try testing.expectEqual(@as(f32, 0.5), Strength.hover.opacity());
     try testing.expectEqual(@as(f32, 1.0), Strength.drag.opacity());
+}
+
+test "a side panel's one edge: dragged is full, hovered is half, neither is out" {
+    try testing.expect(single(false, false) == null);
+    try testing.expectEqual(Strength.hover, single(true, false).?);
+    try testing.expectEqual(Strength.drag, single(false, true).?);
+    // The pointer off the edge mid-drag, or still on it: the drag's bar.
+    try testing.expectEqual(Strength.drag, single(true, true).?);
+    try testing.expectEqual(@as(f32, 4), thickness_dip);
 }
 
 test "the bar is 4px down the middle of its gutter, its whole length" {

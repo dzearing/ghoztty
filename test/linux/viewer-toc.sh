@@ -13,6 +13,10 @@
 # - a wide pane (>= 720 px) puts the card in a left gutter the page
 #   reserves (margin + card); dragging its edge resizes card and gutter
 #   together and the width is saved as the shared preference;
+# - that edge shows the gutter bar (T3732; Mac SidePanelResizeHandle): 4px of
+#   accent down its middle, half under the pointer, full while held (even
+#   with the pointer off it), moving with the edge, out once let go - read
+#   from the seam and from the window's own render (`capture-pane --window`);
 # - a narrow pane turns it into an overlay: the nav bar's first item is a
 #   contents button, the overlay starts closed, the button opens it, a row
 #   click dismisses it, nothing is reserved, and the edge does not drag;
@@ -29,7 +33,8 @@
 # the private headless Weston (test/linux/lib/headless.sh); the pane is driven
 # and read back through the debug build's GHOZTTY_TEST_VIEWER_STEPS seam
 # (src/apprt/gtk/Viewer.zig; `toc` / `toc-rows` / `toc-row` / `toc-drag` /
-# `resize` read and drive ViewerTOC), and the page through `probe`.
+# `toc-hover` / `toc-press` / `toc-release` / `resize` read and drive
+# ViewerTOC), and the page through `probe`.
 #
 # Output: one PASS/FAIL line per check, then 'VIEWER TOC: ALL PASS' or
 # 'VIEWER TOC: <n> FAILURE(S)'. Exit 0 only on ALL PASS.
@@ -106,6 +111,24 @@ toc-drag 60
 sleep 400
 toc
 probe $PAD
+toc-hover on
+sleep 300
+toc
+mark bar-hover
+sleep 2500
+toc-press 20
+sleep 400
+toc
+toc-hover off
+sleep 200
+toc
+mark bar-held
+sleep 2500
+toc-release 0
+sleep 400
+toc
+mark bar-out
+sleep 2500
 resize 600x800
 sleep 1200
 toc
@@ -155,6 +178,46 @@ hl_check "C4 +new-window --view=doc.md opens a viewer" $? "$o"
 hl_wait_for 40 test -s "$dump"
 [ "$(cat "$dump" 2>/dev/null)" = "OK Guide" ]
 hl_check "C5 the pane renders its file" $? "dump: $(cat "$dump" 2>/dev/null)"
+
+# The edge's gutter bar (T3732): the window's own render at three points down
+# the bar's middle, where the latest `toc` line puts it (window px), as it
+# stands at each mark.
+lasttoc() { grep '^toc ' "$out" | tail -1; }
+rect_of() { echo "$1" | sed -n "s/.* $2=\([-0-9]*\),\([-0-9]*\),\([-0-9]*\),\([-0-9]*\) .*/\1 \2 \3 \4/p"; }
+barshot() {
+    local s f x y w h
+    s=$(lasttoc)
+    read -r x y w h <<< "$(rect_of "$s" barrect)"
+    [ -n "$h" ] || { echo off; return; }
+    f="$HL_RUNTIME/toc-bar-$1.png"
+    hl_screenshot doc "$f" --window > /dev/null 2>&1 || { echo off; return; }
+    hl_png_pixel "$f" $((x + w / 2)) $((y + h / 4)) $((x + w / 2)) $((y + h / 2)) $((x + w / 2)) $((y + 3 * h / 4)) | tr '\n' ';'
+}
+# accent <r g b>: libadwaita's default accent (#3584e4) within 45 a channel.
+accent() {
+    [ "$1" != off ] || return 1
+    set -- $1
+    [ $(( ($1 - 53) * ($1 - 53) < 2025 && ($2 - 132) * ($2 - 132) < 2025 && ($3 - 228) * ($3 - 228) < 2025 )) = 1 ]
+}
+# bluish <r g b>: the accent at half over the page - blue well above red.
+bluish() {
+    [ "$1" != off ] || return 1
+    set -- $1
+    [ $(( $3 - $1 >= 40 )) = 1 ]
+}
+# all_pts <pred> <'r g b;r g b;...'>: every sampled point satisfies pred.
+all_pts() {
+    local pred=$1 p
+    [ -n "$2" ] && [ "$2" != off ] || return 1
+    local IFS=';'
+    for p in $2; do "$pred" "$p" || return 1; done
+}
+hl_wait_for 120 grep -q '^mark bar-hover' "$out"
+hover_px=$(barshot hover)
+hl_wait_for 60 grep -q '^mark bar-held' "$out"
+held_px=$(barshot held)
+hl_wait_for 60 grep -q '^mark bar-out' "$out"
+out_px=$(barshot out)
 
 # The driving script's half of the sync points: a live reload down to one
 # heading, then back.
@@ -206,31 +269,65 @@ hl_check "C15 dragging the edge 60 px widens the card and the page's gutter toge
 [ "$(cat "$pref" 2>/dev/null)" = "300" ]
 hl_check "C16 the width is saved as the shared preference" $? "pref: $(cat "$pref" 2>/dev/null)"
 
+# ---- the edge's gutter bar (T3732; Mac SidePanelResizeHandle.gutterBar) ----
+s=$(tc 5)
+has "$s" "bar=none " && has "$s" "baropacity=0.00 "
+hl_check "C26 at rest the card's edge shows no bar" $? "$s"
+
 s=$(tc 6)
+read -r bx by bw bh <<< "$(rect_of "$s" barrect)"
+read -r ex ey ew eh <<< "$(rect_of "$s" edgerect)"
+has "$s" "bar=hover " && has "$s" "baropacity=0.50 "
+hl_check "C27 the pointer over the edge lights its bar at half strength" $? "$s"
+[ "${bw:-0}" = 4 ] && [ "${bh:-0}" = "${eh:--1}" ] && [ "${bh:-0}" -gt 0 ] && [ "$by" = "$ey" ] &&
+    d=$(( 2 * bx + bw - 2 * ex - ew )) && [ "${d#-}" -le 2 ]
+hl_check "C28 the bar is 4px down the middle of the edge, its whole length" $? "bar=$bx,$by,$bw,$bh edge=$ex,$ey,$ew,$eh"
+
+s=$(tc 7)
+read -r hx _ _ _ <<< "$(rect_of "$s" barrect)"
+has "$s" "bar=drag " && has "$s" "baropacity=1.00 " && has "$s" "width=320 " && [ "$((hx - bx))" = 20 ]
+hl_check "C29 a held edge shows its bar at full strength, and the bar moves with the edge" $? "$s (bar x $bx -> $hx)"
+
+s=$(tc 8)
+has "$s" "bar=drag " && has "$s" "baropacity=1.00 "
+hl_check "C30 the pointer running off the edge mid-drag keeps the drag's bar lit" $? "$s"
+
+s=$(tc 9)
+has "$s" "bar=none " && has "$s" "baropacity=0.00 " && has "$s" "width=300 "
+hl_check "C31 let go with the pointer gone, the bar goes out" $? "$s"
+
+all_pts accent "$held_px"
+hl_check "C32 the window draws the accent down the edge while it is held" $? "held=$held_px"
+all_pts bluish "$hover_px" && ! all_pts accent "$hover_px"
+hl_check "C33 hovered, the window draws the bar at half (blue, but not the full accent)" $? "hover=$hover_px held=$held_px"
+! all_pts bluish "$out_px" && [ "$out_px" != off ] && [ -n "$out_px" ]
+hl_check "C34 once it is out the window draws no bar there" $? "out=$out_px"
+
+s=$(tc 10)
 has "$s" "mode=compact " && has "$s" "open=false " && has "$s" "card=false " && has "$s" "button=true " && has "$s" "gutter=0 " && [ "$(pr 6)" = "probe OK pad=none" ]
 hl_check "C17 a narrow pane: the overlay starts closed, the bar shows the contents button, nothing is reserved" $? "$s / $(pr 6)"
 
-s=$(tc 7)
+s=$(tc 11)
 has "$s" "open=true " && has "$s" "card=true " && has "$s" "width=300 " && has "$s" "gutter=0 "
 hl_check "C18 the button opens the overlay; the edge does not drag it" $? "$s"
 
-s=$(tc 8)
+s=$(tc 12)
 has "$s" "open=false " && has "$s" "card=false " && has "$s" "active=flags "
 hl_check "C19 a row click in the overlay scrolls there and dismisses it" $? "$s"
 
-s=$(tc 9)
+s=$(tc 13)
 has "$s" "mode=gutter " && has "$s" "card=true " && has "$s" "button=false " && has "$s" "gutter=312 " && [ "$(pr 7)" = "probe OK pad=312px" ]
 hl_check "C20 widening the pane again puts the card back in its gutter at the saved width" $? "$s / $(pr 7)"
 
-s=$(tc 10)
+s=$(tc 14)
 has "$s" "mode=hidden " && has "$s" "rows=0 " && has "$s" "card=false " && has "$s" "button=false " && [ "$(pr 8)" = "probe OK pad=none" ]
 hl_check "C21 a live reload down to one heading retracts the card and the gutter" $? "$s / $(pr 8)"
 
-s=$(tc 11)
+s=$(tc 15)
 has "$s" "mode=gutter " && has "$s" "rows=9 " && [ "$(pr 9)" = "probe OK pad=312px" ]
 hl_check "C22 a reload that brings the headings back restores card and gutter" $? "$s / $(pr 9)"
 
-s=$(tc 12)
+s=$(tc 16)
 has "$s" "mode=hidden " && has "$s" "rows=0 " && has "$s" "button=false "
 hl_check "C23 a code file has no contents" $? "$s"
 

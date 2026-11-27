@@ -41,6 +41,7 @@ const content = @import("../win32/viewer_content.zig");
 const prefs = @import("../win32/viewer_prefs.zig");
 const toc_layout = @import("../win32/viewer_toc_layout.zig");
 const policy = @import("viewer_toc.zig");
+const gutter_rules = @import("gutter_bar_rules.zig");
 
 const log = std.log.scoped(.gtk_viewer);
 
@@ -67,6 +68,10 @@ pane_h: f32 = 0,
 gutter_pushed: f32 = 0,
 /// The card width a drag started from.
 drag_start: f32 = 0,
+/// The pointer is over the drag edge / the edge is held (T3732): what
+/// lights its gutter bar (`gutter_bar_rules.single`).
+edge_hovered: bool = false,
+edge_dragged: bool = false,
 /// Counters and the last presentation, for the steps runner.
 layouts: u32 = 0,
 last: policy.Presentation = .{ .state = .{}, .card = false, .card_w = 0, .gutter_css = 0, .button = false, .handle = false },
@@ -82,6 +87,9 @@ pub const Ui = struct {
     scroller: *wk.GtkWidget,
     list: *wk.GtkWidget,
     handle: *wk.GtkWidget,
+    /// The edge's gutter bar (T3732): 4px of accent down the middle of the
+    /// handle, its whole length; opacity 0 when out.
+    bar: *wk.GtkWidget,
     /// The nav bar's contents button (compact layout only).
     button: *wk.GtkWidget,
     /// Reports the page area's size; draws nothing, takes no input.
@@ -136,11 +144,27 @@ pub fn buildUi(self: *ViewerTOC, v: *Viewer, overlay: *wk.GtkWidget, bar_row: *w
     wk.gtk_box_append(card, scroller);
 
     // The drag edge, beside the card's right edge in the margin it leaves.
-    const handle = wk.gtk_drawing_area_new();
+    // It holds the edge's gutter bar (T3732; docs/reference/stacked-panes.md
+    // "The gutter bar", Mac `SidePanelResizeHandle.gutterBar`): the same
+    // `.gutter-bar` the stage's dividers show, centred, the edge's whole
+    // length, never a target so the press is the handle's.
+    // Vertical, so the bar gets the edge's full width to centre in and
+    // (vexpand) its full height.
+    const handle = wk.gtk_box_new(wk.orientation_vertical, 0);
     wk.gtk_widget_set_size_request(handle, @intFromFloat(toc_layout.handle_grab_dip), -1);
     wk.gtk_widget_set_cursor_from_name(handle, "col-resize");
+    const bar = wk.gtk_box_new(wk.orientation_vertical, 0);
+    wk.gtk_widget_add_css_class(bar, "gutter-bar");
+    wk.gtk_widget_set_size_request(bar, @intFromFloat(gutter_rules.thickness_dip), -1);
+    wk.gtk_widget_set_halign(bar, align_center);
+    wk.gtk_widget_set_vexpand(bar, 1);
+    wk.gtk_widget_set_can_target(bar, 0);
+    wk.gtk_widget_set_opacity(bar, 0);
+    wk.gtk_box_append(handle, bar);
     const drag = wk.gtk_gesture_drag_new();
     wk.gtk_widget_add_controller(handle, drag);
+    const motion = wk.gtk_event_controller_motion_new();
+    wk.gtk_widget_add_controller(handle, motion);
 
     wk.gtk_box_append(holder, card);
     wk.gtk_box_append(holder, handle);
@@ -161,6 +185,7 @@ pub fn buildUi(self: *ViewerTOC, v: *Viewer, overlay: *wk.GtkWidget, bar_row: *w
         .scroller = scroller,
         .list = list,
         .handle = handle,
+        .bar = bar,
         .button = button,
         .sizer = sizer,
     };
@@ -170,7 +195,14 @@ pub fn buildUi(self: *ViewerTOC, v: *Viewer, overlay: *wk.GtkWidget, bar_row: *w
     _ = wk.g_signal_connect_data(drag, "drag-begin", @ptrCast(&onDragBegin), v, null, 0);
     _ = wk.g_signal_connect_data(drag, "drag-update", @ptrCast(&onDragUpdate), v, null, 0);
     _ = wk.g_signal_connect_data(drag, "drag-end", @ptrCast(&onDragEnd), v, null, 0);
+    // A grab taken away mid-drag ends it with no drag-end: the bar goes out.
+    _ = wk.g_signal_connect_data(drag, "cancel", @ptrCast(&onDragCancel), v, null, 0);
+    _ = wk.g_signal_connect_data(motion, "enter", @ptrCast(&onEdgeEnter), v, null, 0);
+    _ = wk.g_signal_connect_data(motion, "leave", @ptrCast(&onEdgeLeave), v, null, 0);
 }
+
+/// `GTK_ALIGN_CENTER`.
+const align_center: c_int = 3;
 
 /// Free what this side owns. The widgets belong to the viewer's box and may
 /// already be gone (the web view's `destroy` runs this), so none is touched.
@@ -445,8 +477,50 @@ fn onDragEnd(_: *wk.GtkEventController, dx: f64, _: f64, ud: ?*anyopaque) callco
     v.toc.endDrag(v, dx);
 }
 
+fn onDragCancel(_: *wk.GtkEventController, _: ?*anyopaque, ud: ?*anyopaque) callconv(.c) void {
+    const v: *Viewer = @ptrCast(@alignCast(ud orelse return));
+    v.toc.cancelDrag();
+}
+
+fn onEdgeEnter(_: *wk.GtkEventController, _: f64, _: f64, ud: ?*anyopaque) callconv(.c) void {
+    const v: *Viewer = @ptrCast(@alignCast(ud orelse return));
+    v.toc.setEdgeHovered(true);
+}
+
+fn onEdgeLeave(_: *wk.GtkEventController, ud: ?*anyopaque) callconv(.c) void {
+    const v: *Viewer = @ptrCast(@alignCast(ud orelse return));
+    v.toc.setEdgeHovered(false);
+}
+
+/// The pointer came onto (or left) the drag edge.
+pub fn setEdgeHovered(self: *ViewerTOC, on: bool) void {
+    self.edge_hovered = on;
+    self.showBar();
+}
+
+/// The edge's gutter bar as the hover and the drag leave it: one edge, so
+/// `single` (the drag's full, the hover's half).
+fn showBar(self: *ViewerTOC) void {
+    const ui = self.ui orelse return;
+    const s = self.barStrength();
+    wk.gtk_widget_set_opacity(ui.bar, if (s) |st| st.opacity() else 0);
+}
+
+fn barStrength(self: *const ViewerTOC) ?gutter_rules.Strength {
+    return gutter_rules.single(self.edge_hovered, self.edge_dragged);
+}
+
 pub fn beginDrag(self: *ViewerTOC) void {
     self.drag_start = self.last.card_w;
+    self.edge_dragged = true;
+    self.showBar();
+}
+
+/// The grab went away mid-drag: the width stays where the edge last was.
+pub fn cancelDrag(self: *ViewerTOC) void {
+    self.drag_start = 0;
+    self.edge_dragged = false;
+    self.showBar();
 }
 
 /// The card and the page's gutter follow the edge in the same pass.
@@ -458,6 +532,8 @@ pub fn updateDrag(self: *ViewerTOC, v: *Viewer, dx: f64) void {
 
 /// The drag is over: the width is every viewer pane's from now on.
 pub fn endDrag(self: *ViewerTOC, v: *Viewer, dx: f64) void {
+    self.edge_dragged = false;
+    self.showBar();
     if (!self.last.handle or self.drag_start == 0) return;
     self.updateDrag(v, dx);
     self.drag_start = 0;
@@ -483,7 +559,30 @@ pub fn describe(self: *const ViewerTOC, buf: []u8) []const u8 {
         if (wk.gtk_widget_get_visible(ui.holder) != 0) shown_w = wk.gtk_widget_get_width(ui.card);
         button_shown = wk.gtk_widget_get_visible(ui.button) != 0;
     }
-    return std.fmt.bufPrint(buf, "mode={s} open={} card={} button={} handle={} rows={d} active={s} selected={s} width={d:.0} cardw={d:.0} shownw={d} gutter={d:.0} pane={d:.0}x{d:.0} layouts={d}", .{
+    // The edge's gutter bar (T3732): its strength, the opacity the widget
+    // actually has, and where it and the edge are in the window (logical px).
+    var bar_op: f64 = 0;
+    var bar_r: wk.GrapheneRect = .{};
+    var edge_r: wk.GrapheneRect = .{};
+    if (self.ui) |ui| {
+        bar_op = wk.gtk_widget_get_opacity(ui.bar);
+        if (wk.gtk_widget_get_root(ui.bar)) |root| {
+            _ = wk.gtk_widget_compute_bounds(ui.bar, root, &bar_r);
+            _ = wk.gtk_widget_compute_bounds(ui.handle, root, &edge_r);
+        }
+    }
+    const bar_s: []const u8 = if (self.barStrength()) |s| @tagName(s) else "none";
+    var head_buf: [200]u8 = undefined;
+    const head = std.fmt.bufPrint(&head_buf, "bar={s} baropacity={d:.2} barrect={d:.0},{d:.0},{d:.0},{d:.0} edgerect={d:.0},{d:.0},{d:.0},{d:.0} ", .{
+        bar_s,     bar_op,
+        bar_r.x,   bar_r.y,
+        bar_r.w,   bar_r.h,
+        edge_r.x,  edge_r.y,
+        edge_r.w,  edge_r.h,
+    }) catch "";
+    if (head.len > buf.len) return buf[0..0];
+    @memcpy(buf[0..head.len], head);
+    const rest = std.fmt.bufPrint(buf[head.len..], "mode={s} open={} card={} button={} handle={} rows={d} active={s} selected={s} width={d:.0} cardw={d:.0} shownw={d} gutter={d:.0} pane={d:.0}x{d:.0} layouts={d}", .{
         @tagName(self.state.mode),
         self.state.open,
         self.last.card,
@@ -499,7 +598,8 @@ pub fn describe(self: *const ViewerTOC, buf: []u8) []const u8 {
         self.pane_w,
         self.pane_h,
         self.layouts,
-    }) catch buf[0..0];
+    }) catch return buf[0..0];
+    return buf[0 .. head.len + rest.len];
 }
 
 /// The heading rows' ids and depths, `id:depth|id:depth...`.

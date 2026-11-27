@@ -2766,6 +2766,22 @@ const steps = if (build_config.is_debug) struct {
             v.toc.beginDrag();
             v.toc.endDrag(v, dx);
             out("toc-drag {s}", .{arg});
+        } else if (std.mem.eql(u8, verb, "toc-hover")) {
+            // The pointer onto (`on`) or off (`off`) the card's drag edge,
+            // as its motion controller's enter / leave would (T3732).
+            v.toc.setEdgeHovered(std.mem.eql(u8, arg, "on"));
+            out("toc-hover {s}", .{arg});
+        } else if (std.mem.eql(u8, verb, "toc-press")) {
+            // Take hold of the edge and move it `arg` px, and keep holding:
+            // `toc-release` lets go (T3732).
+            const dx = std.fmt.parseFloat(f64, arg) catch 0;
+            v.toc.beginDrag();
+            v.toc.updateDrag(v, dx);
+            out("toc-press {s}", .{arg});
+        } else if (std.mem.eql(u8, verb, "toc-release")) {
+            const dx = std.fmt.parseFloat(f64, arg) catch 0;
+            v.toc.endDrag(v, dx);
+            out("toc-release {s}", .{arg});
         } else if (std.mem.eql(u8, verb, "resize")) {
             // Resize the pane's window to `WxH`, as dragging its edge would.
             var it = std.mem.splitScalar(u8, arg, 'x');

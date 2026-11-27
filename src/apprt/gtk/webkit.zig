@@ -731,6 +731,7 @@ pub extern fn gtk_widget_remove_tick_callback(widget: *GtkWidget, id: c_uint) vo
 pub extern fn gdk_frame_clock_get_frame_time(clock: *GdkFrameClock) i64;
 pub extern fn g_get_monotonic_time() i64;
 pub extern fn gtk_widget_set_opacity(widget: *GtkWidget, opacity: f64) void;
+pub extern fn gtk_widget_get_opacity(widget: *GtkWidget) f64;
 pub extern fn gtk_widget_insert_before(widget: *GtkWidget, parent: *GtkWidget, next_sibling: ?*GtkWidget) void;
 pub extern fn gtk_widget_get_next_sibling(widget: *GtkWidget) ?*GtkWidget;
 pub extern fn adw_get_enable_animations(widget: *GtkWidget) c_int;
