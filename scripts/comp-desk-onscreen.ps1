@@ -34,6 +34,15 @@
 # survives the pointer being elsewhere, unlike a hover) - the pressed slab is
 # a dirty-rect upload, and its frame must match GDI's too, band rows included.
 #
+# The tab strip and a hover (T2547): every arm's window carries TWO tabs, so
+# the band holds a tab strip - opened by a posted F9 (bound to new_tab; no CLI
+# verb opens a tab) and stepped back to the split tab with F8, posted straight
+# at a pane so nothing takes the foreground. And between the rest and the
+# press grabs a third frame is taken with maximize HOVERED: a posted
+# WM_NCMOUSEMOVE that GHOZTTY_COMP_CHROME_HOLD_HOVER keeps latched through the
+# leave the real cursor sends (without it the hovered band is never painted at
+# all). The hover is a dirty-rect upload too, so the freeze arm must miss it.
+#
 # The translucent pair (T2541): the same window at --background-opacity=0.8
 # (blur off). There the desk goes up premultiplied over window pixels cleared
 # under it, and the caption band stays GDI.
@@ -85,7 +94,7 @@ if (-not (Test-Path $Spike)) { "SETUP FAIL: $Spike not found - zig build comp-sp
 if (-not $OutDir) { $OutDir = Join-Path $env:TEMP "ghoztty-comp-desk-onscreen-$PID" }
 New-Item -ItemType Directory -Force $OutDir | Out-Null
 $savedLocalAppData = $env:LOCALAPPDATA
-$knobs = 'GHOZTTY_COMP_CHROME', 'GHOZTTY_COMP_CHROME_TEST_FILL', 'GHOZTTY_COMP_CHROME_CAPTION_FREEZE', 'GHOZTTY_DEBUG_GHOST', 'GHOZTTY_TEST_NO_OCCLUSION'
+$knobs = 'GHOZTTY_COMP_CHROME', 'GHOZTTY_COMP_CHROME_TEST_FILL', 'GHOZTTY_COMP_CHROME_CAPTION_FREEZE', 'GHOZTTY_COMP_CHROME_HOLD_HOVER', 'GHOZTTY_DEBUG_GHOST', 'GHOZTTY_TEST_NO_OCCLUSION'
 $saved = @{}
 foreach ($k in $knobs) { $saved[$k] = [Environment]::GetEnvironmentVariable($k) }
 
@@ -101,6 +110,26 @@ public static class DeskGhost {
     [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr h);
     [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
     [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr h, uint msg, IntPtr w, IntPtr l);
+    [DllImport("user32.dll")] public static extern bool EnumChildWindows(IntPtr p, EnumProc cb, IntPtr l);
+    // Visible descendants of `parent` of class `cls`: the panes.
+    public static IntPtr[] Children(IntPtr parent, string cls) {
+        var list = new List<IntPtr>();
+        EnumChildWindows(parent, (h, l) => {
+            var sb = new System.Text.StringBuilder(64);
+            GetClassName(h, sb, 64);
+            if (sb.ToString() == cls && IsWindowVisible(h)) list.Add(h);
+            return true;
+        }, IntPtr.Zero);
+        return list.ToArray();
+    }
+    // A bare key (no modifiers) posted down then up at `h`: WM_KEYDOWN and
+    // WM_KEYUP with the scan code and the up transition bits.
+    public static void PostKey(IntPtr h, int vk, int scan) {
+        long down = 1L | ((long)scan << 16);
+        long up = down | (1L << 30) | (1L << 31);
+        PostMessage(h, 0x100, (IntPtr)vk, (IntPtr)down);
+        PostMessage(h, 0x101, (IntPtr)vk, (IntPtr)up);
+    }
     // Rows [0, rows) only: the caption band.
     public static int DiffRows(byte[] a, byte[] b, int w, int rows, int stride, int tol) {
         return Diff(a, b, w, rows, stride, tol);
@@ -153,6 +182,34 @@ function Read-Text($path) {
     return ''
 }
 
+# The named window's tab count, from +list --json; -1 when it cannot be read.
+# Through cmd's redirect, as about-links.ps1 does: a PowerShell capture of the
+# exe by its explicit path can come back empty.
+function Get-DeskTabCount {
+    $tmp = Join-Path $OutDir 'list.json'
+    Remove-Item $tmp -ErrorAction SilentlyContinue
+    cmd /c "`"$Exe`" +list --json > `"$tmp`" 2>nul" | Out-Null
+    $raw = Read-Text $tmp
+    try { $j = $raw | ConvertFrom-Json } catch { return -1 }
+    $wins = @($j.data.windows | ForEach-Object { $_ })
+    $w = $wins | Where-Object { $_.target -eq 'desk' } | Select-Object -First 1
+    if (-not $w) { return -1 }
+    return @($w.tabs | ForEach-Object { $_ }).Count
+}
+
+# One WGC frame of $hwnd into $dir\$name.bmp; returns the pixels or $null.
+function Get-Grab($hwnd, $dir, $name, $label) {
+    $path = Join-Path $dir "$name.bmp"
+    $errPath = Join-Path $dir "$name.txt"
+    $gp = Start-Process -FilePath $Spike -ArgumentList @("--grab-hwnd=$([int64]$hwnd)", "--out=`"$path`"") `
+        -NoNewWindow -PassThru -RedirectStandardError $errPath
+    [void]$gp.WaitForExit(15000)
+    $out = (Read-Text $errPath).Trim()
+    "  ${label}: $out" | Write-Host
+    if ($out -match '^GRAB ok' -and (Test-Path $path)) { return Get-Pixels $path }
+    return $null
+}
+
 function Wait-Log($path, $pattern, $timeoutMs) {
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
     while ($sw.ElapsedMilliseconds -lt $timeoutMs) {
@@ -173,8 +230,10 @@ $td = New-TestDesktop -Interactive
 
 $grabs = @{}
 $presses = @{}
+$hovers = @{}
 $logs = @{}
 $script:bandH = 0
+$script:bandH0 = 0
 try {
     foreach ($arm in $arms) {
         "== arm '$arm'"
@@ -184,6 +243,8 @@ try {
         $env:LOCALAPPDATA = $dir
         $env:GHOZTTY_DEBUG_GHOST = 'bottom'
         $env:GHOZTTY_TEST_NO_OCCLUSION = '1'
+        # Every arm holds the hover, the reference included (T2547).
+        $env:GHOZTTY_COMP_CHROME_HOLD_HOVER = '1'
         Remove-Item env:GHOZTTY_COMP_CHROME, env:GHOZTTY_COMP_CHROME_TEST_FILL, env:GHOZTTY_COMP_CHROME_CAPTION_FREEZE -ErrorAction SilentlyContinue
         $translucent = $arm.StartsWith('t')
         if ($arm -ne 'gdi' -and $arm -ne 'tgdi') { $env:GHOZTTY_COMP_CHROME = '1' }
@@ -194,7 +255,8 @@ try {
         $appArgs = @(
             '--config-default-files=false', '--session-persistence=false',
             '--window-width=110', '--window-height=30', '--background=#101418',
-            '--cursor-style-blink=false', '--title=t2509-desk')
+            '--cursor-style-blink=false', '--title=t2509-desk',
+            '--keybind=f9=new_tab', '--keybind=f8=previous_tab')
         if ($translucent) { $appArgs += '--background-opacity=0.8', '--background-blur=false' }
         $app = Start-OnTestDesktop -Exe $Exe -Arguments $appArgs -StdErr $err
         $top = $null
@@ -217,12 +279,40 @@ try {
         foreach ($p in 'desk', 'desk-right') { & $Exe +send-keys "--target=$p" 'cls' Enter 2>$null | Out-Null }
         Start-Sleep -Milliseconds 2000
 
+        # The second tab (T2547): F9 (new_tab) posted at a pane, then F8
+        # (previous_tab) back to the split, so the band carries a tab strip
+        # and the panes are the two cleared ones. VK_F9 0x78 scan 0x43,
+        # VK_F8 0x77 scan 0x42.
+        $panes = @([DeskGhost]::Children($hw, 'GhozttyTerminal'))
+        if ($panes.Count -gt 0) { [DeskGhost]::PostKey($panes[0], 0x78, 0x43) }
+        $tabs = -1
+        for ($t = 0; $t -lt 25; $t++) {
+            $tabs = Get-DeskTabCount
+            if ($tabs -ge 2) { break }
+            Start-Sleep -Milliseconds 200
+        }
+        Assert "$arm.T1 a second tab opened ($tabs tab(s))" ($tabs -eq 2)
+        Start-Sleep -Milliseconds 1500
+        $panes = @([DeskGhost]::Children($hw, 'GhozttyTerminal'))
+        if ($panes.Count -gt 0) { [DeskGhost]::PostKey($panes[0], 0x77, 0x42) }
+        $back = $false
+        for ($t = 0; $t -lt 25 -and -not $back; $t++) {
+            Start-Sleep -Milliseconds 200
+            $back = (@([DeskGhost]::Children($hw, 'GhozttyTerminal')).Count -eq 2)
+        }
+        Assert "$arm.T2 back on the split tab (two panes showing)" $back
+        Start-Sleep -Milliseconds 1500
+
         if ($arm -eq 'visual' -or $arm -eq 'freeze') {
             Assert "$arm.2 the desk visual attached" (Wait-Log $err 'chrome desk visual attached' 10000)
             Assert "$arm.3 the desk never fell back to GDI" ((Read-Text $err) -notmatch 'chrome desk visual (failed|detached)')
             Assert "$arm.3c the caption visual attached above it" (Wait-Log $err 'chrome caption visual attached' 10000)
             Assert "$arm.3d the caption never fell back to GDI" ((Read-Text $err) -notmatch 'chrome caption visual (failed|detached)')
-            if ((Read-Text $err) -match 'chrome caption visual attached: (\d+)x(\d+)') { $script:bandH = [int]$Matches[2] }
+            if ((Read-Text $err) -match 'chrome caption visual attached: (\d+)x(\d+)') { $script:bandH = [int]$Matches[2]; $script:bandH0 = $script:bandH }
+            # The tab strip can resize the band after it attached: the last
+            # surface size wins (T2547).
+            $sizes = @([regex]::Matches((Read-Text $err), 'chrome caption surface: (\d+)x(\d+)'))
+            if ($sizes.Count -gt 0) { $script:bandH = [int]$sizes[$sizes.Count - 1].Groups[2].Value }
         } elseif ($arm -eq 'tvisual') {
             Assert "$arm.2 the desk visual attached on the translucent window" (Wait-Log $err 'chrome desk visual attached' 10000)
             Assert "$arm.3 its surface is premultiplied" (Wait-Log $err 'chrome desk visual alpha: premultiplied' 5000)
@@ -250,6 +340,14 @@ try {
         if (Test-Path $bmpPath) { $grabs[$arm] = Get-Pixels $bmpPath }
         # The translucent pair's caption band stays GDI: no press to score.
         if ($translucent) { continue }
+
+        # The hover (T2547): WM_NCMOUSEMOVE (0xA0) with HTMAXBUTTON (9),
+        # latched by GHOZTTY_COMP_CHROME_HOLD_HOVER through the leave.
+        [void][DeskGhost]::PostMessage($hw, 0xA0, [IntPtr]9, [IntPtr]::Zero)
+        Start-Sleep -Milliseconds 1200
+        $h = Get-Grab $hw $dir 'hover' 'hover'
+        Assert "$arm.H WGC grabbed the hovered frame" ($null -ne $h)
+        if ($h) { $hovers[$arm] = $h }
 
         # The press: WM_NCLBUTTONDOWN (0xA1) with HTMINBUTTON (8). Never
         # released, so the slab stays pressed for the grab.
@@ -299,6 +397,9 @@ $psrc = if ($NegativeControl) { 'freeze' } else { 'visual' }
 $pref = $presses['gdi']
 $pg = $presses[$psrc]
 Assert "band.0 the caption band's height came from the log ($script:bandH rows)" ($script:bandH -gt 0)
+# The second tab's strip resizes the band after it attached: the scored rows
+# are the grown band, so the strip is inside the match (T2547).
+Assert "band.S the tab strip grew the band ($script:bandH0 -> $script:bandH rows)" ($script:bandH -gt $script:bandH0)
 if ($pref -and $ref -and $script:bandH -gt 0 -and $pref.W -eq $ref.W -and $pref.H -eq $ref.H) {
     # Positive control: the press is visible at all in the GDI picture.
     $moved = [DeskGhost]::DiffRows($ref.B, $pref.B, $ref.W, $script:bandH, $ref.Stride, $Tolerance)
@@ -323,6 +424,31 @@ if (-not $pref -or -not $pg) {
         $pbd = [DeskGhost]::DiffRows($pref.B, $pg.B, $pg.W, $script:bandH, $pg.Stride, $Tolerance)
         "  $psrc vs gdi pressed band: differing=$pbd of $($pg.W * $script:bandH)"
         Assert "press.2 the $psrc pressed caption band matches GDI's (a dirty-rect upload)" ($pbd -le $pg.W * $script:bandH * $MaxDiffShare)
+    }
+}
+# The hovered band (T2547), scored like the press: the visual arm's (the freeze
+# arm's under -NegativeControl) against GDI's, after a positive control that
+# the hover reached the GDI picture at all.
+$href = $hovers['gdi']
+$hg = $hovers[$psrc]
+if ($href -and $ref -and $script:bandH -gt 0 -and $href.W -eq $ref.W -and $href.H -eq $ref.H) {
+    $hmoved = [DeskGhost]::DiffRows($ref.B, $href.B, $ref.W, $script:bandH, $ref.Stride, $Tolerance)
+    "  gdi rest vs hovered band: differing=$hmoved"
+    Assert "hover.0 the held hover changes the GDI caption band (positive control)" ($hmoved -gt 20)
+}
+if (-not $href -or -not $hg) {
+    Assert "hover.0b both hovered frames to compare" $false
+} elseif ($href.W -ne $hg.W -or $href.H -ne $hg.H) {
+    Assert "hover.0b the hovered frames are the same size" $false
+} else {
+    $htotal = $hg.W * $hg.H
+    $hd = [DeskGhost]::Diff($href.B, $hg.B, $hg.W, $hg.H, $hg.Stride, $Tolerance)
+    "  $psrc vs gdi hovered: differing=$hd ($('{0:P2}' -f ($hd / [double]$htotal)))"
+    Assert "hover.1 the $psrc hovered frame matches GDI's" ($hd -le $htotal * $MaxDiffShare)
+    if ($script:bandH -gt 0) {
+        $hbd = [DeskGhost]::DiffRows($href.B, $hg.B, $hg.W, $script:bandH, $hg.Stride, $Tolerance)
+        "  $psrc vs gdi hovered band: differing=$hbd of $($hg.W * $script:bandH)"
+        Assert "hover.2 the $psrc hovered caption band matches GDI's (a dirty-rect upload)" ($hbd -le $hg.W * $script:bandH * $MaxDiffShare)
     }
 }
 # The translucent pair (T2541): tvisual (tfill under -NegativeControl) against

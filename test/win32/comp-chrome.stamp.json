@@ -1,13 +1,13 @@
 {
     "guard":  "comp-chrome",
     "script":  "test/win32/comp-chrome.ps1",
-    "generated":  "2026-11-26T15:39:14-08:00",
-    "commit":  "4a13c2a0a8",
+    "generated":  "2026-11-26T19:42:21-08:00",
+    "commit":  "b150f81d52",
     "uncommitted":  [
                         "src/apprt/win32/chrome_comp.zig"
                     ],
     "files":  {
-                  "src/apprt/win32/chrome_comp.zig":  "5fb3639c6a42d880d8cb75f53d4ab3ec320048abf8e5127089c946d82dacf35c",
+                  "src/apprt/win32/chrome_comp.zig":  "f8c771a117cc8b8850ed77f8fce8f922d14030718e07f2314833d9cf04cbd008",
                   "test/win32/comp-chrome.ps1":  "16799e71e24b6e5c546e426a140b0f865f2866ce36523381336e569eb98bd5c4"
               },
     "code":  {

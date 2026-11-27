@@ -19744,9 +19744,24 @@ fn handleNcMouseMove(self: *Window, wparam: usize) void {
     const hovered = captionButtonFor(wparam);
     if (hovered == self.caption_hover) return;
     self.caption_hover = hovered;
-    self.pillTipOnHoverChange(hovered);
-    self.buttonTipOnHoverChange(hovered);
+    // Under the hover hold (below) no tooltip is armed: the held hover lives
+    // on a ghost on the input desktop, and a tip is a window of its own that
+    // would pop up over whatever the person at the desk is doing.
+    if (!holdCaptionHover()) {
+        self.pillTipOnHoverChange(hovered);
+        self.buttonTipOnHoverChange(hovered);
+    }
     self.invalidateCaption();
+}
+
+/// `GHOZTTY_COMP_CHROME_HOLD_HOVER` (T2547, debug builds only): the caption
+/// hover survives `WM_NCMOUSELEAVE`. `TrackMouseEvent` watches the REAL cursor,
+/// so a posted `WM_NCMOUSEMOVE` on a window the pointer is not over is undone
+/// within a frame and the hovered band is never painted (the T209 lesson).
+/// scripts\comp-desk-onscreen.ps1 holds it so the hovered band can be filmed
+/// through the compositor and scored against GDI's.
+fn holdCaptionHover() bool {
+    return chrome_comp.debugKnob("GHOZTTY_COMP_CHROME_HOLD_HOVER");
 }
 
 /// `WM_NCMOUSELEAVE`: the pointer left the non-client area entirely.
@@ -19764,6 +19779,7 @@ fn handleNcMouseLeave(self: *Window) void {
     self.tipHideFor(.pill);
     self.tipHideFor(.button);
     if (self.caption_hover == null) return;
+    if (holdCaptionHover()) return;
     self.caption_hover = null;
     self.invalidateCaption();
 }

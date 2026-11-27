@@ -40,6 +40,9 @@
 //!   - `GHOZTTY_COMP_CHROME_CAPTION_FREEZE=1` (scripts\comp-desk-onscreen.ps1
 //!     -NegativeControl): the caption visual takes its whole uploads and drops
 //!     every dirty-rect one, so a frozen band is something the oracle sees.
+//!   - `GHOZTTY_COMP_CHROME_HOLD_HOVER=1` (scripts\comp-desk-onscreen.ps1,
+//!     T2547): the caption hover survives the leave the real cursor sends,
+//!     and arms no tooltip, so a hovered band can be filmed at all.
 //!   - `GHOZTTY_COMP_CHROME_OVERLAY_FREEZE=1`: the same for the overlay
 //!     (T2544), so a header that stops updating is something it sees.
 //!   - `GHOZTTY_COMP_CHROME_FLAT_FREEZE=1`: the flat style's desk (T2545,
@@ -1407,6 +1410,9 @@ pub const Host = struct {
             self.cap_surface = surf;
             self.cap_w = w;
             self.cap_h = h;
+            // The band's height moves with the tab strip; the on-screen
+            // oracle scores the rows of the LAST size it reads here (T2547).
+            log.debug("chrome caption surface: {d}x{d}", .{ w, h });
             whole = true;
         }
         stage = "caption-upload";
