@@ -27,8 +27,10 @@ $t2485Lib = Join-Path $PSScriptRoot '..\..\..\..\test\win32\lib'
 
 Import-FrameLabDriver; Import-FrameCapture; Import-FrameLabInput
 
-$p = Get-UserPresence
+# -CarryOwnInput (T2633): the previous run's own drag is not a person.
+$p = Get-UserPresence -CarryOwnInput
 if ($p.Present) { "SKIP user present: $($p.Reason)"; exit 3 }
+Start-OwnInputClock
 
 Set-GhozttyTestIsolation -Tag t2485 -ReleaseSandbox | Out-Null
 $null = New-Item -ItemType Directory -Force -Path $Out
@@ -115,7 +117,9 @@ public static class T2485Hit {
 
     $s = Start-FrameCapture -X $fr[0] -Y $fr[1] -W $fr[2] -H $fr[3] -PngDir $frames -SampleEvery $SampleEvery -QueueBytes ([long]$QueueGB * 1GB)
     Start-Sleep -Milliseconds 400
-    $played = Invoke-FrameLabInput -Path $path -Presence (Get-UserPresence)
+    $played = Invoke-FrameLabInput -Path $path -Presence (Get-UserPresence -CarryOwnInput)
+    # Leave the next run the tick of this drag, so it is not read as a person.
+    if (-not $played.Skipped -and $played.AbortReason -ne 'user-input' -and $played.Sent -gt 0) { Save-OwnInputLedger }
     Start-Sleep -Milliseconds 1200
     $res = Stop-FrameCapture -Session $s
     if ($s -is [IDisposable]) { $s.Dispose() }

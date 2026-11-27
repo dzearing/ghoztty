@@ -379,6 +379,46 @@ Assert ($rp.Present) 'presentation mode reads present'
 $rp = Resolve-UserPresence -IdleSeconds 900 -NotificationState 5
 Assert (-not $rp.Present) 'an ordinary accepts-notifications shell state on an idle box reads absent'
 
+# T2633: the own-input ledger. A -Live run's own drag is the session's "last
+# input", so the next run (another process) read it as a person and SKIPPED for
+# five minutes. Pure cases first: now = tick 1,000,000; the ledger was written
+# 10 s ago; its own input ended at 989,000; the person left at 600,000.
+$nowU = [datetime]::UtcNow
+$led = [pscustomobject]@{ ownTick = 989000; humanTick = 600000; writtenTick = 990000; writtenUtc = $nowU.AddSeconds(-10).ToString('o') }
+$ci = Resolve-CarriedHumanIdle -Ledger $led -LastInputTick 989000 -NowTick 1000000 -NowUtc $nowU
+Assert ([math]::Abs($ci - 400) -lt 0.01) "a last input that IS the previous run's own reads idle since the person (400s, got $ci)"
+$ci = Resolve-CarriedHumanIdle -Ledger $led -LastInputTick 989200 -NowTick 1000000 -NowUtc $nowU
+Assert ([math]::Abs($ci - 400) -lt 0.01) "input within the 250 ms slack after the own tick is still the run's own (got $ci)"
+$ci = Resolve-CarriedHumanIdle -Ledger $led -LastInputTick 995000 -NowTick 1000000 -NowUtc $nowU
+Assert ($ci -eq -1) "NEGATIVE CONTROL: input AFTER the run's own is a person - the ledger does not apply (got $ci)"
+$ci = Resolve-CarriedHumanIdle -Ledger $null -LastInputTick 989000 -NowTick 1000000 -NowUtc $nowU
+Assert ($ci -eq -1) 'no ledger, no carry'
+$old = [pscustomobject]@{ ownTick = 989000; humanTick = 600000; writtenTick = 990000; writtenUtc = $nowU.AddSeconds(-3600).ToString('o') }
+$ci = Resolve-CarriedHumanIdle -Ledger $old -LastInputTick 989000 -NowTick 4590000 -NowUtc $nowU
+Assert ($ci -eq -1) "a ledger older than 30 minutes is ignored (got $ci)"
+$boot = [pscustomobject]@{ ownTick = 989000; humanTick = 600000; writtenTick = 990000; writtenUtc = $nowU.AddSeconds(-10).ToString('o') }
+$ci = Resolve-CarriedHumanIdle -Ledger $boot -LastInputTick 50000 -NowTick 60000 -NowUtc $nowU
+Assert ($ci -eq -1) "a ledger whose tick and wall clocks disagree (a reboot reset the tick) is ignored (got $ci)"
+$wrap = [pscustomobject]@{ ownTick = 4294967000; humanTick = 4294000000; writtenTick = 4294967100; writtenUtc = $nowU.AddSeconds(-2).ToString('o') }
+$ci = Resolve-CarriedHumanIdle -Ledger $wrap -LastInputTick 4294967000 -NowTick 1804 -NowUtc $nowU
+Assert ($ci -gt 969 -and $ci -lt 970) "the 49.7-day tick wrap reads right (got $ci)"
+
+# Round trip through the file, on the live ticks: nothing is sent, so the
+# session's last input is unchanged and IS the "own" tick the ledger records.
+$env:GHOZTTY_TEST_OWN_INPUT_LEDGER = Join-Path $env:TEMP ("ghoztty-own-input-ledger-t2633-$PID.json")
+Remove-Item -LiteralPath $env:GHOZTTY_TEST_OWN_INPUT_LEDGER -Force -ErrorAction SilentlyContinue
+$before = Get-CarriedHumanIdle
+Start-OwnInputClock
+$realIdle = [GhozttyUserPresence]::IdleMs() / 1000.0
+Save-OwnInputLedger
+$after = Get-CarriedHumanIdle
+Assert ($before -eq -1 -and (Test-Path -LiteralPath $env:GHOZTTY_TEST_OWN_INPUT_LEDGER)) "no ledger file reads no carry, and Save-OwnInputLedger writes one (before=$before)"
+Assert ($after -ge 0 -and [math]::Abs($after - $realIdle) -lt 2) "the file round trip carries the person's idle across processes (carried=$after real=$realIdle)"
+$cp = Get-UserPresence -CarryOwnInput
+Assert ($cp.Reason -match "previous test run's own injected input") "Get-UserPresence -CarryOwnInput names the carry in its reason ($($cp.Reason))"
+Remove-Item -LiteralPath $env:GHOZTTY_TEST_OWN_INPUT_LEDGER -Force -ErrorAction SilentlyContinue
+Remove-Item Env:GHOZTTY_TEST_OWN_INPUT_LEDGER -ErrorAction SilentlyContinue
+
 # The live probe answers on this box without being forced, with a reason.
 $live = Get-UserPresence
 Write-Host ("  live presence: present={0} - {1}" -f $live.Present, $live.Reason)

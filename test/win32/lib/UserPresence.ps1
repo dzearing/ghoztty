@@ -74,6 +74,14 @@ public class GhozttyUserPresence {
         return (long)unchecked(GetTickCount() - lii.dwTime);
     }
 
+    // GetLastInputInfo's tick (0 when the call fails) and the tick now (T2633).
+    public static uint LastInputTick() {
+        LASTINPUTINFO lii = new LASTINPUTINFO();
+        lii.cbSize = (uint)Marshal.SizeOf(typeof(LASTINPUTINFO));
+        return GetLastInputInfo(ref lii) ? lii.dwTime : 0;
+    }
+    public static uint TickNow() { return GetTickCount(); }
+
     // QUERY_USER_NOTIFICATION_STATE, or 0 when the call fails.
     public static int NotificationState() {
         int s;
@@ -201,10 +209,13 @@ Probe the box and decide. Honours GHOZTTY_TEST_FORCE_USER_PRESENCE.
 -IdleSecondsOverride replaces the GetLastInputInfo reading (every other signal
 is still probed): for a caller that knows the most recent input was its own
 injected input (lib\FrameLabDriver.ps1, T2395), which GetLastInputInfo counts.
+-CarryOwnInput does the same from the own-input ledger a previous test
+PROCESS left (Save-OwnInputLedger, below): when the session's last input is
+that run's own injected input, the idle is the time since the last person.
 Returns { Present, Reason, Forced }.
 #>
 function Get-UserPresence {
-    param([double]$IdleSecondsOverride = -1)
+    param([double]$IdleSecondsOverride = -1, [switch]$CarryOwnInput)
     $forced = $env:GHOZTTY_TEST_FORCE_USER_PRESENCE
     if ($forced -eq 'present') {
         return [pscustomobject]@{ Present = $true; Reason = 'forced present by GHOZTTY_TEST_FORCE_USER_PRESENCE'; Forced = $true }
@@ -216,6 +227,11 @@ function Get-UserPresence {
     $idleMs = [GhozttyUserPresence]::IdleMs()
     $idle = if ($idleMs -ge 0) { $idleMs / 1000.0 } else { -1 }
     if ($IdleSecondsOverride -ge 0) { $idle = $IdleSecondsOverride }
+    $carried = $false
+    if ($CarryOwnInput -and $IdleSecondsOverride -lt 0) {
+        $c = Get-CarriedHumanIdle
+        if ($c -ge 0) { $idle = $c; $carried = $true }
+    }
     $quns = [GhozttyUserPresence]::NotificationState()
 
     $fg = [GhozttyUserPresence]::Foreground()
@@ -241,7 +257,95 @@ function Get-UserPresence {
 
     $r = Resolve-UserPresence -IdleSeconds $idle -IdleThreshold (Get-UserPresenceIdleThreshold) `
         -NotificationState $quns -ForegroundFullscreen $full -ForegroundOurs $ours -ForegroundDescription $desc
-    return [pscustomobject]@{ Present = $r.Present; Reason = $r.Reason; Forced = $false }
+    $reason = $(if ($carried) { "$($r.Reason) (the last input was a previous test run's own injected input)" } else { $r.Reason })
+    return [pscustomobject]@{ Present = $r.Present; Reason = $reason; Forced = $false }
+}
+
+# ---- the own-input ledger (T2633) --------------------------------------------
+#
+# GetLastInputInfo counts injected input. A -Live script that drags the real
+# pointer leaves the session's "last input" at its own drag, so the NEXT run -
+# another process, seconds later - read "input 66s ago" and SKIP ALLed for five
+# minutes with nobody at the box. FrameLabDriver solved this within one process
+# (T2395); the ledger carries the same knowledge across processes:
+#
+#   Start-OwnInputClock   at the start of a run, before it sends anything:
+#                         remembers when a PERSON last touched the box.
+#   Save-OwnInputLedger   right after the run's own input ends: writes
+#                         { ownTick, humanTick, writtenTick, writtenUtc }.
+#   Get-UserPresence -CarryOwnInput
+#                         when the last input is no later than ownTick, the
+#                         idle is the time since humanTick - since the person.
+#
+# Input after ownTick is a person, and the ledger is ignored. So is a ledger
+# older than 30 minutes or one whose tick and wall clocks disagree (a reboot
+# reset the tick). GHOZTTY_TEST_OWN_INPUT_LEDGER moves the file (the harness).
+
+function Get-OwnInputLedgerPath {
+    if ($env:GHOZTTY_TEST_OWN_INPUT_LEDGER) { return $env:GHOZTTY_TEST_OWN_INPUT_LEDGER }
+    return (Join-Path ([IO.Path]::GetTempPath()) 'ghoztty-own-input-ledger.json')
+}
+
+function Get-TickDelta([uint32]$To, [uint32]$From) {
+    return [uint32](([int64]$To - [int64]$From + 4294967296) % 4294967296)
+}
+
+<#
+The pure decision: seconds since a person last touched the box, carried
+through the ledger, or -1 when the ledger does not apply. -Ledger is the parsed
+file (or $null), the rest are the live readings.
+#>
+function Resolve-CarriedHumanIdle {
+    param($Ledger, [uint32]$LastInputTick, [uint32]$NowTick, [datetime]$NowUtc,
+          [int]$SlackMs = 250, [int]$MaxAgeSeconds = 1800, [int]$ClockSkewMs = 5000)
+    if ($null -eq $Ledger -or $LastInputTick -eq 0) { return -1 }
+    try {
+        $own = [uint32]$Ledger.ownTick; $human = [uint32]$Ledger.humanTick; $wt = [uint32]$Ledger.writtenTick
+        $wu = [datetime]::Parse([string]$Ledger.writtenUtc, [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::RoundtripKind).ToUniversalTime()
+    } catch { return -1 }
+    if ($own -eq 0) { return -1 }
+    $wallAge = ($NowUtc.ToUniversalTime() - $wu).TotalMilliseconds
+    if ($wallAge -lt 0 -or $wallAge -gt $MaxAgeSeconds * 1000.0) { return -1 }
+    if ([math]::Abs((Get-TickDelta $NowTick $wt) - $wallAge) -gt $ClockSkewMs) { return -1 }
+    # Own when the last input is no later than ownTick + slack; a difference past
+    # half the range is "before", not "4 billion ms after".
+    $after = Get-TickDelta $LastInputTick $own
+    if (-not ($after -le $SlackMs -or $after -ge 2147483648)) { return -1 }
+    return (Get-TickDelta $NowTick $human) / 1000.0
+}
+
+function Read-OwnInputLedger {
+    $path = Get-OwnInputLedgerPath
+    if (-not (Test-Path -LiteralPath $path)) { return $null }
+    try { return (Get-Content -LiteralPath $path -Raw -ErrorAction Stop | ConvertFrom-Json) } catch { return $null }
+}
+
+function Get-CarriedHumanIdle {
+    return (Resolve-CarriedHumanIdle -Ledger (Read-OwnInputLedger) -LastInputTick ([GhozttyUserPresence]::LastInputTick()) `
+        -NowTick ([GhozttyUserPresence]::TickNow()) -NowUtc ([datetime]::UtcNow))
+}
+
+$script:OwnInputHumanTick = $null
+
+# Call at the start of a run, before it sends any input of its own.
+function Start-OwnInputClock {
+    $idle = Get-CarriedHumanIdle
+    if ($idle -lt 0) {
+        $ms = [GhozttyUserPresence]::IdleMs()
+        $idle = $(if ($ms -ge 0) { $ms / 1000.0 } else { -1 })
+    }
+    if ($idle -lt 0) { $script:OwnInputHumanTick = $null; return }
+    $script:OwnInputHumanTick = [uint32](([int64][GhozttyUserPresence]::TickNow() - [int64][math]::Round($idle * 1000) + 4294967296) % 4294967296)
+}
+
+# Call right after the run's own input ends. A no-op without Start-OwnInputClock.
+function Save-OwnInputLedger {
+    if ($null -eq $script:OwnInputHumanTick) { return }
+    $l = [ordered]@{
+        ownTick = [GhozttyUserPresence]::LastInputTick(); humanTick = $script:OwnInputHumanTick
+        writtenTick = [GhozttyUserPresence]::TickNow(); writtenUtc = [datetime]::UtcNow.ToString('o')
+    }
+    try { [IO.File]::WriteAllText((Get-OwnInputLedgerPath), ($l | ConvertTo-Json)) } catch { }
 }
 
 <#
@@ -266,7 +370,8 @@ when nobody is present; otherwise prints the suite's SKIP ALL shape (scored
 as a skip by scripts\suite-run.ps1) and exits 0.
 #>
 function Assert-UserAbsent {
-    $p = Get-UserPresence
+    param([switch]$CarryOwnInput)
+    $p = Get-UserPresence -CarryOwnInput:$CarryOwnInput
     if ($p.Present) {
         Write-Host "SKIP ALL: user-absent is not available here - somebody is using this box: $($p.Reason). Input-desktop tests never run over the user."
         exit 0

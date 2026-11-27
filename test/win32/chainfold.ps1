@@ -318,7 +318,8 @@ try {
         # ---- L. the user's scenario on a release build --------------------
         # Moves the real pointer over the user's screen: opt-in, never a sweep.
         . (Join-Path $PSScriptRoot 'lib\UserPresence.ps1')
-        Assert-UserAbsent
+        # T2633: the previous -Live run's own drag is not a person.
+        Assert-UserAbsent -CarryOwnInput
         if (-not $Exe -or -not (Test-Path $Exe)) { throw "-Live needs -Exe <a ReleaseFast ghoztty.exe outside the install>, got '$Exe'" }
         $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
         $out = Join-Path $repo "temp\chainfold-live\$stamp"

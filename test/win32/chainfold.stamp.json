@@ -1,14 +1,20 @@
 {
     "guard":  "chainfold",
     "script":  "test/win32/chainfold.ps1",
-    "generated":  "2026-11-06T21:47:58-08:00",
-    "commit":  "61d11ab13",
+    "generated":  "2026-11-27T03:58:34-08:00",
+    "commit":  "9703a47f4a",
     "uncommitted":  [
+                        "docs/design/t2485-chainfold/tools/record-chainfold.ps1",
                         "test/win32/chainfold.ps1"
                     ],
     "files":  {
-                  "docs/design/t2485-chainfold/tools/record-chainfold.ps1":  "0efcda420aa0a4c69a73d7c93157e089670e757a79c4fd1e399a16d52f38aa17",
-                  "test/win32/chainfold.ps1":  "59b160e3e7e93c3c5d28ee79a1618162dfcdaa0c80cd93bd78eb1b874dfd240b",
+                  "docs/design/t2485-chainfold/tools/record-chainfold.ps1":  "edd56eb51860b5e9ed737bab6d2bfd4e464fbb0d87eabd93427864e1f34b5b7d",
+                  "test/win32/chainfold.ps1":  "4d1f4f1c741e11c387a34e63e1b71eaafd09e37fd0cee5c92005871182a1c86d",
                   "test/win32/lib/ChainFoldOracle.ps1":  "6e774b2679c3acb1172991c393b17d36b1524fa4cd843863eacc1848c8fa3423"
-              }
+              },
+    "code":  {
+                 "docs/design/t2485-chainfold/tools/record-chainfold.ps1":  "code1:4a7b3df84d6869a50cb7202145694d2e0adb6a5e19c173a992b59d5434d13863",
+                 "test/win32/chainfold.ps1":  "code1:484a3dc2459857c6053ef04672ad6ff77329a2f675769dd84aa030b263e6c481",
+                 "test/win32/lib/ChainFoldOracle.ps1":  "code1:0bb8260e41802eeece1b05628281fa2a7b5b47e4129f58ee0ed43ebb9cebbe0d"
+             }
 }
