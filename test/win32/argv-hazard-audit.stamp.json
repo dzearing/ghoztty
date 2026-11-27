@@ -1,8 +1,8 @@
 {
     "guard":  "argv-hazard",
     "script":  "test/win32/argv-hazard-audit.ps1",
-    "generated":  "2026-11-26T22:18:11-08:00",
-    "commit":  "af8788e1a6",
+    "generated":  "2026-11-26T22:37:21-08:00",
+    "commit":  "2179ead097",
     "uncommitted":  [
 
                     ],
@@ -123,7 +123,7 @@
                   "scripts/ship-readiness.ps1":  "1fcab42cac628cae5852b0d1bd93b266c0d9809b015ff996362f02c5895c84f7",
                   "scripts/soak-daemon.ps1":  "bd8726720ced0165a658128b044bce3f796b979f57049c92f4e8ab4687aba046",
                   "scripts/stamp-merge.ps1":  "9cac1de32cf4554fbc4070e374cbe163e5b34cf164564499b002c0b3b6a67f3a",
-                  "scripts/suite-run.ps1":  "ec673a3b7deb5b60d9992dc26273e5a2f0c414d5206bc99de94e2774ef480935",
+                  "scripts/suite-run.ps1":  "2f258a16ad2b4df82dbe4ae7b625c3e4d1a8aa9e5cfa2dcea0be30ab43196e5f",
                   "scripts/t470-ring-measure.ps1":  "427dc0cada150aadb214a007e32238f1d75d3751ad40a02260b325157672f143",
                   "scripts/t857-boost-ab.ps1":  "57e0577817a74642cb26688667389345556d03474791d9a4eafabf297069e38b",
                   "scripts/task-dashboard.ps1":  "373581cd79cefd0dacbcdd0c2a8798fa74d3a560f88b22ff86796d692974e398",
