@@ -1,10 +1,10 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-11-26T23:55:18-08:00",
-    "commit":  "2179ead097",
+    "generated":  "2026-11-27T00:10:15-08:00",
+    "commit":  "bd116ee558",
     "uncommitted":  [
-                        "test/win32/comp-chrome.ps1"
+
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "cfa23792d110d499fa4086697daa516d218d0d110e594a7452167a81220ee15e",
@@ -158,7 +158,7 @@
                   "test/win32/drag-perf.ps1":  "4509e2e7575e64baf1fa98c68129848e9a8232f22cc06a9fd520378d6fcc539d",
                   "test/win32/drag-stall.ps1":  "4e44e4d0d58e32aec2e41699007c34b9d4029c6a5f090cec060dfcd17b0708ee",
                   "test/win32/echo-marker-audit.ps1":  "d4ba42c116403ba68c75e1962a7943f32f9001d1654cd604d6afa8ea2ea04396",
-                  "test/win32/edge-drag-rate.ps1":  "2fca304221d50b9ef944602b898f1b74374622f0c940916889130dc0acd4a32c",
+                  "test/win32/edge-drag-rate.ps1":  "347f2a2b401ac9596622fb3bff430db896a07457a83af4ab9a7ee024eddd7917",
                   "test/win32/exec-user-env.ps1":  "2320afd696e761ea6c0c3850cd3df9b0a893aedb1da9e9863df4014d35ee2ea1",
                   "test/win32/exit-reason.ps1":  "0ca75a25399950b555b7ba59118f8dab9a0313d5a4189296e88d4910e66e98ff",
                   "test/win32/fail-transcript.ps1":  "96961e5658923dda19ea6d47e0c671b62c31229a983dfc25f4ff9a0051831fbe",
