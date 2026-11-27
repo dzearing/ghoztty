@@ -665,6 +665,8 @@ pub const SplitTree = extern struct {
     /// the widget that draws it.
     pub const PreviewReport = struct {
         shown: bool,
+        /// The split area's size, `[width, height]`.
+        area: [2]c_int = .{ 0, 0 },
         kind: ?[]const u8 = null,
         seam: ?[]const u8 = null,
         glyph: bool = false,
@@ -680,14 +682,17 @@ pub const SplitTree = extern struct {
     pub fn previewReport(self: *Self, alloc: Allocator) Allocator.Error!PreviewReport {
         const priv = self.private();
         const w: *wk.GtkWidget = @ptrCast(priv.drop_preview);
-        if (wk.gtk_widget_get_visible(w) == 0) return .{ .shown = false };
-        const h = priv.preview orelse return .{ .shown = false };
+        const space: *wk.GtkWidget = @ptrCast(priv.tree_bin);
+        const area: [2]c_int = .{ wk.gtk_widget_get_width(space), wk.gtk_widget_get_height(space) };
+        if (wk.gtk_widget_get_visible(w) == 0) return .{ .shown = false, .area = area };
+        const h = priv.preview orelse return .{ .shown = false, .area = area };
         var classes: std.ArrayList([]const u8) = .empty;
         for (pane_drop_preview.classes) |c| if (wk.gtk_widget_has_css_class(w, c.ptr) != 0) try classes.append(alloc, c);
         const look = pane_drop_preview.look(h);
         const laid: ?[4]i32 = if (PaneDrag.rectOf(w, @ptrCast(priv.tree_bin))) |r| .{ r.left, r.top, r.right, r.bottom } else null;
         return .{
             .shown = true,
+            .area = area,
             .kind = @tagName(h.kind),
             .seam = if (look) |l| l.seam else null,
             .glyph = wk.gtk_widget_get_visible(@ptrCast(priv.drop_preview_glyph)) != 0,

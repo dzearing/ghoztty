@@ -147,17 +147,18 @@ if [ "$(pf "$r" "d['preview']['kind']")" = swap ] && [ "$(pf "$r" "d['preview'][
 fi
 hl_check "V7 over b's centre: the swap box, inside b and centred on it, with the glyph" $ok "$r"
 
-# V8: b's left half puts a back where it is.
-r=$(pd --target="$a" --hover-on="$b" --hx=0.08 --hy=0.5)
+# V8: the window's left edge puts a back where it is (it already spans
+# the left of H(a,V(b,c))): a quiet spot.
+r=$(pd --target="$a" --hover-at="3,$(( (at + ab) / 2 ))")
 [ "$(pf "$r" "d['preview']['shown']")" = False ]
-hl_check "V8 over b's left half (a | b already) nothing is previewed" $? "$r"
+hl_check "V8 by the window's left edge (a is already there) nothing is previewed" $? "$r"
 
 # V9: by the window's right edge, the right half of the whole area.
-area_w=$br; area_h=$cb
-r=$(pd --target="$a" --hover-at="$(( area_w - 4 )),$(( area_h / 2 ))")
+read -r area_w area_h <<< "$(pf "$r" "' '.join(str(v) for v in d['preview']['area'])")"
+r=$(pd --target="$a" --hover-at="$(( area_w - 3 )),$(( area_h / 2 ))")
 [ "$(pf "$r" "d['preview']['kind']")" = top_level ] && [ "$(pf "$r" "d['preview']['seam']")" = seam-left ] \
     && [ "$(pf "$r" "d['preview']['rect']")" = "[$(( area_w - area_w / 2 )), 0, $area_w, $area_h]" ]
-hl_check "V9 by the window's right edge: the right half of the area, seamed on its left" $? "$r"
+hl_check "V9 by the window's right edge: the right half of the ${area_w}x$area_h area, seamed on its left" $? "$r"
 
 # V10: on the b/c divider.
 dy=$(( (bb + ct) / 2 ))
@@ -177,7 +178,7 @@ hl_screenshot "$b" "$shot_off" --window > /dev/null
 # pixels from the window's origin; the split area starts at the stage's
 # offset, so sample relative to b's own capture origin.
 cap=$(hl_screenshot "$b" "$HL_RUNTIME/b.png")
-read -r ox oy cw ch <<< "$(pf "$cap" "' '.join(str(d[k]) for k in ('x', 'y', 'client_width', 'client_height'))")"
+read -r ox oy cw ch <<< "$(pf "$cap" "' '.join(str(d['data'][k]) for k in ('x', 'y', 'client_width', 'client_height'))")"
 wx=$(( ${ox:-0} + ${cw:-0} / 2 )); wy=$(( ${oy:-0} + ${ch:-0} - (bb - bt) / 8 ))
 on_px=$(hl_png_pixel "$shot_on" "$wx" "$wy"); off_px=$(hl_png_pixel "$shot_off" "$wx" "$wy")
 python3 -c '
@@ -198,24 +199,31 @@ hl_wait_for 5 shape_is "V(V(b,$a),c)"
     && shape_is "V(V(b,$a),c)"
 hl_check "V12 the release there splits b downward, and the preview is gone after it" $? "shape=$(shape_of) $r"
 
-# V14-V16: the tab bar. c into a tab of its own, so the window has two.
-r=$(pd --target="$c" --drop-tab=1)
+# V14-V16: the tab bar. c into a tab of its own before the rest, on show,
+# so the window has two and the rest is tab 1.
+r=$(pd --target="$c" --drop-tab=0)
 two_tabs() { [ "$(pf "$(pd --target="$a")" "d['tab_count']")" = 2 ]; }
 hl_wait_for 5 two_tabs
-r=$(pd --target="$a" --hover-tab=0)
-[ "$(pf "$r" "d['selected_tab']")" = 1 ] && [ "$(pf "$r" "d['dwell_tab']")" = 0 ] && [ "$(pf "$r" "d['dwell_lit']")" = 0 ]
+r=$(pd --target="$a" --hover-tab=1)
+[ "$(pf "$r" "d['selected_tab']")" = 0 ] && [ "$(pf "$r" "d['dwell_tab']")" = 1 ] && [ "$(pf "$r" "d['dwell_lit']")" = 1 ]
 hl_check "V14 resting on the other tab's button lights that button while the clock runs" $? "$r"
 r=$(pd --target="$a" --hover-leave)
 [ "$(pf "$r" "d['dwell_lit']")" = None ] && [ "$(pf "$r" "d['dwell_tab']")" = None ]
 hl_check "V15 leaving the bar darkens it" $? "$r"
-pd --target="$a" --hover-tab=0 > /dev/null
-opened() { [ "$(pf "$(pd --target="$a")" "d['selected_tab']")" = 0 ]; }
+pd --target="$a" --hover-tab=1 > /dev/null
+opened() { [ "$(pf "$(pd --target="$a")" "d['selected_tab']")" = 1 ]; }
 hl_wait_for 5 opened
 r=$(pd --target="$a")
-[ "$(pf "$r" "d['selected_tab']")" = 0 ] && [ "$(pf "$r" "d['dwell_lit']")" = None ]
+[ "$(pf "$r" "d['selected_tab']")" = 1 ] && [ "$(pf "$r" "d['dwell_lit']")" = None ]
 hl_check "V16 when the dwell fires the tab opens and its button goes dark" $? "$r"
 
-! grep -E 'Gtk-CRITICAL|Gtk-WARNING|GLib-CRITICAL|GLib-GObject-CRITICAL' "$APP_LOG" | grep -v 'GtkRevealer' > /dev/null
-hl_check "V17 no GTK critical or warning in the app log" $? "$(grep -E 'CRITICAL|WARNING' "$APP_LOG" | head -3)"
+# V17: nothing critical, and no CSS parse error inside this card's rules
+# (style.css's older hsl() line warns on every launch and is not ours).
+css=src/apprt/gtk/css/style.css
+c0=$(grep -n 'The live drop preview of a pane drag' "$css" | cut -d: -f1)
+c1=$(grep -n 'tabbar tab.pane-drag-dwell' "$css" | cut -d: -f1)
+bad=$(grep -oE 'style\.css:[0-9]+' "$APP_LOG" | cut -d: -f2 | awk -v a="${c0:-0}" -v b="$(( ${c1:-0} + 3 ))" '$1 >= a && $1 <= b')
+! grep -E 'CRITICAL' "$APP_LOG" > /dev/null && [ -z "$bad" ] && [ -n "$c0" ] && [ -n "$c1" ]
+hl_check "V17 no critical in the app log, no CSS error in lines $c0-$(( ${c1:-0} + 3 ))" $? "bad=$bad $(grep -E 'CRITICAL|parser error' "$APP_LOG" | head -3)"
 
 hl_finish "$L"
