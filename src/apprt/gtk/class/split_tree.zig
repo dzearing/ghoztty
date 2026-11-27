@@ -24,6 +24,8 @@ const Window = @import("window.zig").Window;
 const PaneDrag = @import("../PaneDrag.zig");
 const pane_drop = @import("../../win32/pane_drop.zig");
 const pane_drop_apply = @import("../pane_drop_apply.zig");
+const pane_drop_preview = @import("../pane_drop_preview.zig");
+const drop_highlight = @import("../../win32/drop_highlight.zig");
 const pane_style = @import("../pane_style.zig");
 const pane_stage = @import("../pane_stage_rules.zig");
 const gutter_rules = @import("../gutter_bar_rules.zig");
@@ -174,6 +176,14 @@ pub const SplitTree = extern struct {
 
         // Template bindings
         tree_bin: *adw.Bin,
+        /// The live drop preview of a pane drag over this split area
+        /// (T3708), and its swap glyph: an overlay child that never takes
+        /// an event.
+        drop_preview: *gtk.Box,
+        drop_preview_glyph: *gtk.Label,
+        /// The preview on show, so a motion that changes nothing redraws
+        /// nothing.
+        preview: ?drop_highlight.Highlight = null,
 
         /// Last focused surface in the tree. We need this to handle various
         /// tree change states.
@@ -320,7 +330,11 @@ pub const SplitTree = extern struct {
 
         // Pane drags land here (T3564): the whole split area answers, in
         // its own coordinates.
-        PaneDrag.installDropTarget(@ptrCast(priv.tree_bin), self, &dropFromTarget);
+        // A drag moving over it shows where a release lands (T3708).
+        PaneDrag.installDropTargetHover(@ptrCast(priv.tree_bin), self, &dropFromTarget, .{
+            .motion = &hoverFromTarget,
+            .leave = &hoverEndFromTarget,
+        });
     }
 
     // ---- Pane rearrange mode and drops (T3564) -------------------------------
@@ -343,6 +357,17 @@ pub const SplitTree = extern struct {
     fn dropFromTarget(owner: *anyopaque, dragged_id: []const u8, x: f64, y: f64) PaneDrag.DropResult {
         const self: *Self = @ptrCast(@alignCast(owner));
         return self.dropPaneAt(dragged_id, x, y, PaneDrag.draggingBlade());
+    }
+
+    fn hoverFromTarget(owner: *anyopaque, x: f64, y: f64) void {
+        const self: *Self = @ptrCast(@alignCast(owner));
+        const id = PaneDrag.dragged() orelse return self.hoverEnd();
+        self.hoverAt(id, x, y, PaneDrag.draggingBlade());
+    }
+
+    fn hoverEndFromTarget(owner: *anyopaque) void {
+        const self: *Self = @ptrCast(@alignCast(owner));
+        self.hoverEnd();
     }
 
     /// The stage's top-left in the split area's coordinates (the drop
@@ -431,60 +456,9 @@ pub const SplitTree = extern struct {
     pub fn dropPaneAt(self: *Self, dragged_id: []const u8, x: f64, y: f64, blade: bool) PaneDrag.DropResult {
         const priv = self.private();
         const tree = priv.tree orelse return .{};
-        const space: *wk.GtkWidget = @ptrCast(priv.tree_bin);
-        const offset = self.stageOffset(space);
-
-        var rects_buf: [pane_drop_apply.max_leaves]pane_drop.PaneRect = undefined;
-        var n: usize = 0;
-        var it = tree.iterator();
-        while (it.next()) |entry| {
-            if (n == rects_buf.len) break;
-            // A minimized pane is a target by its strip, and only a strip
-            // that shows (docs/reference/stacked-panes.md "Dragging a strip";
-            // Mac `PaneDragSession`): its card is out of sight at its last
-            // size on show.
-            if (priv.grid) |*grid| if (offset) |o| if (grid.placement(paneKey(entry.view))) |p| {
-                if (p.is_tucked or p.is_sliver) {
-                    const tab = p.tab orelse continue;
-                    rects_buf[n] = .{ .id = entry.view.paneId(), .rect = offsetRect(tab, o) };
-                    n += 1;
-                    continue;
-                }
-            };
-            const leaf: *gtk.Widget = if (ext.getAncestor(SurfaceScrolledWindow, entry.view.as(gtk.Widget))) |w|
-                w.as(gtk.Widget)
-            else
-                entry.view.as(gtk.Widget);
-            const r = PaneDrag.rectOf(@ptrCast(leaf), space) orelse continue;
-            rects_buf[n] = .{ .id = entry.view.paneId(), .rect = r };
-            n += 1;
-        }
-        const rects = rects_buf[0..n];
-        const metrics = pane_drop.Metrics.forScale(1.0);
-        var ids: [pane_drop_apply.max_leaves][]const u8 = undefined;
-        var divs: [pane_drop_apply.max_leaves]pane_drop.Divider = undefined;
-        const candidate: pane_drop.Candidate = .{
-            .window = @intFromPtr(self),
-            .z_order = 0,
-            .content_rect = .{ .left = 0, .top = 0, .right = wk.gtk_widget_get_width(space), .bottom = wk.gtk_widget_get_height(space) },
-            .pane_rects = rects,
-            .dividers = pane_drop_apply.dividers(Surface.Tree, tree, surfaceId, rects, metrics, &ids, &divs),
-        };
-        const point: pane_drop.Point = .{ .x = @intFromFloat(@round(x)), .y = @intFromFloat(@round(y)) };
-        var blade_buf: BladeBuffers = .{};
-        const home_surface: ?*Surface = if (pane_drop_apply.handleOf(Surface.Tree, tree, surfaceId, dragged_id)) |h| tree.nodes[h.idx()].leaf else null;
-        // A strip folded into a row of THIS tab has its row's slots; one
-        // over another tab or window has only that window's edge band
-        // (`resolveBlade` with no slots and a window that is not this one).
-        const blade_drag: ?pane_drop.BladeDrag = if (!blade) null else if (home_surface) |s|
-            self.bladeGeometry(s, space, metrics, &blade_buf)
-        else
-            .{ .window = 0, .slots = &.{}, .screens = &.{}, .dragged = dragged_id };
-        const resolved = if (blade_drag) |b|
-            pane_drop.resolveBlade(point, &.{candidate}, b, metrics)
-        else
-            pane_drop.resolve(point, &.{candidate}, dragged_id, metrics);
-        const target = resolved orelse return .{};
+        var scratch: DropScratch = undefined;
+        const resolved = self.resolveDropAt(&scratch, dragged_id, x, y, blade) orelse return .{};
+        const target = resolved.target;
 
         var result: PaneDrag.DropResult = .{ .target = @tagName(target) };
         switch (target) {
@@ -547,6 +521,180 @@ pub const SplitTree = extern struct {
             .not_here => result.outcome = "not_here",
         }
         return result;
+    }
+
+    /// The scratch one resolution reads its geometry into: every leaf's rect,
+    /// the dividers, and a strip drag's row.
+    const DropScratch = struct {
+        rects: [pane_drop_apply.max_leaves]pane_drop.PaneRect,
+        ids: [pane_drop_apply.max_leaves][]const u8,
+        divs: [pane_drop_apply.max_leaves]pane_drop.Divider,
+        blade: BladeBuffers,
+    };
+
+    /// What a release at (x, y) would mean, and the geometry it was read
+    /// from (borrowing `scratch`).
+    const Resolved = struct {
+        target: pane_drop.Target,
+        content: pane_drop.Rect,
+        rects: []const pane_drop.PaneRect,
+    };
+
+    /// Resolve a release of `dragged_id` at (x, y) in the split area's
+    /// coordinates against this tab's panes and dividers: the ONE answer
+    /// both the drop (`dropPaneAt`) and the live preview (`previewAt`) use,
+    /// so the preview cannot point somewhere the release does not go.
+    fn resolveDropAt(self: *Self, scratch: *DropScratch, dragged_id: []const u8, x: f64, y: f64, blade: bool) ?Resolved {
+        const priv = self.private();
+        const tree = priv.tree orelse return null;
+        const space: *wk.GtkWidget = @ptrCast(priv.tree_bin);
+        const offset = self.stageOffset(space);
+
+        const rects_buf = &scratch.rects;
+        var n: usize = 0;
+        var it = tree.iterator();
+        while (it.next()) |entry| {
+            if (n == rects_buf.len) break;
+            // A minimized pane is a target by its strip, and only a strip
+            // that shows (docs/reference/stacked-panes.md "Dragging a strip";
+            // Mac `PaneDragSession`): its card is out of sight at its last
+            // size on show.
+            if (priv.grid) |*grid| if (offset) |o| if (grid.placement(paneKey(entry.view))) |p| {
+                if (p.is_tucked or p.is_sliver) {
+                    const tab = p.tab orelse continue;
+                    rects_buf[n] = .{ .id = entry.view.paneId(), .rect = offsetRect(tab, o) };
+                    n += 1;
+                    continue;
+                }
+            };
+            const leaf: *gtk.Widget = if (ext.getAncestor(SurfaceScrolledWindow, entry.view.as(gtk.Widget))) |w|
+                w.as(gtk.Widget)
+            else
+                entry.view.as(gtk.Widget);
+            const r = PaneDrag.rectOf(@ptrCast(leaf), space) orelse continue;
+            rects_buf[n] = .{ .id = entry.view.paneId(), .rect = r };
+            n += 1;
+        }
+        const rects = rects_buf[0..n];
+        const metrics = pane_drop.Metrics.forScale(1.0);
+        const content: pane_drop.Rect = .{ .left = 0, .top = 0, .right = wk.gtk_widget_get_width(space), .bottom = wk.gtk_widget_get_height(space) };
+        const candidate: pane_drop.Candidate = .{
+            .window = @intFromPtr(self),
+            .z_order = 0,
+            .content_rect = content,
+            .pane_rects = rects,
+            .dividers = pane_drop_apply.dividers(Surface.Tree, tree, surfaceId, rects, metrics, &scratch.ids, &scratch.divs),
+        };
+        const point: pane_drop.Point = .{ .x = @intFromFloat(@round(x)), .y = @intFromFloat(@round(y)) };
+        scratch.blade = .{};
+        const home_surface: ?*Surface = if (pane_drop_apply.handleOf(Surface.Tree, tree, surfaceId, dragged_id)) |h| tree.nodes[h.idx()].leaf else null;
+        // A strip folded into a row of THIS tab has its row's slots; one
+        // over another tab or window has only that window's edge band
+        // (`resolveBlade` with no slots and a window that is not this one).
+        const blade_drag: ?pane_drop.BladeDrag = if (!blade) null else if (home_surface) |s|
+            self.bladeGeometry(s, space, metrics, &scratch.blade)
+        else
+            .{ .window = 0, .slots = &.{}, .screens = &.{}, .dragged = dragged_id };
+        const resolved = if (blade_drag) |b|
+            pane_drop.resolveBlade(point, &.{candidate}, b, metrics)
+        else
+            pane_drop.resolve(point, &.{candidate}, dragged_id, metrics);
+        return .{ .target = resolved orelse return null, .content = content, .rects = rects };
+    }
+
+    // ---- The live drop preview (T3708) -----------------------------------------
+
+    /// What a release of `dragged_id` at (x, y) would show as its preview:
+    /// win32's `drop_highlight.forTarget` over the target `resolveDropAt`
+    /// names, or null where the release would change nothing (a spot that
+    /// leaves the pane where it is, `pane_drop_apply.wouldMove`) or lands
+    /// outside this split area. A strip drag's slot caret is not drawn here.
+    pub fn previewAt(self: *Self, dragged_id: []const u8, x: f64, y: f64, blade: bool) ?drop_highlight.Highlight {
+        const tree = self.private().tree orelse return null;
+        var scratch: DropScratch = undefined;
+        const r = self.resolveDropAt(&scratch, dragged_id, x, y, blade) orelse return null;
+        if (!pane_drop_apply.wouldMove(Surface.Tree, tree, surfaceId, dragged_id, r.target)) return null;
+        return drop_highlight.forTarget(r.target, .{
+            .window = @intFromPtr(self),
+            .content_rect = r.content,
+            .pane_rects = r.rects,
+        });
+    }
+
+    /// A pane drag moved to (x, y) over the split area: show where a
+    /// release there lands, or nothing (T3708). The drop target's motion
+    /// handler and the `pane-drag --hover-*` seam both come here.
+    pub fn hoverAt(self: *Self, dragged_id: []const u8, x: f64, y: f64, blade: bool) void {
+        const hl = self.previewAt(dragged_id, x, y, blade);
+        self.showPreview(hl);
+    }
+
+    /// The drag left the split area, dropped, or ended: no preview.
+    pub fn hoverEnd(self: *Self) void {
+        self.showPreview(null);
+    }
+
+    fn showPreview(self: *Self, hl: ?drop_highlight.Highlight) void {
+        const priv = self.private();
+        const w: *wk.GtkWidget = @ptrCast(priv.drop_preview);
+        const glyph: *wk.GtkWidget = @ptrCast(priv.drop_preview_glyph);
+        const space: *wk.GtkWidget = @ptrCast(priv.tree_bin);
+        const h = hl orelse {
+            priv.preview = null;
+            wk.gtk_widget_set_visible(w, 0);
+            return;
+        };
+        const look = pane_drop_preview.look(h) orelse return self.showPreview(null);
+        const at = pane_drop_preview.place(h.rect, wk.gtk_widget_get_width(space), wk.gtk_widget_get_height(space)) orelse
+            return self.showPreview(null);
+        // Holding still re-sends the same motion: change nothing then.
+        if (priv.preview) |cur| if (std.meta.eql(cur, h) and wk.gtk_widget_get_visible(w) != 0) return;
+        priv.preview = h;
+        for (pane_drop_preview.classes) |c| wk.gtk_widget_remove_css_class(w, c.ptr);
+        wk.gtk_widget_add_css_class(w, look.kind.ptr);
+        if (look.seam) |s| wk.gtk_widget_add_css_class(w, s.ptr);
+        wk.gtk_label_set_text(@ptrCast(glyph), pane_drop_preview.swap_glyph.ptr);
+        wk.gtk_widget_set_visible(glyph, @intFromBool(look.glyph));
+        wk.gtk_widget_set_margin_start(w, at.x);
+        wk.gtk_widget_set_margin_top(w, at.y);
+        wk.gtk_widget_set_size_request(w, at.w, at.h);
+        wk.gtk_widget_set_visible(w, 1);
+    }
+
+    /// The preview on show, for the `pane-drag` seam: what was planned and
+    /// the widget that draws it.
+    pub const PreviewReport = struct {
+        shown: bool,
+        kind: ?[]const u8 = null,
+        seam: ?[]const u8 = null,
+        glyph: bool = false,
+        /// The planned rect, `[left, top, right, bottom]` in the split area.
+        rect: ?[4]i32 = null,
+        /// The widget as laid out, `[left, top, right, bottom]` in the split
+        /// area, once it has been allocated.
+        widget: ?[4]i32 = null,
+        /// The CSS classes the widget carries from the look.
+        classes: []const []const u8 = &.{},
+    };
+
+    pub fn previewReport(self: *Self, alloc: Allocator) Allocator.Error!PreviewReport {
+        const priv = self.private();
+        const w: *wk.GtkWidget = @ptrCast(priv.drop_preview);
+        if (wk.gtk_widget_get_visible(w) == 0) return .{ .shown = false };
+        const h = priv.preview orelse return .{ .shown = false };
+        var classes: std.ArrayList([]const u8) = .empty;
+        for (pane_drop_preview.classes) |c| if (wk.gtk_widget_has_css_class(w, c.ptr) != 0) try classes.append(alloc, c);
+        const look = pane_drop_preview.look(h);
+        const laid: ?[4]i32 = if (PaneDrag.rectOf(w, @ptrCast(priv.tree_bin))) |r| .{ r.left, r.top, r.right, r.bottom } else null;
+        return .{
+            .shown = true,
+            .kind = @tagName(h.kind),
+            .seam = if (look) |l| l.seam else null,
+            .glyph = wk.gtk_widget_get_visible(@ptrCast(priv.drop_preview_glyph)) != 0,
+            .rect = .{ h.rect.left, h.rect.top, h.rect.right, h.rect.bottom },
+            .widget = laid,
+            .classes = classes.items,
+        };
     }
 
     /// The pane `dragged_id` of ANOTHER window (or tab) joins this tree on
@@ -3565,6 +3713,8 @@ pub const SplitTree = extern struct {
 
             // Bindings
             class.bindTemplateChildPrivate("tree_bin", .{});
+            class.bindTemplateChildPrivate("drop_preview", .{});
+            class.bindTemplateChildPrivate("drop_preview_glyph", .{});
 
             // Template Callbacks
             class.bindTemplateCallback("notify_tree", &propTree);

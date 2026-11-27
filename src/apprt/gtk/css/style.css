@@ -238,6 +238,47 @@ label.resize-overlay {
 }
 
 /*
+ * The live drop preview of a pane drag (T3708; Mac PaneDropFeedbackView):
+ * the area the pane will take filled in the accent at 30%, with a solid 2px
+ * seam where each new divider runs (SplitDropFill, InsertDropOverlay); a
+ * swap is the pane's centre box, rounded, outlined, with a glyph
+ * (SwapDropBox). Placed and sized by the split tree.
+ */
+.pane-drop-preview {
+  background-color: alpha(@accent_bg_color, 0.3);
+}
+.pane-drop-preview.seam-left { border-left: 2px solid @accent_bg_color; }
+.pane-drop-preview.seam-right { border-right: 2px solid @accent_bg_color; }
+.pane-drop-preview.seam-top { border-top: 2px solid @accent_bg_color; }
+.pane-drop-preview.seam-bottom { border-bottom: 2px solid @accent_bg_color; }
+.pane-drop-preview.seams-sides {
+  border-left: 2px solid @accent_bg_color;
+  border-right: 2px solid @accent_bg_color;
+}
+.pane-drop-preview.seams-ends {
+  border-top: 2px solid @accent_bg_color;
+  border-bottom: 2px solid @accent_bg_color;
+}
+.pane-drop-preview.pane-drop-swap {
+  border: 2px solid @accent_bg_color;
+  border-radius: 6px;
+}
+.pane-drop-glyph {
+  color: @accent_bg_color;
+  font-size: 22px;
+  font-weight: 600;
+}
+
+/*
+ * The tab button a pane drag is dwelling on (T3708; win32 setDwellLit):
+ * lit while the 500ms clock runs, so the tab about to open is the one the
+ * user sees.
+ */
+tabbar tab.pane-drag-dwell {
+  background-color: alpha(@accent_bg_color, 0.25);
+}
+
+/*
  * A minimized pane's strip (T3567; docs/reference/stacked-panes.md): its
  * card at the strip's size, the content gone and its name down it. The label
  * is the strip; the split tree turns it to run down a vertical strip.

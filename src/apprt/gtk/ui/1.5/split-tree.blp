@@ -5,10 +5,40 @@ template $GhosttySplitTree: Box {
   notify::tree => $notify_tree();
   orientation: vertical;
 
-  Adw.Bin tree_bin {
+  // The split area, and over it the live drop preview of a pane drag
+  // (T3708): never a target, so the area's drop target keeps every event.
+  Overlay {
     visible: bind template.has-surfaces;
     hexpand: true;
     vexpand: true;
+
+    child: Adw.Bin tree_bin {
+      hexpand: true;
+      vexpand: true;
+    };
+
+    [overlay]
+    Box drop_preview {
+      visible: false;
+      can-target: false;
+      halign: start;
+      valign: start;
+
+      styles [
+        "pane-drop-preview",
+      ]
+
+      Label drop_preview_glyph {
+        visible: false;
+        hexpand: true;
+        vexpand: true;
+        halign: center;
+        valign: center;
+        styles [
+          "pane-drop-glyph",
+        ]
+      }
+    }
   }
 
   // This could be a lot more visually pleasing but in practice this doesn't

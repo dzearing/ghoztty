@@ -293,6 +293,32 @@ pub fn dividers(
 /// `paneViewStashed`). They are in the tree but not on screen, so "would
 /// this drop change anything" and "which gap is this" are answered over
 /// the arrangement on show.
+/// Whether a release of `dragged` on `target` in `tree` would change
+/// anything - what the live preview asks on every drag motion (T3708; Mac
+/// `wouldLeaveInPlace`, win32 `dropLeavesInPlace`): a spot that would leave
+/// the pane where it is has no preview, the same rule `apply` answers
+/// `.in_place` by, so the preview cannot promise a move the release refuses.
+/// A pane that is not in this tree is arriving from another tab or window,
+/// so every place is a new one to it. Allocates nothing.
+pub fn wouldMove(
+    comptime Tree: type,
+    tree: *const Tree,
+    comptime idOf: fn (*Tree.View) []const u8,
+    dragged: []const u8,
+    target: pane_drop.Target,
+) bool {
+    if (handleOf(Tree, tree, idOf, dragged) == null) return true;
+    switch (target) {
+        .split => |s| if (pane_id.eql(s.pane, dragged)) return false,
+        .swap => |s| return !pane_id.eql(s.pane, dragged),
+        else => {},
+    }
+    const move = pane_layout.Move.of(target) orelse return true;
+    var shape: pane_layout.Shape = .{};
+    const root = shape.fromTree(Tree, tree, idOf, stashed(Tree.View));
+    return !shape.wouldLeaveInPlace(root, dragged, move);
+}
+
 fn stashed(comptime View: type) fn (*View) bool {
     return struct {
         fn f(v: *View) bool {
@@ -760,4 +786,62 @@ test "a popped-out window takes its source's size, or the restored size of a fil
     try testing.expect(popOutSize(1920, 1080, true, 0, 0) == null);
     // Nothing laid out yet: the new window's own estimate.
     try testing.expect(popOutSize(0, 0, false, 500, 400) == null);
+}
+
+test "T3708: the preview's rule - a spot that would leave the pane where it is moves nothing" {
+    // x | y, dragging x.
+    var views = [_]TestView{ .{ .id = "x" }, .{ .id = "y" } };
+    var tree = try twoAcross(&views);
+    defer tree.deinit();
+    const w: pane_drop.WindowRef = 1;
+    // y's left half, and the window's left edge, put x back where it is.
+    try testing.expect(!wouldMove(TestTree, &tree, testId, "x", .{ .split = .{ .window = w, .pane = "y", .side = .left } }));
+    try testing.expect(!wouldMove(TestTree, &tree, testId, "x", .{ .top_level = .{ .window = w, .side = .left } }));
+    // Every other half of y, the right edge and a swap all move it.
+    try testing.expect(wouldMove(TestTree, &tree, testId, "x", .{ .split = .{ .window = w, .pane = "y", .side = .right } }));
+    try testing.expect(wouldMove(TestTree, &tree, testId, "x", .{ .split = .{ .window = w, .pane = "y", .side = .down } }));
+    try testing.expect(wouldMove(TestTree, &tree, testId, "x", .{ .top_level = .{ .window = w, .side = .right } }));
+    try testing.expect(wouldMove(TestTree, &tree, testId, "x", .{ .swap = .{ .window = w, .pane = "y" } }));
+    // Onto itself: nothing, whatever the kind.
+    try testing.expect(!wouldMove(TestTree, &tree, testId, "x", .{ .swap = .{ .window = w, .pane = "x" } }));
+    try testing.expect(!wouldMove(TestTree, &tree, testId, "x", .{ .split = .{ .window = w, .pane = "x", .side = .up } }));
+    // A pane from another tab or window: every place is new to it.
+    try testing.expect(wouldMove(TestTree, &tree, testId, "a", .{ .split = .{ .window = w, .pane = "y", .side = .left } }));
+    try testing.expect(wouldMove(TestTree, &tree, testId, "a", .{ .top_level = .{ .window = w, .side = .left } }));
+}
+
+test "T3708: the preview's rule agrees with what the release does" {
+    // Every split side of every pane and every edge: wouldMove is false
+    // exactly where `apply` answers in_place.
+    var views = [_]TestView{ .{ .id = "a" }, .{ .id = "b" }, .{ .id = "c" } };
+    var tree = try threeAcross(&views);
+    defer tree.deinit();
+    const sides = [_]pane_drop.Side{ .left, .right, .up, .down };
+    const ids = [_][]const u8{ "a", "b", "c" };
+    for (ids) |dragged| {
+        for (ids) |other| for (sides) |side| {
+            const t: pane_drop.Target = .{ .split = .{ .window = 1, .pane = other, .side = side } };
+            var out = try apply(TestTree, testing.allocator, &tree, testId, dragged, t);
+            const moved = switch (out) {
+                .moved => |*m| blk: {
+                    m.deinit();
+                    break :blk true;
+                },
+                else => false,
+            };
+            try testing.expectEqual(moved, wouldMove(TestTree, &tree, testId, dragged, t));
+        };
+        for (sides) |side| {
+            const t: pane_drop.Target = .{ .top_level = .{ .window = 1, .side = side } };
+            var out = try apply(TestTree, testing.allocator, &tree, testId, dragged, t);
+            const moved = switch (out) {
+                .moved => |*m| blk: {
+                    m.deinit();
+                    break :blk true;
+                },
+                else => false,
+            };
+            try testing.expectEqual(moved, wouldMove(TestTree, &tree, testId, dragged, t));
+        }
+    }
 }

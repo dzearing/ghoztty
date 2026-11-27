@@ -329,6 +329,9 @@ pub const Window = extern struct {
         /// resting on and the 500ms clock that selects it.
         dwell_tab: ?usize = null,
         dwell_timer: ?c_uint = null,
+        /// The tab button lit for the dwell (T3708), held by a reference
+        /// so a tab closed mid-dwell cannot leave it dangling.
+        dwell_lit: ?*gtk.Widget = null,
 
         /// The window's own gradient desk in the elevated pane style
         /// (T3566; Mac `PaneDeskVariant`): null is the shared ocean.
@@ -2156,6 +2159,75 @@ pub const Window = extern struct {
         const w = want orelse return;
         priv.dwell_tab = w;
         priv.dwell_timer = glib.timeoutAdd(tab_dwell_ms, onTabDwell, self);
+        self.lightDwell(w);
+    }
+
+    /// The CSS class the tab button a drag is dwelling on wears (T3708;
+    /// win32 `setDwellLit`, Mac `PaneDragSession.dwellTab`): lit while
+    /// the clock runs, so the user sees which tab is about to open.
+    pub const dwell_lit_class: [:0]const u8 = "pane-drag-dwell";
+
+    /// Light the n-th tab's button, darkening any other first.
+    fn lightDwell(self: *Self, index: usize) void {
+        self.unlightDwell();
+        var buf: [max_tab_buttons]TabButton = undefined;
+        const buttons = self.tabButtons(&buf);
+        if (index >= buttons.len) return;
+        const w = buttons[index].widget;
+        w.addCssClass(dwell_lit_class);
+        _ = wk.g_object_ref(@ptrCast(w));
+        self.private().dwell_lit = w;
+    }
+
+    fn unlightDwell(self: *Self) void {
+        const priv = self.private();
+        const w = priv.dwell_lit orelse return;
+        priv.dwell_lit = null;
+        w.removeCssClass(dwell_lit_class);
+        wk.g_object_unref(@ptrCast(w));
+    }
+
+    /// Which tab button wears the dwell's light, by its place on the bar,
+    /// read off the widgets themselves (the `pane-drag` seam).
+    pub fn tabDwellLit(self: *Self) ?usize {
+        var buf: [max_tab_buttons]TabButton = undefined;
+        for (self.tabButtons(&buf), 0..) |b, i| {
+            if (b.widget.hasCssClass(dwell_lit_class) != 0) return i;
+        }
+        return null;
+    }
+
+    const TabButton = struct { widget: *gtk.Widget, rect: pane_drop.Rect };
+
+    /// `tabButtonRects` with each button's widget.
+    fn tabButtons(self: *Self, out: *[max_tab_buttons]TabButton) []TabButton {
+        const bar = self.tabBarWidget();
+        var n: usize = 0;
+        collectTabButtonWidgets(self.private().tab_bar.as(gtk.Widget), bar, out, &n);
+        std.mem.sort(TabButton, out[0..n], {}, struct {
+            fn lt(_: void, a: TabButton, b: TabButton) bool {
+                return a.rect.left < b.rect.left;
+            }
+        }.lt);
+        const pages: usize = @intCast(self.private().tab_view.getNPages());
+        return out[0..@min(n, pages)];
+    }
+
+    fn collectTabButtonWidgets(widget: *gtk.Widget, bar: *wk.GtkWidget, out: *[max_tab_buttons]TabButton, n: *usize) void {
+        var child = widget.getFirstChild();
+        while (child) |c| : (child = c.getNextSibling()) {
+            if (n.* == out.len) return;
+            const class = c.as(gobject.Object).f_g_type_instance.f_g_class orelse continue;
+            const name = std.mem.span(gobject.typeName(class.f_g_type) orelse "");
+            if (std.mem.eql(u8, name, "AdwTab")) {
+                if (c.getMapped() != 0) if (PaneDrag.rectOf(@ptrCast(c), bar)) |r| {
+                    out[n.*] = .{ .widget = c, .rect = r };
+                    n.* += 1;
+                };
+                continue;
+            }
+            collectTabButtonWidgets(c, bar, out, n);
+        }
     }
 
     /// The Mac's and win32's dwell: half a second.
@@ -2167,12 +2239,15 @@ pub const Window = extern struct {
         if (priv.dwell_timer) |t| _ = glib.Source.remove(t);
         priv.dwell_timer = null;
         priv.dwell_tab = null;
+        self.unlightDwell();
     }
 
     fn onTabDwell(ud: ?*anyopaque) callconv(.c) c_int {
         const self: *Self = @ptrCast(@alignCast(ud orelse return 0));
         const priv = self.private();
         priv.dwell_timer = null;
+        // The tab opens: nothing is about to any more.
+        self.unlightDwell();
         const i = priv.dwell_tab orelse return 0;
         priv.dwell_tab = null;
         const tab_view = priv.tab_view;

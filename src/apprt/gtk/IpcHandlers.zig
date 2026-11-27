@@ -664,7 +664,17 @@ fn paneDrag(app: Context, request: Request) Allocator.Error![]u8 {
     var ghost_png: ?[]const u8 = null;
     var fx: f64 = 0.5;
     var fy: f64 = 0.5;
+    var hover_on_arg: ?[]const u8 = null;
+    var hover_at_arg: ?[]const u8 = null;
+    var hover_end = false;
+    var hx: f64 = 0.5;
+    var hy: f64 = 0.5;
     for (request.arguments orelse &.{}) |arg| {
+        if (std.mem.startsWith(u8, arg, "--hover-on=")) hover_on_arg = arg["--hover-on=".len..];
+        if (std.mem.startsWith(u8, arg, "--hover-at=")) hover_at_arg = arg["--hover-at=".len..];
+        if (std.mem.eql(u8, arg, "--hover-end")) hover_end = true;
+        if (std.mem.startsWith(u8, arg, "--hx=")) hx = std.fmt.parseFloat(f64, arg["--hx=".len..]) catch hx;
+        if (std.mem.startsWith(u8, arg, "--hy=")) hy = std.fmt.parseFloat(f64, arg["--hy=".len..]) catch hy;
         if (std.mem.startsWith(u8, arg, "--target=")) target_arg = arg["--target=".len..];
         if (std.mem.startsWith(u8, arg, "--key=")) key_arg = arg["--key=".len..];
         if (std.mem.startsWith(u8, arg, "--drop-on=")) on_arg = arg["--drop-on=".len..];
@@ -739,6 +749,42 @@ fn paneDrag(app: Context, request: Request) Allocator.Error![]u8 {
         bar_window.tabDwellAt(p.x, p.y);
     }
 
+    // The live drop preview (T3708): the drag moved over a point of a split
+    // area, through the same `SplitTree.hoverAt` the drop target's motion
+    // handler calls. `--hover-on` names it as a fraction (`--hx`/`--hy`) of
+    // a pane's drawn rect in that pane's tab, `--hover-at` a point in the
+    // selected tab's split area; `--hover-end` is the drag leaving it.
+    var hover_tree: ?*SplitTree = null;
+    if (hover_on_arg != null or hover_at_arg != null or hover_end) {
+        var tree: *SplitTree = tree: {
+            const sel = window.getSelectedTab() orelse
+                return server.errorResponse(c_alloc, "the window has no tab on show", .{});
+            break :tree sel.getSplitTree();
+        };
+        var x: f64 = 0;
+        var y: f64 = 0;
+        if (hover_on_arg) |on| {
+            const other = switch (try resolve(arena, app, on)) {
+                .found => |t| t.surface() orelse return server.errorResponse(c_alloc, "pane '{s}' is no longer alive", .{on}),
+                else => return server.errorResponse(c_alloc, "--hover-on: pane '{s}' not found", .{on}),
+            };
+            tree = ext.getAncestor(SplitTree, other.as(gtk.Widget)) orelse
+                return server.errorResponse(c_alloc, "--hover-on: pane '{s}' is not in a split tree", .{on});
+            const r = tree.paneRect(other) orelse
+                return server.errorResponse(c_alloc, "--hover-on: pane '{s}' is not on screen in its tab", .{on});
+            x = @as(f64, @floatFromInt(r.left)) + hx * @as(f64, @floatFromInt(r.width()));
+            y = @as(f64, @floatFromInt(r.top)) + hy * @as(f64, @floatFromInt(r.height()));
+        } else if (hover_at_arg) |at| {
+            var parts = std.mem.splitScalar(u8, at, ',');
+            x = std.fmt.parseFloat(f64, parts.next() orelse "") catch
+                return server.errorResponse(c_alloc, "--hover-at must be <x>,<y>", .{});
+            y = std.fmt.parseFloat(f64, parts.next() orelse "") catch
+                return server.errorResponse(c_alloc, "--hover-at must be <x>,<y>", .{});
+        }
+        if (hover_end) tree.hoverEnd() else tree.hoverAt(surface.paneId(), x, y, blade);
+        hover_tree = tree;
+    }
+
     const Drop = struct { target: []const u8, outcome: []const u8, side: ?[]const u8, pane: ?[]const u8, index: ?usize, x: f64, y: f64 };
     var drop: ?Drop = null;
     if (tab_arg) |t| {
@@ -777,6 +823,8 @@ fn paneDrag(app: Context, request: Request) Allocator.Error![]u8 {
         }
         // The id is the pane's own buffer; copy it, the drop rebuilds the tree.
         const id = try arena.dupe(u8, surface.paneId());
+        // A release first takes the preview down, as `PaneDrag.onDrop` does.
+        tree.hoverEnd();
         const r = tree.dropPaneAt(id, x, y, blade);
         drop = .{
             .target = r.target,
@@ -816,7 +864,8 @@ fn paneDrag(app: Context, request: Request) Allocator.Error![]u8 {
     var bar_buf: [Window.max_tab_buttons]pane_drop.Rect = undefined;
     const bar = window.tabBarCandidate(&bar_buf);
 
-    const HeaderRep = struct { pane: []const u8, shown: bool, height: c_int, title: []const u8, content_height: c_int, is_split: bool, pop_out: bool };
+    // `rect`: the pane as drawn in its split area (T3708), `[left, top, right, bottom]`.
+    const HeaderRep = struct { pane: []const u8, shown: bool, height: c_int, title: []const u8, content_height: c_int, is_split: bool, pop_out: bool, rect: ?[4]i32 };
     var headers: std.ArrayList(HeaderRep) = .empty;
     var panes = paneIterator(app);
     while (panes.next()) |p| {
@@ -830,6 +879,11 @@ fn paneDrag(app: Context, request: Request) Allocator.Error![]u8 {
             .content_height = p.surface.contentHeight(),
             .is_split = p.surface.isSplit(),
             .pop_out = if (h) |v| v.popOutEnabled() else false,
+            .rect = rect: {
+                const t = ext.getAncestor(SplitTree, p.surface.as(gtk.Widget)) orelse break :rect null;
+                const r = t.paneRect(p.surface) orelse break :rect null;
+                break :rect .{ r.left, r.top, r.right, r.bottom };
+            },
         });
     }
     const Rep = struct {
@@ -846,7 +900,14 @@ fn paneDrag(app: Context, request: Request) Allocator.Error![]u8 {
         tab_buttons: usize,
         window_count: usize,
         ghost: ?GhostRep,
+        preview: ?SplitTree.PreviewReport,
+        dwell_lit: ?usize,
     };
+    // The preview of the split area the drag hovered, else the selected
+    // tab's. `widget` is its allocation as of the last frame: a hover's
+    // new place is laid out on the next one, so read it again after.
+    const preview_tree: ?*SplitTree = hover_tree orelse if (window.getSelectedTab()) |t| t.getSplitTree() else null;
+    const preview: ?SplitTree.PreviewReport = if (preview_tree) |t| try t.previewReport(arena) else null;
     const rep: Rep = .{
         .ghost = ghost_rep,
         .mode = window.rearrangeMode(),
@@ -860,6 +921,8 @@ fn paneDrag(app: Context, request: Request) Allocator.Error![]u8 {
         .dwell_tab = window.tabDwell(),
         .tab_buttons = if (bar) |b| b.tab_button_rects.len else 0,
         .window_count = window_count,
+        .preview = preview,
+        .dwell_lit = bar_window.tabDwellLit(),
     };
     var out: std.Io.Writer.Allocating = .init(c_alloc);
     defer out.deinit();
