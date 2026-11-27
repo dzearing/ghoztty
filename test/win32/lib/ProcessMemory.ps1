@@ -219,3 +219,33 @@ function Wait-Settled([int]$ProcessId, [string]$Label, [int]$TimeoutSec = 30) {
     } while ((Get-Date) -lt $deadline)
     return $prev
 }
+
+# T2518: the per-cycle growth a leak meter judges, from the settled samples
+# baseline, after 1 .. after N (one per measured cycle, in order).
+#
+# The MEDIAN of the N consecutive deltas, not (end - baseline) / N. A leak
+# grows EVERY cycle, so it moves the median by its full size. What does not
+# grow every cycle arrives as a few large steps - the GPU driver's bounded
+# upload-pool fill landing inside the measured cycles under box load, or a heap
+# trim (one run read 292.1 -> 281.8 -> 287.3 -> 293.3 MB on consecutive cycles
+# with nothing leaking) - and a step moves the endpoint mean by step / N but
+# leaves the median where it is. That is why the old mean straddled its 1 MB
+# budget: 0.97-1.53 MB a window under load, 0.11 alone over 20 cycles.
+#
+# Returns Median and Mean (MB a cycle) so a meter can assert the median against
+# the budget and still hold the mean to a gross ceiling: a leak that lands only
+# on some cycles (20 MB every 4th) has a median of 0 and a mean of 5.
+# $Field is the sample property to read, or a scriptblock over one sample.
+function Get-LeakRate([object[]]$Samples, $Field) {
+    $vals = @($Samples | ForEach-Object { if ($Field -is [scriptblock]) { [double](& $Field $_) } else { [double]$_.$Field } })
+    if ($vals.Count -lt 2) { return [pscustomobject]@{ Median = $null; Mean = $null; Deltas = @() } }
+    $deltas = @(for ($i = 1; $i -lt $vals.Count; $i++) { $vals[$i] - $vals[$i - 1] })
+    $sorted = @($deltas | Sort-Object)
+    $m = $sorted.Count
+    $median = if ($m % 2) { $sorted[($m - 1) / 2] } else { ($sorted[$m / 2 - 1] + $sorted[$m / 2]) / 2 }
+    return [pscustomobject]@{
+        Median = [math]::Round($median, 2)
+        Mean   = [math]::Round(($vals[-1] - $vals[0]) / $deltas.Count, 2)
+        Deltas = $deltas
+    }
+}

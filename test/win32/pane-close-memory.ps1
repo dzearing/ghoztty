@@ -48,7 +48,12 @@
 # budget asserts MUST go red: it is the proof that this meter can see a
 # retained pane at all.
 #
-# -Report samples after every cycle, not only at the end.
+# THE VERDICT IS A MEDIAN (T2518): a settled sample follows every measured
+# cycle, and A1/A8 assert the median per-cycle delta against the 1 MB budget,
+# with the endpoint mean held to a 3 MB ceiling (A1b/A8b). The mean alone
+# straddled its budget (split 1.02-1.95 under a parallel sweep, 0.04 alone).
+#
+# -Report also lists each cycle's open-pane PEAK sample in the table.
 #
 # Only touches ghoztty processes running from this repo's zig-out*.
 #   powershell -NoProfile -File test\win32\pane-close-memory.ps1
@@ -249,14 +254,21 @@ try {
         $base = Wait-Settled $appPid "$kind baseline"
         $samples = New-Object System.Collections.ArrayList
         [void]$samples.Add($base)
+        # T2518: a settled sample after EVERY cycle; A1/A8 judge the median
+        # per-cycle delta over them (Get-LeakRate), not (end - baseline) / N.
         $peak = $null
+        $settled = New-Object System.Collections.ArrayList
+        [void]$settled.Add($base)
         for ($i = 1; $i -le $Cycles; $i++) {
             $pk = Invoke-Cycle $kind $appPid $top $anchor "pcm$tag$i" (-not $NegativeControl) ($i -eq 1)
-            if ($pk) { $peak = $pk; [void]$samples.Add($pk) }
-            if ($Report) { [void]$samples.Add((Wait-Settled $appPid "$kind after $i")) }
+            if ($pk) { $peak = $pk; if ($Report) { [void]$samples.Add($pk) } }
+            $s = Wait-Settled $appPid $(if ($i -eq $Cycles) { "$kind end" } else { "$kind after $i" })
+            [void]$settled.Add($s)
+            [void]$samples.Add($s)
         }
-        $end = Wait-Settled $appPid "$kind end"
-        [void]$samples.Add($end)
+        $end = $settled[$settled.Count - 1]
+        $privRate = Get-LeakRate $settled 'PrivMB'
+        $gpuRate = if ($gpuReadable) { Get-LeakRate $settled { param($x) $x.GpuDedMB + $x.GpuShMB } } else { $null }
         $samples | Format-Table Label, PrivMB, Handles, Gdi, User, Threads, GpuDedMB, GpuShMB, Procs, ProcMB -AutoSize | Out-String -Width 200 | Write-Host
         if ($base.ProcNames -ne $end.ProcNames) {
             Write-Host "baseline descendants: $($base.ProcNames)"
@@ -267,20 +279,27 @@ try {
         $row = [pscustomobject]@{
             Scenario  = $kind
             PaneMB    = $(if ($peak) { [math]::Round($peak.PrivMB - $base.PrivMB, 1) } else { $null })
-            PerPriv   = [math]::Round(($end.PrivMB - $base.PrivMB) / $n, 2)
+            PerPriv   = $privRate.Median
+            MeanPriv  = $privRate.Mean
             PerHandle = [math]::Round(($end.Handles - $base.Handles) / $n, 1)
             PerGdi    = [math]::Round(($end.Gdi - $base.Gdi) / $n, 1)
             PerUser   = [math]::Round(($end.User - $base.User) / $n, 1)
             PerThread = [math]::Round(($end.Threads - $base.Threads) / $n, 1)
             Procs     = "$($base.Procs)->$($end.Procs)"
             PerProcMB = [math]::Round(($end.ProcMB - $base.ProcMB) / $n, 2)
-            PerGpuMB  = $(if ($gpuReadable) { [math]::Round((($end.GpuDedMB + $end.GpuShMB) - ($base.GpuDedMB + $base.GpuShMB)) / $n, 2) } else { $null })
+            PerGpuMB  = $(if ($gpuRate) { $gpuRate.Median } else { $null })
+            MeanGpuMB = $(if ($gpuRate) { $gpuRate.Mean } else { $null })
         }
         [void]$results.Add($row)
 
         # Budgets: a pane costs MBs and dozens of handles; what a close may
         # leave behind is allocator slack, never the pane.
-        Assert ($row.PerPriv -le 1.0) ("$kind A1 private bytes per closed pane <= 1 MB (left {0:N2} MB)" -f $row.PerPriv)
+        # T2518: A1/A8 hold the MEDIAN per-cycle growth (a leak grows every
+        # cycle; driver fill and heap trims arrive as steps); A1b/A8b hold the
+        # endpoint mean to a gross ceiling, for a leak that skips cycles.
+        Write-Host ("$kind private bytes per cycle (MB): {0}" -f (($privRate.Deltas | ForEach-Object { '{0:N1}' -f $_ }) -join ' '))
+        Assert ($row.PerPriv -le 1.0) ("$kind A1 private bytes per closed pane <= 1 MB, median per cycle (left {0:N2} MB; mean {1:N2})" -f $row.PerPriv, $row.MeanPriv)
+        Assert ($row.MeanPriv -le 3.0) ("$kind A1b private bytes per closed pane <= 3 MB, endpoint mean (left {0:N2} MB)" -f $row.MeanPriv)
         Assert ($row.PerHandle -le 5) ("$kind A2 kernel handles per closed pane <= 5 (left {0:N1})" -f $row.PerHandle)
         Assert ($row.PerGdi -le 1) ("$kind A3 GDI objects per closed pane <= 1 (left {0:N1})" -f $row.PerGdi)
         Assert ($row.PerUser -le 1) ("$kind A4 USER objects per closed pane <= 1 (left {0:N1})" -f $row.PerUser)
@@ -288,7 +307,8 @@ try {
         Assert ($end.Procs -le $base.Procs) "$kind A6 no child process outlives its pane (descendants $($base.Procs) -> $($end.Procs))"
         Assert ($row.PerProcMB -le 1.0) ("$kind A7 descendant private bytes per closed pane <= 1 MB (left {0:N2} MB)" -f $row.PerProcMB)
         if ($gpuReadable) {
-            Assert ($row.PerGpuMB -le 1.0) ("$kind A8 GPU memory per closed pane <= 1 MB (left {0:N2} MB)" -f $row.PerGpuMB)
+            Assert ($row.PerGpuMB -le 1.0) ("$kind A8 GPU memory per closed pane <= 1 MB, median per cycle (left {0:N2} MB; mean {1:N2})" -f $row.PerGpuMB, $row.MeanGpuMB)
+            Assert ($row.MeanGpuMB -le 3.0) ("$kind A8b GPU memory per closed pane <= 3 MB, endpoint mean (left {0:N2} MB)" -f $row.MeanGpuMB)
         } else {
             $script:skipped++
             Write-Host "SKIP  $kind A8 GPU memory: the GPU Process Memory counters are not readable on this box"

@@ -1,19 +1,19 @@
 {
     "guard":  "storage-trim-memory",
     "script":  "test/win32/storage-trim-memory.ps1",
-    "generated":  "2026-11-23T18:11:31-08:00",
-    "commit":  "d7c3c6cea",
+    "generated":  "2026-11-26T18:23:51-08:00",
+    "commit":  "bf91cdf74d",
     "uncommitted":  [
                         "test/win32/lib/ProcessMemory.ps1"
                     ],
     "files":  {
                   "src/renderer/opengl/Target.zig":  "79d03ac30310b5d56e0c7e763bd2ce12aba8bef98e971ffc019d076c073854ba",
                   "src/renderer/storage_trim.zig":  "5faeb4a54cd520837401dd9f3ff4322f0d36d9bfe4626516d914ce12feba9126",
-                  "test/win32/lib/ProcessMemory.ps1":  "50851e95a87f0ade1d2b60c89ec4bb94e145286ed765cb5fbe99f38513080ba7",
+                  "test/win32/lib/ProcessMemory.ps1":  "ac3b89e8511ead1936ce2fefb03a093aff5c43956cdddd202cc03eadc4e76863",
                   "test/win32/storage-trim-memory.ps1":  "013edf25e4692fcfdd704c3a7127fd4ee8ab33065939042702d4105c28af612d"
               },
     "code":  {
-                 "test/win32/lib/ProcessMemory.ps1":  "code1:063fcdd86db46c12388af64a6d92c7dbb18f762d4b2b5a6281419811a56854e8",
+                 "test/win32/lib/ProcessMemory.ps1":  "code1:8b914efb9df95d05273bb39dcba0682d099a37feaf9f4df29035232955e55ff9",
                  "test/win32/storage-trim-memory.ps1":  "code1:a14c163fe5c0b511aec250ce17e92a5ce36c7e0dc02e280a543c30822e1f10a7"
              }
 }

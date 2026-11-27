@@ -59,7 +59,14 @@
 # The budget asserts MUST go red: it is the proof that this meter can see a
 # retained window at all.
 #
-# -Report samples after every cycle, not only at the midpoint.
+# THE VERDICT IS A MEDIAN (T2518): a settled sample follows every measured
+# cycle, and A1/A8 assert the median of the per-cycle deltas against the 1 MB
+# budget, with the old (end - baseline) / cycles mean held to a 3 MB ceiling
+# (A1b/A8b). The mean alone straddled its budget for a month - 0.97-1.53 MB a
+# window under a parallel sweep, 0.11 alone - because a driver-fill step or a
+# heap trim inside ten cycles is a tenth of its size on every window.
+#
+# -Report also lists each cycle's open-window PEAK sample in the table.
 #
 # -Shape narrows what a cycle builds, for bisecting a red run: `single` (one
 # terminal), `split` (two terminals), `viewer` (a terminal and a viewer);
@@ -271,17 +278,21 @@ try {
     if ($HeapCensus) { Invoke-HeapCensus $appPid 'baseline' }
 
     # ---- measured cycles ---------------------------------------------------
+    # T2518: a settled sample after EVERY cycle - the verdict is the median
+    # per-cycle delta over them (Get-LeakRate), which a driver-fill step or a
+    # heap trim cannot move the way it moved (end - baseline) / cycles.
     $peak = $null
+    $settled = New-Object System.Collections.ArrayList
+    [void]$settled.Add($base)
     for ($i = 1; $i -le $Cycles; $i++) {
         $close = -not $NegativeControl
         $pk = Invoke-Cycle $appPid "wcm$i" $close ($i -eq 1)
-        if ($pk) { $peak = $pk; [void]$samples.Add($pk) }
-        if ($Report -or $i -eq [int]($Cycles / 2)) {
-            [void]$samples.Add((Wait-Settled $appPid "after $i"))
-        }
+        if ($pk) { $peak = $pk; if ($Report) { [void]$samples.Add($pk) } }
+        $s = Wait-Settled $appPid $(if ($i -eq $Cycles) { 'end' } else { "after $i" })
+        [void]$settled.Add($s)
+        [void]$samples.Add($s)
     }
-    $end = Wait-Settled $appPid 'end'
-    [void]$samples.Add($end)
+    $end = $settled[$settled.Count - 1]
     $endTypes = Get-HandleTypes $appPid
     if ($HeapCensus) { Invoke-HeapCensus $appPid 'end' }
 
@@ -305,7 +316,8 @@ try {
 
     # ---- the verdict: per-cycle growth against a budget ------------------
     $n = [double]$Cycles
-    $perPriv = ($end.PrivMB - $base.PrivMB) / $n
+    $privRate = Get-LeakRate $settled 'PrivMB'
+    $perPriv = $privRate.Mean
     $perHandles = ($end.Handles - $base.Handles) / $n
     $perGdi = ($end.Gdi - $base.Gdi) / $n
     $perUser = ($end.User - $base.User) / $n
@@ -313,13 +325,18 @@ try {
     $perProcMB = ($end.ProcMB - $base.ProcMB) / $n
     Write-Host ("per closed window left behind: {0:N2} MB private, {1:N1} handles, {2:N1} GDI, {3:N1} USER, {4:N1} threads, {5} processes, {6:N2} MB in descendants" -f `
         $perPriv, $perHandles, $perGdi, $perUser, $perThreads, ($end.Procs - $base.Procs), $perProcMB)
+    Write-Host ("private bytes per cycle (MB): {0}  median {1:N2}, mean {2:N2}" -f (($privRate.Deltas | ForEach-Object { '{0:N1}' -f $_ }) -join ' '), $privRate.Median, $privRate.Mean)
     Write-Host ''
 
     # Budgets. A window here costs tens of MB and hundreds of handles; what a
     # close may leave behind is allocator slack, never a pane. 1 MB of private
     # bytes a window over ten cycles is 10 MB of drift - a leaked pane is many
-    # times that on its own.
-    Assert ($perPriv -le 1.0) ("A1 private bytes per closed window <= 1 MB (left {0:N2} MB a window)" -f $perPriv)
+    # times that on its own. T2518: the budget holds the MEDIAN per-cycle
+    # growth (a leak grows every cycle; the driver's bounded fill and a heap
+    # trim arrive as a few steps), and A1b holds the endpoint mean to a gross
+    # ceiling, for a leak that lands on only some cycles.
+    Assert ($privRate.Median -le 1.0) ("A1 private bytes per closed window <= 1 MB, median per cycle (left {0:N2} MB a window; mean {1:N2})" -f $privRate.Median, $privRate.Mean)
+    Assert ($privRate.Mean -le 3.0) ("A1b private bytes per closed window <= 3 MB, endpoint mean - no leak that skips cycles (left {0:N2} MB a window)" -f $privRate.Mean)
     Assert ($perHandles -le 5) ("A2 kernel handles per closed window <= 5 (left {0:N1})" -f $perHandles)
     Assert ($perGdi -le 1) ("A3 GDI objects per closed window <= 1 (left {0:N1})" -f $perGdi)
     Assert ($perUser -le 1) ("A4 USER objects per closed window <= 1 (left {0:N1})" -f $perUser)
@@ -327,8 +344,9 @@ try {
     Assert ($end.Procs -le $base.Procs) "A6 no child process outlives its window (descendants $($base.Procs) -> $($end.Procs))"
     Assert ($perProcMB -le 1.0) ("A7 descendant private bytes per closed window <= 1 MB (left {0:N2} MB)" -f $perProcMB)
     if ($gpuReadable) {
-        $perGpu = (($end.GpuDedMB + $end.GpuShMB) - ($base.GpuDedMB + $base.GpuShMB)) / $n
-        Assert ($perGpu -le 1.0) ("A8 GPU memory per closed window <= 1 MB - every swap chain released (left {0:N2} MB)" -f $perGpu)
+        $gpuRate = Get-LeakRate $settled { param($x) $x.GpuDedMB + $x.GpuShMB }
+        Assert ($gpuRate.Median -le 1.0) ("A8 GPU memory per closed window <= 1 MB, median per cycle - every swap chain released (left {0:N2} MB; mean {1:N2})" -f $gpuRate.Median, $gpuRate.Mean)
+        Assert ($gpuRate.Mean -le 3.0) ("A8b GPU memory per closed window <= 3 MB, endpoint mean (left {0:N2} MB)" -f $gpuRate.Mean)
     } else {
         $script:skipped++
         Write-Host 'SKIP  A8 GPU memory: the GPU Process Memory counters are not readable on this box'

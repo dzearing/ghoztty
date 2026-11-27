@@ -1,19 +1,19 @@
 {
     "guard":  "scrollback-clear-memory",
     "script":  "test/win32/scrollback-clear-memory.ps1",
-    "generated":  "2026-11-23T18:10:48-08:00",
-    "commit":  "d7c3c6cea",
+    "generated":  "2026-11-26T18:23:10-08:00",
+    "commit":  "bf91cdf74d",
     "uncommitted":  [
                         "test/win32/lib/ProcessMemory.ps1"
                     ],
     "files":  {
                   "src/terminal/page_pool.zig":  "af51da0cb5a255915a0af68d5ae0cc75b176c045e05b77106df4d7e0cc66f555",
                   "src/terminal/PageList.zig":  "e42a0f3067b95b70e3a0f622c0e32014f24aa09029a3154882dff34b05d7a282",
-                  "test/win32/lib/ProcessMemory.ps1":  "50851e95a87f0ade1d2b60c89ec4bb94e145286ed765cb5fbe99f38513080ba7",
+                  "test/win32/lib/ProcessMemory.ps1":  "ac3b89e8511ead1936ce2fefb03a093aff5c43956cdddd202cc03eadc4e76863",
                   "test/win32/scrollback-clear-memory.ps1":  "0f59364844f35fb40cf91f4c3015eb274e7c35b6f26ef7d8aaa58616c9375082"
               },
     "code":  {
-                 "test/win32/lib/ProcessMemory.ps1":  "code1:063fcdd86db46c12388af64a6d92c7dbb18f762d4b2b5a6281419811a56854e8",
+                 "test/win32/lib/ProcessMemory.ps1":  "code1:8b914efb9df95d05273bb39dcba0682d099a37feaf9f4df29035232955e55ff9",
                  "test/win32/scrollback-clear-memory.ps1":  "code1:f0b4dd940e6fcb88623abdb681184f2a3c4809c54363e73c46fe3663958e7d5d"
              }
 }
