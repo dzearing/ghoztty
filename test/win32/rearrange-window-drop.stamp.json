@@ -1,8 +1,8 @@
 {
     "guard":  "rearrange-window-drop",
     "script":  "test/win32/rearrange-window-drop.ps1",
-    "generated":  "2026-11-26T21:08:57-08:00",
-    "commit":  "909bdbed3e",
+    "generated":  "2026-11-26T21:41:20-08:00",
+    "commit":  "ad668cc7d3",
     "uncommitted":  [
 
                     ],
