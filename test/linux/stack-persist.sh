@@ -155,6 +155,10 @@ st3() { hl_ipc pane-stack "--target=qc" "$@"; }
 state3() { sq "$(st3)" '" ".join("%s:%s/%s" % (n, int(N[n]["minimized"]), int(N[n]["focused"])) for n in ("qa", "qb", "qc") if N.get(n))'; }
 state3_is() { [ "$(state3)" = "$1" ]; }
 n3() { sq "$(st3)" 'len(s.get("panes", []))'; }
+# Three 400px panes do not fit the harness's window (the layout would stack qa
+# on its own, not the user): a 200px minimum, read on every layout, lets them.
+printf 'macos-pane-min-width = 200\nwindow-width = 150\nwindow-height = 30\n' > "$XDG_CONFIG_HOME/ghostty/config.ghostty"
+cli +reload --config > /dev/null 2>&1
 cli +new-window --target=sx --name=qa > /dev/null 2>&1
 cli +split --target=qa --name=qc --direction=right --focus > /dev/null 2>&1
 cli +split --target=qa --name=qb --direction=right --focus > /dev/null 2>&1
