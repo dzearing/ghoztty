@@ -41019,3 +41019,8 @@ WebKitGTK's script message carries no frame, and a page-world handler is visible
 - What: comp-glide-hold-onscreen.ps1 grew `-Clicks <n>` and a START LATENCY report. It stamps the strip click's button-up on QPC and finds the first filmed frame that moved. Three debug stamps in the app (glide armed, first tick, declared commit) split the wait into parts.
 - Evidence (120 Hz, 8 clicks, -SlideMs 400): shipping `on` path p50 30 / p95 38-44 ms (3.6 / 4.6-5.3 refreshes), with the first tick 14-20 ms after arming. `off` WGL path p50 38 / p95 49 ms. Opt-in `tree` path p50 21 / p95 26 ms, with the declared commit at +1.5 ms and the first moved frame 17-25 ms after it. Every run ALL PASS.
 - Filed: T3834 (shipping: first tick waits behind the click pass's follow-on work), T3835 (tree: a declared curve's first composed frame shows its start pose; start new glides one period in).
+
+## 2026-11-26 16:13 lane a - T2483 parked: the T2428 re-measure needs a live input-desktop capture and the user is at the box
+- What: no code. Re-verified the card: the WGC probe T2418 scored with is gone, and any replacement photographs the real DWM composite at 4K, which only the input desktop has - an @input-desktop-exception by the same rule as frame-lab.ps1 and divider-flicker.ps1 -Live. Get-UserPresence read Present=True (input 198s ago). Added plain terms, goals and validation criteria; parked `blocked(needs the user to start the live run ...)`, blocked-on user, with unblock text and command.
+- Evidence: NOT RUN (the user is present).
+- Filed: nothing new.
