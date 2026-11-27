@@ -4446,8 +4446,14 @@ fn closeViewerPaneFromPage(v: *ViewerPane) void {
     _ = v.parent_window.performViewerBindingAction(pv, .{ .close_surface = {} });
 }
 
+/// The split is a SIDE PANE (T3748; Mac `newViewerSplit`, which never moves
+/// focus): the pane the link was clicked in keeps the caret and stays the
+/// tab's active pane, and the new pane is featured so it comes on show even
+/// in a full row - the same background road an agent's `+split` takes.
 fn openViewerSplitFromLink(pv: *PaneView, location: []const u8, origin: ?[]const u8) void {
     const window = pv.parentWindow();
+    window.split_background = true;
+    defer window.split_background = false;
     _ = window.newViewerSplitAt(pv, .right, 0.5, .{
         .location = location,
         .origin_directory = origin,

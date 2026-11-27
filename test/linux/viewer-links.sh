@@ -117,7 +117,8 @@ hl_wait_for 10 sh -c "exec 3<>/dev/tcp/127.0.0.1/$port" 2>/dev/null
 
 lsdir=$(dirname "$(find "$PWD/zig-out" "$PWD/.zig-cache" -name 'libgtk4-layer-shell.so*' -print -quit 2>/dev/null)")
 cli() { (cd "$fx" && env -u GHOZTTY_IPC_SOCKET -u GHOZTTY_PANE_ID LD_LIBRARY_PATH="$lsdir${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" "$app" "$@"); }
-# Every leaf of every window: type|url|name, one per line.
+# Every leaf of every window: target|type|url|name|focused|minimized, one per
+# line (focused = the tab's active pane, where the caret is; T3748).
 leaves() {
     cli +list --json 2>/dev/null | python3 -c '
 import json, sys
@@ -130,7 +131,8 @@ def walk(n):
 for w in d["windows"]:
     for t in w["tabs"]:
         for l in walk(t["splits"]):
-            print("%s|%s|%s|%s" % (w.get("target") or "", l.get("type"), l.get("url") or "", l.get("name") or ""))
+            print("%s|%s|%s|%s|%s|%s" % (w.get("target") or "", l.get("type"), l.get("url") or "", l.get("name") or "",
+                "focused" if l.get("focused") else "-", "minimized" if l.get("minimized") else "-"))
 ' 2>/dev/null
 }
 
@@ -301,6 +303,18 @@ sunk "split $fx/other.md" && echo "$md_leaves" | grep -qF "|viewer|$fx/other.md|
 hl_check "K9 a relative .md link opens a viewer split showing it" $? "$(echo "$md_leaves" | tr '\n' ' ')"
 sunk "split $fx/page.html" && echo "$md_leaves" | grep -qF "|viewer|$fx/page.html|"
 hl_check "K10 a relative .html link opens a viewer split too (it renders here)" $? "$(echo "$md_leaves" | tr '\n' ' ')"
+# A link's side pane never takes the caret (T3748; Mac newViewerSplit,
+# moveFocusTo: nil): the pane that had it keeps it - here termwin's terminal,
+# since +split --view opened doc in the background - and each side pane is
+# featured, so it is on show rather than a strip.
+echo "$md_leaves" | grep -F "|viewer|$fx/other.md|" | grep -q '|-|[-a-z]*$' &&
+    echo "$md_leaves" | grep -F "|viewer|$fx/page.html|" | grep -q '|-|[-a-z]*$' &&
+    ! echo "$md_leaves" | grep '^termwin|viewer|' | grep -q '|focused|[-a-z]*$'
+hl_check "K10a no viewer split a link opened took the caret" $? "$(echo "$md_leaves" | tr '\n' ' ')"
+[ "$(echo "$md_leaves" | grep '^termwin|terminal|' | grep -c '|focused|[-a-z]*$')" = 1 ]
+hl_check "K10b the pane that had the caret still has it" $? "$(echo "$md_leaves" | tr '\n' ' ')"
+! echo "$md_leaves" | grep -E "[|]viewer[|]$fx/(other[.]md|page[.]html)[|]" | grep -q '|minimized$'
+hl_check "K10c the side panes came on show, not as strips" $? "$(echo "$md_leaves" | tr '\n' ' ')"
 sunk "app $fx/code.zig"
 hl_check "K11 any other file opens in its default app" $? "$(grep '^app' "$sink" 2>/dev/null | tr '\n' ' ')"
 ! grep -qE '^(split|app|browser|window) .*(nope\.md|mailto)' "$sink" 2>/dev/null &&

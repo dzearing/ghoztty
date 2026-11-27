@@ -5305,7 +5305,15 @@ pub fn openViewerSplitBeside(self: *Surface, location: []const u8, focus_address
     const live = self.livePwd(alloc);
     defer if (live) |p| alloc.free(p);
     const origin: ?[]const u8 = if (live) |p| p else if (self.pwd) |p| p else null;
-    const pane = self.parent_window.newViewerSplitAt(pv, .right, 0.5, .{
+    // A viewer side pane leaves the caret where it was (T3748; Mac
+    // `newViewerSplit` never moves focus): a banner link's side pane and the
+    // palette's Open File / Open URL keep the keyboard in this pane and
+    // feature the new one. Only "Open Browser Pane" takes the caret, because
+    // its whole point is typing an address (Mac `focusAddressBar`).
+    const window = self.parent_window;
+    window.split_background = !focus_address;
+    defer window.split_background = false;
+    const pane = window.newViewerSplitAt(pv, .right, 0.5, .{
         .location = location,
         .origin_directory = origin,
     }) catch |err| {

@@ -1161,15 +1161,19 @@ pub const Surface = extern struct {
     }
 
     /// A link in this viewer pane opens another viewer beside it (T3415;
-    /// Mac `openViewerSplit`): a split to the RIGHT, focused, as the
-    /// keyboard's split is.
+    /// Mac `openViewerSplit`): a split to the RIGHT that leaves the caret
+    /// where it was (T3748).
     fn viewerOpenSplit(viewer: *Viewer, location: []const u8) void {
         const self: *Self = @ptrCast(@alignCast(viewer.owner orelse return));
         self.openViewerSplit(location);
     }
 
-    /// A viewer split to the right of this pane, focused (a viewer link, or
-    /// a Ctrl-clicked banner link, T3339).
+    /// A viewer split to the right of this pane (a viewer link, or a
+    /// Ctrl-clicked banner link, T3339). It is a side pane, so it never
+    /// takes the caret: the pane the link was clicked in keeps it, and the
+    /// new pane is featured so it comes on show even in a full row (T3748;
+    /// Mac `newViewerSplit` -> `moveFocusTo: nil` + `paneStackState.feature`,
+    /// and `backgroundSplitAnchor` beside a minimized strip).
     fn openViewerSplit(self: *Self, location: []const u8) void {
         const tab = ext.getAncestor(Tab, self.as(gtk.Widget)) orelse {
             log.warn("viewer link: the pane is in no tab; nothing to split for {s}", .{location});
@@ -1178,7 +1182,7 @@ pub const Surface = extern struct {
         const alloc = Application.default().allocator();
         const loc = alloc.dupeZ(u8, location) catch return;
         defer alloc.free(loc);
-        _ = tab.getSplitTree().newSplitAt(.right, self, .{ .view = loc, .at = self }) catch |err| {
+        _ = tab.getSplitTree().newSplitAt(.right, self, .{ .view = loc, .at = self, .focus = false }) catch |err| {
             log.warn("viewer link: split failed err={} location={s}", .{ err, location });
             return;
         };
