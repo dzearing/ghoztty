@@ -65,6 +65,14 @@
 # stamps cost ~1 us each, T2600), so each arm's stderr log in the report
 # folder carries the phase stamps of every layout pass: where a step's place
 # time goes. It never stamps the guard.
+#   F (T2601). -Trace also asserts that a terminal frame at a NEW size, drawn
+#      4+ ms after the pane's last present, spends its target-ready -> synced
+#      stage (the frame's first synchronous GL call) within 0.2 ms of a
+#      same-size frame's, medians over the row3 logs. Before T2788 the pane's
+#      context was current on its own window, and the driver revalidated that
+#      resized drawable on the first sync call: ~0.8 ms median vs ~0.1. With
+#      -NegativeControl the drags run with GHOZTTY_PANE_GL_HELPER=0 (the
+#      pre-T2788 shape), and F must go red.
 #
 # -ReleaseSandbox runs a release build (-ExePath, e.g. a ReleaseFast
 # `--prefix zig-out-perf`) under all three isolating knobs (lib\Isolation.ps1),
@@ -121,6 +129,46 @@ function Rep([string]$m) { $m | Tee-Object -FilePath $report -Append | Write-Hos
 function Assert([bool]$cond, [string]$label) {
     if ($cond) { $script:pass++; Rep "PASS  $label" }
     else { $script:fail++; $host.UI.WriteErrorLine("FAIL  $label"); "FAIL  $label" | Out-File -Append $report }
+}
+
+# T2601: the target-ready -> synced stage of every terminal frame on a resize
+# trace, split into new-size frames drawn 4+ ms after the pane's last present
+# and same-size frames. Returns @{ NewN; NewMs; SameN; SameMs } (medians, ms).
+function Get-SyncStall([string[]]$logs) {
+    $freq = [double][Diagnostics.Stopwatch]::Frequency
+    $rx = 'resize trace (\S+) hwnd=([0-9a-f]+) qpc=(\d+)(?: size=(\d+x\d+))?'
+    $new = New-Object System.Collections.Generic.List[double]
+    $same = New-Object System.Collections.Generic.List[double]
+    foreach ($log in $logs) {
+        if (-not (Test-Path $log)) { continue }
+        $panes = @{}
+        foreach ($line in [IO.File]::ReadLines($log)) {
+            $m = [regex]::Match($line, $rx)
+            if (-not $m.Success) { continue }
+            $st = $m.Groups[1].Value; $h = $m.Groups[2].Value; $q = [int64]$m.Groups[3].Value
+            if (-not $panes.ContainsKey($h)) { $panes[$h] = @{ cur = @{}; lastQ = [int64]0; lastSize = '' } }
+            $s = $panes[$h]
+            if ($st -eq 'draw-begin') { $s.cur = @{ 'draw-begin' = $q }; continue }
+            if ($st -eq 'present') {
+                $c = $s.cur; $size = $m.Groups[4].Value
+                if ($s.lastQ -ne 0 -and $c.ContainsKey('target-ready') -and $c.ContainsKey('synced')) {
+                    $sync = ($c['synced'] - $c['target-ready']) * 1000 / $freq
+                    $gap = ($c['draw-begin'] - $s.lastQ) * 1000 / $freq
+                    if ($size -ne $s.lastSize) { if ($gap -ge 4) { $new.Add($sync) } }
+                    else { $same.Add($sync) }
+                }
+                $s.lastQ = $q; $s.lastSize = $size; $s.cur = @{}
+                continue
+            }
+            if ($s.cur.ContainsKey('draw-begin') -and -not $s.cur.ContainsKey($st)) { $s.cur[$st] = $q }
+        }
+    }
+    $med = {
+        param($xs)
+        if ($xs.Count -eq 0) { return [double]::NaN }
+        $a = $xs.ToArray(); [Array]::Sort($a); return $a[[int][Math]::Floor($a.Length / 2)]
+    }
+    return @{ NewN = $new.Count; NewMs = (& $med $new); SameN = $same.Count; SameMs = (& $med $same) }
 }
 
 Add-Type -TypeDefinition @'
@@ -248,6 +296,8 @@ function Measure-Scene([string]$scene, [string]$mode) {
     else { Remove-Item env:GHOZTTY_RESIZE_BURST -ErrorAction SilentlyContinue }
     # Both -Burst arms trace, so the rate compares like with like.
     if ($Burst -or $Trace) { $env:GHOZTTY_RESIZE_TRACE = '1' }
+    # T2601's negative control: the pre-T2788 shape, context on the pane window.
+    if ($Trace -and $NegativeControl) { $env:GHOZTTY_PANE_GL_HELPER = '0' }
     switch ($mode) {
         'held' { $env:GHOZTTY_RESIZE_NO_CONTENT = '1' }
         'empty' { $env:GHOZTTY_RESIZE_NO_CONTENT = 'empty' }
@@ -285,6 +335,7 @@ function Measure-Scene([string]$scene, [string]$mode) {
         Remove-Item env:GHOZTTY_RESIZE_NO_CONTENT -ErrorAction SilentlyContinue
         Remove-Item env:GHOZTTY_RESIZE_BURST -ErrorAction SilentlyContinue
         Remove-Item env:GHOZTTY_RESIZE_TRACE -ErrorAction SilentlyContinue
+        Remove-Item env:GHOZTTY_PANE_GL_HELPER -ErrorAction SilentlyContinue
     }
     $res.log = $log
     return $res
@@ -372,6 +423,13 @@ try {
     $shipped = if ($ContentArms) { '*/content' } else { '*/prelayout' }
     $slow = @($all.GetEnumerator() | Where-Object { $_.Key -like $shipped } | ForEach-Object { $_.Value.grow; $_.Value.shrink } | Where-Object { $null -ne $_ -and $_.Fps -lt $MinFps })
     Assert ($slow.Count -eq 0) "C. every shipped-path drag holds $MinFps fps or better ($($slow.Count) below)"
+    if ($Trace) {
+        $rowLogs = @($all.GetEnumerator() | Where-Object { $_.Key -like 'row3/*' } | ForEach-Object { $_.Value.log })
+        $st = Get-SyncStall $rowLogs
+        Rep ("  row3 first-GL-call stage: new-size (gap>=4ms) n={0} median={1:N3} ms; same-size n={2} median={3:N3} ms" -f $st.NewN, $st.NewMs, $st.SameN, $st.SameMs)
+        Assert ($st.NewN -ge 10 -and $st.SameN -ge 10 -and ($st.NewMs - $st.SameMs) -le 0.2) `
+            ("F. a new-size terminal frame's first GL call is within 0.2 ms of a same-size frame's ({0:N3} vs {1:N3} ms, n={2}/{3})" -f $st.NewMs, $st.SameMs, $st.NewN, $st.SameN)
+    }
     Rep ''
     Rep "report: $report"
     Complete-TestBody

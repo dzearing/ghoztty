@@ -383,6 +383,11 @@
             "unset": "shipped-elsewhere",
             "note": "T2609. unset = every edge-drag step resizes the terminals, which is what ships; set (`1` held, `empty` floor) only by edge-drag-rate.ps1 -ContentArms, whose `content` arm runs it unset."
         },
+        "GHOZTTY_PANE_GL_HELPER": {
+            "class": "non-default",
+            "unset": "shipped-elsewhere",
+            "note": "T2601. unset = a composition pane's GL context lives on a hidden helper (T2788), which is what ships; set to `0` only by edge-drag-rate.ps1 -Trace -NegativeControl, to prove assertion F goes red on the pre-T2788 shape. Every other -Trace run leaves it unset."
+        },
         "GHOZTTY_ENROLL_NO_OPEN": {
             "class": "non-default",
             "unset": "shipped-elsewhere",
