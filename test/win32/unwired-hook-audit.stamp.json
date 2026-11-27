@@ -1,8 +1,8 @@
 {
     "guard":  "unwired-hook",
     "script":  "test/win32/unwired-hook-audit.ps1",
-    "generated":  "2026-11-27T05:52:24-08:00",
-    "commit":  "74b6eeac97",
+    "generated":  "2026-11-27T06:19:40-08:00",
+    "commit":  "5547388b9f",
     "uncommitted":  [
 
                     ],
@@ -970,7 +970,7 @@
                   "src/os/wasm/log.zig":  "d5973d2af54a3b23b015ec214cf495322c39cead2135737bbd5fe88ce09c4c00",
                   "src/os/wasm/target.zig":  "07528971020c03f8fa9601e6efc141d29233244484b5fd5645d829922acfc7ec",
                   "src/os/windows.zig":  "35300d7822bbf684191fdeacf9a8e57465327d3dd7246222de77b604de2bcccc",
-                  "src/os/xdg.zig":  "fc1ea4c4091746fd2de40fa48c5aa38c8246cb56f8d440b2e4784c8300c21c33",
+                  "src/os/xdg.zig":  "06a503214a08a2dfb644be78d5a96466d6f4f55fa5e9ec46bc490a21430fc641",
                   "src/pty.zig":  "883021684199ff07823c578fe014c8b7debd85cbbc9200126075d4f8964868f7",
                   "src/quirks.zig":  "eeef560fe350b99f541827b53de3c057d16fadb2f625cf08764da0f8a57ef021",
                   "src/remote/agent/adopt.zig":  "0af7bf58df99cd1f6036c58e4fa45797fe9b6df93c255de1e90960703030b5bb",
@@ -1379,7 +1379,7 @@
                   "test/win32/comp-box-state.ps1":  "f007f61ca91b34758b85ba37fe02d3f1bbf4fc596362f0783a400cb3991a43b6",
                   "test/win32/comp-chrome.ps1":  "01963c90d220b2bcb754df20aad815ca6e858e38a48c36d4bf85a4b7b3540218",
                   "test/win32/comp-present.ps1":  "99d6ce2cfb89c5a257412496b136883504f3642fa6d116a1a5911307bdb91856",
-                  "test/win32/config-errors.ps1":  "63f39d05ae2b8bf1a0f5b31bed618f7d5ac44f4cbc42532666a7831deb4cc19b",
+                  "test/win32/config-errors.ps1":  "860862e952e796a57031a7ee8ef2836d37fd6d52dcc963bffbffa16142536bb3",
                   "test/win32/confirm-dialogs.ps1":  "418be175865abaad2bacd882d7507f158d95ed2fba11689563ea3e5c53290950",
                   "test/win32/conformance.ps1":  "967bda84b6004011c79ed51857454d16f3309bec872455509b24c720ed0e52af",
                   "test/win32/conpty-sync-hold.ps1":  "c35c5319c5f9a7dfcbad49e519d19f9af4a0c0a68dcf303aae1717a6d47eb18c",
