@@ -382,7 +382,9 @@ private runtime dir, so a test app can never meet the user's.
   the focused pane takes its place in the stash. GTK4's button `clicked`
   carries no event state, so the row reads Alt off the seat's keyboard
   (`altHeld`); the seam is `pane-sidebar --click=alt:<row id>`. Anywhere
-  else an Alt-click is a click. Not yet: the sidebar's stash tray (T3607).
+  else an Alt-click is a click. The sidebar lists stashed panes in a tray
+  after the others, and a row dragged into or out of it stashes or
+  restores (T3698, below under the pane sidebar).
   Acceptance: `wsl-run.ps1 -CommandFile test\linux\cli-stash.sh`, ends `CLI
   STASH: ALL PASS` (37 checks; V0-V5 and A1-A2 are T3667's);
   `wsl-run.ps1 -Step 'NEGATIVE=1 bash test/linux/cli-stash.sh'`
@@ -548,9 +550,25 @@ private runtime dir, so a test app can never meet the user's.
   `height`, `draggable`) and `--drag=<row id>:<y>` lets one go at a y of the
   list through the live drop's code; both skip the redraw. Acceptance:
   `wsl-run.ps1 -CommandFile test\linux\cli-sidebar-drag.sh`, ends `CLI
-  SIDEBAR DRAG: ALL PASS` (25 checks); `NEGATIVE=1` must fail D2, D2b, D4b.
-  A real pointer drag is NOT RUN (no seat). Not yet: the stash tray
-  (T3698), cross-window drops (T3699), the order across a restore (T3700).
+  SIDEBAR DRAG: ALL PASS` (46 checks; T1-T11 are the tray's); `NEGATIVE=1`
+  must fail D2, D2b, D4b.
+  **The stash tray (T3698)**: stashed panes are listed after the panes on
+  screen, the top of the stash first (`rows.trayed`), in both scopes. This
+  window's list draws the tray's head, a row of kind `tray` (id `tray`):
+  over the stash a hairline and "Stashed" with the count, or with nothing
+  stashed the empty tray's dashed well ("Drag a pane here to stash it"),
+  lit in the accent (`pane-sidebar-tray-lit`) while a drag over the list
+  would land in it. The all-windows outline draws no head: a window's tray
+  begins between its last row on screen and its first stashed row, or right
+  under its last row (`rows.trayTopBetween`, win32 `trayTop`), so a row let
+  go below its window's rows there stashes. `dropRowAt` splits at that
+  line: in the tray the pane is stashed at that place
+  (`SplitTree.stashSurfaceAt`, `pane_stash.markAt`; a stashed row moves
+  within the stash, the last pane on screen is refused), in the list a
+  stashed pane is restored, focused, then placed. Stashed rows drag.
+  A real pointer drag is NOT RUN (no seat). Not yet: cross-window drops
+  (T3699), the order across a restore (T3700), the rows sliding to make
+  room (parity is behavior here, not the glide).
   **Windows and groups drag too (T3697)**, in the expanded all-windows list
   only: a project header among the top level (never above the lone
   windows), a window row anywhere - into a group (retitled `<group>:
