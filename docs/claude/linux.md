@@ -616,9 +616,22 @@ private runtime dir, so a test app can never meet the user's.
   a grab; the menu's state lasts until a pick or the next open, which is
   what `--menu-pick` acts on. Acceptance: `wsl-run.ps1 -CommandFile
   test\linux\cli-sidebar-groups.sh`, ends `CLI SIDEBAR GROUPS: ALL PASS`
-  (26 checks); `NEGATIVE=1` never presses Return and must fail G9/G9b. Not
+  (32 checks); `NEGATIVE=1` never presses Return and must fail G9/G9b. Not
   yet: the list keeping its place across a regroup (needs T3697's window
-  order) and script-proof user titles (T3702).
+  order).
+  **A title the sidebar pinned is the user's (T3702; win32 T2404, Mac
+  `windowTitleIsUsers`)**: `Window.setTitleOverrideBy(title, .user|.script)`
+  records who set the window-wide pin (`title_set_by_user`; plain
+  `setTitleOverride` is a script's), and the sidebar's group moves write it
+  as the user's. A script's `+rename` is refused, with Mac's sentence
+  (`verbs.rename_refusal_fmt`), while the window carries a user's window pin
+  or ANY of its tabs carries a pin - only the user pins a tab here, and a
+  window pin would hide it (`pane_sidebar_all.renameKept`, none lane; logs
+  `IPC rename kept the user's title=`). A script's own window pin may still
+  be replaced. `+list --json` reports `title_set_by_user` (window pin only),
+  and `session-layout.json` keeps the bit. G17-G20 of the script above.
+  Gap: Change Window Title edits the tab, so the user cannot clear a
+  window-wide pin yet (T3837).
   **This window's header and the rail's + (T3695)**: a window always holds
   its panes - the expanded per-window list starts with the window's own
   header row (`window:<key>`: chevron, name, pane count, + and x on hover)
