@@ -153,6 +153,11 @@ pub const Thumbnail = struct {
     /// from the outside, and a viewer's fold (T2460) carries the scaled ones
     /// as its frame.
     bits: ?[*]u8 = null,
+    /// The encoded image's own size, before the scale (T2635): a viewer
+    /// opening out of its strip takes only a capture of the page laid out at
+    /// its new size, and the scaled `w` x `h` cannot say which one it was.
+    src_w: i32 = 0,
+    src_h: i32 = 0,
 };
 
 /// Decode the encoded image in `stream` and scale it into a fresh
@@ -197,7 +202,10 @@ pub fn decodeScaled(stream: *anyopaque, dst_w: i32, dst_h: i32) ?Thumbnail {
     }
     defer _ = w32.DeleteObject(hbm.?);
 
-    return scaleInto(hbm.?, @intCast(src_w), @intCast(src_h), dst_w, dst_h);
+    var t = scaleInto(hbm.?, @intCast(src_w), @intCast(src_h), dst_w, dst_h) orelse return null;
+    t.src_w = @intCast(src_w);
+    t.src_h = @intCast(src_h);
+    return t;
 }
 
 /// The same decode from BYTES already in memory — what the feedback composer's

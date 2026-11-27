@@ -9003,8 +9003,10 @@ fn heroOnSnapReady(self: *Window, leaf_hwnd_int: usize) void {
             const fr = entry.view.glideFrame() orelse return;
             // An opening card (T2458) takes only the frame drawn at the size
             // it asked for - never an older capture that answered late.
+            // A viewer's capture is scaled to the size asked, so it says
+            // itself whether its page was laid out there (T2635).
             if (entry.view.glide_unfold) if (entry.view.glide_snap_want) |want| {
-                if (fr.w != want.w or fr.h != want.h) return;
+                if (!entry.view.openingFrameLanded(want.w, want.h)) return;
             };
             // `colors` is the acceptance oracle's (viewer-fold-carried.ps1):
             // a page's frame holds its text over its ground, a capture that
@@ -13256,7 +13258,9 @@ fn placeGrid(self: *Window, tree: SplitTree(PaneView), grid: *const pane_stack_g
         // do not wait for that frame (T2940).
         if (view.surface()) |s| s.carried_hidden = opening;
         const shown = (!p.is_tucked or sliding != null) and !carried and !opening;
-        view.setVisible(shown or opening);
+        // An opening pane draws while hidden (a viewer's page under its
+        // hidden host, T2635), so its frame at the new size can be carried.
+        if (opening and !shown) view.setOpeningAwake() else view.setVisible(shown);
         var rect = sliding orelse if (!p.is_tucked)
             p.rect
         else if (view.stack_held) |s| pane_stack_slide.heldRect(p.rect, s) else p.rect;
@@ -13446,9 +13450,9 @@ fn planStackSlide(self: *Window, tree: SplitTree(PaneView), grid: *const pane_st
             .tucked = p.is_tucked,
             .strip = if (p.is_tucked) p.tab else null,
             .axis = p.tab_axis orelse .horizontal,
-            // A terminal opens out of its strip presized (T2458); a viewer
-            // keeps its size and takes its slot's at the end (T2460).
-            .presize = entry.view.surface() != null,
+            // A card opens out of its strip presized (T2458), a viewer's as
+            // a terminal's (T2635): its frame at the new size is the card.
+            .presize = entry.view.opensCarried(),
         };
         n += 1;
     }
@@ -13659,10 +13663,11 @@ fn armGlideSnaps(self: *Window, tree: SplitTree(PaneView)) void {
     while (it.next()) |entry| {
         const view = entry.view;
         const id = pane_stack_grid.viewId(view);
-        // A terminal opening out of its strip (T2458) carries the frame it
-        // draws at its new size: placed there hidden by `placeGrid`, asked
-        // for that frame by `paintStripFace` once it stands at that size.
-        if (slide.unfolding(id) and view.surface() != null) {
+        // A pane opening out of its strip (T2458; a viewer since T2635)
+        // carries the frame it draws at its new size: placed there hidden by
+        // `placeGrid`, asked for that frame by `paintStripFace` once it
+        // stands at that size.
+        if (slide.unfolding(id) and view.opensCarried()) {
             if (!view.glide_unfold) {
                 view.glide_unfold = true;
                 view.glide_snap_want = null;

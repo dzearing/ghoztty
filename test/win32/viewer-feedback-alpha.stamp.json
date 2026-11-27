@@ -1,13 +1,13 @@
 {
     "guard":  "viewer-feedback-alpha",
     "script":  "test/win32/viewer-feedback-alpha.ps1",
-    "generated":  "2026-11-22T04:39:54-08:00",
-    "commit":  "a50885b21",
+    "generated":  "2026-11-27T05:23:47-08:00",
+    "commit":  "f500e650bd",
     "uncommitted":  [
-                        "test/win32/viewer-feedback-alpha.ps1"
+                        "src/apprt/win32/gdiplus_decode.zig"
                     ],
     "files":  {
-                  "src/apprt/win32/gdiplus_decode.zig":  "baa52fcbcfadc3172373cf0c60f1478557c46a71d8b2cf7d3aac895032668560",
+                  "src/apprt/win32/gdiplus_decode.zig":  "fda1cd1c917638a71f1970f6f85c108b7870c90e29834c1e5c066b13dc490614",
                   "src/apprt/win32/viewer_feedback_images.zig":  "6a0f71807506bce40a00a8444c7d4ca3d93c6aec343cac2e97c1344363d4c67e",
                   "test/win32/lib/ComposerSurface.ps1":  "7edd6dccc01fa8654f186ad97e64fb13bd9199305aa0424aebfbe7537e39d287",
                   "test/win32/lib/WebViewCdp.ps1":  "694f3e4f7852950d38ca69bcd317b75b1797f364c7f41fa5c23ed3cb56abd5fe",

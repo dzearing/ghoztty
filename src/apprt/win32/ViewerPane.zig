@@ -637,6 +637,24 @@ snap_dib_bits: ?[*]const u8 = null,
 snap_dib_w: i32 = 0,
 snap_dib_h: i32 = 0,
 
+/// A pane opening out of its strip (T2635) carries the page as it lays out
+/// at its NEW size: the page size (`page_rect`) the capture must come back
+/// at, set by `exactSnapRequest`. A capture of any other size - one started
+/// before the resize, or one the page answered before it re-laid-out - is
+/// dropped and asked again, up to `exact_max_tries` times.
+exact_want: ?struct { w: i32, h: i32 } = null,
+/// The frame `exact_want` asked for is the one in `snap_dib` (T2635).
+exact_landed: bool = false,
+exact_tries: u8 = 0,
+/// The pane is hidden while its page renders (T2635): the controller is
+/// visible and awake, its host window is not, so a capture of the page at
+/// the opening card's size can answer while nothing of the live page shows.
+render_hidden: bool = false,
+/// How many times the host window has taken a new size (`WM_SIZE`; T2635):
+/// an opening viewer, like a terminal (T2458), is resized once, hidden,
+/// before the motion starts, and never again until it lands.
+resizes: u32 = 0,
+
 /// When the outstanding capture started, or null when none is: the runtime
 /// owes us a completion, and starting a second would race two decodes onto
 /// the same fields. Mac's `HeroCarouselView` guards its `takeSnapshot` the
@@ -2049,7 +2067,11 @@ pub fn feedbackSetText(self: *ViewerPane, alloc: Allocator, bytes: []const u8) v
 /// this hides the host window and tells the controller to stop rendering —
 /// the WebView2 half matters: an invisible-but-live view keeps compositing.
 pub fn setVisible(self: *ViewerPane, visible: bool) void {
-    if (self.visible == visible) return;
+    // A page rendering for an opening card (T2635) has a visible controller
+    // under a hidden host: hiding it must reach the controller all the same.
+    const was_rendering = self.render_hidden;
+    self.render_hidden = false;
+    if (self.visible == visible and !(was_rendering and !visible)) return;
     self.visible = visible;
     if (self.controller) |c| _ = c.setVisible(visible);
     if (self.hwnd) |h| {
@@ -5644,6 +5666,8 @@ pub fn heroSnapRequest(
         .{now - self.snap_in_flight_since_ms.?},
     );
     self.snap_in_flight_since_ms = null;
+    self.exact_want = null;
+    self.exact_landed = false;
     self.snap_w = want_w;
     self.snap_h = want_h;
     // Stamped on the ATTEMPT, not on success. A capture that keeps failing —
@@ -5663,6 +5687,8 @@ pub fn heroSnapRequest(
 /// when it lands. True when a frame is on its way.
 pub fn glideSnapRequest(self: *ViewerPane, w: u32, h: u32) bool {
     if (w == 0 or h == 0) return false;
+    self.exact_want = null;
+    self.exact_landed = false;
     self.snap_w = @intCast(@min(w, @as(u32, std.math.maxInt(i32))));
     self.snap_h = @intCast(@min(h, @as(u32, std.math.maxInt(i32))));
     const now = std.time.milliTimestamp();
@@ -5672,6 +5698,57 @@ pub fn glideSnapRequest(self: *ViewerPane, w: u32, h: u32) bool {
     self.snap_in_flight_since_ms = null;
     self.snap_asked_ms = now;
     return self.startSnapCapture(now);
+}
+
+/// How many captures an opening card (T2635) asks for before it settles for
+/// none: a page answers a capture on its next paint, so the first one or two
+/// can still be of the old layout; past this the card keeps its band.
+pub const exact_max_tries: u8 = 8;
+
+/// Ask for the page's frame at the size the pane now stands at, `w` x `h`,
+/// for a card opening out of its strip to carry (T2635) - a terminal's
+/// `exactSnapRequest` (T2458). The pane was just resized there while hidden;
+/// the capture taken is the one of the page laid out at that size, never an
+/// older one, so a capture already in flight is superseded rather than taken
+/// over. False while the page's bounds have not followed the window yet
+/// (a held sync, T2838): the next frame asks again.
+pub fn exactSnapRequest(self: *ViewerPane, w: u32, h: u32) bool {
+    if (w == 0 or h == 0) return false;
+    const page = self.page_rect orelse return false;
+    const pw = page.right - page.left;
+    const ph = page.bottom - page.top;
+    if (pw <= 0 or ph <= 0) return false;
+    if (pw != @as(i32, @intCast(@min(w, @as(u32, std.math.maxInt(i32)))))) return false;
+    self.snap_w = @intCast(@min(w, @as(u32, std.math.maxInt(i32))));
+    self.snap_h = @intCast(@min(h, @as(u32, std.math.maxInt(i32))));
+    self.exact_want = .{ .w = pw, .h = ph };
+    self.exact_landed = false;
+    self.exact_tries = 1;
+    const now = std.time.milliTimestamp();
+    self.snap_in_flight_since_ms = null;
+    self.snap_asked_ms = now;
+    log.debug("viewer exact frame asked pane={s} page={d}x{d} card={d}x{d}", .{ self.paneId(), pw, ph, w, h });
+    return self.startSnapCapture(now);
+}
+
+/// Whether a capture of `src_w` x `src_h` is the page at the size an opening
+/// card asked for (T2635). A capture can come back a pixel off the bounds
+/// under a fractional scale; one of the OLD layout is hundreds off.
+pub fn exactFits(want_w: i32, want_h: i32, src_w: i32, src_h: i32) bool {
+    return @abs(src_w - want_w) <= 2 and @abs(src_h - want_h) <= 2;
+}
+
+/// Keep the page rendering while its host window is hidden (T2635): a card
+/// opening out of its strip carries a capture of the page at its new size,
+/// and a page whose controller is hidden produces no frame to capture. The
+/// host window stays off show - the card's face draws it - and `setVisible`
+/// takes the pane from here either way.
+pub fn renderHidden(self: *ViewerPane) void {
+    if (self.visible or self.render_hidden) return;
+    self.render_hidden = true;
+    if (self.controller) |c| _ = c.setVisible(true);
+    self.applySleep(true);
+    log.debug("viewer pane {s}: page rendering hidden (opening)", .{self.paneId()});
 }
 
 /// The frame the last capture decoded: bottom-up 0x??RRGGBB pixels,
@@ -5742,7 +5819,10 @@ fn onCapturePreviewCompleted(cap: *SnapCapture, result: com.HRESULT) com.HRESULT
         return com.S_OK;
     }
     self.snap_in_flight_since_ms = null;
-    defer self.releaseSnapStream();
+    // Not released when an opening card's retry (T2635) has already put the
+    // NEXT capture's stream in its place.
+    var asked_again = false;
+    defer if (!asked_again) self.releaseSnapStream();
 
     if (com.failed(result)) {
         log.warn(
@@ -5759,6 +5839,25 @@ fn onCapturePreviewCompleted(cap: *SnapCapture, result: com.HRESULT) com.HRESULT
 
     const thumb = gdiplus_decode.decodeScaled(@ptrCast(stream), self.snap_w, self.snap_h) orelse
         return com.S_OK;
+    // An opening card (T2635) takes only the page laid out at its new size:
+    // a capture of the old layout is dropped, the picture already held is
+    // kept, and the page is asked again on its next paint.
+    if (self.exact_want) |want| if (!exactFits(want.w, want.h, thumb.src_w, thumb.src_h)) {
+        _ = w32.DeleteObject(thumb.dib);
+        log.debug("viewer exact frame misfit pane={s} got={d}x{d} want={d}x{d} try={d}", .{
+            self.paneId(), thumb.src_w, thumb.src_h, want.w, want.h, self.exact_tries,
+        });
+        if (self.exact_tries < exact_max_tries) {
+            self.exact_tries += 1;
+            // `startSnapCapture` releases this capture's stream and hangs
+            // the next one's on the pane, which the deferred release must
+            // then leave alone.
+            asked_again = true;
+            _ = self.startSnapCapture(std.time.milliTimestamp());
+        }
+        return com.S_OK;
+    };
+    if (self.exact_want != null) self.exact_landed = true;
     if (self.snap_dib) |old| _ = w32.DeleteObject(old);
     self.snap_dib = thumb.dib;
     self.snap_dib_bits = thumb.bits;
@@ -5801,6 +5900,9 @@ pub fn releaseSnapshot(self: *ViewerPane) void {
     // picture nothing needs between paints of a pane nobody is looking at
     // (T3041). The next paint grows it back.
     self.releaseGlassBuf();
+    // An opening card's ask (T2635) ends with the glide that made it.
+    self.exact_want = null;
+    self.exact_landed = false;
     if (self.snap_in_flight_since_ms != null) return;
     if (self.snap_dib) |dib| _ = w32.DeleteObject(dib);
     self.snap_dib = null;
@@ -7868,6 +7970,7 @@ pub fn wndProc(
     switch (msg) {
         w32.WM_SIZE => {
             Window.traceRenderStage("viewer-size", self.hwnd);
+            self.resizes +%= 1;
             // Inside a live batch's `EndDeferWindowPos` the bounds sync (nav
             // bar, put_Bounds: ~2.5 ms) waits until the terminals' held resize
             // work has woken their renderers (T2838). Routed through
@@ -8231,6 +8334,16 @@ test "T3041: the glass sheet is laid over the dirty rect, less an opaque page" {
     // Clipping to the client.
     try eq(.{ .left = 0, .top = 0, .right = 800, .bottom = 600 }, clipToClient(.{ .left = -5, .top = -5, .right = 900, .bottom = 700 }, 800, 600).?);
     try testing.expect(clipToClient(.{ .left = 800, .top = 0, .right = 900, .bottom = 10 }, 800, 600) == null);
+}
+
+test "T2635: an opening card takes the page at its new size, never the old layout's capture" {
+    // The page at the size asked, and a pixel off under a fractional scale.
+    try testing.expect(exactFits(900, 640, 900, 640));
+    try testing.expect(exactFits(900, 640, 901, 639));
+    // The old layout's capture: the strip's, or the size it was folded at.
+    try testing.expect(!exactFits(900, 640, 12, 640));
+    try testing.expect(!exactFits(900, 640, 450, 640));
+    try testing.expect(!exactFits(900, 640, 900, 600));
 }
 
 test "viewer pane id is a valid pane id" {

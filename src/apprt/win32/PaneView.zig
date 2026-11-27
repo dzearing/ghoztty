@@ -29,6 +29,7 @@
 const PaneView = @This();
 
 const std = @import("std");
+const builtin = @import("builtin");
 const Allocator = std.mem.Allocator;
 
 const w32 = @import("win32.zig");
@@ -580,9 +581,11 @@ pub fn glideSnapRequest(self: *PaneView, w: u32, h: u32) bool {
     }
 }
 
-/// Ask a terminal's renderer for the first frame it draws at exactly `w`x`h`
-/// (T2458): a pane opening out of its strip was just resized to that while
-/// hidden, and its card carries that frame, unscaled. False for a viewer.
+/// Ask the pane for the first frame it draws at exactly `w`x`h` (T2458): a
+/// pane opening out of its strip was just resized to that while hidden, and
+/// its card carries that frame. A terminal's renderer draws it unscaled; a
+/// viewer's page is captured once it has laid out at that size (T2635).
+/// False when nothing was asked, and the next frame asks again.
 pub fn glideSnapRequestExact(self: *PaneView, w: u32, h: u32) bool {
     switch (self.kind) {
         .terminal => |s| {
@@ -590,16 +593,61 @@ pub fn glideSnapRequestExact(self: *PaneView, w: u32, h: u32) bool {
             s.exactSnapRequest(w, h);
             return true;
         },
-        .viewer => return false,
+        .viewer => |v| return v.exactSnapRequest(w, h),
     }
 }
 
-/// How many times the pane has taken a new size (T2458's oracle); 0 for a
-/// viewer.
+/// Whether this pane opens out of its strip carrying its own frame (T2458,
+/// T2635): placed at its slot's size while hidden and drawn by its card's
+/// face from what it draws there. Every terminal; a viewer whose page is up
+/// to be captured.
+pub fn opensCarried(self: *const PaneView) bool {
+    return switch (self.kind) {
+        .terminal => true,
+        .viewer => |v| {
+            // viewer-unfold-carried.ps1's negative control: the shape before
+            // T2635, a viewer opening as its live page under the face.
+            if (comptime builtin.mode == .Debug) {
+                if (std.process.hasEnvVarConstant("GHOZTTY_TEST_VIEWER_OPEN_LIVE")) return false;
+            }
+            return v.controller != null;
+        },
+    };
+}
+
+/// Whether the frame in hand is the one an opening card asked for at
+/// `w` x `h` (T2458, T2635) - never an older capture that answered late. A
+/// terminal's frame is drawn at exactly that size; a viewer's is scaled to
+/// it, so the viewer says whether the page it captured was laid out there.
+pub fn openingFrameLanded(self: *const PaneView, w: i32, h: i32) bool {
+    const fr = self.glideFrame() orelse return false;
+    if (fr.w != w or fr.h != h) return false;
+    return switch (self.kind) {
+        .terminal => true,
+        .viewer => |v| v.exact_landed,
+    };
+}
+
+/// Keep an opening card's pane drawing while it is hidden (T2458, T2635): a
+/// terminal's renderer stays awake; a viewer's page renders under its hidden
+/// host window, so it can be captured at its new size.
+pub fn setOpeningAwake(self: *PaneView) void {
+    switch (self.kind) {
+        .terminal => self.setVisible(true),
+        .viewer => |v| {
+            const win = self.parentWindow();
+            if (!occlusion.paneShows(true, win.occluded or win.isParked())) return self.setVisible(true);
+            v.renderHidden();
+        },
+    }
+}
+
+/// How many times the pane has taken a new size (T2458's oracle, a viewer's
+/// since T2635).
 pub fn resizeCount(self: *const PaneView) u32 {
     return switch (self.kind) {
         .terminal => |s| s.resizes,
-        .viewer => 0,
+        .viewer => |v| v.resizes,
     };
 }
 

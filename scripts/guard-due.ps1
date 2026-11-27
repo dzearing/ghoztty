@@ -2351,6 +2351,21 @@ $GuardTable = @(
             'src\apprt\win32\strip_face.zig'
         )
     },
+    # A VIEWER opening out of its strip carries the frame its page draws at
+    # its new size (T2635), the way a terminal does (T2458): presized while
+    # hidden, the page rendering under the hidden host, an older capture
+    # dropped, never resized on the way.
+    [pscustomobject]@{
+        Name   = 'viewer-unfold-carried'
+        Script = 'test\win32\viewer-unfold-carried.ps1'
+        Stamp  = 'test\win32\viewer-unfold-carried.stamp.json'
+        Covers = @(
+            'test\win32\viewer-unfold-carried.ps1',
+            'src\apprt\win32\ViewerPane.zig',
+            'src\apprt\win32\PaneView.zig',
+            'src\apprt\win32\gdiplus_decode.zig'
+        )
+    },
     # A collapsed row carried across a tree change (T2083/T2119): a pane on
     # show closed, undone, or split leaves the strips as strips and the caret
     # on a pane on show. `CloseUndo.zig` saves the stack state with the tree.
