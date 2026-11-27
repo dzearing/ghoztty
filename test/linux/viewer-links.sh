@@ -304,17 +304,18 @@ hl_check "K9 a relative .md link opens a viewer split showing it" $? "$(echo "$m
 sunk "split $fx/page.html" && echo "$md_leaves" | grep -qF "|viewer|$fx/page.html|"
 hl_check "K10 a relative .html link opens a viewer split too (it renders here)" $? "$(echo "$md_leaves" | tr '\n' ' ')"
 # A link's side pane never takes the caret (T3748; Mac newViewerSplit,
-# moveFocusTo: nil): the pane that had it keeps it - here termwin's terminal,
-# since +split --view opened doc in the background - and each side pane is
-# featured, so it is on show rather than a strip.
-echo "$md_leaves" | grep -F "|viewer|$fx/other.md|" | grep -q '|-|[-a-z]*$' &&
-    echo "$md_leaves" | grep -F "|viewer|$fx/page.html|" | grep -q '|-|[-a-z]*$' &&
-    ! echo "$md_leaves" | grep '^termwin|viewer|' | grep -q '|focused|[-a-z]*$'
+# moveFocusTo: nil): doc, the pane the links were clicked in, keeps it, and
+# the newest side pane is featured, so it is on show rather than a strip (the
+# one before it may give way to it in a full row - only the newest is owed).
+side_leaves=$(echo "$md_leaves" | grep '^termwin|viewer|' | grep -v '|doc|')
+echo "$side_leaves" | grep -qF "|viewer|$fx/other.md|" &&
+    echo "$side_leaves" | grep -qF "|viewer|$fx/page.html|" &&
+    ! echo "$side_leaves" | grep -q '|focused|[-a-z]*$'
 hl_check "K10a no viewer split a link opened took the caret" $? "$(echo "$md_leaves" | tr '\n' ' ')"
-[ "$(echo "$md_leaves" | grep '^termwin|terminal|' | grep -c '|focused|[-a-z]*$')" = 1 ]
-hl_check "K10b the pane that had the caret still has it" $? "$(echo "$md_leaves" | tr '\n' ' ')"
-! echo "$md_leaves" | grep -E "[|]viewer[|]$fx/(other[.]md|page[.]html)[|]" | grep -q '|minimized$'
-hl_check "K10c the side panes came on show, not as strips" $? "$(echo "$md_leaves" | tr '\n' ' ')"
+echo "$md_leaves" | grep '^termwin|viewer|' | grep -F '|doc|' | grep -q '|focused|[-a-z]*$'
+hl_check "K10b the pane the links were clicked in still has the caret" $? "$(echo "$md_leaves" | tr '\n' ' ')"
+echo "$side_leaves" | grep -F "|viewer|$fx/page.html|" | grep -q '|-$'
+hl_check "K10c the newest side pane came on show, not as a strip" $? "$(echo "$md_leaves" | tr '\n' ' ')"
 sunk "app $fx/code.zig"
 hl_check "K11 any other file opens in its default app" $? "$(grep '^app' "$sink" 2>/dev/null | tr '\n' ' ')"
 ! grep -qE '^(split|app|browser|window) .*(nope\.md|mailto)' "$sink" 2>/dev/null &&
