@@ -16,9 +16,9 @@
 #
 #   powershell -NoProfile -File scripts\linux\wsl-run.ps1 -CommandFile test\linux\palette-shell-pick.sh
 #
-# Both session-persistence paths run: on (the default - every pane is hosted
-# by ghoztty-agent, which must forward the shell's argv), then off (a plain
-# PTY). The default shell is /bin/sh, so a pane that comes up on bash can only
+# Both session-persistence paths run: off (pass B, a plain PTY: New Tab only),
+# then on (pass A, the default - every pane is hosted by ghoztty-agent, which
+# must forward the shell's argv: all four targets). The default shell is /bin/sh, so a pane that comes up on bash can only
 # be the pick.
 #
 # NEGATIVE=1 backs out of the shell list with Escape instead of picking bash,
@@ -84,7 +84,8 @@ run_pass() { # run_pass <label> <session-persistence>
 
     # ---- the rows, the second step, Escape -----------------------------------
     o=$(pal --op=open --query='with shell')
-    four() { o=$(pal); [ "$(jget "$o" 'd["pending"]')" = false ] && [ "$(jget "$o" 'sorted(r["title"] for r in d["rows"])')" = '["New Tab with Shell…", "New Window with Shell…", "Split Down with Shell…", "Split Right with Shell…"]' ]; }
+    # (Compared in python: jget prints the titles' ellipsis \u-escaped.)
+    four() { o=$(pal); [ "$(jget "$o" 'd["pending"]')" = false ] && [ "$(jget "$o" 'sorted(r["action_key"] for r in d["rows"]) == ["new_tab_with_shell", "new_window_with_shell", "split_down_with_shell", "split_right_with_shell"] and all(r["title"].endswith("with Shell…") for r in d["rows"])')" = true ]; }
     hl_wait_for 5 four
     hl_check "$tag.2 'with shell' finds the four rows, each keyed *_with_shell" $? "rows=$(jget "$o" '[(r["title"], r["action_key"]) for r in d["rows"]]')"
 
@@ -120,20 +121,20 @@ run_pass() { # run_pass <label> <session-persistence>
         newpid=$(comm -13 <(printf '%s\n' "$before" | awk '{print $3}' | sort) <(printf '%s\n' "$after" | awk '{print $3}' | sort) | head -1)
         hl_wait_for 10 sh -c "[ \"\$(readlink -f /proc/$newpid/exe 2>/dev/null)\" = \"$(readlink -f "$bash_path")\" ]"
         hl_check "$tag.8 $target -> bash opens a new pane running bash" $? "new pid=$newpid exe=$(exe_of "$newpid") panes: $(printf '%s' "$before" | tr '\n' ';') -> $(printf '%s' "$after" | tr '\n' ';')"
-        # Where it landed: a tab is a new (window,tab) pair in window 0, a
-        # window a new window index, a split a second pane in an existing tab.
-        shape=$(printf '%s\n' "$after" | awk -v p="$newpid" '$3==p {print $1, $2}')
+        # Where it landed, by what shares its window and tab (`+list` orders
+        # windows by stacking, not by creation): a tab is alone in its tab
+        # but beside older panes in its window, a window alone in its window,
+        # a split beside another pane in its tab.
+        w=$(printf '%s\n' "$after" | awk -v p="$newpid" '$3==p {print $1}')
+        t=$(printf '%s\n' "$after" | awk -v p="$newpid" '$3==p {print $2}')
+        in_win=$(printf '%s\n' "$after" | awk -v w="$w" '$1==w' | grep -c .)
+        in_tab=$(printf '%s\n' "$after" | awk -v w="$w" -v t="$t" '$1==w && $2==t' | grep -c .)
         case "$target" in
-            New\ Tab*) want="0 $(printf '%s\n' "$before" | awk '$1==0 {print $2}' | sort -n | tail -1 | awk '{print $1+1}')" ;;
-            New\ Window*) want="$(printf '%s\n' "$before" | awk '{print $1}' | sort -n | tail -1 | awk '{print $1+1}') 0" ;;
-            *) want=split ;;
+            New\ Tab*) want="alone in its tab, not in its window"; [ "$in_tab" = 1 ] && [ "$in_win" -ge 2 ] ;;
+            New\ Window*) want="alone in its window"; [ "$in_win" = 1 ] ;;
+            *) want="beside another pane in its tab"; [ "$in_tab" -ge 2 ] ;;
         esac
-        if [ "$want" = split ]; then
-            [ "$(printf '%s\n' "$after" | awk -v s="$shape" '($1" "$2)==s' | grep -c .)" -ge 2 ]
-        else
-            [ "$shape" = "$want" ]
-        fi
-        hl_check "$tag.9 $target lands where it says (window tab = $shape)" $? "want=$want"
+        hl_check "$tag.9 $target lands where it says ($want)" $? "window=$w tab=$t panes in window=$in_win in tab=$in_tab"
         [ "$(cwd_of "$newpid")" = "$(readlink -f "$wd")" ]
         hl_check "$tag.10 $target starts in the current pane's folder" $? "cwd=$(cwd_of "$newpid") want=$wd"
     done
