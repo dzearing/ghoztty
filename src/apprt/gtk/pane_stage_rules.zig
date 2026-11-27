@@ -59,10 +59,10 @@ pub fn cardAllocation(frame: PxRect, elevated: bool) PxRect {
 }
 
 /// The part of a strip that shows: its tab, less the `tuck` that reaches under
-/// the strip in front of it (toward the run). Faces of neighbouring strips
-/// then meet edge to edge instead of overlapping, so no paint order is needed
-/// between them. `leads`: the strip lies before its run (its run side is its
-/// trailing edge). `axis`: the row's direction.
+/// the strip in front of it (toward the run). Since T3729 a face is drawn at
+/// its whole tab and the strip in front covers the tuck (see "Blades"
+/// below); this is what is left in sight. `leads`: the strip lies before its
+/// run (its run side is its trailing edge). `axis`: the row's direction.
 pub fn stripFace(tab: PxRect, leads: bool, tuck: i32, axis: Direction) PxRect {
     var r = tab;
     const t = @max(tuck, 0);

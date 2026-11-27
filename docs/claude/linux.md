@@ -1813,7 +1813,8 @@ from the same tree. A lone or zoomed pane still sits in the tree's `AdwBin`.
   a `.pane-strip` label named by the sidebar row's rule
   (`pane_sidebar_rows.text`) - is allocated over its tab, turned 90 degrees in
   a row (`gsk_transform_rotate`; `pane_stage_rules.labelPlacement`). Faces are
-  trimmed by their tuck (`stripFace`) so they never overlap.
+  blades (T3729, below): each is drawn at its whole tab and overlaps the
+  strip in front by its tuck.
 - **Focus brings a pane forward.** `placeStage` notes the last-focused pane
   (`noteFocus`); `propSurfaceFocused` and `focusSurface` (CLI `--focus`, the
   sidebar) queue a relayout. A strip click is a press + release on the stage's
@@ -1886,6 +1887,48 @@ powershell -NoProfile -File scripts\linux\wsl-run.ps1 -CommandFile test\linux\st
 Ends `STACK GLIDE: ALL PASS`: one sampler process polls the seam every ~40ms
 through a stretched glide (strip click, then a close) and checks the motion,
 the held content, the fades and the resize counts.
+
+### Strips are blades (T3729)
+
+docs/reference/stacked-panes.md "Gutters": a strip with another between it
+and the run reaches 12px (`Metrics.blade_tuck`) under that one.
+
+- **Whole faces, painted in order.** The tucked branch of `placeStage` places
+  each face at its whole tab (no `stripFace` trim); `paintByElevation`
+  already stacks the strip nearer the run above the one behind it, so the
+  front strip covers the tucked part, and `stripAt` hit-tests the same way.
+- **The title is centred on what shows**: `pane_stage_rules.labelTuck` names
+  the tucked side in the label's own (turned) coordinates and the face takes
+  `.pane-strip-tuck-top` / `-bottom`, 12px of padding there
+  (`strip_tuck_css_px`, unit-tested against the engine's tuck).
+- **The shadow** is win32's pure `blade_shadow.paint` (Mac `PaneCardView`:
+  30% dark / 14% light, leaning away from the run, cast from a shape pulled
+  in by the corner radius so it fades inside the rounded ends). Rendered
+  into a CLEAR buffer it is exactly a premultiplied black shadow, so
+  `pane_stage_rules.renderShadow` fills a `GdkMemoryTexture` shown by a
+  non-targetable `GtkPicture` per strip (`Blade`), placed just under its own
+  face; `shadowImage` grows the tab by the shadow's reach at the device
+  scale. The texture is redrawn only when `ShadowKey` changes (size, scale,
+  side, collapse in 1/256ths, light desk), so a strip that only moves keeps
+  it. The face's own CSS box-shadow is gone: this replaces it.
+- **It follows collapse**: a card gliding into or out of its strip
+  (`Slide.stripFace`) casts it from the card as drawn at the same collapse
+  the content fades by, so it comes on as the card narrows.
+- The `pane-stack` seam reports per pane `face` (as drawn), `tuck`
+  (`none|top|bottom`), `shadow` (the caster) and `shadow_collapse`.
+
+```powershell
+powershell -NoProfile -File scripts\linux\wsl-run.ps1 -CommandFile test\linux\stack-blades.sh
+```
+
+Ends `STACK BLADES: ALL PASS` (B1-B12): a six-pane row stacks, every face is
+its whole tab, side-by-side strips overlap by exactly 12px with the tucked
+ones (only) giving way, every strip casts at collapse 1 and no card on show
+does, the window's own render is darker just past the front strip's edge on
+the blade behind than deep inside it, and a sampled glide shows the shadow
+at intermediate collapses. `NEGATIVE=1` reads two interior pixels and must
+fail B9. The real-screen look beside the Mac (`open.ps1`) is the user's to
+run.
 
 ### The gutter bar and double-click (T3626)
 
