@@ -39,6 +39,17 @@
 //! window's own closes. The last window is never parked - with nothing left
 //! on screen there is nowhere to press undo. A single-window-mode workspace
 //! is not parked here (T3790).
+//!
+//! A pane DRAG is one undoable step too (T3706; Mac `PaneMoveCoordinator`,
+//! undo action "Move Pane"): a drop in its own tab, into another tab, onto
+//! the tab bar, into another window, or out into a new window. Every tree it
+//! touched is recorded by pane identity (`beginMove`/`endMove`), and a tab or
+//! window it emptied is kept, hidden, instead of destroyed, so undo puts all
+//! of it back at once (`move_undo_rules.rebuildAcross`). The redo is the
+//! same record taken as the undo applies, so a tab or window the undo
+//! empties - the drop's new tab, the pop-out's new window - comes back on
+//! redo. A move between two windows is owned by `shared_owner`: either
+//! window's undo reaches it.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;

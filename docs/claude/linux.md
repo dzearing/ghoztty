@@ -856,7 +856,29 @@ private runtime dir, so a test app can never meet the user's.
   compositor's call (Mac and win32 open it at the drop point). Logs: `pop out
   pane=... into a new window size=<w>x<h>`, `pop out pane=... refused`,
   `drag released over nothing pane=...`, `pop-out button pane=...
-  outcome=...`. Not yet: the drop preview, including lighting the dwelling
+  outcome=...`. **Undo (T3706, Mac "Move Pane")**: every drop that moves a
+  pane - in its tab, into another tab, a new tab off the tab bar, another
+  window, a pop-out - is ONE undo on Ctrl+Shift+Z and one redo on
+  Ctrl+Shift+Y, through `CloseUndo.beginMove`/`endMove` around the commit.
+  Each tree it touched is recorded by pane id, and while the move runs a tab
+  or window it EMPTIES is kept (`parkTab`/`parkWindow` hand it to the open
+  move: out of its tab view, or hidden and out of the app's window list)
+  instead of destroyed, so the undo puts the pane back AND reopens what it
+  emptied (`move_undo_rules.rebuildAcross` rebuilds every tree together; a
+  pane opened since joins its tree on the right, one closed since is
+  pruned). The redo is recorded the same way as the undo applies, so the
+  drop's new tab or the pop-out's window comes back too. A move within one
+  window is that window's entry; one between two windows is shared, so
+  either window's undo reaches it. Not yet: a lone pane's tab moved along
+  the bar (a tab reorder, not a tree change) is not recorded (T3840); in
+  single-window mode a workspace a move empties or creates is not kept (the
+  same exclusion as a workspace close, T3790), so that undo or redo finds
+  the tree gone and does nothing (code-read, not run). Logs: `pane move
+  recorded for undo (<n> tree(s), <n> emptied)`, `pane move emptied the tab
+  at <n>: kept for undo`, `pane move emptied a window: kept for undo`.
+  Acceptance: `wsl-run.ps1 -CommandFile test\linux\pane-drag-undo.sh`, ends
+  `PANE DRAG UNDO: ALL PASS` (28 checks); `NEGATIVE=1` turns undo off and
+  must fail 12 (listed in its header). Not yet: the drop preview, including lighting the dwelling
   tab (T3708), and the hover handle with the mode off (T3709). Debug seam:
   `hl_ipc pane-drag --target=<pane> [--key=escape] [--drop-on=<pane>
   --fx=<0..1> --fy=<0..1> | --drop-at=<x>,<y> | --drop-tab=<n>]

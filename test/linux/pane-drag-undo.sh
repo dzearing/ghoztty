@@ -25,9 +25,11 @@
 #
 #   powershell -NoProfile -File scripts\linux\wsl-run.ps1 -CommandFile test\linux\pane-drag-undo.sh
 #
-# NEGATIVE=1 launches with --undo-timeout=0 (undo off): every undo and redo
-# check must FAIL (M6, M7, M8, M10, M11, M13, M14, M16, M18, M19, M21, M22,
-# M24), and nothing else.
+# NEGATIVE=1 launches with --undo-timeout=0 (undo off) and must FAIL 12:
+# M6, M8, M10, M11, M13, M16, M18, M19, M21, M22 (nothing is put back), M20
+# (the pop-out cascades from a different start) and M24 (nothing recorded).
+# M7 and M14 pass there by construction: a redo of nothing leaves the state
+# the drop made, which is what they read.
 # Output: one PASS/FAIL line per check, then 'PANE DRAG UNDO: ALL PASS' or
 # 'PANE DRAG UNDO: <n> FAILURE(S)'. Exit 0 only on ALL PASS.
 set -u
