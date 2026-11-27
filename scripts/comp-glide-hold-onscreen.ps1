@@ -38,16 +38,19 @@
 # What the film cannot see: a card coming out of (or going into) its strip is
 # drawn during the glide by its FACE (StripFace.zig, T2458), a layered popup
 # owned by the pane - its own top-level window, which a capture of the main
-# window never contains (the bell-fade-onscreen.ps1 caveat). So on the ON and
-# OFF arms that card reads as an empty card until it lands live, and it is
-# reported but never scored; .6 scores the cards that are live at both ends of
-# the glide. In the composition pane tree the face is a picture of the
-# window's own tree (T2777), and the TREE arm scores both faces (T2818): .18
-# the folding card is on film until its left edge has gone half its width
+# window alone never contains (the bell-fade-onscreen.ps1 caveat). So the ON
+# and OFF arms film the window WITH its secondary windows (the spike's
+# --popups, T2634), with the process's first ghost window moved clear of the
+# filmed one first (.3q) since it would be composited over it (T2561). In the
+# composition pane tree the face is a picture of the window's own tree
+# (T2777). Every main-path arm scores both faces (T2818 tree, T2561 on/off):
+# .18 the folding card is on film until its left edge has gone half its width
 # toward the strip, .19 the opening card is on film at 2+ places before it
 # settles.
 #   powershell -NoProfile -File scripts\comp-glide-hold-onscreen.ps1 -Arms tree -NoFaceComp   # tree.18 and tree.19 must go red
+#   powershell -NoProfile -Command "& .\scripts\comp-glide-hold-onscreen.ps1 -Arms on,off -NoPopups"   # on/off .18 and .19 must go red
 # -NoFaceComp sets GHOZTTY_FACE_COMP=0: the faces stay on their popups.
+# -NoPopups films the ON/OFF arms without the window's popups.
 #
 # .20 (T2826, tree arms) reads the app's count of window-region cuts made for
 # gliding panes: with the desk on the compositor a gliding pane's window keeps
@@ -211,6 +214,10 @@ param(
     # moment it catches up, though the glide's cards are still on their way -
     # the strip arm's .22c must then go red.
     [switch]$NoFaceHold,
+    # T2561: film the ON and OFF arms WITHOUT the window's secondary windows
+    # (the spike's --popups), so the faces on their layered popups are out of
+    # the capture again - on.18/.19 and off.18/.19 must then go red.
+    [switch]$NoPopups,
     # T2480: strip clicks per arm whose click-to-first-motion is measured
     # (the first is the scored glide; the rest alternate between the tucked
     # strips at either end). Reported as p50/p95 in ms and display refreshes,
@@ -293,6 +300,14 @@ public static class GhWin {
     // at the bottom).
     public static bool Size(IntPtr h, int w, int ht) {
         return SetWindowPos(h, IntPtr.Zero, 0, 0, w, ht, 0x0002 | 0x0004 | 0x0010); // NOMOVE|NOZORDER|NOACTIVATE
+    }
+    // T2561: move h clear of other (to its right), without activating or
+    // touching the z-order - a film that takes the process's secondary
+    // windows otherwise composites h over the window it films.
+    public static bool Clear(IntPtr h, IntPtr other) {
+        RECT r;
+        if (!GetWindowRect(other, out r)) return false;
+        return SetWindowPos(h, IntPtr.Zero, r.Right + 100, r.Top, 0, 0, 0x0001 | 0x0004 | 0x0010); // NOSIZE|NOZORDER|NOACTIVATE
     }
     // T2851: the first visible child window of a class ("hwnd left top right
     // bottom"), or null.
@@ -537,6 +552,23 @@ function Score-Film($arm, $fdir) {
         $seenAt = @($rows | Where-Object { $_.B[$k].Rows -gt 0 } | ForEach-Object { $_.I })
         $firstSeen = if ($on0) { -1 } else { $seenAt[0] }
         $lastSeen = if ($on1) { -1 } else { $seenAt[-1] }
+        # T2561: the faint step is every frame that shows the same block as
+        # the first (or last) one seen. On the popup arms (--popups) the face
+        # commits on its own window, so WGC delivers each of its steps twice
+        # - once for the popup, once for the window under it (green f12 and
+        # f13 both 143-168).
+        $faintSet = @{}
+        foreach ($end in @($firstSeen, $lastSeen)) {
+            if ($end -lt 0) { continue }
+            $at = @($rows | ForEach-Object { $_.I }).IndexOf($end)
+            $e = $rows[$at].B[$k]
+            $step = if ($end -eq $firstSeen) { 1 } else { -1 }
+            for ($j = $at; $j -ge 0 -and $j -lt $rows.Count; $j += $step) {
+                $b = $rows[$j].B[$k]
+                if ($b.Rows -eq 0 -or $b.LeftMin -ne $e.LeftMin -or $b.RightMax -ne $e.RightMax) { break }
+                $faintSet[$rows[$j].I] = $true
+            }
+        }
         foreach ($f in $rows) {
             $b = $f.B[$k]
             if ($b.Rows -eq 0) { if ($on0 -and $on1) { $missing++ }; continue }
@@ -557,7 +589,7 @@ function Score-Film($arm, $fdir) {
             # content_alpha's first step (T2818), and that step's block sits
             # on the threshold along its edge too (green f14 right 159..168,
             # one run in three).
-            $faint = (-not ($on0 -and $on1)) -and ($f.I -eq $firstSeen -or $f.I -eq $lastSeen)
+            $faint = (-not ($on0 -and $on1)) -and $faintSet.ContainsKey($f.I)
             $judged = (($on0 -and $on1) -or $b.Rows -ge [Math]::Floor(0.9 * $restH)) -and -not $faint
             if ($judged -and (($b.LeftMax - $b.LeftMin) -gt 2 -or ($b.RightMax - $b.RightMin) -gt 2)) {
                 $tornBad += "$($colourNames[$k]) f$($f.I) left $($b.LeftMin)..$($b.LeftMax) right $($b.RightMin)..$($b.RightMax)"
@@ -582,7 +614,9 @@ function Score-Film($arm, $fdir) {
     Assert "$arm.6 whole: every card on show at both ends is on screen in every frame$(if ($wholeBad) { ': ' + ($wholeBad -join '; ') })" ($wholeBad.Count -eq 0)
     Assert "$arm.7 held: no card's picture is ever larger than its rest size (clipped, never stretched)$(if ($heldBad) { ': ' + (($heldBad | Select-Object -First 4) -join '; ') + " ($($heldBad.Count))" })" ($heldBad.Count -eq 0)
     Assert "$arm.8 untorn: every card's rows share one left and one right edge in every frame$(if ($tornBad) { ': ' + (($tornBad | Select-Object -First 4) -join '; ') + " ($($tornBad.Count))" })" ($tornBad.Count -eq 0)
-    if ($arm -eq 'tree') { Score-TreeFaces $arm $rows }
+    # T2561: the popup arms' faces are on film through --popups, so they are
+    # scored the same way as the tree's.
+    if ($arm -in 'tree', 'on', 'off') { Score-TreeFaces $arm $rows }
     if ($arm -in 'stall', 'live') { Score-Stall $arm $rows }
     if ($arm -eq 'unfold') { Score-StallUnfold $arm $rows ($StallMs / 4.0) }
 }
@@ -1218,7 +1252,17 @@ try {
         $fdir = Join-Path $dir 'film'
         $filmErr = Join-Path $dir 'film.txt'
         $filmMs = $SlideMs + 1500
-        $fp = Start-Process -FilePath $Spike -ArgumentList @("--film-hwnd=$([int64]$hw)", "--film-dir=`"$fdir`"", "--film-ms=$filmMs") `
+        # T2561: on the popup arms the faces are the pane's owned layered
+        # popups, so the film takes the window's secondary windows with it.
+        $filmArgs = @("--film-hwnd=$([int64]$hw)", "--film-dir=`"$fdir`"", "--film-ms=$filmMs")
+        $popupArm = ($arm -in 'on', 'off') -and -not $NoPopups
+        if ($popupArm) {
+            $filmArgs += '--popups'
+            # The first ghost window is the same process's and would be
+            # composited over the filmed one.
+            Assert "$arm.3q the first ghost window moved clear of the filmed one" ([GhWin]::Clear($top, $hw))
+        }
+        $fp = Start-Process -FilePath $Spike -ArgumentList $filmArgs `
             -NoNewWindow -PassThru -RedirectStandardError $filmErr
         $ready = $false
         for ($t = 0; $t -lt 100 -and -not $ready; $t++) { $ready = Test-Path (Join-Path $fdir 'ready'); if (-not $ready) { Start-Sleep -Milliseconds 50 } }
@@ -1230,6 +1274,7 @@ try {
         $filmOut = (Read-Text $filmErr).Trim()
         "  $filmOut"
         Assert "$arm.3b the film finished" ($filmOut -match '^FILM ok')
+        if ($popupArm) { Assert "$arm.3p the film took the window's popups (the faces' windows)" ($filmOut -match 'popups=true') }
         $after = @(Get-Panes $hw)
         $me = @($after | Where-Object { $_.Hwnd -eq $p.Hwnd })
         Assert "$arm.3c the clicked pane came on show" ($me.Count -eq 1 -and $me[0].Visible)
