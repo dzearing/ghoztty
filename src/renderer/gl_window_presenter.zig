@@ -116,6 +116,27 @@ pub const SlotPair = struct {
         return replaced;
     }
 
+    /// The renderer's way out of back-pressure for a pane the presenter is not
+    /// composing (a hidden tab, a folded stack, a pane past `MAX_PANES`;
+    /// T2622): nothing will take its published frame, so waiting for that only
+    /// drops the frame. Instead the renderer gets the PENDING slot back and
+    /// draws its new frame over the untaken one, so the newest frame is always
+    /// the one waiting when the pane is composed again.
+    ///
+    /// Safe without the presenter: it only ever reads the slot it holds, and a
+    /// pending slot is never the held one (`publish`); under this lock a
+    /// concurrent `take` either got the frame first (then there is nothing to
+    /// reclaim and `acquire` will succeed) or never sees it. Null when nothing
+    /// is pending. The slot's old frame stays named, so the next `publish`
+    /// still hands its fence back for deleting.
+    pub fn reclaim(self: *SlotPair) ?u1 {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        const p = self.pending orelse return null;
+        self.pending = null;
+        return p;
+    }
+
     pub const Take = struct {
         slot: u1,
         frame: Frame,
@@ -393,6 +414,37 @@ test "SlotPair: a fresh take names the slot it stopped holding" {
     try testing.expectEqual(@as(?u1, 0), t.released);
     // A re-compose of the held frame releases nothing.
     try testing.expectEqual(@as(?u1, null), s.take().?.released);
+}
+
+test "SlotPair: reclaim gives an uncomposed pane its untaken slot back, and the newest frame is the one taken (T2622)" {
+    var s: SlotPair = .{};
+    // Nothing published: nothing to reclaim, and the renderer may draw.
+    try testing.expectEqual(@as(?u1, null), s.reclaim());
+    _ = s.publish(s.acquire().?, frameN(1)); // slot 0, pending
+    _ = s.take(); // held 0
+    _ = s.publish(s.acquire().?, frameN(2)); // slot 1, pending, never taken
+    try testing.expectEqual(@as(?u1, null), s.acquire());
+    // The renderer redraws over the untaken frame instead of waiting...
+    const r = s.reclaim().?;
+    try testing.expectEqual(@as(u1, 1), r);
+    // ...never the slot the presenter holds...
+    try testing.expect(r != s.take().?.slot);
+    // ...and publishing it hands back the overwritten frame's fence.
+    try testing.expectEqual(@as(?usize, 102), s.publish(r, frameN(3)));
+    // Composed again: the presenter takes the NEWEST frame, not the stale one.
+    const t = s.take().?;
+    try testing.expect(t.fresh);
+    try testing.expectEqual(@as(u64, 3), t.frame.frame_id);
+    try testing.expectEqual(@as(?u1, 0), t.released);
+}
+
+test "SlotPair: a frame taken before the reclaim leaves nothing to reclaim (T2622)" {
+    var s: SlotPair = .{};
+    _ = s.publish(s.acquire().?, frameN(1));
+    _ = s.take();
+    try testing.expectEqual(@as(?u1, null), s.reclaim());
+    // The ordinary path still answers.
+    try testing.expectEqual(@as(?u1, 1), s.acquire());
 }
 
 test "SlotPair: reset forgets every frame" {

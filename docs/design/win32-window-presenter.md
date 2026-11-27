@@ -129,6 +129,12 @@ a second answer from the same seam:
    signal its event. The renderer writes the other slot next. It waits until
    the presenter has released that slot, so it is never more than one frame
    ahead. That wait replaces the vsync throttle the per-pane swap gave it.
+   A pane the presenter is **not composing** (a hidden tab, a folded stack, a
+   pane past `MAX_PANES`) has no presenter to wait for: each layout pass marks
+   its link out of the compose, and its renderer draws the next frame over
+   its own untaken one (`SlotPair.reclaim`) and asks for no compose, so it
+   never stalls and its newest frame is the one waiting when it is shown
+   again (T2622).
 3. **Presenter thread:** wake on the event, or on a re-compose posted by a
    layout pass. For each terminal pane, take its newest published slot,
    `glWaitSync` its fence, and blit it into the pane's rectangle. Fill

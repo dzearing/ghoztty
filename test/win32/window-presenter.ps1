@@ -33,6 +33,13 @@
 #      slot, so the only way it can reach the presenter's back buffer is the
 #      handoff. The debug-only GHOZTTY_PRESENTER_PROBE readback of each pane's
 #      center must show ff00ff, and later something else (frames keep coming).
+#   H. A pane the presenter is not composing (T2622): with the debug hook
+#      GHOZTTY_PRESENTER_UNCOMPOSED=last the newest pane is left out of the
+#      compose while its renderer keeps drawing (a hidden tab cannot stand in:
+#      its renderer is told it is hidden and stops). Its renderer must redraw
+#      over its own untaken frame instead of waiting 2x20ms for a take that
+#      never comes and dropping the frame; arm F's composed panes must never
+#      take that path (the negative control).
 #   G. The resize wait (T2621): a layout pass's frame wait is answered by the
 #      presenter's swap of the pane at its new rectangle (`pres-shown` in the
 #      resize trace), not by the renderer's publish, which no longer reports
@@ -105,16 +112,16 @@ public static class T2614Win {
 $root = Join-Path $env:TEMP "ghoztty-window-presenter-$PID"
 $savedLocalAppData = $env:LOCALAPPDATA
 $knobs = 'GHOZTTY_WINDOW_PRESENTER', 'GHOZTTY_COMP_PRESENT', 'GHOZTTY_LAB_PLANT', 'GHOZTTY_PRESENTER_PROBE',
-    'GHOZTTY_RESIZE_TRACE', 'GHOZTTY_PRESENT_LAG_MS'
+    'GHOZTTY_RESIZE_TRACE', 'GHOZTTY_PRESENT_LAG_MS', 'GHOZTTY_PRESENTER_UNCOMPOSED'
 $saved = @{}
 foreach ($k in $knobs) { $saved[$k] = [Environment]::GetEnvironmentVariable($k) }
 
-function Set-Knobs($presenter, $comp, $plant = $null, $probe = $null, $trace = $null, $lag = $null) {
+function Set-Knobs($presenter, $comp, $plant = $null, $probe = $null, $trace = $null, $lag = $null, $uncomposed = $null) {
     # The composition present is the default since T2514 and wins over the
     # presenter, so "no comp" has to be the explicit opt-out here.
     if (-not $comp) { $comp = '0' }
     $vals = @{ GHOZTTY_WINDOW_PRESENTER = $presenter; GHOZTTY_COMP_PRESENT = $comp; GHOZTTY_LAB_PLANT = $plant; GHOZTTY_PRESENTER_PROBE = $probe
-        GHOZTTY_RESIZE_TRACE = $trace; GHOZTTY_PRESENT_LAG_MS = $lag }
+        GHOZTTY_RESIZE_TRACE = $trace; GHOZTTY_PRESENT_LAG_MS = $lag; GHOZTTY_PRESENTER_UNCOMPOSED = $uncomposed }
     foreach ($k in $knobs) {
         if ($vals[$k]) { Set-Item "env:$k" $vals[$k] }
         else { Remove-Item "env:$k" -ErrorAction SilentlyContinue }
@@ -387,6 +394,43 @@ try {
     Assert "F9 closing a presenter pane leaves the app running" (Test-Alive $g)
     Assert "F10 no OpenGL errors and no presenter failure on the frame path" ((Read-Text $g.Err) -notmatch 'error\(opengl\)|window presenter: ')
 
+    $reclaimLine = 'pane renderer redrew its untaken frame in place'
+    $dropLine = 'pane renderer dropped a frame'
+    Assert "F11 negative control: no composed pane took the uncomposed path ($(Count-Log $g.Err $reclaimLine) reclaim lines)" ((Count-Log $g.Err $reclaimLine) -eq 0)
+
+    # ========================================================================
+    "== H: a pane the presenter is not composing never waits for it (T2622)"
+    # ========================================================================
+    Set-Knobs '1' $null $null $null $null $null 'last'
+    $u = Start-Arm 'u'
+    Assert "H0 the arm's window came up ($($u.Target))" ($u.Top -ne [IntPtr]::Zero -and $u.Target)
+    & $Exe +split "--target=$($u.Target)" '--direction=right' '--name=presu2' 2>$null | Out-Null
+    $mu = Wait-Measure $u.Top 2
+    Assert "H1 the split shows two terminal panes ($($mu.Terms.Count))" ($mu.Terms.Count -eq 2)
+    Close-Measure $mu
+    [void](Wait-Log $u.Err 'pane renderer published its first frame to the window presenter' 10000)
+    # Typed text echoes, and every echo is a frame the left-out pane draws.
+    foreach ($i in 1..6) {
+        cmd /c "`"$Exe`" +send-keys --target=presu2 `"echo t2622-$i`" Enter > nul 2>&1" | Out-Null
+        Start-Sleep -Milliseconds 250
+    }
+    Assert "H2 the left-out pane redrew over its untaken frame instead of waiting" (Wait-Log $u.Err $reclaimLine 10000)
+    $sw = [System.Diagnostics.Stopwatch]::StartNew()
+    $most = 0
+    while ($sw.ElapsedMilliseconds -lt 8000) {
+        $hits = @([regex]::Matches((Read-Text $u.Err), 'redrew its untaken frame in place[^\r\n]*reclaims=(\d+)'))
+        if ($hits.Count) { $most = ($hits | ForEach-Object { [int]$_.Groups[1].Value } | Measure-Object -Maximum).Maximum }
+        if ($most -ge 4) { break }
+        Start-Sleep -Milliseconds 200
+    }
+    Assert "H3 and kept doing so frame after frame (reclaims=$most)" ($most -ge 4)
+    Assert "H4 no frame was dropped waiting for a take ($(Count-Log $u.Err $dropLine) drop lines)" ((Count-Log $u.Err $dropLine) -eq 0)
+    Assert "H5 the app is still running, no OpenGL error, no presenter failure" ((Test-Alive $u) -and (Read-Text $u.Err) -notmatch 'error\(opengl\)|window presenter: ')
+    if (-not ($most -ge 4)) {
+        ((Read-Text $u.Err) -split "`n" | Where-Object { $_ -match 'pane renderer|window presenter' } | Select-Object -Last 8) |
+            ForEach-Object { "    $_" }
+    }
+
     # ========================================================================
     "== G: a resize waits for the presenter's compose, not the pane's publish (T2621)"
     # ========================================================================
@@ -483,4 +527,4 @@ if ($script:failures -eq 0) {
 }
 
 Write-Host ''
-Write-TestVerdict -Pass $script:passes -Fail $script:failures -Label 'window-presenter' -MinPass 46
+Write-TestVerdict -Pass $script:passes -Fail $script:failures -Label 'window-presenter' -MinPass 53

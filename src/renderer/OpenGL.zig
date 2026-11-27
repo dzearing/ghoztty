@@ -163,6 +163,12 @@ pres_has_frame: bool = false,
 /// a rebuild waits until the presenter's is past it, so the new context
 /// joins the presenter's NEW group rather than the dead one.
 pres_lost_gen: u32 = 0,
+/// Frames this pane drew over its own untaken one because the presenter was
+/// not composing it (T2622), and frames dropped because the presenter did not
+/// take the last one in time. Counted for the log line the acceptance harness
+/// reads (`presCount`).
+pres_reclaims: u64 = 0,
+pres_drops: u64 = 0,
 
 /// When this pane's grow-only GPU storage last changed size and whether the
 /// last frame left any of it bigger than its size needs (T2974): the target,
@@ -1720,17 +1726,15 @@ pub fn presentLastTarget(self: *OpenGL) !void {
 
 /// How long `presAcquire` waits, per try, for the presenter to take the
 /// frame already published. Two tries, a little over two vblanks at 60 Hz:
-/// the presenter takes a visible pane's frame at its next compose, and a
-/// pane it is not composing (hidden behind a tab, folded in a stack) must
-/// not hold its renderer up for longer than that.
+/// the presenter takes a composed pane's frame at its next compose. A pane it
+/// is not composing (hidden behind a tab, folded in a stack) never waits here
+/// at all (T2622): it reclaims its untaken slot instead.
 const pres_wait_ms: u32 = 20;
 
 /// The slot this frame may be drawn into, after the GPU is past every
 /// compose that read it. Null drops the frame: the presenter has not taken
-/// the last one (a pane it is not composing) or is gone (the window is being
-/// destroyed).
+/// the last one in time, or is gone (the window is being destroyed).
 fn presAcquire(self: *OpenGL, l: anytype) ?u1 {
-    _ = self;
     // The presenter has left this context's group (T2616) and will not take
     // from this link until it rejoins: do not wait for it. `checkDevice` at
     // the end of this frame starts the rebuild.
@@ -1746,19 +1750,43 @@ fn presAcquire(self: *OpenGL, l: anytype) ?u1 {
             }
             return slot;
         }
-        if (!l.attached() or tries == 2) return null;
+        // T2622: nothing is going to take the frame waiting in the pending
+        // slot, so draw this one over it rather than wait 2x20ms and drop it.
+        // Whatever the pane shows when it is composed again is then its
+        // newest frame, not one from before it was hidden. The presenter
+        // never read that slot (a pending slot is not the held one), and its
+        // release fence, if any, was consumed when the renderer acquired it.
+        if (!l.composed.load(.seq_cst)) {
+            if (l.slots.reclaim()) |slot| {
+                self.presCount(&self.pres_reclaims, "redrew its untaken frame in place: the window presenter is not composing this pane");
+                return slot;
+            }
+            // Taken meanwhile: the ordinary path answers now.
+            continue;
+        }
+        if (!l.attached() or tries == 2) {
+            if (l.attached()) self.presCount(&self.pres_drops, "dropped a frame: the window presenter did not take the last one in time");
+            return null;
+        }
         _ = wgl.WaitForSingleObject(@ptrCast(l.signal), pres_wait_ms);
         tries += 1;
     }
 }
 
+/// Count one `presAcquire` outcome and log it on the 1st, 2nd, 4th, 8th...
+/// occurrence, with both totals, so the log says it happened and roughly how
+/// often without a line per frame.
+fn presCount(self: *OpenGL, counter: *u64, what: []const u8) void {
+    counter.* += 1;
+    if (!std.math.isPowerOfTwo(counter.*)) return;
+    log.info("pane renderer {s} reclaims={d} drops={d}", .{ what, self.pres_reclaims, self.pres_drops });
+}
+
 fn presToSlot(self: *OpenGL, l: anytype, target: Target) !void {
     self.last_target = target;
-    const slot = self.presAcquire(l) orelse {
-        // A planted lab frame waits for the next frame that has a slot.
-        log.debug("window presenter has not taken the last frame; this one is dropped", .{});
-        return;
-    };
+    // A dropped frame is counted (and logged) by `presAcquire`; a planted
+    // lab frame waits for the next frame that has a slot.
+    const slot = self.presAcquire(l) orelse return;
     const w: u32 = @intCast(target.width);
     const h: u32 = @intCast(target.height);
     const c = &gl.glad.context;
@@ -1827,7 +1855,11 @@ fn presPublish(self: *OpenGL, l: anytype) void {
     self.pres_has_frame = true;
     // The renderer is running: from here a presenter rebuild may wake it.
     l.armed.store(true, .release);
-    _ = l.notify();
+    // T2622: a pane the presenter is not composing asks for no compose: it
+    // would swap the window for a frame nobody takes. Read after the publish,
+    // so a layout pass that composes it from now on has its compose come
+    // after this frame was published (`PaneLink.composed`).
+    if (l.composed.load(.seq_cst)) _ = l.notify();
     self.rt_surface.tracePresent(self.drawn_client, true);
     if (self.pres_frame_id == 1) log.info("pane renderer published its first frame to the window presenter", .{});
 }

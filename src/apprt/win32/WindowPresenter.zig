@@ -117,6 +117,12 @@ frame_logged_gen: u32 = 0,
 /// Debug builds: `probeCenters` is on (`GHOZTTY_PRESENTER_PROBE`), and what it
 /// last logged.
 probe: bool = false,
+/// Debug builds, `GHOZTTY_PRESENTER_UNCOMPOSED=last` (T2622): every layout
+/// pass leaves the most recently linked pane out of the compose although its
+/// window is shown and its renderer keeps drawing, so the acceptance harness
+/// can drive a pane the presenter is not composing on demand. A hidden tab
+/// cannot stand in: its renderer is told it is hidden and stops drawing.
+uncompose_last: bool = false,
 probe_last: [4]u32 = .{ 0, 0, 0, 0 },
 probe_len: usize = std.math.maxInt(usize),
 
@@ -222,7 +228,10 @@ pub fn create(
         .bg = bg,
         .alloc = alloc,
     };
-    if (comptime builtin.mode == .Debug) self.probe = probeEnabled();
+    if (comptime builtin.mode == .Debug) {
+        self.probe = probeEnabled();
+        self.uncompose_last = uncomposeLastEnabled();
+    }
     _ = w32.SetWindowLongPtrW(hwnd, w32.GWLP_USERDATA, @bitCast(@intFromPtr(self)));
 
     self.thread = std.Thread.spawn(thread_stack.config, threadMain, .{self}) catch |err| {
@@ -296,6 +305,16 @@ pub const PaneLink = struct {
     /// Written under the presenter's lock (`rejoin`), so a compose never
     /// reads a texture name from a group the presenter has left.
     gen: u32,
+    /// Whether the last layout pass put this pane in the compose (T2622).
+    /// False for a pane hidden behind a tab, folded in a stack, or past
+    /// `MAX_PANES`: nothing will take its frames, so its renderer draws over
+    /// its untaken one (`SlotPair.reclaim`) instead of waiting for a take that
+    /// never comes, and asks for no compose. Starts true, the pre-T2622
+    /// behavior, until the first `sync` after the link is made says otherwise.
+    /// `sync` stores it BEFORE it requests the compose, so a renderer that read
+    /// false and skipped its own request has published before that compose,
+    /// which then takes the frame.
+    composed: std.atomic.Value(bool) = .init(true),
     slots: core.SlotPair = .{},
     /// The two slot textures, names in the window's share group. The renderer
     /// creates and sizes them; the presenter only samples the one it took.
@@ -572,6 +591,16 @@ pub fn sync(self: *WindowPresenter) void {
     var n: usize = 0;
     var overflow = false;
 
+    // The debug hook's pane (`uncompose_last`), if any.
+    const skip: ?w32.HWND = skip: {
+        if (comptime builtin.mode != .Debug) break :skip null;
+        if (!self.uncompose_last) break :skip null;
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        if (self.links.items.len < 2) break :skip null;
+        break :skip self.links.items[self.links.items.len - 1].hwnd;
+    };
+
     // Owned by the window once `SetWindowRgn` takes it, below.
     const rgn = w32.CreateRectRgn(0, 0, 0, 0);
 
@@ -584,6 +613,7 @@ pub fn sync(self: *WindowPresenter) void {
             walk_len += 1;
         }
         if (kind != .terminal or w32.IsWindowVisible(c) == 0) continue;
+        if (skip != null and skip.? == c) continue;
         var wr: w32.RECT = undefined;
         if (w32.GetWindowRect(c, &wr) == 0) continue;
         var pts = [2]w32.POINT{ .{ .x = wr.left, .y = wr.top }, .{ .x = wr.right, .y = wr.bottom } };
@@ -641,6 +671,14 @@ pub fn sync(self: *WindowPresenter) void {
     self.pane_len = n;
     self.client_w = @intCast(cw);
     self.client_h = @intCast(ch);
+    // T2622: which renderers' frames this compose and the next will take.
+    // Before the request below (the ordering `PaneLink.composed` relies on).
+    for (self.links.items) |l| {
+        const in = for (pane_hwnds[0..n]) |h| {
+            if (h == l.hwnd) break true;
+        } else false;
+        l.composed.store(in, .seq_cst);
+    }
     self.mutex.unlock();
     self.requestCompose();
 
@@ -701,6 +739,12 @@ fn probeEnabled() bool {
     const raw = std.process.getEnvVarOwned(std.heap.page_allocator, "GHOZTTY_PRESENTER_PROBE") catch return false;
     defer std.heap.page_allocator.free(raw);
     return std.mem.eql(u8, raw, "1");
+}
+
+fn uncomposeLastEnabled() bool {
+    const raw = std.process.getEnvVarOwned(std.heap.page_allocator, "GHOZTTY_PRESENTER_UNCOMPOSED") catch return false;
+    defer std.heap.page_allocator.free(raw);
+    return std.mem.eql(u8, raw, "last");
 }
 
 fn isTerminal(h: w32.HWND) bool {
