@@ -41111,3 +41111,7 @@ WebKitGTK's script message carries no frame, and a page-world handler is visible
 - What: no code change. The `[tripwire] untripped point=read` text on the 2026-10-31 red was shared stderr from tripwire.zig's own passing test (the T1662 trap). The error return trace in the same log blames the section-handle check at PaneDesk.zig:185. That is the handle-reuse defect T2594 fixed in 24c267593 on 2026-11-06, which made the sizes fit one section and added a comptime assert. T2563 was filed first and nobody linked the two.
 - Evidence: `floor-lane.ps1 -Lane win32 -Filter 'a bitmap over a kept section' -Repeat 5` 5/5 PASS. 0 of 1074 win32 lane logs written since the fix carry a failure for this test. Also ran the three audits T3844 left due (argv-hazard, unroll-count, unwired-hook): ALL PASS.
 - Filed: none.
+## 2026-11-26 22:55 lane a - T2596: pane-banner / resize-flicker parallel flakes closed as already fixed
+- What: no code change. pane-banner.ps1 got its `@timing-sensitive` marker from T2756 (6c5adfdb44) on 2026-11-06, after this card's 2026-11-01 sweep. resize-flicker.ps1 had had its marker since T1960, so its stale-frame reds were not about running beside other scripts. The 11-11 alone-red (zig-out exe, 4 of 6) does not reproduce today. No single fix commit can be named for it.
+- Evidence: resize-flicker alone 3/3 PASS (31 assertions each) at -Width 1. A mixed width-4 run (pane-banner x2, resize-flicker, ipc-p1/p2/p3) was ACCEPTANCE GREEN 6/6, with both flaky scripts in the `[exclusive]` slot. HEAD 89211f21b.
+- Filed: none.
