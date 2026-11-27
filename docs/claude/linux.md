@@ -550,8 +550,20 @@ private runtime dir, so a test app can never meet the user's.
   `height`, `draggable`) and `--drag=<row id>:<y>` lets one go at a y of the
   list through the live drop's code; both skip the redraw. Acceptance:
   `wsl-run.ps1 -CommandFile test\linux\cli-sidebar-drag.sh`, ends `CLI
-  SIDEBAR DRAG: ALL PASS` (46 checks; T1-T11 are the tray's); `NEGATIVE=1`
+  SIDEBAR DRAG: ALL PASS` (48 checks; T1-T11 are the tray's); `NEGATIVE=1`
   must fail D2, D2b, D4b.
+  **Another window's rows (T3699)**: in the all-windows list a pane row let
+  go inside ANOTHER window's group - its header down to its last row, the
+  gaps included, a folded window's header alone (`rows.joinTab` over the
+  rows as laid out) - joins that window (Mac `sidebarHit` over
+  `windowGroups` -> `.joinWindow`, win32 `commitJoinDrop`): the same pane
+  moves onto that grid's right edge at the top level
+  (`SplitTree.joinArriving`, the cross-window `dropArriving` a drop on its
+  right edge band makes), that tab is selected, the pane is focused there,
+  and a stashed one arrives on screen. Logged `pane sidebar join pane=
+  window= outcome=`. Over its own window's rows, between groups or below
+  them all it is the T3607/T3698 drop; the tray does not light over another
+  window's rows. D10-D10e of `cli-sidebar-drag.sh`.
   **The stash tray (T3698)**: stashed panes are listed after the panes on
   screen, the top of the stash first (`rows.trayed`), in both scopes. This
   window's list draws the tray's head, a row of kind `tray` (id `tray`):
@@ -566,9 +578,10 @@ private runtime dir, so a test app can never meet the user's.
   (`SplitTree.stashSurfaceAt`, `pane_stash.markAt`; a stashed row moves
   within the stash, the last pane on screen is refused), in the list a
   stashed pane is restored, focused, then placed. Stashed rows drag.
-  A real pointer drag is NOT RUN (no seat). Not yet: cross-window drops
-  (T3699), the order across a restore (T3700), the rows sliding to make
-  room (parity is behavior here, not the glide).
+  A real pointer drag is NOT RUN (no seat). Not yet: a pane drag (a header
+  or a strip, so another window's pane) dropped on the sidebar (T3756), the
+  order across a restore (T3700), the rows sliding to make room (parity is
+  behavior here, not the glide).
   **Windows and groups drag too (T3697)**, in the expanded all-windows list
   only: a project header among the top level (never above the lone
   windows), a window row anywhere - into a group (retitled `<group>:
