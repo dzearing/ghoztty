@@ -1,8 +1,8 @@
 {
     "guard":  "self-spawn",
     "script":  "test/win32/self-spawn-audit.ps1",
-    "generated":  "2026-11-26T21:23:21-08:00",
-    "commit":  "a91c9c800c",
+    "generated":  "2026-11-26T22:11:03-08:00",
+    "commit":  "bc6454d96e",
     "uncommitted":  [
 
                     ],
@@ -29,7 +29,7 @@
                   "src/apprt/gtk/capture_seam.zig":  "6866cd688571dbba0eb9e83d3ac20a3119b51549268937182ed4d17a5117d5b6",
                   "src/apprt/gtk/cgroup.zig":  "372cae8dcb5e10e5068debf3132f25e98b0f86c48bd535a661cd10192d68502a",
                   "src/apprt/gtk/class.zig":  "8d1e5c64e3d97635e21c0861e73c1f957c52aa939100357e039d1f5dc690d8cc",
-                  "src/apprt/gtk/class/application.zig":  "9a5e2c371fd84eb33a8945e76b86623e270c770358249e9966f7daac213fb8fa",
+                  "src/apprt/gtk/class/application.zig":  "f3a4595870e7cacaa4a189828c569d102605d7f0105faf558d00a7980f52aa67",
                   "src/apprt/gtk/class/clipboard_confirmation_dialog.zig":  "ce0b3150d6909398ec46c7a1c2e3cc8add359ee816dc50c856349202217129c3",
                   "src/apprt/gtk/class/close_confirmation_dialog.zig":  "781503ff6c1cb7368f99dfc8f8eed0d75c156b778077add5c7a7b06ac11985ca",
                   "src/apprt/gtk/class/command_palette.zig":  "f70fbef37efda29b68fafd4212f6477ce4dfdea4d928b2e962c0e650be74bcb1",
@@ -45,7 +45,7 @@
                   "src/apprt/gtk/class/resize_overlay.zig":  "28e96fba32fa79da6736d51965583f17655d59899fec3964a717b66364160a07",
                   "src/apprt/gtk/class/search_overlay.zig":  "d3e6ca662b546ccadcee62fa3d564addb1df6e7ea420eab6492bc06a89f08158",
                   "src/apprt/gtk/class/split_tree.zig":  "3f61909ca038f54bf6fcd120d3a8a4eb4da90b79b0af08ecc81caaa496e3a35e",
-                  "src/apprt/gtk/class/surface.zig":  "4c57e98ebdabab0dbde4286037f7489cdd7b8562c9695bcab6be90789f718a6e",
+                  "src/apprt/gtk/class/surface.zig":  "64126d95d05e2c32d3a1d396933989d5697e921aef409bc8f13643bdcd889564",
                   "src/apprt/gtk/class/surface_child_exited.zig":  "6b4cf3d1ed4ed891ca02f841973bd1518acb76451830172e87ab9512e711ff1b",
                   "src/apprt/gtk/class/surface_scrolled_window.zig":  "88e36e9a7318aa492360697ec08c6914cd3c672f16d320c79f12ba3c85297d3c",
                   "src/apprt/gtk/class/tab.zig":  "da9707126c318c86a75eb9a83ad7c94b23a3a4b22230ed7be2fbf12ff6610eee",
@@ -89,7 +89,7 @@
                   "src/apprt/gtk/pane_sidebar_rows.zig":  "13fd02ad212f050bf17e9b3f9179fb86f812a326f5897340bd1e07fe21df8e25",
                   "src/apprt/gtk/pane_snapshot.zig":  "1ae68a786104731789761780642bc64a8ec794a2bafa9e9c7a723fc1242ad79f",
                   "src/apprt/gtk/pane_stage_rules.zig":  "51a94120645034542ce58360428b12be6f7c0dd2574b757087a1b80082e373d2",
-                  "src/apprt/gtk/pane_style.zig":  "1b5379e9c9f458a439527c0953ee290c801ae2762d91ef04170b764f0e3929f8",
+                  "src/apprt/gtk/pane_style.zig":  "8f48fd3cf6e3dac77f71d2f80f6517945ceee856826c5de7fdb266c16b7a7c22",
                   "src/apprt/gtk/PaneBanner.zig":  "faa3384cfa2c0f189f9d4f9b6e39b50810d9afda50b33f33ff5a67693a3753c5",
                   "src/apprt/gtk/PaneDrag.zig":  "a1ebfc709f3ccc481eaec18b6b37fa2be57de8474312eb158be0d0025af61693",
                   "src/apprt/gtk/PaneDragGhost.zig":  "dbafda6d0e699693cc5b7e7c0c762c796ac04e28c7ffb76972a1f656c08d27cc",
