@@ -1126,7 +1126,7 @@ pub const Surface = extern struct {
         // rewrites it in place, so the borrow stays current (T3544).
         viewer.pane_id = self.paneId();
         // Our own pages go see-through over a glass pane's sheet (T3622).
-        viewer.setOnGlass(self.isOnGlass());
+        viewer.setOnGlass(self.isOnGlass(), self.sheetBackground());
 
         const gl = priv.gl_area.as(gtk.Widget);
         gl.setVisible(0);
@@ -1369,7 +1369,7 @@ pub const Surface = extern struct {
     /// a viewer's own pages go see-through on glass. The split tree calls
     /// this from `syncPaneStyle`.
     pub fn syncGlass(self: *Self) void {
-        if (self.private().viewer) |v| v.setOnGlass(self.isOnGlass());
+        if (self.private().viewer) |v| v.setOnGlass(self.isOnGlass(), self.sheetBackground());
     }
 
     /// The terminal's background the sheet is tinted with: a colour a

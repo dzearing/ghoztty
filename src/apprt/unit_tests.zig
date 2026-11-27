@@ -600,6 +600,7 @@ test {
     // page grants, the page URL (T3410). Pure, no GTK imports, so every lane
     // runs it, like the win32 modules above.
     _ = @import("gtk/viewer_scheme.zig");
+    _ = @import("gtk/viewer_glass_scheme.zig");
 
     // WSLg's GPU default for the GTK app's renderer - when to set
     // GALLIUM_DRIVER=d3d12 and when the user's choice stands (T3350). Pure,

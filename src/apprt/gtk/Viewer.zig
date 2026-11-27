@@ -86,6 +86,8 @@ const scheme = @import("viewer_scheme.zig");
 const chrome = @import("viewer_chrome.zig");
 const content = @import("../win32/viewer_content.zig");
 const glass = @import("../win32/viewer_glass.zig");
+const glass_scheme = @import("viewer_glass_scheme.zig");
+const color_math = @import("../win32/color_math.zig");
 const document = @import("../win32/viewer_document.zig");
 const nav = @import("../win32/viewer_nav.zig");
 const view_arg = @import("../../cli/view_arg.zig");
@@ -122,6 +124,9 @@ mode: content.Mode,
 /// The pane sits on a glass sheet (T3622, `macos-pane-glass`): our own
 /// template pages then go see-through over it (`applyGlass`).
 on_glass: bool = false,
+/// The terminal background the pane's sheet is tinted with: on glass a
+/// template page's light/dark is this colour's (T3720, `glass_scheme`).
+sheet_bg: color_math.Rgb = .{ .r = 0, .g = 0, .b = 0 },
 /// What the viewer was opened on, as given: Home goes back here.
 location: [:0]u8,
 /// Where the viewer is NOW: the file it shows, else the page's URI. Read
@@ -2137,11 +2142,13 @@ pub fn finishRender(self: *Viewer, ok: bool, detail: []const u8) void {
     if (comptime build_config.is_debug) steps.onRendered(self, ok);
 }
 
-/// Put the pane on (or off) its glass sheet (T3622): the pane calls this
-/// whenever the window's pane style is synced.
-pub fn setOnGlass(self: *Viewer, on: bool) void {
-    if (self.on_glass == on) return;
+/// Put the pane on (or off) its glass sheet (T3622) over terminal
+/// background `bg` (T3720): the pane calls this whenever the window's pane
+/// style is synced, which a config reload does too.
+pub fn setOnGlass(self: *Viewer, on: bool, bg: color_math.Rgb) void {
+    if (self.on_glass == on and std.meta.eql(self.sheet_bg, bg)) return;
     self.on_glass = on;
+    self.sheet_bg = bg;
     self.applyGlass();
 }
 
@@ -2161,7 +2168,12 @@ fn applyGlass(self: *Viewer) void {
         .alpha = @as(f32, @floatFromInt(bg.a)) / 255.0,
     };
     wk.webkit_web_view_set_background_color(self.view, &rgba);
-    if (self.mode.usesTemplate()) self.runQuiet(glass.classToggleJs(draws));
+    if (self.mode.usesTemplate()) {
+        self.runQuiet(glass.classToggleJs(draws));
+        // The ink sits over the sheet, so its light/dark is the terminal
+        // background's, not the desktop's (T3720).
+        self.runQuiet(glass_scheme.applyJs(glass_scheme.forced(self.on_glass, self.mode, self.sheet_bg)));
+    }
 }
 
 fn onLoadChanged(view: *wk.WebView, event: wk.LoadEvent, ud: ?*anyopaque) callconv(.c) void {
