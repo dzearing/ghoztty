@@ -10649,7 +10649,8 @@ fn paintBusyLightFrame(self: *Window, hdc: w32.HDC) void {
     const area = self.deskRect();
     // The rings go up to the desk's visual when it carries the desk (T2509).
     const live = if (self.chrome_host) |*ch| ch.deskLive() else false;
-    self.pane_desk.sink = if (live) .{ .ctx = self, .upload = deskSinkUploadLight } else null;
+    // Or to their own layer, when the last paint put them there (T2626).
+    self.pane_desk.sink = if (live) .{ .ctx = self, .upload = deskSinkUploadLight, .lights = lightsSinkUpload } else null;
     defer self.pane_desk.sink = null;
     self.pane_desk.paintLightFrame(self.desk_hdc orelse hdc, area.left, area.top, self.busyHead(), self.deskOpacity());
 }
@@ -15724,11 +15725,14 @@ fn paintPaneDesk(self: *Window, hdc: w32.HDC) void {
     if (on_visual) self.clearUnderDesk(area);
     self.over_desk = on_visual and over;
     if (on_visual) self.overlayPrepare(desk_dc, area, hero_split, over);
-    self.pane_desk.sink = if (on_visual) .{ .ctx = self, .upload = deskSinkUpload } else null;
+    self.pane_desk.sink = if (on_visual) .{ .ctx = self, .upload = deskSinkUpload, .lights = lightsSinkUpload } else null;
     defer self.pane_desk.sink = null;
     // On the compositor the glow is its own layers over a desk composed
     // without it (T2574), so a focus move fades there and repaints nothing.
     const glow_layers = on_visual and self.glowOnCompositor();
+    // And the busy lights go over those layers (T2626), as the window draws
+    // them over the glow: a ring left in the desk sat under them.
+    self.syncLightsApart(glow_layers);
     const style: pane_elevation.CardStyle = .{
         .fill = fill,
         .is_light = color_math.isLight(fill),
@@ -15858,6 +15862,9 @@ fn deskOffVisual(self: *Window) void {
     const had_cap = host.capLive();
     host.deskHide();
     self.pane_desk.forget();
+    // The lights' layer went with the desk (T2626): their next frame draws
+    // them into the GDI desk again.
+    _ = self.pane_desk.setLightsApart(false);
     self.desk_overlay.reset();
     self.over_desk = false;
     self.desk_cleared = null;
@@ -16029,6 +16036,45 @@ fn deskSinkUpload(ctx: *anyopaque, px: []const u32, w: i32, h: i32, rects: ?[]co
 /// header again, which is a flash rather than a picture.
 fn deskSinkUploadLight(ctx: *anyopaque, px: []const u32, w: i32, h: i32, rects: ?[]const busy_light.Rect) void {
     deskSinkSend(@ptrCast(@alignCast(ctx)), px, w, h, rects, false);
+}
+
+/// Whether the busy lights go up as their own layer over the focus glow's
+/// (T2626): while the glow is on the compositor, on an opaque window - a
+/// translucent one's desk is `out`, re-premultiplied over the desk, and its
+/// rings stay in it - and while no step of that layer has failed here.
+fn syncLightsApart(self: *Window, glow_layers: bool) void {
+    const host = if (self.chrome_host) |*h| h else {
+        _ = self.pane_desk.setLightsApart(false);
+        return;
+    };
+    const on = glow_layers and self.deskOpacity() == null and host.lightsAvailable();
+    if (self.pane_desk.setLightsApart(on)) {
+        log.debug("busy lights {s}", .{if (on) "on their own layer" else "in the desk"});
+        if (!on) host.lightsHide();
+    }
+}
+
+/// The desk's `PaneDesk.Sink.lights` hook (T2626): the rings' layer, or what
+/// changed of it, into its visual; `w` = 0 takes it down. The overlay stays,
+/// as for a light frame into the desk.
+fn lightsSinkUpload(ctx: *anyopaque, px: []const u32, w: i32, h: i32, rects: ?[]const busy_light.Rect) void {
+    const self: *Window = @ptrCast(@alignCast(ctx));
+    const host = if (self.chrome_host) |*hh| hh else return;
+    if (w == 0) return host.lightsHide();
+    var buf: [64]chrome_comp.Rect = undefined;
+    const rs: ?[]const chrome_comp.Rect = if (rects) |rr| blk: {
+        if (rr.len > buf.len) break :blk null;
+        for (rr, buf[0..rr.len]) |r, *o| o.* = .{ .left = r.left, .top = r.top, .right = r.right, .bottom = r.bottom };
+        break :blk buf[0..rr.len];
+    } else null;
+    host.lightsUpload(px, w, h, rs) catch {
+        // The rings go back into the desk at the next paint.
+        const f = chrome_comp.Host.lastFailure();
+        log.warn("busy lights layer failed at {s}: hr=0x{x:0>8}; the rings stay in the desk", .{ f.stage, chrome_comp.hex(f.hr) });
+        host.lights_failed = true;
+        host.lightsHide();
+        if (self.hwnd) |hwnd| _ = w32.InvalidateRect(hwnd, null, 0);
+    };
 }
 
 fn deskSinkSend(self: *Window, px: []const u32, w: i32, h: i32, rects: ?[]const busy_light.Rect, erase: bool) void {

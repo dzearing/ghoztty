@@ -12,10 +12,14 @@
 #      layers: the one it leaves fades out). Each move logs its fade declared
 #      on the compositor, and then logs it done with desk_uploads=0: nothing
 #      went up to the desk while the glow moved.
+#      Then the focused pane reports busy (OSC 9;4;3) and its light's ring
+#      goes up as its own layer over the glow's (T2626), as the window draws
+#      it over the glow; a ring left in the desk sat under them.
 #   B. Negative control (debug seam GHOZTTY_DEBUG_GLOW_STEPPED=1, the A/B arm):
 #      the same moves keep the glow in the desk and step it, so no
 #      compositor fade is ever logged. This is the run that shows A's lines
-#      come from the new path and not from the log in general.
+#      come from the new path and not from the log in general. The same busy
+#      pane lights, and its ring stays in the desk: no lights layer.
 #
 # NOT asserted here: the PICTURE. This harness runs on a background desktop,
 # which DWM never composes and Windows.Graphics.Capture refuses (T2463). Pixel
@@ -146,6 +150,22 @@ $deskLine = 'chrome desk visual attached'
 $fadeLine = 'focus glow fade on the compositor layers=(\d+) uploads=\d+'
 $doneLine = 'focus glow fade on the compositor done desk_uploads=(\d+)'
 $failLine = 'focus glow layer \w+ failed'
+$lightOnLine = 'busy light on lit=[1-9]'
+$lightsLayerLine = 'chrome busy lights visual attached'
+$lightsFailLine = 'busy lights layer failed'
+
+# A new pane (d) runs a script that reports busy every 500ms, and the glow is
+# moved onto it, so the busy card is the focused one. The pane runs the
+# emitter as its command: no shell or quoting layer sees the escape.
+$busyEmit = Join-Path $root 'busy-emit.ps1'
+function Start-Busy($arm) {
+    [IO.File]::WriteAllText($busyEmit, "`$e = [char]27; `$b = [char]7`r`nwhile (`$true) { [Console]::Out.Write(`"`$e]9;4;3;`$b`"); [Console]::Out.Flush(); Start-Sleep -Milliseconds 500 }`r`n")
+    & $Exe +split "--pane=$($arm.Target)c" '--direction=right' "--name=$($arm.Target)d" -e powershell.exe -NoProfile -ExecutionPolicy Bypass -File $busyEmit 2>$null | Out-Null
+    Start-Sleep -Milliseconds 900 # settle: the split lands before the focus link names its pane, as Invoke-Moves does
+    # The same focus link Invoke-Moves uses: a client that forwards and exits.
+    $link = "ghoztty-debug://focus/$($arm.Target)d"
+    & $Exe $link 2>&1 | Out-Null
+}
 
 try {
     # ========================================================================
@@ -168,6 +188,10 @@ try {
     Assert "A5 nothing went up to the desk while the glow moved" `
         ($uploads.Count -ge 3 -and @($uploads | Where-Object { $_ -ne 0 }).Count -eq 0)
     Assert "A6 no glow layer step failed" ((Count-Log $a.Err $failLine) -eq 0)
+    Start-Busy $a
+    Assert "A8 the focused pane's busy ring went up as its own layer over the glow's (T2626)" `
+        ((Wait-Count $a.Err $lightOnLine 1 15000) -and (Wait-Count $a.Err $lightsLayerLine 1 5000))
+    Assert "A9 no lights layer step failed" ((Count-Log $a.Err $lightsFailLine) -eq 0)
     Assert "A7 the app is still running" (Test-Alive $a)
     if ($script:failures -gt 0) { Copy-Item $a.Err (Join-Path $env:TEMP 'focus-glow-comp-a-stderr.txt') -Force -ErrorAction SilentlyContinue }
 
@@ -183,6 +207,11 @@ try {
     Start-Sleep -Milliseconds 600
     Assert "B2 no fade was declared on the compositor" `
         ((Count-Log $b.Err $fadeLine) -eq 0 -and (Count-Log $b.Err $doneLine) -eq 0)
+    Start-Busy $b
+    Assert "B4 the busy pane's light came on" (Wait-Count $b.Err $lightOnLine 1 15000)
+    # The arm A layer attaches within a frame of the light coming on; give it
+    # 1.5s here to prove it does not.
+    Assert "B5 with the glow in the desk the ring stays there too: no lights layer" (-not (Wait-Count $b.Err $lightsLayerLine 1 1500))
     Assert "B3 the app is still running" (Test-Alive $b)
 
     [void](Stop-RepoGhoztty -Exe $Exe -SettleMs 600)
@@ -208,4 +237,4 @@ if ($script:failures -eq 0) {
 }
 
 Write-Host ''
-Write-TestVerdict -Pass $script:passes -Fail $script:failures -Label 'focus-glow-comp' -MinPass 12
+Write-TestVerdict -Pass $script:passes -Fail $script:failures -Label 'focus-glow-comp' -MinPass 16

@@ -371,6 +371,40 @@ pub fn apply(buf: []u32, px: []const RingPx, shape: Shape, color: color_math.Rgb
     }
 }
 
+/// One frame of the light as a layer of its own (T2626), into a transparent
+/// buffer: at each ring pixel the premultiplied BGRA that, laid over any
+/// opaque picture, gives what `apply` makes of it. `apply`'s three blends
+/// toward the one colour are one blend, by 1 - (1 - a1)(1 - a2)(1 - a3), so
+/// the layer does not depend on what lies under it - the focus glow's layers
+/// can sit between it and the desk.
+pub fn applyLayer(buf: []u32, px: []const RingPx, shape: Shape, color: color_math.Rgb, head: f32) void {
+    for (px) |p| {
+        const pos = @as(f32, @floatFromInt(p.pos)) / 65535;
+        const k = switch (shape) {
+            .ring => ringAlpha(pos, head),
+            .bar => pos,
+        };
+        buf[p.idx] = if (k <= 0) 0 else layerPixel(color, p, k);
+    }
+}
+
+fn layerPixel(color: color_math.Rgb, p: RingPx, k: f32) u32 {
+    var keep: f32 = 1;
+    inline for (.{ p.wide, p.tight, p.line }) |layer| {
+        const a = @min(@as(f32, @floatFromInt(layer)) / 255 * k, 1);
+        if (a > 0) keep *= 1 - a;
+    }
+    const al = 1 - keep;
+    const a8: u32 = to8(al);
+    if (a8 == 0) return 0;
+    const ch = struct {
+        fn f(c: u8, alpha: f32, cap: u32) u32 {
+            return @min(@as(u32, @intFromFloat(@round(@as(f32, @floatFromInt(c)) * alpha))), cap);
+        }
+    }.f;
+    return (a8 << 24) | (ch(color.r, al, a8) << 16) | (ch(color.g, al, a8) << 8) | ch(color.b, al, a8);
+}
+
 // ---------------------------------------------------------------------------
 
 test "T1899: a report with no percentage circles the border, a percentage or a pause is a bar" {
@@ -487,6 +521,47 @@ test "T1899: moving the head restores the pixels it left" {
     // With the head back near the top that pixel is just ahead of it: dark.
     apply(&buf, ring.items, .ring, lightColor(.indeterminate, false), 0.05);
     try testing.expectEqual(@as(u32, 0x0010_2030), buf[top_tail]);
+}
+
+test "T2626: the ring's own layer laid over any picture is what apply draws into it" {
+    const alloc = testing.allocator;
+    const W = 140;
+    const H = 100;
+    const card: Card = .{ .left = 18, .top = 16, .right = 122, .bottom = 84 };
+    var seed: u32 = 2626;
+    for ([_]Shape{ .ring, .{ .bar = 60 } }) |shape| for ([_]f32{ 1, 1.5 }) |scale| for ([_]f32{ 0.1, 0.62 }) |head| for ([_]bool{ false, true }) |light| {
+        var ring: std.ArrayListUnmanaged(RingPx) = .empty;
+        defer ring.deinit(alloc);
+        try build(alloc, &ring, W, H, card, shape, scale);
+        // A picture that is not one colour: what the glow layers leave under
+        // the ring differs pixel by pixel.
+        var under: [W * H]u32 = undefined;
+        for (&under) |*p| {
+            seed = seed *% 1103515245 +% 12345;
+            p.* = seed & 0xFFFFFF;
+        }
+        var drawn = under;
+        rebase(&drawn, ring.items);
+        const color = lightColor(.indeterminate, light);
+        apply(&drawn, ring.items, shape, color, head);
+        var layer = [_]u32{0} ** (W * H);
+        applyLayer(&layer, ring.items, shape, color, head);
+        var lit = false;
+        for (under, drawn, layer) |b, want, p| {
+            const pa: i32 = @intCast(p >> 24);
+            if (pa != 0) lit = true;
+            inline for (.{ 0, 8, 16 }) |sh| {
+                const pc: i32 = @intCast((p >> sh) & 0xFF);
+                const bc: i32 = @intCast((b >> sh) & 0xFF);
+                const wc: i32 = @intCast((want >> sh) & 0xFF);
+                try testing.expect(pc <= pa);
+                // What the compositor shows: P + (1 - a) B.
+                const got = pc + @divTrunc(bc * (255 - pa) + 127, 255);
+                try testing.expect(@abs(got - wc) <= 2);
+            }
+        }
+        try testing.expect(lit);
+    };
 }
 
 test "T1899: a bar lights the top edge only as far as the share that is done" {

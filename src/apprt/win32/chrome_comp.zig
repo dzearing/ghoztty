@@ -930,6 +930,16 @@ pub const Host = struct {
     /// A step of a glow layer failed on this host; the glow stays in the
     /// desk until the host is rebuilt.
     glow_failed: bool = false,
+    /// The busy lights' layer (T2626): over the glow's layers, under the
+    /// overlay, the desk's size (no effect group: it is never faded). Live
+    /// only with the desk.
+    lights_vis: GlowVis = .{},
+    /// Lights uploads since the window last read them: whole, rectangles.
+    lights_full: u32 = 0,
+    lights_partial: u32 = 0,
+    /// A step of the lights' layer failed on this host; the rings stay in
+    /// the desk until the host is rebuilt.
+    lights_failed: bool = false,
     /// The card shadows' layer (T2741): the desk's bottom child, made with
     /// the desk, holding one `ShadowVis` per card whose shadow left the desk
     /// compose. `desk_gen` counts desks put up, so a shadow can tell it hangs
@@ -1534,8 +1544,10 @@ pub const Host = struct {
             // T2793), under what the painters over it drew: below the
             // overlay when it is up, else on top - `insertAbove` FALSE with
             // no reference (an overlay that comes later goes on top of it).
-            if (self.ovl_visual) |ovl| {
-                try check(slot(*const fn (Obj, Obj, i32, ?Obj) callconv(.winapi) HRESULT, desk, slot_dcomp_visual_add_visual)(desk, vis, 0, ovl));
+            // And under the busy lights' layer when it is up (T2626): the
+            // window draws the rings over the glow.
+            if (self.lights_vis.visual orelse self.ovl_visual) |above| {
+                try check(slot(*const fn (Obj, Obj, i32, ?Obj) callconv(.winapi) HRESULT, desk, slot_dcomp_visual_add_visual)(desk, vis, 0, above));
             } else try check(slot(*const fn (Obj, Obj, i32, ?Obj) callconv(.winapi) HRESULT, desk, slot_dcomp_visual_add_visual)(desk, vis, 0, null));
             g.visual = vis;
             g.effect = effect;
@@ -1606,6 +1618,76 @@ pub const Host = struct {
         if (g.effect) |e| release(e);
         if (g.visual) |v| release(v);
         g.* = .{};
+    }
+
+    /// Whether the busy lights can go up as their own layer (T2626): the
+    /// desk is on the compositor and no step of that layer failed here.
+    pub fn lightsAvailable(self: *const Host) bool {
+        return self.desk_visual != null and !self.lights_failed;
+    }
+
+    /// The busy lights' layer (T2626): `w` x `h` premultiplied pixels the
+    /// desk's size, transparent but for the rings, over the desk and the
+    /// focus glow's layers and under the overlay. Only `rects` of it when the
+    /// surface already holds the rest (null: all of it); a new layer, a new
+    /// size or a lost surface takes the whole buffer. Commits.
+    pub fn lightsUpload(self: *Host, px: []const u32, w: i32, h: i32, rects: ?[]const Rect) Error!void {
+        const desk = self.desk_visual orelse return error.Unavailable;
+        if (w <= 0 or h <= 0 or px.len < @as(usize, @intCast(w)) * @as(usize, @intCast(h))) return error.ComFailed;
+        const g = &self.lights_vis;
+        var whole = rects == null;
+        if (g.visual == null) {
+            stage = "lights-visual";
+            const vis = try self.newVisual();
+            errdefer release(vis);
+            // Over the glow's layers (they go in under this one), under what
+            // the painters over the desk drew.
+            if (self.ovl_visual) |ovl| {
+                try check(slot(*const fn (Obj, Obj, i32, ?Obj) callconv(.winapi) HRESULT, desk, slot_dcomp_visual_add_visual)(desk, vis, 0, ovl));
+            } else try check(slot(*const fn (Obj, Obj, i32, ?Obj) callconv(.winapi) HRESULT, desk, slot_dcomp_visual_add_visual)(desk, vis, 0, null));
+            g.visual = vis;
+            log.info("chrome busy lights visual attached: {d}x{d}", .{ w, h });
+        }
+        if (g.surface == null or w != g.w or h != g.h) {
+            stage = "lights-surface";
+            if (g.surface) |old| release(old);
+            g.surface = null;
+            var surface: ?Obj = null;
+            try check(slot(*const fn (Obj, u32, u32, u32, u32, *?Obj) callconv(.winapi) HRESULT, self.dcomp, slot_dcomp_device_create_surface)(self.dcomp, @intCast(w), @intCast(h), DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_ALPHA_MODE_PREMULTIPLIED, &surface));
+            const surf = surface orelse return error.ComFailed;
+            errdefer release(surf);
+            try check(slot(*const fn (Obj, ?Obj) callconv(.winapi) HRESULT, g.visual.?, slot_dcomp_visual_set_content)(g.visual.?, surf));
+            g.surface = surf;
+            g.w = w;
+            g.h = h;
+            whole = true;
+        }
+        stage = "lights-upload";
+        defer stage = "";
+        if (whole) {
+            try self.drawRect(g.surface.?, px, w, .{ .left = 0, .top = 0, .right = w, .bottom = h });
+            self.lights_full +|= 1;
+        } else for (rects.?) |r| {
+            const c: Rect = .{
+                .left = std.math.clamp(r.left, 0, w),
+                .top = std.math.clamp(r.top, 0, h),
+                .right = std.math.clamp(r.right, 0, w),
+                .bottom = std.math.clamp(r.bottom, 0, h),
+            };
+            if (c.right <= c.left or c.bottom <= c.top) continue;
+            try self.drawRect(g.surface.?, px, w, c);
+            self.lights_partial +|= 1;
+        }
+        try self.commit();
+    }
+
+    /// Take the busy lights' layer off the compositor (T2626).
+    pub fn lightsHide(self: *Host) void {
+        const vis = self.lights_vis.visual orelse return;
+        if (self.desk_visual) |desk| _ = slot(*const fn (Obj, Obj) callconv(.winapi) HRESULT, desk, slot_dcomp_visual_remove_visual)(desk, vis);
+        self.commit() catch {};
+        releaseGlow(&self.lights_vis);
+        log.info("chrome busy lights visual detached", .{});
     }
 
     /// A hero selection slide, declared whole (T2573): `pics` are the
@@ -2349,6 +2431,7 @@ pub const Host = struct {
         self.releaseCap();
         self.releaseOvl();
         for (&self.glows) |*g| releaseGlow(g);
+        releaseGlow(&self.lights_vis);
         self.releaseHeroSlide(null);
         if (self.root_visual) |r| release(r);
         self.root_visual = null;

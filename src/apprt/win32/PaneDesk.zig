@@ -306,6 +306,11 @@ pub const Sink = struct {
     /// that changed since the last upload, in its own pixels (null: all of
     /// it). The sink takes the whole buffer when it holds no picture yet.
     upload: *const fn (ctx: *anyopaque, px: []const u32, w: i32, h: i32, rects: ?[]const busy_light.Rect) void,
+    /// The lights' own layer (T2626), for a sink that carries it while
+    /// `lights_apart` is set: `px` is the whole `w` x `h` premultiplied
+    /// layer, transparent but for the rings, and `rects` what changed (null:
+    /// all of it). `w` = 0 takes the layer down: no light is left.
+    lights: ?*const fn (ctx: *anyopaque, px: []const u32, w: i32, h: i32, rects: ?[]const busy_light.Rect) void = null,
 };
 
 /// A light's ring, cached for the geometry it was built for.
@@ -370,6 +375,16 @@ test "T3002: fitList gives back a maximized buffer's slack and keeps a small one
 
 lights: [MAX_LIGHTS]LightCache = [_]LightCache{.{}} ** MAX_LIGHTS,
 light_n: usize = 0,
+/// The rings as their own layer over the desk (T2626), not drawn into
+/// `comp`: on the compositor the focus glow's layers lie over the desk, and
+/// a ring drawn into it sat under them. Changed only by `setLightsApart`.
+lights_apart: bool = false,
+/// That layer: premultiplied, `lights_w` x `lights_h` (0: not sent yet),
+/// zero but where a ring lies; and the strips the last frame laid into it.
+lights_px: std.ArrayListUnmanaged(u32) = .empty,
+lights_w: i32 = 0,
+lights_h: i32 = 0,
+lights_laid: ?Memo.Rects = null,
 
 desk: ?Desk = null,
 /// What `desk` points into; kept at its largest size.
@@ -1250,6 +1265,7 @@ pub fn deinit(self: *PaneDesk) void {
     self.quarter_buf.deinit(light_alloc);
     self.names_saved.deinit(light_alloc);
     self.glow_px.deinit(light_alloc);
+    self.lights_px.deinit(light_alloc);
     if (self.prepared) |*p| p.deinit();
     self.desk_buf.deinit(light_alloc);
     if (self.comp) |c| c.destroy();
@@ -1353,7 +1369,7 @@ pub fn paint(
         self.memo_hits +|= 1;
         for (self.lights[0..self.light_n], lights[0..self.light_n]) |*c, l| {
             c.color = l.color;
-            busy_light.apply(comp.pixels(), c.px.items, c.shape, c.color, head);
+            if (!self.lights_apart) busy_light.apply(comp.pixels(), c.px.items, c.shape, c.color, head);
         }
         self.last_stamps.hit = true;
         _ = w32.QueryPerformanceCounter(&self.last_stamps.composed);
@@ -1365,8 +1381,13 @@ pub fn paint(
         // and the names (T2509).
         if (self.sink) |s| {
             var up: Memo.Rects = .{ .w = w, .h = h };
-            self.addLightStrips(&up, comp);
+            // Rings on their own layer (T2626) leave the desk as it was.
+            if (!self.lights_apart) self.addLightStrips(&up, comp);
             if (laid) for (self.names.?.rects) |r| up.add(r.left, r.top, r.right, r.bottom);
+            if (self.lights_apart) {
+                if (up.len > 0) self.toSink(s, comp, up.slice(), opacity);
+                return self.sendLights(s, w, h, head);
+            }
             return self.toSink(s, comp, up.slice(), opacity);
         }
         // The window kept what the last paints put there (T2732): a paint
@@ -1421,9 +1442,9 @@ pub fn paint(
     // rectangles composed, and every light's ring before and after - one
     // going out was just lifted off `comp`, and every ring moves anyway.
     var shown: ?Memo.Rects = if (done and (self.blit_changed_only or self.sink != null)) partial.rects else null;
-    if (shown) |*sh| self.addLightStrips(sh, comp);
+    if (shown) |*sh| if (!self.lights_apart) self.addLightStrips(sh, comp);
     self.syncLights(comp, lights, style.scale);
-    for (self.lights[0..self.light_n]) |*c| busy_light.apply(comp.pixels(), c.px.items, c.shape, c.color, head);
+    if (!self.lights_apart) for (self.lights[0..self.light_n]) |*c| busy_light.apply(comp.pixels(), c.px.items, c.shape, c.color, head);
     self.memo.store(w, h, self.desk_gen, cards, strips, style, bar, lights);
     if (timer) |*t| self.compose_ns +|= t.read();
     _ = w32.QueryPerformanceCounter(&tq_lights);
@@ -1436,8 +1457,10 @@ pub fn paint(
     // The composition surface (T2509) takes what changed; the window's
     // invalid box is GDI's business and none of its.
     if (self.sink) |s| {
+        // The rings' layer goes up after the desk (T2626).
+        defer if (self.lights_apart) self.sendLights(s, w, h, head);
         if (shown) |*sh| {
-            self.addLightStrips(sh, comp);
+            if (!self.lights_apart) self.addLightStrips(sh, comp);
             if (laid) for (self.names.?.rects) |r| sh.add(r.left, r.top, r.right, r.bottom);
             if (sh.area() * 4 <= @as(i64, w) * h * 3) return self.toSink(s, comp, sh.slice(), opacity);
         }
@@ -2020,7 +2043,8 @@ fn composePartial(
         strips,
         style,
         bar,
-        self.lights[0..self.light_n],
+        // Rings on their own layer (T2626) were never on `comp`.
+        if (self.lights_apart) &.{} else self.lights[0..self.light_n],
         comp.w,
         comp.h,
         prep,
@@ -2536,6 +2560,11 @@ fn syncLights(self: *PaneDesk, comp: Dib, lights: []const Light, scale: f32) voi
 /// paint has built the caches for the current size.
 pub fn paintLightFrame(self: *PaneDesk, hdc: w32.HDC, origin_x: i32, origin_y: i32, head: f32, opacity: ?u8) void {
     const comp = self.comp orelse return;
+    // Their own layer (T2626): the desk is not touched at all.
+    if (self.lights_apart) {
+        if (self.sink) |s| self.sendLights(s, comp.w, comp.h, head);
+        return;
+    }
     // Translucent (T1852): each strip is re-premultiplied into `out` first,
     // from the desk the last full paint used.
     const tr: ?struct { out: Dib, desk: Desk, o: u8 } = if (opacity) |o| blk: {
@@ -2568,6 +2597,77 @@ pub fn paintLightFrame(self: *PaneDesk, hdc: w32.HDC, origin_x: i32, origin_y: i
             } else comp.dc;
             _ = w32.BitBlt(hdc, origin_x + r.left, origin_y + r.top, r.right - r.left, r.bottom - r.top, src, r.left, r.top, w32.SRCCOPY);
         }
+    }
+}
+
+/// Carry the rings as their own layer (T2626), or back in the desk. A change
+/// forgets the composed picture, so the next paint composes the desk whole -
+/// without the rings, or with them - and the layer goes up whole the next
+/// time it is sent. True when it changed.
+pub fn setLightsApart(self: *PaneDesk, on: bool) bool {
+    if (self.lights_apart == on) return false;
+    self.lights_apart = on;
+    self.forget();
+    self.lights_w = 0;
+    self.lights_h = 0;
+    self.lights_laid = null;
+    if (!on) fitList(&self.lights_px, 0) catch {};
+    return true;
+}
+
+/// The rings at `head` into their own layer and up through `s.lights`
+/// (T2626): what the last frame laid is cleared, every ring laid again, and
+/// only those strips go up - all of it the first time at a size. With no
+/// ring left the layer is taken down and its buffer given back.
+fn sendLights(self: *PaneDesk, s: Sink, w: i32, h: i32, head: f32) void {
+    const up = s.lights orelse return;
+    const live = for (self.lights[0..self.light_n]) |*c| {
+        if (c.w == w and c.h == h) break true;
+    } else false;
+    if (!live or w <= 0 or h <= 0) {
+        if (self.lights_w != 0) up(s.ctx, &.{}, 0, 0, null);
+        self.lights_w = 0;
+        self.lights_h = 0;
+        self.lights_laid = null;
+        fitList(&self.lights_px, 0) catch {};
+        return;
+    }
+    const n = @as(usize, @intCast(w)) * @as(usize, @intCast(h));
+    const whole = self.lights_w != w or self.lights_h != h;
+    if (whole) {
+        fitList(&self.lights_px, n) catch return;
+        @memset(self.lights_px.items[0..n], 0);
+        self.lights_w = w;
+        self.lights_h = h;
+        self.lights_laid = null;
+    }
+    const px = self.lights_px.items[0..n];
+    var changed: Memo.Rects = .{ .w = w, .h = h };
+    if (self.lights_laid) |prev| for (prev.slice()) |r| {
+        clearLayerRect(px, w, r);
+        changed.add(r.left, r.top, r.right, r.bottom);
+    };
+    var laid: Memo.Rects = .{ .w = w, .h = h };
+    for (self.lights[0..self.light_n]) |*c| {
+        if (c.w != w or c.h != h) continue;
+        busy_light.applyLayer(px, c.px.items, c.shape, c.color, head);
+        for (busy_light.strips(c.card, c.shape, c.scale, w, h)) |r| {
+            laid.add(r.left, r.top, r.right, r.bottom);
+            changed.add(r.left, r.top, r.right, r.bottom);
+        }
+    }
+    self.lights_laid = laid;
+    up(s.ctx, px, w, h, if (whole) null else changed.slice());
+}
+
+/// `r` of a `w`-wide layer back to transparent.
+fn clearLayerRect(px: []u32, w: i32, r: busy_light.Rect) void {
+    if (r.right <= r.left or r.bottom <= r.top) return;
+    const cw: usize = @intCast(w);
+    var y = r.top;
+    while (y < r.bottom) : (y += 1) {
+        const a: usize = @as(usize, @intCast(y)) * cw + @as(usize, @intCast(r.left));
+        @memset(px[a..][0..@intCast(r.right - r.left)], 0);
     }
 }
 
@@ -3388,6 +3488,96 @@ test "T2509: a sink takes the whole desk first, then only what a moved card reac
     pd.sink = null;
     pd.forget();
     try testing.expect(pd.memo.dirty(w, h, pd.desk_gen, &cards, &.{}, style, null) == .full);
+}
+
+test "T2626: rings apart leave the desk unlit, and their layer over it is the desk the window draws with them" {
+    const testing = std.testing;
+    const Rec = struct {
+        desk_calls: u32 = 0,
+        light_calls: u32 = 0,
+        light_whole: u32 = 0,
+        light_area: i64 = 0,
+        light_down: u32 = 0,
+        fn desk(ctx: *anyopaque, px: []const u32, w: i32, h: i32, rects: ?[]const busy_light.Rect) void {
+            _ = px;
+            _ = w;
+            _ = h;
+            _ = rects;
+            const r: *@This() = @ptrCast(@alignCast(ctx));
+            r.desk_calls += 1;
+        }
+        fn lights(ctx: *anyopaque, px: []const u32, w: i32, h: i32, rects: ?[]const busy_light.Rect) void {
+            const r: *@This() = @ptrCast(@alignCast(ctx));
+            if (w == 0) {
+                r.light_down += 1;
+                return;
+            }
+            std.debug.assert(px.len == @as(usize, @intCast(w * h)));
+            r.light_calls += 1;
+            if (rects) |rs| {
+                for (rs) |x| r.light_area += @as(i64, x.right - x.left) * (x.bottom - x.top);
+            } else r.light_whole += 1;
+        }
+    };
+    const w = 420;
+    const h = 260;
+    const dc = w32.CreateCompatibleDC(null) orelse return error.SkipZigTest;
+    defer _ = w32.DeleteDC(dc);
+    const cards = [_]pane_elevation.Card{
+        .{ .left = 12, .top = 12, .right = 200, .bottom = 248 },
+        .{ .left = 214, .top = 12, .right = 408, .bottom = 248 },
+    };
+    for ([_]bool{ false, true }) |is_light| for ([_]busy_light.Shape{ .ring, .{ .bar = 40 } }) |shape| {
+        const fill: color_math.Rgb = if (is_light) .{ .r = 250, .g = 250, .b = 250 } else .{ .r = 24, .g = 26, .b = 30 };
+        const style: pane_elevation.CardStyle = .{ .fill = fill, .is_light = is_light, .scale = 1 };
+        const lights = [_]Light{.{ .key = 1, .card = cards[1], .shape = shape, .color = busy_light.lightColor(.indeterminate, is_light) }};
+        // What the window draws with the ring in the desk, and without one.
+        var ref: PaneDesk = .{};
+        defer ref.deinit();
+        ref.paint(dc, 0, 0, w, h, &cards, &.{}, style, null, &lights, 0.3, null, null);
+        var bare: PaneDesk = .{};
+        defer bare.deinit();
+        bare.paint(dc, 0, 0, w, h, &cards, &.{}, style, null, &.{}, 0.3, null, null);
+
+        var pd: PaneDesk = .{};
+        defer pd.deinit();
+        var rec: Rec = .{};
+        pd.sink = .{ .ctx = &rec, .upload = Rec.desk, .lights = Rec.lights };
+        try testing.expect(pd.setLightsApart(true));
+        pd.paint(dc, 0, 0, w, h, &cards, &.{}, style, null, &lights, 0.3, null, null);
+        try testing.expectEqual(@as(u32, 1), rec.desk_calls);
+        try testing.expectEqual(@as(u32, 1), rec.light_whole);
+        const comp = pd.comp.?.pixels()[0 .. w * h];
+        const layer = pd.lights_px.items[0 .. w * h];
+        var lit = false;
+        for (comp, bare.comp.?.pixels()[0 .. w * h], layer, ref.comp.?.pixels()[0 .. w * h]) |c, b, p, want| {
+            // The desk never had the ring.
+            try testing.expectEqual(b & 0xFFFFFF, c & 0xFFFFFF);
+            const pa: i32 = @intCast(p >> 24);
+            if (pa != 0) lit = true;
+            inline for (.{ 0, 8, 16 }) |sh| {
+                const pc: i32 = @intCast((p >> sh) & 0xFF);
+                const bc: i32 = @intCast((c >> sh) & 0xFF);
+                const wc: i32 = @intCast((want >> sh) & 0xFF);
+                try testing.expect(@abs(pc + @divTrunc(bc * (255 - pa) + 127, 255) - wc) <= 2);
+            }
+        }
+        try testing.expect(lit);
+        // A frame of the light sends the layer's strips alone; the desk
+        // takes nothing.
+        pd.paintLightFrame(dc, 0, 0, 0.55, null);
+        try testing.expectEqual(@as(u32, 1), rec.desk_calls);
+        try testing.expectEqual(@as(u32, 2), rec.light_calls);
+        try testing.expect(rec.light_area > 0 and rec.light_area * 4 < @as(i64, w) * h);
+        // The last light goes out: the layer comes down.
+        pd.paint(dc, 0, 0, w, h, &cards, &.{}, style, null, &.{}, 0.55, null, null);
+        try testing.expectEqual(@as(u32, 1), rec.light_down);
+        // Back in the desk: the next paint composes it whole, ring and all.
+        try testing.expect(pd.setLightsApart(false));
+        try testing.expect(!pd.setLightsApart(false));
+        pd.paint(dc, 0, 0, w, h, &cards, &.{}, style, null, &lights, 0.3, null, null);
+        for (pd.comp.?.pixels()[0 .. w * h], ref.comp.?.pixels()[0 .. w * h]) |c, want| try testing.expectEqual(want & 0xFFFFFF, c & 0xFFFFFF);
+    };
 }
 
 test "T2541: a translucent window's sink is sent the premultiplied picture, the window's own blit through it" {
