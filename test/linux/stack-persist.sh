@@ -145,6 +145,41 @@ r=$(state)
 case "$r" in "pa:0/1 pb:"*) true ;; *) false ;; esac
 hl_check "P14 clicking the restored strip brings pa forward with the caret" $? "$r"
 
+# ---- 6. a close beside the strip does not bring it out (T3744) -------------
+# Three panes qa | qb | qc, the user tucks qa (the leading one) into a strip
+# and closes the focused qb beside it. The tree's previous leaf of qb is qa,
+# the strip: focusing it would bring it back out and undo the collapse. The
+# caret goes to qc, the pane on show, and qa stays a strip (win32
+# `paneOnShowAfter`, Mac 3090ac2aa).
+st3() { hl_ipc pane-stack "--target=qc" "$@"; }
+state3() { sq "$(st3)" '" ".join("%s:%s/%s" % (n, int(N[n]["minimized"]), int(N[n]["focused"])) for n in ("qa", "qb", "qc") if N.get(n))'; }
+state3_is() { [ "$(state3)" = "$1" ]; }
+n3() { sq "$(st3)" 'len(s.get("panes", []))'; }
+cli +new-window --target=sx --name=qa > /dev/null 2>&1
+cli +split --target=qa --name=qc --direction=right --focus > /dev/null 2>&1
+cli +split --target=qa --name=qb --direction=right --focus > /dev/null 2>&1
+hl_wait_for 15 eval '[ "$(n3)" = 3 ]'
+hl_wait_for 5 state3_is "qa:0/0 qb:0/1 qc:0/0"
+hl_check "P16 qa, qb and qc fit side by side, qb (between them) focused" $? "$(state3)"
+
+r=$(st3)
+# The gutter between qa and qb: the leftmost vertical seam of the row.
+gx=$(sq "$r" 'sorted([g for g in s["gutters"] if g["kind"] in ("divider", "grip") and g["direction"] == "horizontal"], key=lambda g: g["rect"][0])[0]["rect"][0] + 2')
+gy=$(sq "$r" 'sorted([g for g in s["gutters"] if g["kind"] in ("divider", "grip") and g["direction"] == "horizontal"], key=lambda g: g["rect"][0])[0]["rect"][1] + 20')
+st3 "--press=$gx,$gy" "--drag=-2000,0" "--release=-2000,0" > /dev/null
+hl_wait_for 5 state3_is "qa:1/0 qb:0/1 qc:0/0"
+hl_check "P17 the seam dragged past qa's minimum tucks qa into a strip; qb keeps the caret" $? "$(state3)"
+
+cli +close --target=qb > /dev/null 2>&1
+qb_gone() { ! names | tr ' ' '\n' | grep -q '^qb='; }
+hl_wait_for 10 qb_gone
+hl_check "P18 +close takes qb out of the tab" $? "names=$(names)"
+hl_wait_for 5 state3_is "qa:1/0 qc:0/1"
+hl_check "P19 the caret goes to qc, the pane on show, and qa stays a strip (not brought out by the close)" $? "$(state3)"
+sleep 1
+state3_is "qa:1/0 qc:0/1"
+hl_check "P20 a second on, qa is still a strip and qc still has the caret" $? "$(state3)"
+
 ! grep -E "Gtk-CRITICAL|Allocation (width|height) too small" "$APP_LOG" "$APP2_LOG" > /dev/null
 hl_check "P15 neither run logged a GTK critical or allocation warning" $? "$(grep -h -m3 -E 'Gtk-CRITICAL|too small' "$APP_LOG" "$APP2_LOG")"
 
