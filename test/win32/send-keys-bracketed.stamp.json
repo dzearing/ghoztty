@@ -1,14 +1,14 @@
 {
     "guard":  "send-keys-bracketed",
     "script":  "test/win32/send-keys-bracketed.ps1",
-    "generated":  "2026-11-25T21:40:04-08:00",
-    "commit":  "bbacdece43",
+    "generated":  "2026-11-27T01:57:25-08:00",
+    "commit":  "62504c069c",
     "uncommitted":  [
                         "src/apprt/win32/IpcHandlers.zig"
                     ],
     "files":  {
                   "src/apprt/ipc/segments.zig":  "4804011167bdc7a1eb954c4c9a44d96f730ee1a5c1cfa1b26e66383df28c775c",
-                  "src/apprt/win32/IpcHandlers.zig":  "f7ff6d0aef3d5d5adcacbd6878dcc38e5be6203236a8b4c581a3b93614145ba3",
+                  "src/apprt/win32/IpcHandlers.zig":  "8a058458367ed01d03ce5384b15ced2cbdf1edc0e34d3c0ff8ff07db83cc914f",
                   "src/cli/send_keys.zig":  "eadc5860163f0131418b4826922cb715c8e8ebd7913d83ac4811fdcbd5cba395",
                   "test/win32/send-keys-bracketed.ps1":  "f8aae8f9e1c3d3ca0c4bbdbea9e1c063a384a40992cf41d87278d4064c9c1c70"
               },

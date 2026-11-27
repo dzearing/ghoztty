@@ -1,15 +1,15 @@
 {
     "guard":  "blade-click-neighbour",
     "script":  "test/win32/blade-click-neighbour.ps1",
-    "generated":  "2026-11-26T23:05:00-08:00",
-    "commit":  "2179ead097",
+    "generated":  "2026-11-27T01:58:35-08:00",
+    "commit":  "62504c069c",
     "uncommitted":  [
                         "src/apprt/win32/Window.zig"
                     ],
     "files":  {
                   "src/apprt/win32/pane_stack_state.zig":  "e3087d45b99e3a09eb31c6022d285f91114895b601b0d60ab24b48a9a3bcff51",
                   "src/apprt/win32/ViewerPane.zig":  "620ff4f52ac56f78ef166cac4a73e7bc49ad77e9fe2f060e66494aec554ebd26",
-                  "src/apprt/win32/Window.zig":  "e2c3b2ba3e85505de0d0863626326720a6fbdb9182f277adef0f97a72628e37d",
+                  "src/apprt/win32/Window.zig":  "f99a2e840c5e421ceac1506ddc590b05a66e7a530634fbcf8ecc151a8706701b",
                   "test/win32/blade-click-neighbour.ps1":  "c08e9f99aeab1b37a262d84d85e6730a5c33c77eab34c6f0b7f8f4ca18d312c0"
               },
     "code":  {

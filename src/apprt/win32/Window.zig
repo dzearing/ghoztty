@@ -856,6 +856,8 @@ glow_t0_ms: i64 = 0,
 glow_layers: [2]GlowLayerState = .{ .{}, .{} },
 glow_fade_declared: bool = false,
 glow_fade_mark: u32 = 0,
+/// Whether this move's debug stall has run (T2627; `debugGlowStall`).
+glow_stalled: bool = false,
 /// The busy light (T1899): the interval its timer runs at (0 = stopped),
 /// the signature of what the last sync saw lit - which panes, which shape,
 /// which state - so a report that changes nothing visible costs no repaint,
@@ -10176,6 +10178,7 @@ fn syncFocusGlow(self: *Window) void {
     self.glow_to = target;
     self.glow_t0_ms = std.time.milliTimestamp();
     self.glow_fade_declared = false;
+    self.glow_stalled = false;
     log.debug("focus glow moves from={} to={}", .{ self.glow_from != null, target != null });
     // A compositor fade's end tick is a plain timer under the same id.
     FrameClock.disarm(hwnd, FOCUS_GLOW_TIMER_ID);
@@ -10183,6 +10186,28 @@ fn syncFocusGlow(self: *Window) void {
 }
 
 fn focusGlowTick(self: *Window) void {
+    self.focusGlowStep();
+    self.debugGlowStall();
+}
+
+/// `GHOZTTY_DEBUG_GLOW_FADE_STALL_MS=<n>` (debug builds, T2627): block this
+/// thread for n ms once per move, right after its first tick declared the
+/// fade (or, on the stepped arm, painted its first step) - the on-screen
+/// oracle's stand-in for a busy UI thread (`scripts\focus-glow-onscreen.ps1`).
+/// A compositor fade keeps moving through it; a stepped one freezes.
+fn debugGlowStall(self: *Window) void {
+    if (comptime builtin.mode != .Debug) return;
+    if (self.glow_stalled) return;
+    self.glow_stalled = true;
+    const raw = std.process.getEnvVarOwned(std.heap.page_allocator, "GHOZTTY_DEBUG_GLOW_FADE_STALL_MS") catch return;
+    defer std.heap.page_allocator.free(raw);
+    const ms = std.fmt.parseInt(u32, std.mem.trim(u8, raw, " \t\r\n"), 10) catch return;
+    if (ms == 0) return;
+    log.info("focus glow debug stall ms={d} declared={}", .{ ms, self.glow_fade_declared });
+    std.Thread.sleep(@as(u64, @min(ms, 5000)) * std.time.ns_per_ms);
+}
+
+fn focusGlowStep(self: *Window) void {
     const hwnd = self.hwnd orelse return;
     const elapsed = std.time.milliTimestamp() - self.glow_t0_ms;
     // On the compositor (T2574) the fade is declared once, from this first

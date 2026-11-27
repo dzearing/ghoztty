@@ -1,10 +1,10 @@
 {
     "guard":  "argv-hazard",
     "script":  "test/win32/argv-hazard-audit.ps1",
-    "generated":  "2026-11-26T23:09:50-08:00",
-    "commit":  "2179ead097",
+    "generated":  "2026-11-27T02:03:51-08:00",
+    "commit":  "62504c069c",
     "uncommitted":  [
-
+                        "scripts/focus-glow-onscreen.ps1"
                     ],
     "files":  {
                   "scripts/acceptance-parallel.ps1":  "7cd02b3ad09cfe17adc20d49eebb85ce02ad135c8cbe368ec0d32a5f60a016dc",
@@ -41,6 +41,7 @@
                   "scripts/divider-drag-onscreen.ps1":  "09c6b79655c929a091a1946a98b1c95875c0b4f19b5c1f9535cdc58d0b7eaba1",
                   "scripts/fetch-symbols.ps1":  "33ea1e1fcef7c475b9aa9757da23487b01ee54257ab03f1601e03bc242128a6e",
                   "scripts/floor-lane.ps1":  "f59d5620412bd923b67b2849107a329c72f0f52c08505a41b7f0c3c1ef4fafde",
+                  "scripts/focus-glow-onscreen.ps1":  "33dbdeabba1e5b9845e669ee7be50cfae9e0969b77b6fa873e2ba611b5776030",
                   "scripts/focus-pull-scan.ps1":  "ce1ebfa8aac19eed0eb7cc7578fb0a1df8b39974204777a9991ac2fea1eec8e8",
                   "scripts/fork-identity.ps1":  "229e1f428c4dcb47e51b54b4786c2850275e09b34126470db2f64c0efe546981",
                   "scripts/ghoztty-agent-watcher.ps1":  "51f93a125f8c81543a365acc9a990175f3b1b599184c19e2a87748b417559db4",

@@ -522,6 +522,14 @@ pub fn focusTarget(entry: App.IpcTarget) void {
             if (window.tabIndexOfPane(p)) |tab| {
                 window.tab_active_pane[tab] = p;
                 window.showFocusedPane(tab);
+                // The glow and the dim wash follow the active pane now
+                // (T2627), not only once the deferred SetFocus lands: that
+                // assert is dropped whenever the window is not the
+                // foreground (a refused raise, a background window), which
+                // left the glow on the pane the window no longer considers
+                // active. Idempotent, so the WM_SETFOCUS that follows a
+                // successful raise is a no-op for it.
+                window.updateDimOverlays();
             }
             if (p.hwnd()) |h| {
                 App.deferSetFocus(h); // T48
