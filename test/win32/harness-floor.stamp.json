@@ -1,8 +1,8 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-11-27T06:24:50-08:00",
-    "commit":  "5547388b9f",
+    "generated":  "2026-11-27T07:02:02-08:00",
+    "commit":  "f57ca82e80",
     "uncommitted":  [
 
                     ],
@@ -221,7 +221,7 @@
                   "test/win32/hidden-new-pane.ps1":  "5f12c8912a7fded420286713a1349614717b14fd5a56bd4517f10bafe3294ae1",
                   "test/win32/hidden-title.ps1":  "ba19c0ded6b798a6fe069c2e9ce5ce9845a94f0c994bd29356d56977955cabcb",
                   "test/win32/hidden-viewer.ps1":  "6ac84b06e1632973d41ca813fd54c0d611bcbd6083fb11adcd3eea00fe8113a7",
-                  "test/win32/hidden-window-memory.ps1":  "8a77ffd72887c9976612b4770c477ae99591d0493ba83f32f0fa35d3713274ef",
+                  "test/win32/hidden-window-memory.ps1":  "a5f9ac0d26f43e20f0d2be80b1e74273420b9c7e760f7cdf26f0cecb361ceb96",
                   "test/win32/history-guard-flavor.ps1":  "0411d42ec5a55b477b15fa43913be4af394a38941e274cff9ecdfe0610ac5dd1",
                   "test/win32/holder-adopt.ps1":  "70acb6fe2b26bcbd6ddc0ddfccd1e6110385fa944827a7f136de91624359cc92",
                   "test/win32/holder-durable.ps1":  "97592f6b6d4919077d068098a1f0a16fa6ce8995628f53d202a62ec61000b3bd",

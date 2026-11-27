@@ -1,15 +1,15 @@
 {
     "guard":  "pane-stack-strip-hold",
     "script":  "test/win32/pane-stack-strip-hold.ps1",
-    "generated":  "2026-11-27T03:37:05-08:00",
-    "commit":  "3bc0718992",
+    "generated":  "2026-11-27T05:49:49-08:00",
+    "commit":  "f57ca82e80",
     "uncommitted":  [
 
                     ],
     "files":  {
                   "src/apprt/win32/pane_stack_layout.zig":  "e35dd1daa83dcc3a692c106acea8d793c2602dd24ede85ab907b5b5423562470",
                   "src/apprt/win32/pane_stack_slide.zig":  "326e35a603232edc82b1bab57c2ab44696da45dd326d194565f8a27a6d4c8a33",
-                  "src/apprt/win32/Window.zig":  "2d0aee645b88ca16574215f0b5a955148bb1a3cf52a1a19d38f637e25cbd177f",
+                  "src/apprt/win32/Window.zig":  "fee72e4c37a9c83138a994604dee41fd9a2267aa6bf9a19543e1dcaba2c4aacb",
                   "test/win32/pane-stack-strip-hold.ps1":  "cae00176ad9e2160778c3caecf98cfd40961a4c263621b1ce1d8141ad644539b"
               },
     "code":  {
