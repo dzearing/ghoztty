@@ -1475,14 +1475,16 @@ fn mainMenuSeam(app: Context, request: Request) Allocator.Error![]u8 {
     return c_alloc.dupe(u8, out.written());
 }
 
-/// `command-palette --target=<pane> [--op=state|open|close|run]
+/// `command-palette --target=<pane> [--op=state|open|close|run|escape]
 /// [--query=<text>] [--title=<row title>]` (T3640): the target window's
 /// command palette. `open`/`close` toggle it through `win.toggle-command-
 /// palette` (its keybind's and menu item's action); `--query` types into its
 /// search field; `run` activates the shown row titled `--title` the way a
 /// click on it does (the palette closes and emits `trigger`). The reply is
 /// `open`, `pending` (the incremental filter has not finished: read again)
-/// and the shown rows' `title`/`action_key`.
+/// and the shown rows' `title`/`action_key`. `escape` presses Escape in the
+/// search field, and `shell_step` names the "... with Shell" row whose shell
+/// list is up (T3737).
 fn commandPaletteSeam(app: Context, request: Request) Allocator.Error![]u8 {
     var target_arg: ?[]const u8 = null;
     var op: []const u8 = "state";
@@ -1515,7 +1517,7 @@ fn commandPaletteSeam(app: Context, request: Request) Allocator.Error![]u8 {
         if (!is_open(window)) _ = widget.activateAction("win.toggle-command-palette", null);
     } else if (std.mem.eql(u8, op, "close")) {
         if (is_open(window)) _ = widget.activateAction("win.toggle-command-palette", null);
-    } else if (!std.mem.eql(u8, op, "state") and !std.mem.eql(u8, op, "run")) {
+    } else if (!std.mem.eql(u8, op, "state") and !std.mem.eql(u8, op, "run") and !std.mem.eql(u8, op, "escape")) {
         return server.errorResponse(c_alloc, "unknown --op '{s}'", .{op});
     }
 
@@ -1523,11 +1525,14 @@ fn commandPaletteSeam(app: Context, request: Request) Allocator.Error![]u8 {
     // ref), so no palette is a closed one, not an error - unless the request
     // needs one to act on.
     const palette = window.seamCommandPalette() orelse {
-        if (query != null or std.mem.eql(u8, op, "run"))
+        if (query != null or std.mem.eql(u8, op, "run") or std.mem.eql(u8, op, "escape"))
             return server.errorResponse(c_alloc, "the command palette is not open", .{});
-        return c_alloc.dupe(u8, "{\"success\":true,\"data\":{\"open\":false,\"pending\":false,\"ran\":null,\"rows\":[]}}");
+        return c_alloc.dupe(u8, "{\"success\":true,\"data\":{\"open\":false,\"pending\":false,\"ran\":null,\"shell_step\":null,\"rows\":[]}}");
     };
     defer palette.unref();
+    // `escape` (T3737): Escape in the search field - out of a "... with
+    // Shell" row's shell list back to the commands, else the palette closes.
+    if (std.mem.eql(u8, op, "escape")) palette.seamEscape();
     if (query) |q| palette.seamSetQuery(try arena.dupeZ(u8, q));
 
     if (std.mem.eql(u8, op, "run")) {
@@ -1559,6 +1564,8 @@ fn commandPaletteSeam(app: Context, request: Request) Allocator.Error![]u8 {
             .open = palette.seamIsOpen(),
             .pending = palette.seamFilterPending(),
             .ran = ran,
+            // T3737: the "... with Shell" step on show (its row key), else null.
+            .shell_step = palette.seamShellStep(),
             .rows = rows.items,
         },
     }, .{}, &out.writer) catch return error.OutOfMemory;

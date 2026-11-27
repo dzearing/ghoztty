@@ -47,6 +47,7 @@ const RemotePill = @import("../RemotePill.zig");
 const IpcHandlers = @import("../IpcHandlers.zig");
 const RemoteReconnect = @import("../RemoteReconnect.zig");
 const Workspaces = @import("../Workspaces.zig");
+const shell_pick = @import("../shell_pick.zig");
 const desk_fade = @import("../../win32/desk_fade.zig");
 const window_chord = @import("../../win32/window_chord.zig");
 const window_title_owner = @import("../../win32/window_title_owner.zig");
@@ -4010,6 +4011,14 @@ pub const Window = extern struct {
                 self,
                 .{},
             );
+            // T3737: a shell picked from a "… with Shell" row's list.
+            _ = CommandPalette.signals.shell_picked.connect(
+                command_palette,
+                *Window,
+                signalCommandPaletteShellPicked,
+                self,
+                .{},
+            );
 
             // Save a weak reference to the command palette. We use a weak reference to avoid
             // reference counting cycles that might cause problems later.
@@ -4040,6 +4049,57 @@ pub const Window = extern struct {
     fn signalCommandPaletteTrigger(_: *CommandPalette, action: *const input.Binding.Action, self: *Self) callconv(.c) void {
         // If the activation actually has an action, perform it.
         self.performBindingAction(action.*);
+    }
+
+    fn signalCommandPaletteShellPicked(_: *CommandPalette, target_raw: c_int, path: [*:0]const u8, self: *Self) callconv(.c) void {
+        const target = std.meta.intToEnum(shell_pick.Target, target_raw) catch return;
+        self.openWithShell(target, std.mem.span(path));
+    }
+
+    /// Whether this window's panes run on another machine (T3737): the
+    /// active pane rides a live remote link. The command palette hides its
+    /// "… with Shell" rows there, since the list is this machine's shells.
+    pub fn isRemoteWindow(self: *Self) bool {
+        const surface = self.getActiveSurface() orelse return false;
+        const link = surface.remoteLink() orelse return false;
+        return !link.retired;
+    }
+
+    /// Open `target` on the shell at `path` (T3737, the command palette's
+    /// "… with Shell" picks): the pane runs `[path]`, exactly as
+    /// `+new-window --shell=<path>` with no `--command` does, and starts
+    /// where any new tab, window or split from the active pane would (its
+    /// inherited working directory). On the local agent when session
+    /// persistence is on, like any other local pane.
+    pub fn openWithShell(self: *Self, target: shell_pick.Target, path: []const u8) void {
+        var arena_state = std.heap.ArenaAllocator.init(Application.default().allocator());
+        defer arena_state.deinit();
+        const argv = shell_pick.argv(arena_state.allocator(), path) catch |err| {
+            log.warn("open with shell: {}", .{err});
+            return;
+        };
+        const command: configpkg.Command = .{ .direct = argv };
+        const surface = self.getActiveSurface();
+        const core = if (surface) |s| s.core() else null;
+        log.info("command palette: {s} on shell {s}", .{ @tagName(target), path });
+        switch (target) {
+            // Single-window mode: a new tab is a new workspace (T3649),
+            // which is a window.
+            .new_tab => if (Workspaces.applies(self))
+                _ = Application.default().newWindowWithCommand(core, command)
+            else {
+                _ = self.newTabPage(core, .tab, .{ .command = command });
+            },
+            .new_window => _ = Application.default().newWindowWithCommand(core, command),
+            .split_right, .split_down => {
+                const tab = self.getSelectedTab() orelse return;
+                tab.getSplitTree().newSplit(
+                    if (target == .split_right) .right else .down,
+                    surface,
+                    .{ .command = command },
+                ) catch |err| log.warn("open with shell: split failed err={}", .{err});
+            },
+        }
     }
 
     /// React to a GTK action requesting that the command palette be toggled.

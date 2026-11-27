@@ -717,6 +717,10 @@ test {
     // drag's bar sits on, one bar at a time, a double press (T3626). No GTK
     // imports.
     _ = @import("gtk/gutter_bar_rules.zig");
+    // The command palette's "… with Shell" rows: the four targets, their
+    // prompts, and the Settings > Shell list a pick is made from (T3737).
+    // No GTK imports.
+    _ = @import("gtk/shell_pick.zig");
     // What a launch does when another build serves the socket: the dialog's
     // buttons, the scripted answer, the window a join forwards (T3598). No
     // GTK imports.

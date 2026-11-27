@@ -20,6 +20,9 @@ const Config = @import("config.zig").Config;
 const AgentUpgrade = @import("../AgentUpgrade.zig");
 const agent_upgrade = @import("../../win32/agent_upgrade.zig");
 const agent_upgrade_rules = @import("../agent_upgrade_rules.zig");
+const shell_pick = @import("../shell_pick.zig");
+const SettingsWindow = @import("../SettingsWindow.zig");
+const wk = @import("../webkit.zig");
 
 const log = std.log.scoped(.gtk_ghostty_command_palette);
 
@@ -64,6 +67,20 @@ pub const CommandPalette = extern struct {
                 void,
             );
         };
+
+        /// Emitted when a shell is picked from a "... with Shell" row's list
+        /// (T3737): open `target` (a `shell_pick.Target`) on the shell at
+        /// `path`. The palette has already closed.
+        pub const shell_picked = struct {
+            pub const name = "shell-picked";
+            pub const connect = impl.connect;
+            const impl = gobject.ext.defineSignal(
+                name,
+                Self,
+                &.{ c_int, [*:0]const u8 },
+                void,
+            );
+        };
     };
 
     const Private = struct {
@@ -85,6 +102,16 @@ pub const CommandPalette = extern struct {
         /// The list that serves as the data source of the model.
         /// This is where all command data is ultimately stored.
         source: *gio.ListStore,
+
+        /// While a "... with Shell" row's second step is up (T3737): what the
+        /// picked shell opens. Null: the command list.
+        shell_target: ?shell_pick.Target = null,
+
+        /// Whether the window the palette opened over runs its panes on
+        /// THIS machine. The shell list is this machine's shells, so the
+        /// "... with Shell" rows are hidden in a remote machine's window
+        /// (win32 `Condition.local_window`).
+        local_window: bool = true,
 
         pub var offset: c_int = 0;
     };
@@ -170,12 +197,21 @@ pub const CommandPalette = extern struct {
             commands.deinit(alloc);
         }
 
+        // The second step of a "... with Shell" row (T3737): the installed
+        // shells, in the Settings > Shell order, and nothing else.
+        if (priv.shell_target != null) {
+            collectShellChoices(config, &commands, alloc);
+            for (commands.items) |cmd| priv.source.append(cmd.as(gobject.Object));
+            return;
+        }
+
         self.collectJumpCommands(config, &commands) catch |err| {
             log.warn("failed to collect jump commands: {}", .{err});
         };
 
         self.collectRegularCommands(config, &commands, alloc);
         collectStateCommands(config, &commands, alloc);
+        if (priv.local_window) collectWithShellCommands(config, &commands, alloc);
 
         // Sort commands
         std.mem.sort(*Command, commands.items, {}, struct {
@@ -233,6 +269,39 @@ pub const CommandPalette = extern struct {
             cmd.unref();
             log.warn("failed to add command to list: {}", .{err});
         };
+    }
+
+    /// The four "... with Shell" rows (T3737), in a local window only.
+    fn collectWithShellCommands(config: *Config, commands: *std.ArrayList(*Command), alloc: Allocator) void {
+        for (std.enums.values(shell_pick.Target)) |target| {
+            const cmd = Command.newWithShell(config, target);
+            commands.append(alloc, cmd) catch |err| {
+                cmd.unref();
+                log.warn("failed to add command to list: {}", .{err});
+            };
+        }
+    }
+
+    /// The shell list a "... with Shell" row swaps in (T3737): one row per
+    /// installed shell, titled by its name with its path below.
+    fn collectShellChoices(config: *Config, commands: *std.ArrayList(*Command), alloc: Allocator) void {
+        var arena_state = ArenaAllocator.init(alloc);
+        defer arena_state.deinit();
+        const shells = SettingsWindow.installedShells(arena_state.allocator()) catch |err| {
+            log.warn("failed to list the installed shells: {}", .{err});
+            return;
+        };
+        if (shells.len == 0) log.info("command palette: no installed shell found on PATH", .{});
+        for (shells) |sh| {
+            const cmd = Command.newShell(config, sh) catch |err| {
+                log.warn("failed to create shell row: {}", .{err});
+                continue;
+            };
+            commands.append(alloc, cmd) catch |err| {
+                cmd.unref();
+                log.warn("failed to add command to list: {}", .{err});
+            };
+        }
     }
 
     /// Check if an action is supported on GTK.
@@ -299,11 +368,11 @@ pub const CommandPalette = extern struct {
 
         // Titles are equal - use sort_key as tie-breaker if both are jump commands
         const a_sort_key = switch (a.private().data) {
-            .regular, .app_action => return false,
+            .regular, .app_action, .with_shell, .shell => return false,
             .jump => |*ja| ja.sort_key,
         };
         const b_sort_key = switch (b.private().data) {
-            .regular, .app_action => return false,
+            .regular, .app_action, .with_shell, .shell => return false,
             .jump => |*jb| jb.sort_key,
         };
 
@@ -320,8 +389,29 @@ pub const CommandPalette = extern struct {
     }
 
     fn searchStopped(_: *gtk.SearchEntry, self: *CommandPalette) callconv(.c) void {
-        // ESC was pressed - close the palette
+        // ESC was pressed. In a "... with Shell" row's shell list it goes
+        // back to the commands (T3737, win32's Escape); otherwise it closes.
+        if (self.private().shell_target != null) {
+            self.setShellStep(null);
+            return;
+        }
         self.close();
+    }
+
+    /// Enter (`target` set) or leave (null) a "... with Shell" row's second
+    /// step: the search is cleared, its cue says what a pick opens, and the
+    /// list is rebuilt for the step.
+    fn setShellStep(self: *CommandPalette, target: ?shell_pick.Target) void {
+        const priv = self.private();
+        priv.shell_target = target;
+        priv.search.as(gtk.Editable).setText("");
+        wk.gtk_search_entry_set_placeholder_text(
+            @ptrCast(priv.search),
+            if (target) |t| t.prompt().ptr else shell_pick.commands_prompt.ptr,
+        );
+        self.rebuild();
+        priv.model.setSelected(0);
+        _ = priv.search.as(gtk.Widget).grabFocus();
     }
 
     fn searchActivated(_: *gtk.SearchEntry, self: *CommandPalette) callconv(.c) void {
@@ -347,6 +437,14 @@ pub const CommandPalette = extern struct {
             return;
         }
 
+        // Every open starts on the command list (T3737), and the "... with
+        // Shell" rows exist only over a window on this machine.
+        priv.local_window = !window.isRemoteWindow();
+        if (priv.shell_target != null) {
+            priv.shell_target = null;
+            wk.gtk_search_entry_set_placeholder_text(@ptrCast(priv.search), shell_pick.commands_prompt.ptr);
+        }
+
         // State rows (T3691) are read as the palette opens.
         self.rebuild();
 
@@ -366,6 +464,15 @@ pub const CommandPalette = extern struct {
         const object_ = priv.model.as(gio.ListModel).getObject(pos);
         defer if (object_) |object| object.unref();
 
+        // A "... with Shell" row keeps the palette open and swaps its list
+        // for the installed shells (T3737, win32 T3751).
+        if (object_) |object| if (gobject.ext.cast(Command, object)) |c| {
+            if (c.getWithShell()) |target| {
+                self.setShellStep(target);
+                return;
+            }
+        };
+
         // Close before running the action in order to avoid being replaced by
         // another dialog (such as the change title dialog). If that occurs then
         // the command palette dialog won't be counted as having closed properly
@@ -373,6 +480,15 @@ pub const CommandPalette = extern struct {
         self.close();
 
         const cmd = gobject.ext.cast(Command, object_ orelse return) orelse return;
+
+        // A shell from the second step (T3737): the window opens the target
+        // on it. The row (and its path) outlives the synchronous emit.
+        if (cmd.getShellPath()) |path| {
+            const target = priv.shell_target orelse return;
+            priv.shell_target = null;
+            signals.shell_picked.impl.emit(self, null, .{ @intFromEnum(target), path.ptr }, null);
+            return;
+        }
 
         // An app-state row runs its GAction on the application (T3691).
         if (cmd.getAppAction()) |name| {
@@ -446,6 +562,17 @@ pub const CommandPalette = extern struct {
         self.activated(@intCast(pos));
     }
 
+    /// Escape in the search field: what `stop-search` does (T3737).
+    pub fn seamEscape(self: *CommandPalette) void {
+        searchStopped(self.private().search, self);
+    }
+
+    /// The "... with Shell" step the palette is on (its `key()`), else null.
+    pub fn seamShellStep(self: *CommandPalette) ?[:0]const u8 {
+        const t = self.private().shell_target orelse return null;
+        return t.key();
+    }
+
     const C = Common(Self, Private);
     pub const as = C.as;
     pub const ref = C.ref;
@@ -490,6 +617,7 @@ pub const CommandPalette = extern struct {
 
             // Signals
             signals.trigger.impl.register(.{});
+            signals.shell_picked.impl.register(.{});
 
             // Virtual methods
             gobject.Object.virtual_methods.dispose.implement(class, &dispose);
@@ -623,6 +751,12 @@ const Command = extern struct {
             regular: RegularData,
             jump: JumpData,
             app_action: AppActionData,
+            /// A "... with Shell" row (T3737): choosing it opens the shell
+            /// list for this target.
+            with_shell: shell_pick.Target,
+            /// One installed shell in that list (T3737). Strings live in
+            /// the row's arena.
+            shell: shell_pick.Shell,
         };
 
         /// A row that runs an application GAction (T3691). Strings are
@@ -676,6 +810,47 @@ const Command = extern struct {
         return self;
     }
 
+    /// A "... with Shell" row for `target` (T3737).
+    pub fn newWithShell(config: *Config, target: shell_pick.Target) *Self {
+        const self = gobject.ext.newInstance(Self, .{
+            .config = config,
+        });
+        self.private().data = .{ .with_shell = target };
+        return self;
+    }
+
+    /// One installed shell for the second step (T3737); the strings are
+    /// copied into the row.
+    pub fn newShell(config: *Config, sh: shell_pick.Shell) Allocator.Error!*Self {
+        const self = gobject.ext.newInstance(Self, .{
+            .config = config,
+        });
+        errdefer self.unref();
+        const priv = self.private();
+        const alloc = priv.arena.allocator();
+        priv.data = .{ .shell = .{
+            .name = try alloc.dupeZ(u8, sh.name),
+            .path = try alloc.dupeZ(u8, sh.path),
+        } };
+        return self;
+    }
+
+    /// The target a "... with Shell" row opens a shell list for, else null.
+    pub fn getWithShell(self: *Self) ?shell_pick.Target {
+        return switch (self.private().data) {
+            .with_shell => |t| t,
+            else => null,
+        };
+    }
+
+    /// The path a shell row runs, else null.
+    pub fn getShellPath(self: *Self) ?[:0]const u8 {
+        return switch (self.private().data) {
+            .shell => |sh| sh.path,
+            else => null,
+        };
+    }
+
     /// The `app.<name>` action an app-state row runs, else null.
     pub fn getAppAction(self: *Self) ?[:0]const u8 {
         return switch (self.private().data) {
@@ -720,7 +895,7 @@ const Command = extern struct {
         }
 
         switch (priv.data) {
-            .regular, .app_action => {},
+            .regular, .app_action, .with_shell, .shell => {},
             .jump => |*j| {
                 j.surface.set(null);
             },
@@ -752,6 +927,8 @@ const Command = extern struct {
             .regular => |*r| r,
             .jump => return null,
             .app_action => |a| return a.action,
+            .with_shell => |t| return t.key(),
+            .shell => |sh| return sh.path,
         };
 
         if (regular.action_key) |action_key| return action_key;
@@ -772,7 +949,7 @@ const Command = extern struct {
         const regular = switch (priv.data) {
             .regular => |*r| r,
             // No keybind: an app-state row has no accelerator to show.
-            .jump, .app_action => return null,
+            .jump, .app_action, .with_shell, .shell => return null,
         };
 
         if (regular.action) |action| return action;
@@ -797,6 +974,8 @@ const Command = extern struct {
 
         switch (priv.data) {
             .app_action => |a| return a.title,
+            .with_shell => |t| return t.title(),
+            .shell => |sh| return sh.name,
             .regular => |*r| return r.command.title,
             .jump => |*j| {
                 if (j.title) |title| return title;
@@ -824,6 +1003,8 @@ const Command = extern struct {
 
         switch (priv.data) {
             .app_action => |a| return a.description,
+            .with_shell => |t| return t.description(),
+            .shell => |sh| return sh.path,
             .regular => |*r| return r.command.description,
             .jump => |*j| {
                 if (j.description) |desc| return desc;
@@ -855,7 +1036,7 @@ const Command = extern struct {
         const priv = self.private();
         return switch (priv.data) {
             .regular => |*r| r.command.action,
-            .jump, .app_action => null,
+            .jump, .app_action, .with_shell, .shell => null,
         };
     }
 
@@ -870,7 +1051,7 @@ const Command = extern struct {
     pub fn getJumpSurface(self: *Self) ?*Surface {
         const priv = self.private();
         return switch (priv.data) {
-            .regular, .app_action => null,
+            .regular, .app_action, .with_shell, .shell => null,
             .jump => |*j| j.surface.get(),
         };
     }

@@ -89,6 +89,7 @@ const SettingsModel = @import("../win32/SettingsModel.zig");
 const SettingsSources = @import("../win32/SettingsSources.zig");
 const pages = @import("../win32/settings_pages.zig");
 const controls = @import("../win32/settings_controls.zig");
+const shell_pick = @import("shell_pick.zig");
 
 const Application = @import("class/application.zig").Application;
 const ShortcutGuideWindow = @import("ShortcutGuideWindow.zig");
@@ -807,14 +808,17 @@ fn shellChoices(self: *SettingsWindow, arena: Allocator, scripted: bool) ![]cons
     _ = self;
     var out: std.ArrayListUnmanaged(pages.Option) = .empty;
     try out.append(arena, .{ .value = "", .label = controls.shellDefaultLabelPosix(scripted) });
-    const path_env = std.posix.getenv("PATH") orelse "";
-    var buf: [std.fs.max_path_bytes]u8 = undefined;
-    for (controls.posix_shells) |name| {
-        const full = controls.resolvePosix(&buf, name, path_env, {}, isExecutable) orelse continue;
-        const path_copy = try arena.dupe(u8, full);
-        try out.append(arena, .{ .value = path_copy, .label = try std.fmt.allocPrint(arena, "{s} ({s})", .{ name, path_copy }) });
+    // One catalog with the command palette's "… with Shell" list (T3737).
+    for (try installedShells(arena)) |sh| {
+        try out.append(arena, .{ .value = sh.path, .label = try std.fmt.allocPrint(arena, "{s} ({s})", .{ sh.name, sh.path }) });
     }
     return out.toOwnedSlice(arena);
+}
+
+/// The installed shells Settings > Shell and the command palette's "… with
+/// Shell" rows offer (T3737): `shell_pick.catalog` over this process's PATH.
+pub fn installedShells(arena: Allocator) Allocator.Error![]const shell_pick.Shell {
+    return shell_pick.catalog(arena, std.posix.getenv("PATH") orelse "", {}, isExecutable);
 }
 
 /// Mac's `isExecutableFile`: a regular file this user may execute.

@@ -1810,6 +1810,17 @@ pub const Application = extern struct {
         return win;
     }
 
+    /// The command palette's "New Window with Shell…" pick (T3737): a new
+    /// window as Ctrl+Shift+N opens one from `parent` (its inherited config
+    /// and working directory), in front, its first pane running `command`.
+    /// The command is cloned by the surface, so the caller's may be freed.
+    pub fn newWindowWithCommand(self: *Self, parent: ?*CoreSurface, command: configpkg.Command) *Window {
+        self.private().requested_window = true;
+        const win = Window.new(self, .none);
+        Action.initAndShowWindow(self, win, parent, .{ .command = command });
+        return win;
+    }
+
     /// A window rebuilt by a session restore (T3397), at its recorded size
     /// (T3549) when there is one, set before it is presented so it maps at
     /// that size. Wayland gives a client no position, so where it lands
