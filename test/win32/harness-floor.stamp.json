@@ -1,10 +1,11 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-11-26T17:17:37-08:00",
-    "commit":  "de3440ca95",
+    "generated":  "2026-11-26T17:33:17-08:00",
+    "commit":  "e829292d23",
     "uncommitted":  [
-
+                        "test/win32/background-blur.ps1",
+                        "test/win32/translucent-window.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "cfa23792d110d499fa4086697daa516d218d0d110e594a7452167a81220ee15e",
@@ -55,7 +56,7 @@
                   "test/win32/arp-version.ps1":  "3f483140196d74ac80c620bbde5f25e6bdb07cfa0e7891c50a5bd6e0dea73d51",
                   "test/win32/asserted-nothing.ps1":  "98ac55e5d2ce106e56c4db1fb90839112a1156b3851acf352b9e93246a09acb0",
                   "test/win32/auto-launch-cwd.ps1":  "002e496da7dca52636d1c20a319e19963bf5f7f6621d9d517b71aa7ea748d11a",
-                  "test/win32/background-blur.ps1":  "dffab046e7560e606416751d4441733b0b9acd8630dcf61d3da36389b04edc9a",
+                  "test/win32/background-blur.ps1":  "89bfa5f68b6489859509573c70ac6a2d1bbd35aa779ab9528244d54133278fde",
                   "test/win32/background-window-frame.ps1":  "558f33f7cd12663f4fba03479038e7cc924b5fb119da50efc006958b278f7791",
                   "test/win32/banner-resize-repaint.ps1":  "98cd5883d482b80f74733ccb24ff1a80cf72d7e561b1c8c70f057c607e9c55ca",
                   "test/win32/bell-border.ps1":  "9fd6e642cbecf863a82c0488e78c162f4c54f232139c7974920da095d24e765e",
@@ -611,7 +612,7 @@
                   "test/win32/title-flood.ps1":  "eaf112fc93d1a24927339dbd75e75e4fd38a67e5b1bacdef0c546afb555999f0",
                   "test/win32/title-font.ps1":  "34e38564b29d6ea03cdb773abba624ad1489d2686cdf82ee80d0206b0baa006e",
                   "test/win32/title-jitter.ps1":  "100984222fdcc4ec936d2c2912f2d136b553ef9a32e753a66c56055d4d31d331",
-                  "test/win32/translucent-window.ps1":  "eba06c72df9125b51d640a2be2beb4000ab627b5fed0b935bf5f65ac28af5406",
+                  "test/win32/translucent-window.ps1":  "74d5224775ce00b12722490491c75d2efc3f70ec89bb7b0edb4248cd82cc657b",
                   "test/win32/tree-swap-audit.ps1":  "c03ecc3fc2003732cc2ff532cd53d211f53c9d9545bd760c33092ab833f6a3ab",
                   "test/win32/tui-copy-reflow.ps1":  "27aaf25b87bf115d160981b2a3cb856190ea4891ed0cd5abb2796247249d98ea",
                   "test/win32/type-ramp-audit.ps1":  "a1e4a503e657613677cfe2c2832cde43008c6ba364321391117326ba9341dd19",

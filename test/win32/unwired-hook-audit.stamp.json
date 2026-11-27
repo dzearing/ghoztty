@@ -1,8 +1,8 @@
 {
     "guard":  "unwired-hook",
     "script":  "test/win32/unwired-hook-audit.ps1",
-    "generated":  "2026-11-26T16:58:35-08:00",
-    "commit":  "6f07650c4d",
+    "generated":  "2026-11-26T17:06:01-08:00",
+    "commit":  "e829292d23",
     "uncommitted":  [
 
                     ],
@@ -431,7 +431,7 @@
                   "src/apprt/win32/pane_stack_state.zig":  "e3087d45b99e3a09eb31c6022d285f91114895b601b0d60ab24b48a9a3bcff51",
                   "src/apprt/win32/pane_stack_strip.zig":  "959ede11d874857790114246aaeb3be01e7b8d67d95d9a0ec352c6cae22640f5",
                   "src/apprt/win32/pane_stash.zig":  "9630f313b9811db3497998a01772b4dce32497326ba99fdef7a2c883f48530cb",
-                  "src/apprt/win32/PaneDesk.zig":  "44b600444b1e09e05b07a7bc3ec9fadad315e5f18c729bca689df35bde64d93d",
+                  "src/apprt/win32/PaneDesk.zig":  "6ae44d4c6d7339a88ed2c02c2c5bac3c4f1393a530ba582fc4262fe5a4d927f6",
                   "src/apprt/win32/PaneDragGhost.zig":  "75cb6d32f4313912ab7ddcd73a624140ca91ae60ca583fccd5f5f1d69658fea2",
                   "src/apprt/win32/PaneGrabHandle.zig":  "959df18a9af052cb606f2e4b5d9e5aa196a1e5a83c53e238103bcb407907ab4e",
                   "src/apprt/win32/panel_theme.zig":  "caf0cd7e30f705d17e3590985e3fa51a7a3a32f90b619fd38e51b932a6c7a134",
@@ -1308,7 +1308,7 @@
                   "test/win32/arp-version.ps1":  "3f483140196d74ac80c620bbde5f25e6bdb07cfa0e7891c50a5bd6e0dea73d51",
                   "test/win32/asserted-nothing.ps1":  "98ac55e5d2ce106e56c4db1fb90839112a1156b3851acf352b9e93246a09acb0",
                   "test/win32/auto-launch-cwd.ps1":  "002e496da7dca52636d1c20a319e19963bf5f7f6621d9d517b71aa7ea748d11a",
-                  "test/win32/background-blur.ps1":  "dffab046e7560e606416751d4441733b0b9acd8630dcf61d3da36389b04edc9a",
+                  "test/win32/background-blur.ps1":  "89bfa5f68b6489859509573c70ac6a2d1bbd35aa779ab9528244d54133278fde",
                   "test/win32/background-window-frame.ps1":  "558f33f7cd12663f4fba03479038e7cc924b5fb119da50efc006958b278f7791",
                   "test/win32/banner-resize-repaint.ps1":  "98cd5883d482b80f74733ccb24ff1a80cf72d7e561b1c8c70f057c607e9c55ca",
                   "test/win32/bell-border.ps1":  "9fd6e642cbecf863a82c0488e78c162f4c54f232139c7974920da095d24e765e",
@@ -1756,7 +1756,7 @@
                   "test/win32/title-flood.ps1":  "eaf112fc93d1a24927339dbd75e75e4fd38a67e5b1bacdef0c546afb555999f0",
                   "test/win32/title-font.ps1":  "34e38564b29d6ea03cdb773abba624ad1489d2686cdf82ee80d0206b0baa006e",
                   "test/win32/title-jitter.ps1":  "100984222fdcc4ec936d2c2912f2d136b553ef9a32e753a66c56055d4d31d331",
-                  "test/win32/translucent-window.ps1":  "eba06c72df9125b51d640a2be2beb4000ab627b5fed0b935bf5f65ac28af5406",
+                  "test/win32/translucent-window.ps1":  "74d5224775ce00b12722490491c75d2efc3f70ec89bb7b0edb4248cd82cc657b",
                   "test/win32/tree-swap-audit.ps1":  "c03ecc3fc2003732cc2ff532cd53d211f53c9d9545bd760c33092ab833f6a3ab",
                   "test/win32/tui-copy-reflow.ps1":  "27aaf25b87bf115d160981b2a3cb856190ea4891ed0cd5abb2796247249d98ea",
                   "test/win32/type-ramp-audit.ps1":  "a1e4a503e657613677cfe2c2832cde43008c6ba364321391117326ba9341dd19",

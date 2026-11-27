@@ -72,6 +72,8 @@ public static class Bl {
   [DllImport("user32")] public static extern bool SetWindowPos(IntPtr h, IntPtr a, int x, int y, int cx, int cy, uint f);
   [DllImport("user32")] public static extern bool GetClientRect(IntPtr h, out RECT r);
   [DllImport("user32")] public static extern bool ClientToScreen(IntPtr h, ref POINT p);
+  [DllImport("user32")] public static extern int GetWindowLong(IntPtr h, int i);
+  [DllImport("user32")] public static extern bool IsZoomed(IntPtr h);
   [DllImport("dwmapi")] static extern int DwmGetWindowAttribute(IntPtr h, int a, out int v, int s);
   [DllImport("user32")] static extern bool IsWindowVisible(IntPtr h);
   [DllImport("user32")] static extern bool EnumWindows(EnumProc cb, IntPtr p);
@@ -171,6 +173,7 @@ $conf = Join-Path $env:TEMP ("ghoztty-t{0}-blur.conf" -f $PID)
 function Write-Conf([bool]$blur) {
     [IO.File]::WriteAllText($conf, @"
 background-opacity = 0.6
+maximize = false
 background-blur = $(if ($blur) { 'true' } else { 'false' })
 background = #101010
 foreground = #00ff00
@@ -213,12 +216,30 @@ try {
     if ($pane -eq [IntPtr]::Zero) { Write-Host 'SETUP FAIL: terminal pane not found'; exit 1 }
     # HWND_TOPMOST, SWP_NOACTIVATE | SWP_SHOWWINDOW: over the backdrop, never
     # the foreground.
-    [void][Bl]::SetWindowPos($top, [IntPtr](-1), 250, 250, 800, 560, 0x0050)
+    # T2504: the promotion can silently not take (T3609), so retry until the
+    # WS_EX_TOPMOST bit reads back.
+    for ($i = 0; $i -lt 5; $i++) {
+        [void][Bl]::SetWindowPos($top, [IntPtr](-1), 250, 250, 800, 560, 0x0050)
+        if (([Bl]::GetWindowLong($top, -20) -band 0x8) -ne 0) { break }
+        Start-Sleep -Milliseconds 200
+    }
     Start-Sleep -Seconds 3   # the shell prints its banner and prompt
+
+    # T2504: since T2342 a new window opens MAXIMIZED, which put the sampled
+    # rects on the user's unchanging desktop instead of the backdrop (the
+    # translucent-window.ps1 B/F see-through-0 false red). Refuse to measure
+    # unless the window is where this script put it, topmost, over the backdrop.
+    if ([Bl]::IsZoomed($top)) { Write-Host 'SETUP FAIL: the window is maximized, so the sampled regions are not over the backdrop (maximize = false missing?)'; exit 1 }
+    if (([Bl]::GetWindowLong($top, -20) -band 0x8) -eq 0) { Write-Host 'SETUP FAIL: the window is not topmost, so the topmost backdrop covers it'; exit 1 }
 
     $paneRect = [Bl]::ClientScreen($pane)
     $textRect = New-Object System.Drawing.Rectangle $paneRect.X, $paneRect.Y, $paneRect.Width, ([int]($paneRect.Height * 0.4))
     $bgRect = New-Object System.Drawing.Rectangle ($paneRect.X + 20), ($paneRect.Y + [int]($paneRect.Height * 0.6)), ($paneRect.Width - 40), ([int]($paneRect.Height * 0.3))
+    foreach ($pair in @(@('text', $textRect), @('background', $bgRect))) {
+        if (-not $backdrop.Bounds.Contains($pair[1])) {
+            Write-Host ("SETUP FAIL: the {0} region {1} is not over the backdrop {2}" -f $pair[0], $pair[1], $backdrop.Bounds); exit 1
+        }
+    }
 
     # --- A: blur off - the control -------------------------------------------
     $off = Measure-Region $bgRect
