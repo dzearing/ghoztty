@@ -32,6 +32,7 @@
 #   A2  restoring takes it back (the panes really are drawing again)
 #   A3  every pane, after every restore, captures at its own size with text
 #   A4  no growth across the cycles (the last restored sample vs the first)
+#   A6  -Cycles 10+: shared GPU memory flat past its warm-up (T2637)
 #   A5  the release and the redraw are in the log (the mechanism, not a
 #       coincidence of the driver trimming memory)
 #   C1  a window fully covered by another releases its pane's targets too
@@ -221,8 +222,16 @@ try {
     $rows | Format-Table Label, GpuDedMB, GpuShMB, PrivMB, Threads -AutoSize | Out-String | Write-Host
 
     # Dedicated memory, where the driver puts a renderbuffer. Shared memory
-    # moves on its own across a minimize/restore with or without the release
-    # (T2637), so it is reported above and not scored.
+    # (the driver's system-memory heap) WARMS UP instead (T2637, measured
+    # 2026-11-27, 4 panes 1400x900): 43 -> ~73 MB over the first five
+    # cycles, then flat - 73.1 at cycle 5, 75.0 at cycle 40. It is the
+    # driver's upload pool growing to a high-water mark under the release's
+    # per-restore target + atlas re-creation: the same curve with
+    # GHOZTTY_COMP_PRESENT=0, GHOZTTY_PANE_LAYER=0 or no capture-pane reads,
+    # only ~2 MB steps with the release disabled, and +1 MB over 20 cycles
+    # in the standalone WGL repro (test\zig-repro\t2599-wgl-multichild,
+    # sh= column). So it is scored only past the warm-up: A6 below, on a
+    # run of 10 or more cycles.
     if ($gpuReadable) {
         $drops = @(); $backs = @()
         for ($k = 0; $k -lt $rows.Count; $k += 3) {
@@ -237,6 +246,14 @@ try {
         $first = [double]$rows[2].GpuDedMB
         $last = [double]$rows[-1].GpuDedMB
         Assert (($last - $first) -le [math]::Max(1.0, $bar)) "A4 no dedicated GPU growth across $Cycles cycles (first restored $first MB, last $last MB)"
+        if ($Cycles -ge 10) {
+            # Restored sample of cycle 6 (index 17) vs the last: past the
+            # warm-up the shared heap must be flat (T2637). 3 MB allows the
+            # one 2 MB step seen in 35 post-warm-up cycles.
+            $shWarm = [double]$rows[17].GpuShMB
+            $shLast = [double]$rows[-1].GpuShMB
+            Assert (($shLast - $shWarm) -le 3.0) "A6 shared GPU memory flat past the warm-up (cycle 6 restored $shWarm MB, cycle $Cycles $shLast MB)"
+        }
     } else {
         $script:skipped++
         Write-Host 'SKIP  A1/A2/A4: the GPU Process Memory counters are not readable on this box'

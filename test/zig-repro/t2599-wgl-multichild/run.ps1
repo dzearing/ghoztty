@@ -82,7 +82,12 @@ try {
         function Step([int]$cmd, [int]$arg) {
             [void][T2599Msg]::SendMessageW($h, 0x8000, [IntPtr]$cmd, [IntPtr]$arg)
             $v = Gpu $app.Pid
-            Write-Host ("  {0,-10} {1,-9} ded={2,7}" -f $sc, $names[$cmd], $v)
+            # Shared beside dedicated (T2637): the driver's system-memory heap
+            # moves on a minimize/restore on its own, so a reader can tell a
+            # bounded warm-up from a per-cycle leak.
+            $g = Get-GpuBytes $app.Pid
+            $sh = if ($g) { [math]::Round($g.Shared / 1MB, 2) } else { $null }
+            Write-Host ("  {0,-10} {1,-9} ded={2,7} sh={3,7}" -f $sc, $names[$cmd], $v, $sh)
         }
         Write-Host ("  {0,-10} {1,-9} ded={2,7}" -f $sc, 'base', $base)
         foreach ($s in $plan.S) { Step $s[0] $s[1] }
