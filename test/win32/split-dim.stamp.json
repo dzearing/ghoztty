@@ -1,14 +1,15 @@
 {
     "guard":  "split-dim",
     "script":  "test/win32/split-dim.ps1",
-    "generated":  "2026-11-26T07:15:39-08:00",
-    "commit":  "65cd6227e6",
+    "generated":  "2026-11-26T23:50:59-08:00",
+    "commit":  "bfc3efeb8f",
     "uncommitted":  [
+                        "src/apprt/win32/dim_math.zig",
                         "src/apprt/win32/DimOverlay.zig"
                     ],
     "files":  {
-                  "src/apprt/win32/dim_math.zig":  "cff41b14687e6df85060c252f1013cadf25959a48d72018d585c7c0335837d3b",
-                  "src/apprt/win32/DimOverlay.zig":  "4fbd37b5f6bfe40ca2b9d7625cd4aace1e60d368d55d0d6bed92b282c3f6f49d",
+                  "src/apprt/win32/dim_math.zig":  "4ab06f247c6e587296b82e31def8158e439003ec21b2b68aea24369e533c2260",
+                  "src/apprt/win32/DimOverlay.zig":  "0dc925f122aaef9b56c79067b6165dc704539b0642518233fd1c90b90b0c6962",
                   "test/win32/split-dim.ps1":  "f7fddb7e47fe4b82b735103e1f4abcea05e9ec40be893c9bb35590098f611a30"
               },
     "code":  {

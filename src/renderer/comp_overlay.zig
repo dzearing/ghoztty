@@ -244,6 +244,24 @@ const DCOMPOSITION_BITMAP_INTERPOLATION_MODE_NEAREST_NEIGHBOR: u32 = 0;
 /// clip it and no move or resize ever has to touch it.
 pub const cover_extent: f32 = 16384;
 
+/// The `cover` stretch, its top-left `lift` px above the origin (T2618). Row
+/// vectors (D2D): the scale runs first and the translation after, so the 1x1
+/// pixel spans [-lift, cover_extent - lift) in pane pixels.
+pub fn coverMatrix(lift: i32) Matrix3x2 {
+    var m = Matrix3x2.scale(cover_extent, cover_extent);
+    m.dy = -@as(f32, @floatFromInt(lift));
+    return m;
+}
+
+test "coverMatrix: the stretch reaches lift px above the origin and still covers any pane (T2618)" {
+    const m = coverMatrix(48);
+    // The pixel's corners, (0,0) and (1,1), through p * M.
+    try std.testing.expectEqual(@as(f32, -48), 0 * m.m22 + m.dy);
+    try std.testing.expectEqual(cover_extent - 48, 1 * m.m22 + m.dy);
+    try std.testing.expectEqual(@as(f32, 0), m.dx);
+    try std.testing.expectEqual(@as(f32, 0), coverMatrix(0).dy);
+}
+
 pub fn slot(comptime F: type, obj: Obj, index: usize) F {
     const vtbl: *const [*]const *const anyopaque = @ptrCast(@alignCast(obj));
     return @ptrCast(vtbl.*[index]);
@@ -460,6 +478,9 @@ pub const Layer = struct {
     offset_y: i32 = 0,
     /// The transform's vertical shift (`setShiftY`); a new visual has none.
     shift_y: i32 = 0,
+    /// How far above the visual's origin a `cover` stretch starts
+    /// (`setCoverLift`, T2618).
+    cover_lift: i32 = 0,
     /// The visual this layer is a child of (`attachUnder`, T2798), with a
     /// reference of its own; null when it hangs off the root (or nowhere).
     parent_visual: ?Obj = null,
@@ -546,10 +567,29 @@ pub const Layer = struct {
         const vis = self.visual orelse return false;
         if (!self.setPixels(&.{px}, 1, 1)) return false;
         if (!ok(slot(*const fn (Obj, u32) callconv(.winapi) HRESULT, vis, slot_visual_set_bitmap_interpolation_mode)(vis, DCOMPOSITION_BITMAP_INTERPOLATION_MODE_NEAREST_NEIGHBOR))) return false;
-        const m = Matrix3x2.scale(cover_extent, cover_extent);
-        if (!ok(slot(*const fn (Obj, *const Matrix3x2) callconv(.winapi) HRESULT, vis, slot_visual_set_transform_matrix)(vis, &m))) return false;
+        if (!self.applyCover(self.cover_lift)) return false;
         self.commit();
         return true;
+    }
+
+    /// Start a `cover` layer `lift` px above the visual it hangs off (T2618):
+    /// a pane whose tree root sits at the grid top, below the banner band the
+    /// window spans (T2566), gets the band covered too. Carried by the
+    /// stretch matrix itself, so the lift is in pane pixels whatever order the
+    /// compositor applies an offset and a transform in. Commits only a change.
+    pub fn setCoverLift(self: *Layer, lift: i32) bool {
+        if (comptime builtin.os.tag != .windows) return false;
+        if (lift == self.cover_lift) return true;
+        if (self.surface != null and !self.applyCover(lift)) return false;
+        self.cover_lift = lift;
+        self.commit();
+        return true;
+    }
+
+    fn applyCover(self: *Layer, lift: i32) bool {
+        const vis = self.visual orelse return false;
+        const m = coverMatrix(lift);
+        return ok(slot(*const fn (Obj, *const Matrix3x2) callconv(.winapi) HRESULT, vis, slot_visual_set_transform_matrix)(vis, &m));
     }
 
     /// Where the layer's top-left sits in the pane, in pane pixels (T2492):

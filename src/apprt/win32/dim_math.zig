@@ -115,6 +115,23 @@ pub fn colorrefToBgra(color: u32) u32 {
     return 0xff000000 | (r << 16) | (g << 8) | b;
 }
 
+/// Whether a pane's banner band leaves its wash free to be a visual of the
+/// pane's composition tree (T2618): no band at all, or a band whose banner is
+/// drawn in that same tree (T2559), which the wash can then cover from inside.
+/// A band whose banner is still a popup sits outside the tree, and only the
+/// popup wash can reach over it (T2308).
+pub fn bandAllowsVisual(band_height: i32, banner_in_tree: bool) bool {
+    return band_height <= 0 or banner_in_tree;
+}
+
+test "bandAllowsVisual: a banner drawn in the tree no longer forces the popup (T2618)" {
+    try testing.expect(bandAllowsVisual(0, false));
+    try testing.expect(bandAllowsVisual(-3, false));
+    try testing.expect(bandAllowsVisual(48, true));
+    // A popup banner: the wash has to be a popup to cover it.
+    try testing.expect(!bandAllowsVisual(48, false));
+}
+
 test "colorrefToBgra: red, green and blue land in their BGRA bytes, opaque" {
     try std.testing.expectEqual(@as(u32, 0xffff0000), colorrefToBgra(0x000000ff));
     try std.testing.expectEqual(@as(u32, 0xff00ff00), colorrefToBgra(0x0000ff00));

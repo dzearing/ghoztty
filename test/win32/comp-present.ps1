@@ -29,8 +29,8 @@
 #      path is bell-border.ps1.)
 #   F. The unfocused-split dim as a child visual (T2491): the unfocused pane's
 #      wash goes up as a visual with no GhozttyDimOverlay popup, a window move
-#      and resize re-show nothing, and a banner sends it back to the popup
-#      (it must cover the band above the pane window). Knob-off: split-dim.ps1.
+#      and resize re-show nothing, and a banner drawn in the pane's tree keeps
+#      it a visual lifted over the band (T2618). Knob-off: split-dim.ps1.
 #   G. The scrollbar as a child visual (T2492): the strip goes up as a visual
 #      of the pane with no GhozttyScrollbar popup on screen, a window move
 #      re-shows nothing, and hit testing stays on the pane window - a press
@@ -555,18 +555,34 @@ try {
     $shownAfter = Count-Log $f.Err 'dim overlay shown as visual'
     Assert "F3 a move and a resize show no popup and re-show nothing ($shownBefore -> $shownAfter, $($washes.Count) popups)" `
         ($washes.Count -eq 0 -and $shownAfter -eq $shownBefore)
-    # A banner sends the dimmed pane's wash back to the popup: it has to reach
-    # up over the band, outside the pane window (T2308). Both panes carry one,
-    # so whichever is unfocused is the one asserted.
+    # A banner drawn in the pane's own tree (T2559) keeps the wash a visual
+    # (T2618): the window spans the band, and the wash's stretch starts the
+    # band's height above the tree's root, at the window's top - so the
+    # oracle line's lift equals the band and no popup goes up. Before T2618
+    # the wash went back to the popup here (T2308); T2618_NEUTERED
+    # (DimOverlay.zig) puts that back and reddens F4. Both panes carry one, so
+    # whichever is unfocused is the one asserted.
     & $Exe +set-banner "--target=$($f.Target)" 'banner over the dim' 2>$null | Out-Null
     & $Exe +set-banner '--target=compf2' 'banner over the dim' 2>$null | Out-Null
-    $popup = $false
-    for ($t = 0; $t -lt 25 -and -not $popup; $t++) {
-        $popup = @(Get-TestWindows -ProcessId $f.App.Pid -Class 'GhozttyDimOverlay').Count -eq 1
-        if (-not $popup) { Start-Sleep -Milliseconds 200 }
+    $lifted = Wait-Log $f.Err 'dim overlay visual lift=[1-9]\d* band=\d+' 5000
+    # The banner is a popup until the layout gives the window its band, and
+    # the wash goes with it for that moment; what is asserted is where it
+    # ends: the last path line says visual and no wash popup is on screen.
+    $endsVisual = $false
+    for ($t = 0; $t -lt 25 -and -not $endsVisual; $t++) {
+        $lastPath = [regex]::Matches((Read-Text $f.Err), 'dim overlay path visual=(true|false)') | Select-Object -Last 1
+        $washes = @(Get-TestWindows -ProcessId $f.App.Pid -Class 'GhozttyDimOverlay')
+        $endsVisual = (-not $lastPath -or $lastPath.Groups[1].Value -eq 'true') -and $washes.Count -eq 0
+        if (-not $endsVisual) { Start-Sleep -Milliseconds 200 }
     }
-    Assert "F4 with a banner the wash is the popup again (log + one visible popup)" `
-        ($popup -and (Count-Log $f.Err 'dim overlay path visual=false') -ge 1)
+    $lm = [regex]::Matches((Read-Text $f.Err), 'dim overlay visual lift=(\d+) band=(\d+)') | Select-Object -Last 1
+    $liftOk = $lm -and [int]$lm.Groups[1].Value -gt 0 -and $lm.Groups[1].Value -eq $lm.Groups[2].Value
+    Assert "F4 with a banner in the tree the wash ends a visual reaching over the band (lift=$(if ($lm) { $lm.Groups[1].Value } else { 'none' }) band=$(if ($lm) { $lm.Groups[2].Value } else { 'none' }), $($washes.Count) popups, last path=$(if ($lastPath) { $lastPath.Groups[1].Value } else { 'none' }))" `
+        ($lifted -and $liftOk -and $washes.Count -eq 0 -and $endsVisual)
+    if (-not ($lifted -and $liftOk -and $washes.Count -eq 0 -and $endsVisual)) {
+        "    dim/banner lines:"
+        (Read-Text $f.Err) -split "`n" | Where-Object { $_ -match 'dim overlay|banner path|grid band' } | Select-Object -Last 12 | ForEach-Object { "      $_" }
+    }
     $fAlive = Test-Alive $f
     $fFails = Count-Log $f.Err $failLine
     Assert "F5 the app is still running, nothing fell back (alive=$fAlive fallbacks=$fFails)" ($fAlive -and $fFails -eq 0)
@@ -923,6 +939,21 @@ try {
             }
             $own = @($own) | Select-Object -First 1
             $r.Dim = Rel $wash $own
+        } elseif ($visual) {
+            # Knob on the banner is in the tree and so is the wash (T2618):
+            # it covers the unfocused pane's window - the split, which opened
+            # in the background - from `band - lift` px below its top.
+            [void](Wait-Log $m.Arm.Err 'dim overlay visual lift=\d+ band=\d+' 3000)
+            $lm = Last-Match $m.Arm.Err 'dim overlay visual lift=(\d+) band=(\d+)'
+            $own = $null
+            foreach ($tw in @(Get-TestWindows -ProcessId $m.Arm.App.Pid -Class 'GhozttyWindow')) {
+                $own = @(Get-TestChildWindows -Window ([IntPtr]$tw.Hwnd) -Class 'GhozttyTerminal' | Where-Object { $_.Visible -and [int64]$_.Hwnd -ne [int64]$p.Hwnd }) | Select-Object -First 1
+                if ($own) { break }
+            }
+            if ($lm -and $own) {
+                $gap = [int]$lm.Groups[2].Value - [int]$lm.Groups[1].Value
+                $r.Dim = Rel ([pscustomobject]@{ Left = $own.Left; Top = $own.Top + $gap; Width = $own.Width; Height = $own.Height - $gap }) $own
+            }
         }
         return [pscustomobject]$r
     }

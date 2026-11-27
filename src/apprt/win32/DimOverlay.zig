@@ -17,10 +17,12 @@
 //! is a child visual of the pane's visual instead (T2491, comp_overlay.zig):
 //! one colour pixel stretched over the whole pane, at the same alpha, clipped
 //! by the pane window itself. A move, a resize, a fold or a divider drag is
-//! nothing to it, so it cannot lag its pane. A pane with a banner keeps the
-//! popup: the wash reaches up over the banner band, outside the pane window,
-//! and stacks over the strip's popup (T2308), which a visual inside the pane
-//! cannot do. So does a viewer pane, which has no composition tree to join.
+//! nothing to it, so it cannot lag its pane. A banner drawn in the same tree
+//! (T2559) is covered by the visual too: the window spans the band, and the
+//! wash's stretch starts the band's height above the tree's root (T2618). A
+//! banner that is still a popup keeps the wash a popup, reaching up over the
+//! band outside the pane window and stacked over the strip (T2308). So does a
+//! viewer pane, which has no composition tree to join.
 
 const std = @import("std");
 const w32 = @import("win32.zig");
@@ -110,6 +112,13 @@ pub const DimOverlay = struct {
         /// path's pane carves it off its own top (T2568) - so the wash keeps
         /// the owner's rect and only cuts the band's shape into it.
         in_owner: bool = false,
+        /// The banner is drawn in the pane's own composition tree (T2559),
+        /// so a wash on that tree can cover it (T2618): the visual path.
+        in_tree: bool = false,
+        /// How far below the pane window's top its tree's root sits (T2566,
+        /// `Surface.gridBand`): the lift a visual wash takes to start at the
+        /// window's top, over the band.
+        grid: i32 = 0,
     };
 
     /// What the window region is cut from: where this popup's top-left sits
@@ -201,9 +210,11 @@ pub const DimOverlay = struct {
         self.lab_alpha = alpha;
         if (self.lab_hold != 0) return false;
 
-        // The pane's composition tree, unless a banner band or a chrome
-        // popup the wash must cover needs the popup (T2308, T2335).
-        const want_visual = self.band.height <= 0 and (T2335_NEUTERED or !self.covers_popups) and
+        // The pane's composition tree, unless a banner band outside it or a
+        // chrome popup the wash must cover needs the popup (T2308, T2335). A
+        // banner drawn in the tree is the tree's to cover (T2618).
+        const want_visual = dim_math.bandAllowsVisual(self.band.height, self.band.in_tree and !T2618_NEUTERED) and
+            (T2335_NEUTERED or !self.covers_popups) and
             if (self.slot) |s| self.layer.sync(s) else false;
         if (want_visual != self.on_visual) {
             // The wash leaves the old path at once and goes up afresh on the
@@ -402,6 +413,20 @@ pub const DimOverlay = struct {
         if (alpha != self.layer.opacity) {
             self.layer.setOpacity(alpha);
             changed = true;
+        }
+        // The tree's root sits at the grid top, below a band the window
+        // spans (T2566): the wash starts that far above it, at the window's
+        // top, so it covers the banner drawn there too (T2618).
+        const lift = @max(self.band.grid, 0);
+        if (lift != self.layer.cover_lift) {
+            if (!self.layer.setCoverLift(lift)) {
+                log.warn("dim overlay visual lift failed", .{});
+                return false;
+            }
+            changed = true;
+            // comp-present.ps1 F4's oracle (T2618): the wash's top in the
+            // pane window is `band - lift`, 0 when it reaches over the band.
+            log.info("dim overlay visual lift={d} band={d} pane={d}", .{ lift, self.band.grid, @intFromPtr(self.owner) });
         }
         // A rebuilt tree (the renderer remade its chain) is a fresh layer
         // under a wash that is still up: attach it again.
@@ -612,6 +637,15 @@ test "DimOverlay: the T2335 negative control ships clear" {
 /// gives the wash back the terminal's rect alone and leaves its stacking to
 /// chance, as before T2308: an unfocused pane's banner stays undimmed.
 pub const T2308_NEUTERED = false;
+
+/// Negative control for T2618 (`comp-present.ps1` F4). Flipping it sends a
+/// banner pane's wash back to the popup even when the banner is drawn in the
+/// pane's own composition tree, as T2491 left it.
+pub const T2618_NEUTERED = false;
+
+test "DimOverlay: the T2618 negative control ships clear" {
+    try std.testing.expect(!T2618_NEUTERED);
+}
 
 test "DimOverlay: the T2308 negative control ships clear" {
     try std.testing.expect(!T2308_NEUTERED);

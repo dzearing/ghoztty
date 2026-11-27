@@ -281,12 +281,12 @@ try {
         $three = Wait-Until { @(Get-Content $log6 -ErrorAction SilentlyContinue | Where-Object { $_ -match 'banner shown as visual' }).Count -ge 3 } 8000
         Assert ([bool](Select-String -Path $log6 -Pattern 'pane presents through a composition swap chain' -Quiet)) 'comp: the panes present through the composition chain (log)'
         Assert $three "comp: the three banners went up as visuals (log)"
-        # Every overlay is a visual here except the unfocused panes' dim wash:
-        # over a banner pane it stays the popup on this path too (it has to
-        # cover the band - comp-present.ps1 F4), so section 2's rule still
-        # applies to it and is asserted for c2's below.
-        $pop = @(@(Get-OverlayPopups $appPid) | Where-Object { $_.Visible -and $_.Class -ne 'GhozttyDimOverlay' })
-        Assert ($pop.Count -eq 0) "comp: no overlay popup but the banner panes' dim washes is on screen ($(($pop | ForEach-Object { $_.Class }) -join ','))"
+        # Every overlay is a visual here, the unfocused banner panes' dim wash
+        # included since T2618 (it covers a band drawn in the tree from the
+        # tree - comp-present.ps1 F4). The c2 dim checks below stay for a wash
+        # that is a popup (a read-only pane's, T2335); here they find none.
+        $pop = @(@(Get-OverlayPopups $appPid) | Where-Object { $_.Visible })
+        Assert ($pop.Count -eq 0) "comp: no overlay popup is on screen, the banner panes' dim washes included ($(($pop | ForEach-Object { $_.Class }) -join ','))"
         # cw is the top-level holding three panes. Which one is c2 comes from
         # the split tree's left-to-right leaf order, never from a position
         # guess. c3 is split off with --pane=c2: --target=c2 would name c2's

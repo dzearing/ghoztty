@@ -2106,17 +2106,35 @@ pub fn showDimOverlay(self: *Surface, color: u32, alpha: u8, batch: ?*?w32.HDWP)
     }
     // The wash covers the banner band above the terminal too (T2308), the
     // way Mac's dim covers the whole pane.
-    self.dim_overlay.?.setBand(if (self.banner_overlay) |b| .{
-        .height = @max(b.inset, 0),
-        .corner = b.card_corner,
-        // A spanning window already reaches over the band (T2568).
-        .in_owner = self.gridBand() > 0,
-    } else .{});
+    self.dim_overlay.?.setBand(self.dimBand());
     // A read-only badge needs the wash to be the popup, to stack over it.
     _ = self.dim_overlay.?.setCoversPopups(self.readonlyBadgeWanted());
     _ = self.dim_overlay.?.show(color, alpha, batch);
     // An elevated pane's wash takes its card's rounded shape (T1831).
     if (self.pane_view) |pv| self.dim_overlay.?.matchOwnerRegion(pv.card_region_key);
+}
+
+/// The banner band this pane's wash also covers (T2308), and how it may.
+fn dimBand(self: *const Surface) DimOverlay.Band {
+    const grid: i32 = @intCast(self.gridBand());
+    const b = self.banner_overlay orelse return .{ .grid = grid };
+    return .{
+        .height = @max(b.inset, 0),
+        .corner = b.card_corner,
+        // A spanning window already reaches over the band (T2568).
+        .in_owner = grid > 0,
+        // A card drawn in the pane's tree is covered from the tree (T2618).
+        .in_tree = b.on_visual,
+        .grid = grid,
+    };
+}
+
+/// The banner moved between its popup and the pane's tree (T2559): a shown
+/// wash follows it onto the path that can cover it there (T2618).
+pub fn bannerPathChanged(self: *Surface) void {
+    const d = self.dim_overlay orelse return;
+    d.setBand(self.dimBand());
+    if (d.reshow()) self.seatDimOverChrome();
 }
 
 /// Stack this pane's dim over its chrome popups, the way Mac's dim is the

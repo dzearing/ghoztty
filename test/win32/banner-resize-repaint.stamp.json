@@ -1,14 +1,13 @@
 {
     "guard":  "banner-resize-repaint",
     "script":  "test/win32/banner-resize-repaint.ps1",
-    "generated":  "2026-11-23T19:10:07-08:00",
-    "commit":  "338dc4c9e",
+    "generated":  "2026-11-26T23:47:24-08:00",
+    "commit":  "bfc3efeb8f",
     "uncommitted":  [
-                        "src/apprt/win32/BannerOverlay.zig",
-                        "test/win32/banner-resize-repaint.ps1"
+                        "src/apprt/win32/BannerOverlay.zig"
                     ],
     "files":  {
-                  "src/apprt/win32/BannerOverlay.zig":  "2da952dfc0099dcd58f72d5df810098c43830664f52947a4724dc34ad3568bfd",
+                  "src/apprt/win32/BannerOverlay.zig":  "0a652178c5c17f239e630c26cf1c47372c448a8c06f1b8243058b295aefca2c3",
                   "test/win32/banner-resize-repaint.ps1":  "98cd5883d482b80f74733ccb24ff1a80cf72d7e561b1c8c70f057c607e9c55ca"
               },
     "code":  {

@@ -1,8 +1,8 @@
 {
     "guard":  "shell-starting-folder",
     "script":  "test/win32/shell-starting-folder.ps1",
-    "generated":  "2026-11-26T15:35:42-08:00",
-    "commit":  "4a13c2a0a8",
+    "generated":  "2026-11-26T23:52:30-08:00",
+    "commit":  "bfc3efeb8f",
     "uncommitted":  [
                         "src/apprt/win32/Surface.zig"
                     ],
@@ -11,7 +11,7 @@
                   "src/apprt/win32/ipc_settings.zig":  "ef12fe96344dd8f29eb30daef0d269e6c7bcc161abb1130ae9ed72630c81a68c",
                   "src/apprt/win32/IpcHandlers.zig":  "f7ff6d0aef3d5d5adcacbd6878dcc38e5be6203236a8b4c581a3b93614145ba3",
                   "src/apprt/win32/SettingsWindow.zig":  "ad1799a9e54362ba27bfd02a42a8644b994f5a0d5107bb41070864033f14685a",
-                  "src/apprt/win32/Surface.zig":  "265296300274a5222e4ac81f7875b2d21c5774b1c8ff77ba2246bb6614cb9aa2",
+                  "src/apprt/win32/Surface.zig":  "685e447fa83d97de36cf87f227715bce1e31e1954e49241648ec933553210b5d",
                   "test/win32/shell-starting-folder.ps1":  "5b7ff11760cfc8f98304ab88112630eb20e9e5c461528d0761d51cd9ab7914a0"
               },
     "code":  {

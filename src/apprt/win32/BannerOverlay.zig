@@ -863,6 +863,9 @@ pub const BannerOverlay = struct {
             self.visual_press = .none;
             self.clearHover();
             log.info("banner path visual={}", .{want});
+            // An unfocused pane's wash covers a card in the tree from the
+            // tree, and a popup card only as a popup (T2618).
+            if (self.surface) |s| s.bannerPathChanged();
         }
         return want;
     }

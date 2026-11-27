@@ -592,7 +592,8 @@ try {
     $washes = @(Get-TestWindows -ProcessId $app.Pid -Class 'GhozttyDimOverlay' | Where-Object Visible)
     # On the composition path the wash is a visual in its pane (T2491), read
     # from the app's transition lines: shown less hidden is the washes up now.
-    # (s2 wears a banner, whose band keeps its wash on the popup.)
+    # (s2 wears a banner: drawn in the tree, it keeps the wash a visual too,
+    # T2618; a popup banner would put it back on the popup.)
     $visualWashes = [math]::Max(0, (Get-LogMatches 'dim overlay shown as visual') - (Get-LogMatches 'dim overlay hidden visual=true'))
     Say ("      P focused; {0} dim wash popup(s) on show, {1} shown as a visual" -f $washes.Count, $visualWashes)
     # Glass panes never dim (T2281, Mac 9da9618f8): there F6 still checks
