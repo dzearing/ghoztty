@@ -900,6 +900,12 @@ pub const Surface = extern struct {
         /// the core surface exists; `+list` reports it as `background_tint`.
         background_tint: ?color_math.Rgb = null,
 
+        /// The background a program set at runtime (OSC 11, or OSC 111's
+        /// reset), from the core's `color_change` action (T3719). A glass
+        /// sheet is tinted with it, since the renderer draws no background
+        /// on glass. A later `applyBackgroundTint` clears it.
+        runtime_background: ?color_math.Rgb = null,
+
         pub var offset: c_int = 0;
     };
 
@@ -1332,8 +1338,18 @@ pub const Surface = extern struct {
         const priv = self.private();
         if (priv.viewer != null) return;
         priv.background_tint = rgb;
+        // The tint is the newer colour now (T3719): the terminal shows it.
+        priv.runtime_background = null;
         if (priv.core_surface) |cs| applyTintToCore(cs, rgb);
         // A glass pane's sheet is this colour (T3622).
+        self.as(gtk.Widget).queueDraw();
+    }
+
+    /// A program changed the terminal's background (OSC 11 / OSC 111; the
+    /// core's `color_change` action, T3719). The renderer already shows it on
+    /// a solid card; a glass sheet is drawn here, so it must follow too.
+    pub fn setRuntimeBackground(self: *Self, rgb: color_math.Rgb) void {
+        self.private().runtime_background = rgb;
         self.as(gtk.Widget).queueDraw();
     }
 
@@ -1356,14 +1372,15 @@ pub const Surface = extern struct {
         if (self.private().viewer) |v| v.setOnGlass(self.isOnGlass());
     }
 
-    /// The terminal's background the sheet is tinted with: the pane's own
-    /// `--color` tint, else the configured background.
+    /// The terminal's background the sheet is tinted with: a colour a
+    /// program set (OSC 11, T3719), else the pane's own `--color` tint, else
+    /// the configured background (`pane_style.sheetBackground`).
     fn sheetBackground(self: *Self) color_math.Rgb {
-        if (self.private().background_tint) |rgb| return rgb;
+        const priv = self.private();
         const config_obj = Application.default().getConfig();
         defer config_obj.unref();
         const c = config_obj.get().background;
-        return .{ .r = c.r, .g = c.g, .b = c.b };
+        return pane_style.sheetBackground(priv.runtime_background, priv.background_tint, .{ .r = c.r, .g = c.g, .b = c.b });
     }
 
     /// The pane's glass sheet (Mac `PaneGlass`): the terminal's background at

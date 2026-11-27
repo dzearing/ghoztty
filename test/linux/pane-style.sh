@@ -5,7 +5,7 @@
 # around the edge, the focused pane of several is backlit with a brighter rim,
 # `macos-pane-style = flat` (on a reload too) puts the panes back square, one
 # 6px flat gutter apart (Mac flatGap), and `+new-window --color=random` gives the window its own gradient
-# instead of tinting the terminal. Glass panes (T3622, G1-G8): each pane is a
+# instead of tinting the terminal. Glass panes (T3622, G1-G8; OSC 11 T3719, G9-G10): each pane is a
 # sheet of its terminal's background at 40% over the desk (25% under a banner
 # card), focused or not, with no unfocused wash; a markdown viewer's page is
 # see-through over it; flat stays solid. The window paints the desk, so it runs
@@ -268,6 +268,27 @@ sleep 2
 s1=$(probe ${pts[0]})
 moved $s0 $s1 32 48 64 && ! moved ${before[0]} ${after[0]} 32 48 64
 hl_check "G7 control: with glass off the same probe moves by the whole background (solid), with glass on it did not" $? "solid ${s0// /,} -> ${s1// /,} | glass $(pair 0)"
+
+# A program sets the background at runtime (T3719): OSC 11 in pane b changes
+# only the terminal's own colour, which glass does not draw, so the sheet has
+# to follow it - by the same 40% of (32,48,64) a config change moves it - and
+# OSC 111 puts it back. Typed into b's shell (+send-keys turns `\\` into `\`).
+printf "$glass_cfg" > "$cfg_dir/config.ghostty"
+cli +reload --config > /dev/null 2>&1
+sleep 2
+read -r bx by bw bh <<< "$(geom "$b")"
+opt="$b $(( bx + bw / 2 )) $(( by + bh / 2 ))"
+o0=$(probe $opt)
+cli +send-keys --target="$b" "printf '\\\\033]11;#000000\\\\007'; clear" Enter > /dev/null 2>&1
+sleep 2
+o1=$(probe $opt)
+moved $o0 $o1 13 19 26
+hl_check "G9 OSC 11 in a glass pane moves its sheet by 40% of the background change (GTK color_change)" $? "b ${o0// /,} -> ${o1// /,}"
+cli +send-keys --target="$b" "printf '\\\\033]111\\\\007'; clear" Enter > /dev/null 2>&1
+sleep 2
+o2=$(probe $opt)
+moved $o0 $o2 0 0 0
+hl_check "G10 OSC 111 resets it: the sheet is the configured background's 40% again" $? "b ${o0// /,} -> ${o1// /,} -> ${o2// /,}"
 
 
 

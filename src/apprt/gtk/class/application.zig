@@ -1079,6 +1079,8 @@ pub const Application = extern struct {
             .search_total => Action.searchTotal(target, value),
             .search_selected => Action.searchSelected(target, value),
 
+            .color_change => return Action.colorChange(target, value),
+
             .pane_banner => return Action.paneBanner(target, value),
             .activity_state => return Action.activityState(target, value),
 
@@ -1091,7 +1093,6 @@ pub const Application = extern struct {
             .cell_size,
             .render_inspector,
             .renderer_health,
-            .color_change,
             .reset_window_size,
             .check_for_updates,
             => {
@@ -3391,6 +3392,21 @@ const Action = struct {
         switch (target) {
             .app => {},
             .surface => |v| v.rt_surface.surface.setBellRinging(true),
+        }
+    }
+
+    /// A program changed a terminal colour (OSC 10/11/12/4 and their
+    /// resets; T3719). Only the background matters to GTK: a glass pane's
+    /// sheet is tinted with it (Mac `SurfaceView.backgroundColor`). The
+    /// renderer already shows every one of them, so the rest are handled.
+    pub fn colorChange(target: apprt.Target, value: apprt.action.ColorChange) bool {
+        switch (target) {
+            .app => return false,
+            .surface => |v| {
+                if (value.kind == .background)
+                    v.rt_surface.surface.setRuntimeBackground(.{ .r = value.r, .g = value.g, .b = value.b });
+                return true;
+            },
         }
     }
 

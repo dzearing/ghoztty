@@ -190,6 +190,16 @@ pub fn sheetColor(bg: color_math.Rgb, under_banner: bool) SheetColor {
     };
 }
 
+/// The background a glass sheet is tinted with (T3719): the colour a program
+/// set at runtime (OSC 11, or OSC 111's reset to the default) when there is
+/// one, else the pane's `--color` tint, else the configured background. The
+/// renderer draws no background on glass, so this is the only place the
+/// terminal's background shows; a newer tint clears the runtime colour (the
+/// Mac's one `backgroundColor`, which the latest of the two sets).
+pub fn sheetBackground(runtime: ?color_math.Rgb, tint: ?color_math.Rgb, configured: color_math.Rgb) color_math.Rgb {
+    return runtime orelse tint orelse configured;
+}
+
 /// A rectangle in the pane's own coordinates.
 pub const Rect = struct { x: f32, y: f32, w: f32, h: f32 };
 
@@ -263,6 +273,16 @@ test "T3622: the sheet is the terminal background at 40%, 25% under a banner" {
     try testing.expectEqual(glass_tint, c.a);
     try testing.expectEqual(glass_banner_tint, sheetColor(.{ .r = 0, .g = 0, .b = 0 }, true).a);
     try testing.expect(glass_banner_tint < glass_tint);
+}
+
+test "T3719: a runtime background (OSC 11) beats the tint, which beats the config" {
+    const cfg: color_math.Rgb = .{ .r = 0x20, .g = 0x30, .b = 0x40 };
+    const tint: color_math.Rgb = .{ .r = 0x80, .g = 0x10, .b = 0x10 };
+    const osc: color_math.Rgb = .{ .r = 0, .g = 0, .b = 0 };
+    try testing.expectEqual(cfg, sheetBackground(null, null, cfg));
+    try testing.expectEqual(tint, sheetBackground(null, tint, cfg));
+    try testing.expectEqual(osc, sheetBackground(osc, tint, cfg));
+    try testing.expectEqual(osc, sheetBackground(osc, null, cfg));
 }
 
 test "T3622: the sheet's bands cover the pane once, the banner at its own tint" {
