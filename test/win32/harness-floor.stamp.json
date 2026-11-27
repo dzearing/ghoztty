@@ -1,8 +1,8 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-11-26T16:14:51-08:00",
-    "commit":  "0af324a895",
+    "generated":  "2026-11-26T16:54:46-08:00",
+    "commit":  "ad54ced7d1",
     "uncommitted":  [
 
                     ],

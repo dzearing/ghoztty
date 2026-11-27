@@ -41023,4 +41023,7 @@ WebKitGTK's script message carries no frame, and a page-world handler is visible
 ## 2026-11-26 16:13 lane a - T2483 parked: the T2428 re-measure needs a live input-desktop capture and the user is at the box
 - What: no code. Re-verified the card: the WGC probe T2418 scored with is gone, and any replacement photographs the real DWM composite at 4K, which only the input desktop has - an @input-desktop-exception by the same rule as frame-lab.ps1 and divider-flicker.ps1 -Live. Get-UserPresence read Present=True (input 198s ago). Added plain terms, goals and validation criteria; parked `blocked(needs the user to start the live run ...)`, blocked-on user, with unblock text and command.
 - Evidence: NOT RUN (the user is present).
+- Filed: T3834 (shipping: first tick waits behind the click pass's follow-on work), T3835 (tree: a declared curve's first composed frame shows its start pose; start new glides one period in).## 2026-11-26 16:25 lane b - T2486 closed as already fixed: the acceptance runners' idle hang detector was committed the evening it was found stranded
+- What: re-verification only. 15a81678e8 (2026-10-29 20:09) committed scripts/lib/TreeIdle.ps1 and its wiring into suite-run.ps1 and AcceptanceParallel.ps1; the card filed for the stranded working tree was never closed against it.
+- Evidence: both runners' New-TreeIdleWatch/Test-TreeIdle call sites read on disk; `acceptance-parallel.ps1 run -Scripts suite-run.ps1 -FailFast` PASS, ALL PASS (144 assertions, C5-C10 idle-kill section).
 - Filed: nothing new.
