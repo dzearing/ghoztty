@@ -1,0 +1,10 @@
+{
+  "version": "1.56.40",
+  "sections": [
+    { "title": "Fixes",
+      "items": [
+        { "text": "Strip names on a translucent window now reach the screen in the same paint as their strips, on the GDI path as well as the compositor's." },
+        { "text": "A folded pane on a raised card without glass is its own card again, not a darker bar." }
+      ] }
+  ]
+}
