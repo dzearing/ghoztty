@@ -1,13 +1,13 @@
 {
     "guard":  "conformance",
     "script":  "test/win32/conformance.ps1",
-    "generated":  "2026-11-25T21:35:05-08:00",
-    "commit":  "bbacdece43",
+    "generated":  "2026-11-27T03:32:31-08:00",
+    "commit":  "3bc0718992",
     "uncommitted":  [
-                        "src/apprt/win32/IpcHandlers.zig"
+
                     ],
     "files":  {
-                  "src/apprt/win32/IpcHandlers.zig":  "f7ff6d0aef3d5d5adcacbd6878dcc38e5be6203236a8b4c581a3b93614145ba3",
+                  "src/apprt/win32/IpcHandlers.zig":  "8a058458367ed01d03ce5384b15ced2cbdf1edc0e34d3c0ff8ff07db83cc914f",
                   "test/win32/conformance.ps1":  "967bda84b6004011c79ed51857454d16f3309bec872455509b24c720ed0e52af"
               },
     "code":  {

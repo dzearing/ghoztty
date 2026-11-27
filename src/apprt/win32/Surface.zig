@@ -5932,6 +5932,10 @@ fn fillUncoveredStrips(self: *Surface, width: u32, height: u32) void {
         };
         _ = w32.FillRect(dc, &rect, brush);
     }
+    // Oracle for plain-child-strip-fill.ps1 (T2630): which panes got the
+    // fill, and on which layer. The strips are sub-frame on screen, so the
+    // decision is stated rather than photographed (the T1031 shape).
+    log.debug("pane strip fill layered={} strips={d}", .{ self.own_layer, r.len });
 }
 
 /// Handle WM_SIZE.
@@ -5964,7 +5968,13 @@ pub fn handleResize(self: *Surface, width: u32, height: u32) void {
         Window.batch_cost.size_qpc += t_end - cost_t[0];
         Window.batch_cost.fill_qpc += cost_t[2] - cost_t[1];
     };
-    if (self.own_layer and (self.in_live_resize or self.parent_window.in_live_layout)) {
+    // T2630: a plain child (`GHOZTTY_PANE_LAYER=0`) gets the same fill: its
+    // grown strip shows the top-level's stale pixels instead of black.
+    if (resize_paint.fillsUncoveredStrips(.{
+        .live = self.in_live_resize or self.parent_window.in_live_layout,
+        .presents_into_window = self.parent_window.presenter == null and !self.spans_banner_band,
+        .translucent = self.parent_window.translucent or self.app.config.@"background-opacity" < 1.0,
+    })) {
         if (cost_on) _ = w32.QueryPerformanceCounter(&cost_t[1]);
         self.fillUncoveredStrips(width, height);
         if (cost_on) _ = w32.QueryPerformanceCounter(&cost_t[2]);

@@ -265,6 +265,11 @@
             "unset": "shipped-elsewhere",
             "note": "T2514/T2747: explicit 0 or 1 picks the WGL or composition present; unset is the build's default (default_on in gl_comp_present.zig), which every harness that does not set it runs. Harnesses whose subject is the popup path pin 0; pane-banner section 13 and comp-present pin 1."
         },
+        "GHOZTTY_PANE_LAYER": {
+            "class": "enable",
+            "unset": "shipped-elsewhere",
+            "note": "T2499/T2502: 0 makes a WGL terminal pane a plain child instead of its own opaque layer (escape hatch, A/B runs); unset is the shipped default (layered where the pane presents into its window), which every harness that does not set it runs. plain-child-strip-fill.ps1 section A pins 0 (T2630)."
+        },
         "GHOZTTY_COMP_SHARED_DEVICE": {
             "class": "enable",
             "unset": "shipped-elsewhere",

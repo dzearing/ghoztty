@@ -9087,6 +9087,17 @@ $GuardTable = @(
             'test\win32\resize-flicker.ps1'
         )
     },
+    # T2630: a plain-child pane (GHOZTTY_PANE_LAYER=0) gets its uncovered
+    # strips filled under a held divider drag, the same as a layered one.
+    [pscustomobject]@{
+        Name   = 'plain-child-strip-fill'
+        Script = 'test\win32\plain-child-strip-fill.ps1'
+        Stamp  = 'test\win32\plain-child-strip-fill.stamp.json'
+        Covers = @(
+            'src\apprt\win32\resize_paint.zig',
+            'test\win32\plain-child-strip-fill.ps1'
+        )
+    },
     # T1835: how many resizes a divider drag or a window resize delivers to the
     # PROGRAM in the pane (counted by the program, from its console input), that
     # the last size always lands, and that no size overlay shows by default.

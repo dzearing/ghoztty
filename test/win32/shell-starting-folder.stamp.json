@@ -1,17 +1,17 @@
 {
     "guard":  "shell-starting-folder",
     "script":  "test/win32/shell-starting-folder.ps1",
-    "generated":  "2026-11-27T02:02:05-08:00",
-    "commit":  "62504c069c",
+    "generated":  "2026-11-27T03:42:45-08:00",
+    "commit":  "3bc0718992",
     "uncommitted":  [
-                        "src/apprt/win32/IpcHandlers.zig"
+                        "src/apprt/win32/Surface.zig"
                     ],
     "files":  {
                   "src/apprt/ipc/shell_folder.zig":  "d1362d255ab8670a2dc80b122db6903f3c03e99a88a50bc128f6dd35d1f01741",
                   "src/apprt/win32/ipc_settings.zig":  "ef12fe96344dd8f29eb30daef0d269e6c7bcc161abb1130ae9ed72630c81a68c",
                   "src/apprt/win32/IpcHandlers.zig":  "8a058458367ed01d03ce5384b15ced2cbdf1edc0e34d3c0ff8ff07db83cc914f",
                   "src/apprt/win32/SettingsWindow.zig":  "ad1799a9e54362ba27bfd02a42a8644b994f5a0d5107bb41070864033f14685a",
-                  "src/apprt/win32/Surface.zig":  "685e447fa83d97de36cf87f227715bce1e31e1954e49241648ec933553210b5d",
+                  "src/apprt/win32/Surface.zig":  "b7f62f3aa06ff1c2f270a1956fe0e7afcdd99180f256807f325abb0e3592013a",
                   "test/win32/shell-starting-folder.ps1":  "5b7ff11760cfc8f98304ab88112630eb20e9e5c461528d0761d51cd9ab7914a0"
               },
     "code":  {

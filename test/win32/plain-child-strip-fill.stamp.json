@@ -1,0 +1,17 @@
+{
+    "guard":  "plain-child-strip-fill",
+    "script":  "test/win32/plain-child-strip-fill.ps1",
+    "generated":  "2026-11-27T03:24:41-08:00",
+    "commit":  "3bc0718992",
+    "uncommitted":  [
+                        "src/apprt/win32/resize_paint.zig",
+                        "test/win32/plain-child-strip-fill.ps1"
+                    ],
+    "files":  {
+                  "src/apprt/win32/resize_paint.zig":  "df6bc5ae70bc2cd3a372d4715c57823854f70e535925ee1515d4e3400b503007",
+                  "test/win32/plain-child-strip-fill.ps1":  "7292d694f65ae52ba6caf3794ad2d165b45ddf09fffef2643b9dabbaa93c647c"
+              },
+    "code":  {
+                 "test/win32/plain-child-strip-fill.ps1":  "code1:81b88a0fcd32787699bb8d724fdf46f4a6e03339a11cc26e51fed39fada1f3ee"
+             }
+}

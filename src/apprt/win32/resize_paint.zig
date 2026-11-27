@@ -165,6 +165,32 @@ pub fn gridHeight(client_h: u32, band: u32) u32 {
     return if (client_h > band) client_h - band else 1;
 }
 
+/// What decides whether a pane's `WM_SIZE` lays the uncovered-strip fill.
+pub const StripFill = struct {
+    /// A resize or layout pass is live: a window edge drag (T2623's held
+    /// grid) or a divider drag / glide.
+    live: bool,
+    /// The pane presents into its own window's pixels: it is not on the
+    /// window presenter (T2610) nor the composition path (T2515), both of
+    /// which place the held frame themselves.
+    presents_into_window: bool,
+    /// The window is translucent (`background-opacity` < 1): an opaque GDI
+    /// fill there would stop the desktop showing through the grown strip.
+    translucent: bool,
+};
+
+/// Whether `uncoveredStrips` gets the background fill (T2485 D18, T2630).
+///
+/// The layer the pane presents on does not matter. A layered pane (T2499)
+/// shows pure black beyond its old frame; a plain child (`GHOZTTY_PANE_LAYER=0`)
+/// shows whatever its top-level's redirection surface held there - the
+/// neighbour's stale pixels or the desk - until the renderer presents at the
+/// new size, which under a held grid is the settle, not the next tick. Both
+/// want the same strip of background, laid the same way.
+pub fn fillsUncoveredStrips(s: StripFill) bool {
+    return s.live and s.presents_into_window and !s.translucent;
+}
+
 pub fn uncoveredStrips(presented: u64, width: u32, height: u32) Uncovered {
     var out: Uncovered = .{ .len = 0, .strips = undefined };
     if (presented == 0) return out;
@@ -385,6 +411,18 @@ test "a pane that shrank, held still, or never presented gets no fill" {
     const r = uncoveredStrips(packSize(900, 700), 870, 720);
     try std.testing.expectEqual(@as(u8, 1), r.len);
     try std.testing.expectEqual(Strip{ .left = 0, .top = 700, .right = 870, .bottom = 720 }, r.strips[0]);
+}
+
+test "T2630: a plain-child pane gets the strip fill under a live pass, the same as a layered one" {
+    // The rule no longer asks which layer the pane is on: an opaque pane that
+    // presents into its window is filled under a held drag either way.
+    try std.testing.expect(fillsUncoveredStrips(.{ .live = true, .presents_into_window = true, .translucent = false }));
+    // Not live: the resize's own frame lands at once, nothing to cover.
+    try std.testing.expect(!fillsUncoveredStrips(.{ .live = false, .presents_into_window = true, .translucent = false }));
+    // The window presenter / composition path places the held frame itself.
+    try std.testing.expect(!fillsUncoveredStrips(.{ .live = true, .presents_into_window = false, .translucent = false }));
+    // A translucent window keeps its see-through strip rather than an opaque one.
+    try std.testing.expect(!fillsUncoveredStrips(.{ .live = true, .presents_into_window = true, .translucent = true }));
 }
 
 test "a batch's held resizes keep one entry per pane, at its last size, in arrival order" {
