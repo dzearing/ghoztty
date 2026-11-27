@@ -203,6 +203,8 @@ pub const SplitTree = extern struct {
         stage: ?*wk.GtkWidget = null,
         /// Each pane's strip face on the stage, by pane id.
         faces: std.AutoHashMapUnmanaged(pane_stack_layout.Id, *wk.GtkWidget) = .empty,
+        /// Each pane's blade shadow on the stage, by pane id (T3729).
+        blades: std.AutoHashMapUnmanaged(pane_stack_layout.Id, Blade) = .empty,
         /// The focus history and the rows the user collapsed (Mac
         /// `PaneStackState`). Lives as long as the tab.
         stacks: ?pane_stack_state.PaneStackState = null,
@@ -882,6 +884,28 @@ pub const SplitTree = extern struct {
 
     const strip_class: [:0]const u8 = "pane-strip";
     const bar_class: [:0]const u8 = "gutter-bar";
+    /// A strip's title gives way on its tucked side (T3729): the label's
+    /// own top or bottom, `pane_stage.labelTuck`.
+    const tuck_top_class: [:0]const u8 = "pane-strip-tuck-top";
+    const tuck_bottom_class: [:0]const u8 = "pane-strip-tuck-bottom";
+
+    /// A strip's blade shadow (T3729; docs/reference/stacked-panes.md
+    /// "Strips are blades"): a picture just under its face, holding
+    /// `blade_shadow`'s pixels for the strip (or for a card gliding into or
+    /// out of it, at its collapse). Redrawn only when `key` changes.
+    const Blade = struct {
+        pic: *wk.GtkWidget,
+        key: ?pane_stage.ShadowKey = null,
+        /// What the seam reports: the face and the shadow's caster as last
+        /// placed, and the collapse it was cast at; null while hidden.
+        face: ?pane_stack_grid.PxRect = null,
+        caster: ?pane_stack_grid.PxRect = null,
+        collapse: f64 = 0,
+    };
+
+    /// GtkPicture's `GTK_CONTENT_FIT_FILL`: the texture is exactly the
+    /// allocation at the device scale, so nothing is resampled.
+    const content_fit_fill: c_int = 0;
 
     fn paneKey(s: *Surface) pane_stack_layout.Id {
         return @intFromPtr(s);
@@ -921,9 +945,19 @@ pub const SplitTree = extern struct {
 
         const alloc = Application.default().allocator();
         priv.faces.clearRetainingCapacity();
+        priv.blades.clearRetainingCapacity();
         var it = tree.iterator();
         while (it.next()) |entry| {
             if (pane_stash.isStashed(entry.view)) continue; // T3596: no card, no strip
+            // Its blade shadow, under the face (T3729): never a target, so
+            // a press passes to whatever it darkens.
+            const pic = wk.gtk_picture_new_for_paintable(null);
+            wk.gtk_picture_set_content_fit(pic, content_fit_fill);
+            wk.gtk_picture_set_can_shrink(pic, 1);
+            wk.gtk_widget_set_can_target(pic, 0);
+            wk.gtk_widget_set_child_visible(pic, 0);
+            wk.gtk_box_append(stage, pic);
+            priv.blades.put(alloc, paneKey(entry.view), .{ .pic = pic }) catch {};
             const face = wk.gtk_label_new(null);
             wk.gtk_widget_add_css_class(face, strip_class);
             wk.gtk_label_set_ellipsize(face, 3); // PANGO_ELLIPSIZE_END
@@ -1112,9 +1146,11 @@ pub const SplitTree = extern struct {
             const id = paneKey(entry.view);
             const card: *wk.GtkWidget = @ptrCast(cardOf(entry.view));
             const face = priv.faces.get(id);
+            const blade = priv.blades.getPtr(id);
             const p = grid.placement(id) orelse {
                 wk.gtk_widget_set_child_visible(card, 0);
                 if (face) |f| wk.gtk_widget_set_child_visible(f, 0);
+                if (blade) |b| hideBlade(b);
                 continue;
             };
             const axis = p.tab_axis orelse .horizontal;
@@ -1127,17 +1163,25 @@ pub const SplitTree = extern struct {
                 const cut = hasCardLayout(card);
                 var content_alpha: f64 = 1;
                 if (s.stripFace(id)) |sf| {
-                    const fa = pane_stage.fadeAt(pane_stack_slide.collapse(
+                    const collapse = pane_stack_slide.collapse(
                         pane_stack_slide.Edges.of(sf.card).extent(),
                         fade.strip,
                         fade.span,
-                    ));
+                    );
+                    const fa = pane_stage.fadeAt(collapse);
                     content_alpha = fa.content;
                     if (face) |f| {
-                        placeFace(f, sf.card, sf.axis, entry.view, home);
+                        placeFace(f, sf.card, sf.axis, .none, entry.view, home);
                         wk.gtk_widget_set_opacity(f, fa.face);
                     }
-                } else if (face) |f| wk.gtk_widget_set_child_visible(f, 0);
+                    // The blade's shadow comes on as the card narrows into
+                    // its strip, not when the glide lands (T3729).
+                    if (blade) |b| placeBlade(b, stage, sf.card, sf.axis, sf.leads, collapse, look.is_light);
+                    if (blade) |b| b.face = if (face != null) sf.card else null;
+                } else {
+                    if (face) |f| wk.gtk_widget_set_child_visible(f, 0);
+                    if (blade) |b| hideBlade(b);
+                }
                 wk.gtk_widget_set_child_visible(card, 1);
                 wk.gtk_widget_set_opacity(cardContent(card), content_alpha);
                 // The card cuts a held pane whichever the style.
@@ -1163,9 +1207,13 @@ pub const SplitTree = extern struct {
                 // Minimized: the card keeps its last size on show, out of
                 // sight, and its strip's face takes its place.
                 wk.gtk_widget_set_child_visible(card, 0);
-                const f = face orelse continue;
+                const f = face orelse {
+                    if (blade) |b| hideBlade(b);
+                    continue;
+                };
                 const laid = p.tab orelse {
                     wk.gtk_widget_set_child_visible(f, 0);
+                    if (blade) |b| hideBlade(b);
                     continue;
                 };
                 const leads = p.strip_leads orelse true;
@@ -1173,10 +1221,19 @@ pub const SplitTree = extern struct {
                 // glide has it, its reach under a newcomer held until the
                 // glide is over (`Slide.shownStrip`).
                 const tab = if (slide) |s| s.shownStrip(id, laid, axis, leads) else laid;
-                placeFace(f, pane_stage.stripFace(tab, leads, p.strip_tuck, axis), axis, entry.view, home);
+                // A blade (T3729): its face is its whole tab, the part
+                // reaching under the strip in front covered by that one
+                // (paint order), its title centred on what shows, and its
+                // shadow cast on the blade behind it.
+                placeFace(f, tab, axis, pane_stage.labelTuck(leads, p.strip_tuck, axis), entry.view, home);
+                if (blade) |b| {
+                    placeBlade(b, stage, tab, axis, leads, 1, look.is_light);
+                    b.face = tab;
+                }
                 continue;
             }
             if (face) |f| wk.gtk_widget_set_child_visible(f, 0);
+            if (blade) |b| hideBlade(b);
             wk.gtk_widget_set_child_visible(card, 1);
             allocateCard(card, pane_stage.cardAllocation(p.rect, elevated));
         }
@@ -1245,8 +1302,10 @@ pub const SplitTree = extern struct {
 
     /// Show `f`, a strip's face, over `fr`, named by the sidebar row's rule
     /// and turned to run down a vertical strip.
-    fn placeFace(f: *wk.GtkWidget, fr: pane_stack_grid.PxRect, axis: pane_stack_layout.Direction, view: *Surface, home: ?[]const u8) void {
+    fn placeFace(f: *wk.GtkWidget, fr: pane_stack_grid.PxRect, axis: pane_stack_layout.Direction, tuck: pane_stage.LabelTuck, view: *Surface, home: ?[]const u8) void {
         labelFace(f, view, home);
+        setClass(f, tuck_top_class, tuck == .top);
+        setClass(f, tuck_bottom_class, tuck == .bottom);
         wk.gtk_widget_set_child_visible(f, 1);
         const lp = pane_stage.labelPlacement(fr, axis);
         var min_w: c_int = 0;
@@ -1256,6 +1315,51 @@ pub const SplitTree = extern struct {
         var tr = wk.gsk_transform_translate(null, &.{ .x = lp.tx, .y = lp.ty });
         if (lp.rotate) tr = wk.gsk_transform_rotate(tr, 90);
         wk.gtk_widget_allocate(f, @max(lp.w, min_w), @max(lp.h, min_h), -1, tr);
+    }
+
+    /// Cast `b`'s shadow from `caster` (stage coordinates: a strip's tab, or
+    /// a card gliding into or out of it) at `collapse` (T3729). The picture
+    /// is the caster grown by the shadow's reach; its texture is redrawn
+    /// only when the shadow would look different, so a strip that only
+    /// moves keeps it.
+    fn placeBlade(
+        b: *Blade,
+        stage: *wk.GtkWidget,
+        caster: pane_stack_grid.PxRect,
+        axis: pane_stack_layout.Direction,
+        leads: bool,
+        collapse: f64,
+        is_light: bool,
+    ) void {
+        if (collapse <= 0 or caster.width() <= 0 or caster.height() <= 0) return hideBlade(b);
+        const scale = @max(wk.gtk_widget_get_scale_factor(stage), 1);
+        const img = pane_stage.shadowImage(caster, scale);
+        if (img.w == 0 or img.h == 0) return hideBlade(b);
+        const key = pane_stage.ShadowKey.of(caster, scale, axis, leads, collapse, is_light);
+        const fresh = if (b.key) |k| !std.meta.eql(k, key) else true;
+        if (fresh) {
+            const buf = std.heap.c_allocator.alloc(u32, img.w * img.h) catch return hideBlade(b);
+            defer std.heap.c_allocator.free(buf);
+            pane_stage.renderShadow(buf, img, caster, axis, leads, collapse, is_light);
+            const bytes = wk.g_bytes_new(buf.ptr, buf.len * 4);
+            defer wk.g_bytes_unref(bytes);
+            const tex = wk.gdk_memory_texture_new(@intCast(img.w), @intCast(img.h), wk.GDK_MEMORY_B8G8R8A8_PREMULTIPLIED, bytes, img.w * 4) orelse return hideBlade(b);
+            defer wk.g_object_unref(tex);
+            wk.gtk_picture_set_paintable(b.pic, tex);
+            b.key = key;
+        }
+        wk.gtk_widget_set_child_visible(b.pic, 1);
+        const tr = wk.gsk_transform_translate(null, &.{ .x = @floatFromInt(img.rect.left), .y = @floatFromInt(img.rect.top) });
+        wk.gtk_widget_allocate(b.pic, img.rect.width(), img.rect.height(), -1, tr);
+        b.caster = caster;
+        b.collapse = collapse;
+    }
+
+    fn hideBlade(b: *Blade) void {
+        wk.gtk_widget_set_child_visible(b.pic, 0);
+        b.face = null;
+        b.caster = null;
+        b.collapse = 0;
     }
 
     // ---- Glides: a change in what is on show (T3625) ----------------------
@@ -1443,7 +1547,7 @@ pub const SplitTree = extern struct {
             n += 1;
         }
         pane_stack_layout.paintOrder(ids[0..n], &grid.result);
-        var order: [2 * pane_stack_slide.max_cards]*wk.GtkWidget = undefined;
+        var order: [3 * pane_stack_slide.max_cards]*wk.GtkWidget = undefined;
         var m: usize = 0;
         for (ids[0..n]) |id| {
             const view: *Surface = for (views[0..n]) |v| {
@@ -1453,6 +1557,12 @@ pub const SplitTree = extern struct {
             if (wk.gtk_widget_get_parent(card) != stage) continue;
             order[m] = card;
             m += 1;
+            // Its blade shadow over every blade further out, under its own
+            // face (T3729).
+            if (priv.blades.get(id)) |b| {
+                order[m] = b.pic;
+                m += 1;
+            }
             if (priv.faces.get(id)) |f| {
                 order[m] = f;
                 m += 1;
@@ -1996,6 +2106,16 @@ pub const SplitTree = extern struct {
             /// The label its strip face shows now (T3629), null when no face
             /// is on show.
             label: ?[]const u8 = null,
+            /// Its strip face as drawn (T3729): the whole tab, overlapping
+            /// the strip in front by its tuck; null when no face shows.
+            face: ?[4]i32 = null,
+            /// The tucked side its title gives way on (`none|top|bottom`, in
+            /// the label's own turned coordinates).
+            tuck: []const u8 = "none",
+            /// What its blade shadow is cast from and at what collapse
+            /// (T3729); null when it casts none.
+            shadow: ?[4]i32 = null,
+            shadow_collapse: ?f64 = null,
         };
         pub const Gutter = struct { kind: []const u8, direction: []const u8, rect: [4]i32 };
         /// The gutter bar (T3626): the gutter it is lit in as laid out, the
@@ -2049,7 +2169,18 @@ pub const SplitTree = extern struct {
                 break :blk pane_stack_slide.collapse(pane_stack_slide.Edges.of(sf.card).extent(), f.strip, f.span);
             } else null else null;
             const card: *wk.GtkWidget = @ptrCast(cardOf(entry.view));
+            const blade = priv.blades.get(id);
+            const face_w = priv.faces.get(id);
+            const face_on = if (face_w) |f| wk.gtk_widget_get_child_visible(f) != 0 else false;
+            const tuck: []const u8 = if (face_w) |f|
+                (if (wk.gtk_widget_has_css_class(f, tuck_top_class) != 0) "top" else if (wk.gtk_widget_has_css_class(f, tuck_bottom_class) != 0) "bottom" else "none")
+            else
+                "none";
             try panes.append(arena, .{
+                .face = if (face_on) if (blade) |b| if (b.face) |r| rectArr(r) else null else null else null,
+                .tuck = tuck,
+                .shadow = if (blade) |b| if (b.caster) |r| rectArr(r) else null else null,
+                .shadow_collapse = if (blade) |b| if (b.caster != null) b.collapse else null else null,
                 .pane = try arena.dupe(u8, entry.view.paneId()),
                 .minimized = mini,
                 .focused = focused == entry.view,
@@ -2163,6 +2294,7 @@ pub const SplitTree = extern struct {
         priv.pointer = null;
         priv.last_press = null;
         priv.faces.clearRetainingCapacity();
+        priv.blades.clearRetainingCapacity();
         if (priv.grid) |*g| g.deinit();
         priv.grid = null;
     }
@@ -3096,6 +3228,8 @@ pub const SplitTree = extern struct {
         self.dropStage();
         priv.faces.deinit(Application.default().allocator());
         priv.faces = .empty;
+        priv.blades.deinit(Application.default().allocator());
+        priv.blades = .empty;
         priv.held.deinit(Application.default().allocator());
         priv.held = .empty;
         priv.holds.deinit(Application.default().allocator());

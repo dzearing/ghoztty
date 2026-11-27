@@ -291,20 +291,34 @@ tabbar tab.pane-drag-dwell {
   padding: 0 10px;
 }
 
+/*
+ * Strips are blades (T3729): a strip reaches 12px (the engine's blade tuck,
+ * pane_stage_rules.strip_tuck_css_px) under the strip in front of it, so its
+ * title gives way on that side and stays centred on what shows. Top/bottom
+ * are the LABEL's own: a row's strip is turned 90 degrees.
+ */
+.pane-strip.pane-strip-tuck-top {
+  padding-top: 12px;
+}
+
+.pane-strip.pane-strip-tuck-bottom {
+  padding-bottom: 12px;
+}
+
+/* Each strip's shadow is its blade shadow, drawn under it by the split tree
+ * (pane_stage_rules.renderShadow), so the face itself casts none. */
 .pane-elevated .pane-strip {
   border-radius: 11px;
   outline-style: solid;
   outline-width: 1px;
   outline-offset: -1px;
   outline-color: rgba(255, 255, 255, 0.10);
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.30);
 }
 
 .pane-elevated.pane-desk-light .pane-strip {
   background-color: rgba(246, 247, 250, 0.94);
   color: rgba(0, 0, 0, 0.78);
   outline-color: rgba(0, 0, 0, 0.10);
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12);
 }
 
 .pane-elevated.pane-desk-light .pane-card.pane-focused {
