@@ -2011,6 +2011,10 @@ pub const Window = extern struct {
     fn movePaneToNewTab(self: *Self, source: *SplitTree, surface: *Surface, position: usize) bool {
         _ = surface.ref();
         defer surface.unref();
+        // One undoable step (T3706): undo puts the pane back and closes the
+        // tab this made.
+        const recording = CloseUndo.beginMove(&.{source}, surface.paneId());
+        defer if (recording) CloseUndo.endMove();
         const released = source.releaseSurface(surface) catch false;
         if (!released) return false;
         const tab = Tab.newAdopting(self.private().config, surface) catch |err| {
@@ -2021,6 +2025,7 @@ pub const Window = extern struct {
         };
         const n = self.private().tab_view.getNPages();
         _ = self.attachTabPage(tab, @intCast(@min(@as(c_int, @intCast(position)), n)));
+        CloseUndo.moveCreated(tab.getSplitTree());
         tab.getSplitTree().focusSurface(surface);
         return true;
     }
@@ -2039,6 +2044,11 @@ pub const Window = extern struct {
         defer source_window.as(gobject.Object).unref();
         const source_mode = source_window.rearrangeMode();
 
+        // One undoable step (T3706): undo puts the pane back - reopening a
+        // tab or window this emptied - and closes the tab (or the pop-out
+        // window) this made.
+        const recording = CloseUndo.beginMove(&.{home.tree}, surface.paneId());
+        defer if (recording) CloseUndo.endMove();
         const taken = home.tree.takeSurface(surface) catch false;
         if (!taken) return false;
         const tab = Tab.newAdopting(self.private().config, surface) catch |err| {
@@ -2047,6 +2057,7 @@ pub const Window = extern struct {
         };
         const n = self.private().tab_view.getNPages();
         _ = self.attachTabPage(tab, @intCast(@min(@as(c_int, @intCast(position)), n)));
+        CloseUndo.moveCreated(tab.getSplitTree());
         tab.getSplitTree().focusSurface(surface);
         self.finishArrival(&.{surface}, source_mode);
         return true;

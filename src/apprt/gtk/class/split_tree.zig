@@ -524,6 +524,9 @@ pub const SplitTree = extern struct {
                     const h = pane_drop_apply.handleOf(Surface.Tree, &t, surfaceId, dragged_id) orelse break :dragged null;
                     break :dragged t.nodes[h.idx()].leaf;
                 };
+                // One undoable step (T3706, Mac "Move Pane").
+                const recording = CloseUndo.beginMove(&.{self}, dragged_id);
+                defer if (recording) CloseUndo.endMove();
                 self.rearrange(&t);
                 const lands_on_show = if (target == .reorder) shown: {
                     // A strip dropped among the cards on show takes focus; one
@@ -599,6 +602,11 @@ pub const SplitTree = extern struct {
                     const h = pane_drop_apply.handleOf(Surface.Tree, &m.source, surfaceId, target.swap.pane) orelse break :partner null;
                     break :partner m.source.nodes[h.idx()].leaf;
                 };
+                // One undoable step across both trees (T3706, Mac
+                // `crossWindowCommit`): a tab - or window - this empties is
+                // kept for the undo instead of destroyed.
+                const recording = CloseUndo.beginMove(&.{ source, self }, dragged_id);
+                defer if (recording) CloseUndo.endMove();
                 // The source first: it may empty, and its tab then closes;
                 // the pane lives on in `m.dest` meanwhile.
                 source.rearrange(&m.source);

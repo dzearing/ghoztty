@@ -697,6 +697,9 @@ test {
     // and divider inserts, and the in-place drop that does nothing (T3564).
     // No GTK imports.
     _ = @import("gtk/pane_drop_apply.zig");
+    // Undoing a pane move: every tree it touched rebuilt together, by pane
+    // identity (T3706). No GTK imports.
+    _ = @import("gtk/move_undo_rules.zig");
     // The card a pane drag carries: its size, hot spot and colours (T3617).
     // No GTK imports.
     _ = @import("gtk/pane_ghost_rules.zig");

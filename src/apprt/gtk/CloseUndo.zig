@@ -59,6 +59,7 @@ const close_undo = @import("../win32/close_undo.zig");
 const layout_undo = @import("../win32/layout_undo.zig");
 const pane_id = @import("../ipc/pane_id.zig");
 const pane_stack_state = @import("../win32/pane_stack_state.zig");
+const move_undo_rules = @import("move_undo_rules.zig");
 
 const log = std.log.scoped(.gtk_close_undo);
 
@@ -121,6 +122,39 @@ const Entry = union(enum) {
     layout_redo: struct { after: Shape, home: *Home },
     /// Redo: close that window again (T3665).
     window_redo: struct { window: *WindowRef },
+    /// Undo or redo: put back the trees a pane drag changed (T3706). The
+    /// same shape on both stacks - applying one records its mirror image.
+    move: Move,
+};
+
+/// One tree a pane move touched, as it was before (T3706).
+const MoveSide = struct {
+    home: *Home,
+    /// The tree by pane identity; empty for a tab the move created.
+    shape: Shape,
+    /// Its stacked rows (T3627). Owned.
+    stack: ?pane_stack_state.Saved,
+};
+
+/// A tab or window the move EMPTIED, kept so the undo can bring it back.
+const MoveParked = union(enum) {
+    /// Out of its window's tab view; holds ONE reference.
+    tab: struct { tab: *Tab, window: *WindowRef, position: c_int },
+    /// Parked (hidden, out of the app's list); holds ONE reference.
+    window: *Window,
+};
+
+/// A pane drag as one undoable step (T3706; Mac `PaneMoveCoordinator`,
+/// undo action "Move Pane").
+const Move = struct {
+    /// Owned.
+    sides: []MoveSide,
+    /// Owned.
+    parked: []MoveParked,
+    /// The pane that takes focus when this is applied.
+    focus: ?pane_id.Buf,
+    /// The pane the mirror image focuses.
+    refocus: ?pane_id.Buf,
 };
 
 const Stack = close_undo.Stack(Entry);
@@ -299,6 +333,34 @@ fn finalize(entry: *Entry) void {
             r.after.deinit(alloc);
             freeHome(r.home);
         },
+        .move => |*m| {
+            freeMoveSides(m.sides);
+            for (m.parked) |p| endMoveParked(p);
+            alloc.free(m.parked);
+        },
+    }
+}
+
+fn freeMoveSide(s: *MoveSide) void {
+    const alloc = gpa();
+    s.shape.deinit(alloc);
+    if (s.stack) |*st| st.deinit(alloc);
+    freeHome(s.home);
+}
+
+fn freeMoveSides(sides: []MoveSide) void {
+    for (sides) |*s| freeMoveSide(s);
+    gpa().free(sides);
+}
+
+/// A tab or window a move emptied ends: nothing runs in it.
+fn endMoveParked(p: MoveParked) void {
+    switch (p) {
+        .tab => |t| {
+            endTab(t.tab);
+            freeWindowRef(t.window);
+        },
+        .window => |w| endWindow(w),
     }
 }
 
@@ -438,6 +500,7 @@ pub fn parkClosedPane(
 /// the window, which is not undoable here yet), or nothing in it is still
 /// running - then the close is the immediate one it always was.
 pub fn parkTab(window: *Window, tab: *Tab, position: c_int) bool {
+    if (captureMovedTab(window, tab, position)) return true;
     if (timeoutMs() == null) return false;
     if (window.getTabView().getNPages() <= 1) return false;
     const tree = tab.getSurfaceTree() orelse return false;
@@ -494,6 +557,7 @@ pub fn canParkWindow(window: *Window) bool {
 /// tab and shell intact, and the caller must NOT close it; false means
 /// close it as before (see `canParkWindow`).
 pub fn parkWindow(window: *Window) bool {
+    if (captureMovedWindow(window)) return true;
     if (!canParkWindow(window)) return false;
     if (!push(&undos, shared_owner, .{ .window = .{ .window = window.ref() } })) {
         window.unref();
@@ -598,6 +662,305 @@ pub fn rearrange(split_tree: *SplitTree, new_tree: *const Tree) void {
 }
 
 // ---------------------------------------------------------------------------
+// Pane moves (T3706)
+//
+// A pane drag changes one tree (a drop in its own tab) or two (another tab,
+// another window), and may empty a tab - closing it - and with it a window.
+// Mac undoes all of that as ONE step ("Move Pane"). Here a drag's commit is
+// bracketed by `beginMove` / `endMove`: the first records each tree's shape
+// by pane id, and while it is open a tab or window the move empties is kept
+// rather than destroyed (`parkTab` / `parkWindow` hand it to the open move).
+// Undo rebuilds every tree together (`move_undo_rules.rebuildAcross`), so a
+// pane goes back to the tree it left, puts back what was emptied, and
+// records the mirror image the same way - which is the redo, and which in
+// turn keeps a tab or window the UNDO empties (a drag's new tab or window).
+
+const MoveTx = struct {
+    sides: std.ArrayListUnmanaged(MoveSide) = .empty,
+    parked: std.ArrayListUnmanaged(MoveParked) = .empty,
+    windows: std.ArrayListUnmanaged(usize) = .empty,
+    focus: ?pane_id.Buf = null,
+    refocus: ?pane_id.Buf = null,
+    /// Something could not be recorded: the move happens, unrecorded.
+    failed: bool = false,
+};
+
+var move_tx: ?MoveTx = null;
+
+fn idBuf(id: []const u8) ?pane_id.Buf {
+    if (id.len != pane_id.len) return null;
+    var buf: pane_id.Buf = undefined;
+    @memcpy(&buf, id[0..pane_id.len]);
+    return buf;
+}
+
+fn addMoveSide(tx: *MoveTx, split_tree: *SplitTree, created: bool) void {
+    const alloc = gpa();
+    for (tx.sides.items) |*s| {
+        const t = s.home.get() orelse continue;
+        defer t.unref();
+        if (t == split_tree) return;
+    }
+    const empty: Tree = .empty;
+    const now: *const Tree = if (created) &empty else split_tree.getTree() orelse &empty;
+    var shape = Shape.capture(alloc, now, idOf) catch {
+        tx.failed = true;
+        return;
+    };
+    const home = newHome(split_tree) catch {
+        shape.deinit(alloc);
+        tx.failed = true;
+        return;
+    };
+    var stack: ?pane_stack_state.Saved = if (created) null else split_tree.stackSaved();
+    tx.sides.append(alloc, .{ .home = home, .shape = shape, .stack = stack }) catch {
+        shape.deinit(alloc);
+        if (stack) |*st| st.deinit(alloc);
+        freeHome(home);
+        tx.failed = true;
+        return;
+    };
+    if (ownerOf(split_tree)) |w| tx.windows.append(alloc, w) catch {
+        tx.failed = true;
+    };
+}
+
+/// A pane drag is about to change `trees` (the tree it leaves first):
+/// record them for its undo. `moved` is the dragged pane, which a redo
+/// focuses. False when undo is off or a move is already open - the drag
+/// then happens unrecorded, as before; `endMove` is still safe to call.
+pub fn beginMove(trees: []const *SplitTree, moved: []const u8) bool {
+    if (move_tx != null) return false;
+    if (timeoutMs() == null) return false;
+    move_tx = .{};
+    const tx = &move_tx.?;
+    for (trees) |t| addMoveSide(tx, t, false);
+    if (trees.len > 0) if (trees[0].getActiveSurface()) |s| {
+        tx.focus = idOf(s);
+    };
+    tx.refocus = idBuf(moved);
+    return true;
+}
+
+/// `split_tree` is a tab the open move just MADE (a drop on the tab bar,
+/// a pop-out): its undo empties it again.
+pub fn moveCreated(split_tree: *SplitTree) void {
+    const tx = &(move_tx orelse return);
+    addMoveSide(tx, split_tree, true);
+}
+
+/// The open move is done: register it as one undo.
+pub fn endMove() void {
+    const owner = owner: {
+        const tx = &(move_tx orelse return);
+        break :owner move_undo_rules.ownerFor(tx.windows.items, shared_owner);
+    };
+    if (finishMove(owner, &undos)) clearRedos(owner);
+}
+
+/// Close the open move onto `stack`, owned by `owner`. False when nothing
+/// was recorded (then whatever it kept is ended).
+fn finishMove(owner: usize, stack: *Stack) bool {
+    const alloc = gpa();
+    var tx = move_tx orelse return false;
+    move_tx = null;
+    defer tx.windows.deinit(alloc);
+    defer {
+        // Whatever was not handed to an entry ends here.
+        for (tx.sides.items) |*s| freeMoveSide(s);
+        tx.sides.deinit(alloc);
+        for (tx.parked.items) |p| endMoveParked(p);
+        tx.parked.deinit(alloc);
+    }
+    if (tx.failed or tx.sides.items.len == 0) return false;
+    const sides = tx.sides.toOwnedSlice(alloc) catch return false;
+    const parked = tx.parked.toOwnedSlice(alloc) catch {
+        freeMoveSides(sides);
+        return false;
+    };
+    var entry: Entry = .{ .move = .{
+        .sides = sides,
+        .parked = parked,
+        .focus = tx.focus,
+        .refocus = tx.refocus,
+    } };
+    if (!push(stack, owner, entry)) {
+        finalize(&entry);
+        return false;
+    }
+    log.info("pane move recorded for undo ({d} tree(s), {d} emptied)", .{ sides.len, parked.len });
+    return true;
+}
+
+/// A tab the open move emptied is closing: keep it (one reference, out of
+/// its window) instead of letting it go. True when it was taken.
+fn captureMovedTab(window: *Window, tab: *Tab, position: c_int) bool {
+    const tx = &(move_tx orelse return false);
+    if (tab.getSurfaceTree()) |t| if (!t.isEmpty()) return false;
+    const ref = newWindowRef(window) catch {
+        tx.failed = true;
+        return false;
+    };
+    tx.parked.append(gpa(), .{ .tab = .{ .tab = tab.ref(), .window = ref, .position = position } }) catch {
+        tab.unref();
+        freeWindowRef(ref);
+        tx.failed = true;
+        return false;
+    };
+    window.detachParkedTab(tab);
+    log.info("pane move emptied the tab at {d}: kept for undo", .{position});
+    return true;
+}
+
+/// The open move emptied `window`'s last tab: park the window whole, as a
+/// close would (T3665), instead of letting it go. True when it was taken.
+fn captureMovedWindow(window: *Window) bool {
+    const tx = &(move_tx orelse return false);
+    if (window.isQuickTerminal() or window.isFrame() or window.isParkedForUndo()) return false;
+    if (Workspaces.applies(window) or Workspaces.manages(window)) return false;
+    const tab_view = window.getTabView();
+    const n: usize = @intCast(tab_view.getNPages());
+    for (0..n) |i| {
+        const tab = gobject.ext.cast(Tab, tab_view.getNthPage(@intCast(i)).getChild()) orelse continue;
+        if (tab.getSurfaceTree()) |t| if (!t.isEmpty()) return false;
+    }
+    tx.parked.append(gpa(), .{ .window = window.ref() }) catch {
+        window.unref();
+        tx.failed = true;
+        return false;
+    };
+    window.parkForUndo();
+    log.info("pane move emptied a window: kept for undo", .{});
+    return true;
+}
+
+fn isMoveParkedWindow(m: *const Move, w: *Window) bool {
+    for (m.parked) |p| switch (p) {
+        .window => |pw| if (pw == w) return true,
+        .tab => {},
+    };
+    return false;
+}
+
+const max_move_sides = 8;
+
+/// Consumes `entry`. Put every tree the move touched back as its shape has
+/// it, bring back what it emptied, and record the mirror image on `into`.
+fn applyMove(owner: usize, entry: *Entry, into: *Stack) bool {
+    const m = &entry.move;
+    const alloc = gpa();
+    if (m.sides.len == 0 or m.sides.len > max_move_sides or move_tx != null) {
+        finalize(entry);
+        return false;
+    }
+
+    // Every tree must still be here, in a window that is on screen or that
+    // this very move parked.
+    var trees_buf: [max_move_sides]*SplitTree = undefined;
+    var got: usize = 0;
+    defer for (trees_buf[0..got]) |t| t.unref();
+    for (m.sides) |*s| {
+        trees_buf[got] = s.home.get() orelse {
+            finalize(entry);
+            return false;
+        };
+        got += 1;
+    }
+    const trees = trees_buf[0..got];
+    for (trees) |t| {
+        const w = ext.getAncestor(Window, t.as(gtk.Widget)) orelse continue;
+        if (w.isParkedForUndo() and !isMoveParkedWindow(m, w)) {
+            finalize(entry);
+            return false;
+        }
+    }
+    // A kept tab goes back into its window, which must still be open.
+    if (m.parked.len > max_move_sides) {
+        finalize(entry);
+        return false;
+    }
+    var windows_buf: [max_move_sides]?*Window = .{null} ** max_move_sides;
+    defer for (windows_buf) |w| if (w) |x| x.unref();
+    for (m.parked, 0..) |p, i| switch (p) {
+        .tab => |t| {
+            windows_buf[i] = t.window.get() orelse {
+                finalize(entry);
+                return false;
+            };
+        },
+        .window => {},
+    };
+
+    var current: [max_move_sides]?*const Tree = undefined;
+    var shapes: [max_move_sides]Shape = undefined;
+    for (trees, m.sides, 0..) |t, *s, i| {
+        current[i] = t.getTree();
+        shapes[i] = s.shape;
+    }
+    const rebuilt = move_undo_rules.rebuildAcross(
+        Surface,
+        pane_id.Buf,
+        alloc,
+        shapes[0..trees.len],
+        current[0..trees.len],
+        idOf,
+    ) catch {
+        finalize(entry);
+        return false;
+    };
+    defer move_undo_rules.freeAll(Surface, alloc, rebuilt);
+
+    // What it emptied comes back first: windows, then tabs into them.
+    for (m.parked) |p| switch (p) {
+        .window => |w| w.unparkFromUndo(),
+        .tab => {},
+    };
+    for (m.parked, 0..) |p, i| switch (p) {
+        .tab => |t| windows_buf[i].?.restoreParkedTab(t.tab, t.position),
+        .window => {},
+    };
+
+    // The mirror image, from the trees as they are now. A tree this empties
+    // closes its tab - and window - into it.
+    move_tx = .{};
+    for (trees) |t| addMoveSide(&move_tx.?, t, false);
+    move_tx.?.focus = m.refocus;
+    move_tx.?.refocus = m.focus;
+
+    for (trees, rebuilt, m.sides) |t, *next, *s| {
+        t.rearrange(next);
+        if (s.stack) |*st| if (!next.isEmpty()) t.restoreStackRows(st);
+    }
+    if (m.focus) |id| for (trees) |t| {
+        if (t.surfaceById(&id)) |s| {
+            if (!t.isStackMinimized(s)) t.focusSurface(s);
+            break;
+        }
+    };
+    // T3563: a pane back in a live tree closes as a close again.
+    for (trees) |t| if (t.getTree()) |now| {
+        var it = now.iterator();
+        while (it.next()) |e| e.view.clearDetachPin();
+    };
+
+    // The tab views and the application hold what came back now.
+    for (m.parked) |p| switch (p) {
+        .tab => |t| {
+            t.tab.unref();
+            freeWindowRef(t.window);
+        },
+        .window => |w| w.unref(),
+    };
+    alloc.free(m.parked);
+    m.parked = &.{};
+    freeMoveSides(m.sides);
+    m.sides = &.{};
+
+    if (!finishMove(owner, into)) log.info("pane move put back; its mirror image was not recorded", .{});
+    return true;
+}
+
+// ---------------------------------------------------------------------------
 // Undo / redo
 
 /// Where a parked layout's ids resolve: the tab's panes now, plus the ones
@@ -657,6 +1020,7 @@ fn undoOne(owner: usize, item: Stack.Item) bool {
         .layout => restoreLayout(owner, &it.payload),
         .tab => restoreTab(owner, &it.payload),
         .window => restoreWindow(&it.payload),
+        .move => applyMove(owner, &it.payload, &redos),
         .pane_redo, .layout_redo, .tab_redo, .window_redo => unreachable,
     };
 }
@@ -686,6 +1050,7 @@ fn redoOne(item: Stack.Item) bool {
         .layout_redo => reapplyLayout(&it.payload),
         .tab_redo => recloseTab(&it.payload),
         .window_redo => recloseWindow(&it.payload),
+        .move => applyMove(it.owner, &it.payload, &undos),
         .pane, .layout, .tab, .window => unreachable,
     };
 }
