@@ -546,6 +546,16 @@ pub const SplitTree = extern struct {
         return result;
     }
 
+    /// The pane `dragged_id` of ANOTHER window (or tab) joins this tree on
+    /// its right edge, at the top level, and takes focus here (T3699; Mac
+    /// `PaneMoveCoordinator` `.joinWindow` -> `insertAtTopLevel(side:
+    /// .right)`, win32 `commitJoinDrop`): a pane sidebar row let go among
+    /// this window's rows. The same move as a drop on this window's right
+    /// edge band. "moved", else "not_here" (the pane is gone, or is here).
+    pub fn joinArriving(self: *Self, dragged_id: []const u8) []const u8 {
+        return self.dropArriving(dragged_id, .{ .top_level = .{ .window = @intFromPtr(self), .side = .right } });
+    }
+
     /// The drop of a pane that is in ANOTHER tree into this one - another tab
     /// of this window (T3615), or a tab of another window (T3616): both trees
     /// change, the pane that lands is the very one that left, and a tab it

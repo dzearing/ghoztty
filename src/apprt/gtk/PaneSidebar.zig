@@ -2030,8 +2030,12 @@ fn onListAccept(_: *wk.GtkEventController, _: *wk.GdkDrop, _: *PaneSidebar) call
 
 fn onListMotion(_: *wk.GtkEventController, _: *wk.GdkDrop, _: f64, y: f64, self: *PaneSidebar) callconv(.c) c_int {
     const id = rowDragged() orelse return 0;
-    // A pane row over its own window's tray lights it (T3698).
-    const lit = if (isItemId(id)) false else if (self.rowById(id)) |r| rows.inTray(self.trayTop(r.tab), y) else false;
+    // A pane row over its own window's tray lights it (T3698); over another
+    // window's rows it would join that window instead (T3699).
+    const lit = if (isItemId(id)) false else if (self.rowById(id)) |r|
+        self.joinTabAt(r.tab, y) == null and rows.inTray(self.trayTop(r.tab), y)
+    else
+        false;
     self.lightTray(lit);
     return wk.gdk_action_move;
 }
@@ -2072,6 +2076,9 @@ fn rowBounds(self: *PaneSidebar, r: *const Row) ?wk.GrapheneRect {
 pub fn dropRowAt(self: *PaneSidebar, id: []const u8, y: f64) ?usize {
     const r = self.rowById(id) orelse return null;
     if (r.kind != .pane or !r.draggable) return null;
+    // Over another window's rows (the all-windows outline): it joins that
+    // window (T3699, Mac `.joinWindow`).
+    if (self.joinTabAt(r.tab, y)) |dest| return joinWindow(id, dest);
     // Two lists, split where the tray begins (T3698, win32
     // `pane_drop.sidebarHit`): above it the window's panes on screen, at or
     // below it the tray.
@@ -2100,6 +2107,50 @@ pub fn dropRowAt(self: *PaneSidebar, id: []const u8, y: f64) ?usize {
     }
     if (!self.moveRow(id, index)) return null;
     return index;
+}
+
+/// The window (tab key) whose rows a pane row of window `own` let go at `y`
+/// is among, when that is another window's (T3699, `rows.joinTab`); null in
+/// its own window's rows, between windows, or in this window's own list.
+fn joinTabAt(self: *PaneSidebar, own: usize, y: f64) ?u64 {
+    var spans: std.ArrayListUnmanaged(rows.Span) = .empty;
+    defer spans.deinit(self.alloc);
+    for (self.drawn.items) |o| {
+        const tab: u64 = switch (o.kind) {
+            .pane, .tray => o.tab,
+            .window => o.key,
+            else => continue,
+        };
+        const b = self.rowBounds(o) orelse continue;
+        spans.append(self.alloc, .{ .tab = tab, .top = b.y, .bottom = b.y + b.h }) catch return null;
+    }
+    return rows.joinTab(spans.items, own, y);
+}
+
+/// Pane `pane_id` moves into window (tab) `dest`'s grid on its right edge
+/// and is focused there, that window's tab selected (T3699; Mac
+/// `.joinWindow`, win32 `commitJoinDrop`). A stashed pane comes out of its
+/// stash on the way: it arrives on screen, as Mac's tree-level stash does.
+/// The window it left closes when that was its last pane, as for any drop
+/// that joins an existing window. Returns its place in `dest`'s tree (the
+/// last), or null when either is gone.
+fn joinWindow(pane_id: []const u8, dest: u64) ?usize {
+    const f = findPane(pane_id) orelse return null;
+    const to = findTab(dest) orelse return null;
+    if (to.tab == f.tab) return null;
+    if (pane_stash.isStashed(f.surface)) _ = f.tab.getSplitTree().restoreSurface(f.surface, false);
+    const tab_view = to.win.getTabView();
+    tab_view.setSelectedPage(tab_view.getPage(to.tab.as(gtk.Widget)));
+    const tree = to.tab.getSplitTree();
+    const outcome = tree.joinArriving(pane_id);
+    log.info("pane sidebar join pane={s} window={x} outcome={s}", .{ pane_id, dest, outcome });
+    if (!std.mem.eql(u8, outcome, "moved")) return null;
+    Window.queueAllSidebarRefresh();
+    const t = tree.getTree() orelse return 0;
+    var n: usize = 0;
+    var it = t.iterator();
+    while (it.next()) |_| n += 1;
+    return n -| 1;
 }
 
 /// Where window (tab) `tab`'s tray begins in the list's coordinates

@@ -364,6 +364,42 @@ pub fn inTray(tray_top: ?f64, y: f64) bool {
     return y >= top;
 }
 
+// ---------------------------------------------------------------------------
+// Another window's rows (T3699; docs/reference/pane-sidebar.md "Drag to
+// reorder": "another window's pane joins this window there"; Mac
+// `PaneDropResolver.sidebarHit` over `windowGroups`, win32 `join_window`)
+
+/// One drawn row as the join test reads it: the window (GTK tab, by address)
+/// it belongs to - a pane's or a tray head's window, a window header's own -
+/// and where it is laid out, in the list's coordinates.
+pub const Span = struct { tab: u64, top: f64, bottom: f64 };
+
+/// The window a pane row of window `own` joins when let go at `y`: the one
+/// whose group - its header down to its last row, the gaps between them
+/// included - holds the pointer, when that is ANOTHER window's. Null over its
+/// own window's group or over no group, where the row stays in its own
+/// window's list or tray. Only the all-windows outline draws other windows'
+/// rows, so this list's own panes and header never join anything.
+pub fn joinTab(spans: []const Span, own: u64, y: f64) ?u64 {
+    if (groupHolds(spans, own, y)) return null;
+    for (spans) |s| {
+        if (s.tab == own) continue;
+        if (groupHolds(spans, s.tab, y)) return s.tab;
+    }
+    return null;
+}
+
+fn groupHolds(spans: []const Span, tab: u64, y: f64) bool {
+    var top: ?f64 = null;
+    var bottom: f64 = 0;
+    for (spans) |s| if (s.tab == tab) {
+        top = if (top) |t| @min(t, s.top) else s.top;
+        bottom = @max(bottom, s.bottom);
+    };
+    const t = top orelse return false;
+    return y >= t and y < bottom;
+}
+
 /// The tray's caption (Mac: "Stashed" only while it holds panes, with their
 /// count; the empty well's words instead, expanded).
 pub const tray_caption = "Stashed";
@@ -466,6 +502,36 @@ test "T3698: the tray begins between the last row on screen and the first stashe
     try testing.expect(inTray(110, 300));
     try testing.expect(!inTray(110, 109.5));
     try testing.expect(!inTray(null, 1000));
+}
+
+test "T3699: a row let go in another window's group joins that window, in its own it stays" {
+    // Window 1: header 0-30, panes 32-60, 62-90. Window 2: header 100-130,
+    // pane 132-160. Window 3 folded: its header 170-200.
+    const spans = [_]Span{
+        .{ .tab = 1, .top = 0, .bottom = 30 },  .{ .tab = 1, .top = 32, .bottom = 60 },
+        .{ .tab = 1, .top = 62, .bottom = 90 }, .{ .tab = 2, .top = 100, .bottom = 130 },
+        .{ .tab = 2, .top = 132, .bottom = 160 }, .{ .tab = 3, .top = 170, .bottom = 200 },
+    };
+    // Over its own window's rows, header and the gaps between them: stays.
+    try testing.expectEqual(@as(?u64, null), joinTab(&spans, 1, 10));
+    try testing.expectEqual(@as(?u64, null), joinTab(&spans, 1, 31));
+    try testing.expectEqual(@as(?u64, null), joinTab(&spans, 1, 89));
+    // Over another window's header, pane or the gap between them: joins.
+    try testing.expectEqual(@as(?u64, 2), joinTab(&spans, 1, 100));
+    try testing.expectEqual(@as(?u64, 2), joinTab(&spans, 1, 131));
+    try testing.expectEqual(@as(?u64, 2), joinTab(&spans, 1, 159));
+    // A folded window is its header alone.
+    try testing.expectEqual(@as(?u64, 3), joinTab(&spans, 1, 185));
+    // Between two windows' groups, or past them all: no window.
+    try testing.expectEqual(@as(?u64, null), joinTab(&spans, 1, 95));
+    try testing.expectEqual(@as(?u64, null), joinTab(&spans, 1, 165));
+    try testing.expectEqual(@as(?u64, null), joinTab(&spans, 1, 400));
+    // From window 2, window 1's rows are the other window's.
+    try testing.expectEqual(@as(?u64, 1), joinTab(&spans, 2, 45));
+    try testing.expectEqual(@as(?u64, null), joinTab(&spans, 2, 145));
+    // This window's own list: only its rows are drawn, nothing joins.
+    try testing.expectEqual(@as(?u64, null), joinTab(spans[0..3], 1, 500));
+    try testing.expectEqual(@as(?u64, null), joinTab(&.{}, 1, 5));
 }
 
 test "T3607: a window's order is copied in, replaced whole, forgotten when empty or closed" {

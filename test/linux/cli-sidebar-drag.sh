@@ -11,8 +11,10 @@
 #     that window in the all-windows list, and a drag in either changes both;
 #   - stashed panes sit in a tray after the panes on screen (T3698): a row let
 #     go in the tray stashes there, a tray row let go in the list is restored
-#     there, and the last pane on screen is refused; a row lands among its own
-#     window's rows whatever it is let go over.
+#     there, and the last pane on screen is refused;
+#   - in the all-windows list a row let go among ANOTHER window's rows joins
+#     that window (T3699, Mac `.joinWindow`): the same shell moves onto its
+#     grid's right edge and is focused there, and it can come back the same way.
 #
 # Run it ONLY through the wrapper, from this box:
 #
@@ -211,23 +213,30 @@ hl_check "D9b and no other window's" $? "$(field wa '[x["pane"] for x in p]')"
 is wb 'order(["'"$a"'", "'"$b"'", "'"$c"'"])' "['$c', '$b', '$a']"
 hl_check "D9c every window's list shows it" $? "$(field wb '[x["pane"] for x in p]')"
 
-# Let go over the other window's rows, it stays in its own window: below its
-# window's rows is that window's tray (T3698, win32 `trayTop`: the outline's
-# tray begins right under the window's last row on screen), so it stashes there.
+# Let go among the other window's rows, it joins that window (T3699, Mac
+# `.joinWindow`): onto its grid's right edge, the same shell, focused there.
 hl_wait_for 10 laid wa "$a" "$b" "$c" "$f" "$e"
+cpid=$(lst 'pids("wa")[ids("wa").index("'"$c"'")]')
 y=$(ylow wa "$e")
 idx=$(drop wa "$c" "$y")
-hl_wait_for 10 lst_is 'stashed("wa")' "['$c']"
-hl_check "D10 let go below another window's rows it goes into its own window's tray" $? "index=$idx stashed=$(lst 'stashed("wa")') list=$(field wa '[x["pane"] for x in p]')"
-hl_wait_for 10 is wa 'order(["'"$a"'", "'"$b"'", "'"$c"'"])' "['$b', '$a', '$c']"
-hl_check "D10a last in its own window's rows" $? "list=$(field wa '[x["pane"] for x in p]')"
-lst_is '(ids("wa"), ids("wb"), stashed("wb"))' "(['$a', '$b', '$c'], ['$f', '$e'], [])"
-hl_check "D10b and no pane changes window" $? "$(lst '(ids("wa"), ids("wb"))')"
-# Back out of the tray: let go low on a (above where the tray begins).
+hl_wait_for 10 lst_is '(ids("wa"), ids("wb"))' "(['$a', '$b'], ['$f', '$e', '$c'])"
+hl_check "D10 let go among another window's rows it joins that window, on its right" $? "index=$idx $(lst '(ids("wa"), ids("wb"))')"
+hl_wait_for 10 lst_is '(pids("wb")[-1], focused("wb"), stashed("wa"), stashed("wb"))' "($cpid, '$c', [], [])"
+hl_check "D10a the same shell, focused there, stashed nowhere" $? "was=$cpid $(lst '(pids("wb"), focused("wb"), stashed("wa"), stashed("wb"))')"
+grep -q "pane sidebar join pane=$c window=.* outcome=moved" "$APP_LOG"
+hl_check "D10b the join is logged" $? "$(grep 'pane sidebar join' "$APP_LOG" | tail -2)"
+hl_wait_for 10 is wa '(order(["'"$a"'", "'"$b"'"]), order(["'"$f"'", "'"$e"'", "'"$c"'"]))' "(['$b', '$a'], ['$f', '$e', '$c'])"
+hl_check "D10c the list shows it under its new window, the old one keeps its order" $? "$(field wa '[x["pane"] for x in p]')"
+# And back: let go among its old window's rows, it joins that one again.
 hl_wait_for 10 laid wa "$a" "$b" "$c" "$f" "$e"
 idx=$(drop wa "$c" "$(ylow wa "$a")")
-hl_wait_for 10 lst_is 'stashed("wa")' "[]"
-hl_check "D10c let go back among its window's rows on screen it is restored, last" $? "index=$idx stashed=$(lst 'stashed("wa")') list=$(field wa '[x["pane"] for x in p]')"
+hl_wait_for 10 lst_is '(ids("wa"), ids("wb"), focused("wa"))' "(['$a', '$b', '$c'], ['$f', '$e'], '$c')"
+hl_check "D10d let go back among its old window's rows it joins that one again" $? "index=$idx $(lst '(ids("wa"), ids("wb"), focused("wa"))')"
+# Let go low on a, within its own window's rows now: only the list moves.
+hl_wait_for 10 laid wa "$a" "$b" "$c" "$f" "$e"
+idx=$(drop wa "$c" "$(ylow wa "$a")")
+hl_wait_for 10 is wa 'order(["'"$a"'", "'"$b"'", "'"$c"'"])' "['$b', '$a', '$c']"
+hl_check "D10e once home, let go in its own rows it only reorders: last, after a" $? "index=$idx list=$(field wa '[x["pane"] for x in p]') $(lst '(ids("wa"), ids("wb"))')"
 
 sb wa --click=scope > /dev/null
 hl_wait_for 10 is wa '(s["all_windows"], [x["pane"] for x in p])' "(False, ['$b', '$a', '$c'])"
