@@ -1,8 +1,8 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-11-27T08:27:41-08:00",
-    "commit":  "62490f5132",
+    "generated":  "2026-11-28T00:57:46-08:00",
+    "commit":  "0d9d74940f",
     "uncommitted":  [
 
                     ],
@@ -582,7 +582,7 @@
                   "test/win32/stack-caret-on-show.ps1":  "70db1bcbb5a17f5e0819d05b500a247ed314f385d7ef752d37f7450866d95541",
                   "test/win32/stack-collapse-carry.ps1":  "2fb0e9c3403e77a583f2eee95338ea9b0cbd9005eff39ca7dd278e5e202b713c",
                   "test/win32/stack-collapse-drag.ps1":  "3920e3507becefdfffe664522336401ed45fe9c6b0006b85494d199f0cad090f",
-                  "test/win32/stack-fold-slide.ps1":  "b7d5060bb6ec26836da09449c91b7bb089ac6925d9324bcd9cb2a5832145ebe2",
+                  "test/win32/stack-fold-slide.ps1":  "3075a0fe178b4138f60e5514ca2abe0df165ca0b8988b2425a90b93011f30667",
                   "test/win32/stale-build-notify.ps1":  "4ab2898604ac45d3a62e7f78232a6e6a02081d7fee27716f1975831fda65d4a1",
                   "test/win32/startup-failure.ps1":  "17e72b90d659b5f98d19e3f18aa7aca5d9ba87004f41a10016ba96f08ca015ea",
                   "test/win32/stash-divider-drag.ps1":  "4134757458d5901fb054ee6b8c547fad766e904db689f03a7cebae7151354a79",
