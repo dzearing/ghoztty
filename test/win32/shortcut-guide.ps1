@@ -3,7 +3,8 @@
 # Windows, lists the live config's bindings with plain names, marks what the
 # user customized, searches by word and by key combo in any modifier order,
 # filters by category, toggles unbound actions, runs a safe action in the
-# terminal window, writes a printable cheat sheet, and closes the Mac way.
+# terminal window, writes a printable cheat sheet, closes the Mac way, and
+# reopens where the user left it (T2667, section J).
 #
 # THE ORACLE IS THE MODEL. Which bindings are live, which were customized and
 # what a key-combo search finds are decisions, invisible in pixels, so they are
@@ -90,6 +91,31 @@ $prefExisted = Test-Path $prefPath
 $prefBackup = $null
 if ($prefExisted) { $prefBackup = [System.IO.File]::ReadAllText($prefPath) }
 Remove-Item $prefPath -Force -ErrorAction SilentlyContinue
+
+# Same for the remembered frame (T2667), so every section before J sees the
+# default placement and the run leaves the box's frame as it found it.
+$framePath = Join-Path $env:LOCALAPPDATA 'ghoztty\shortcut-guide-frame-debug'
+$frameExisted = Test-Path $framePath
+$frameBackup = $null
+if ($frameExisted) { $frameBackup = [System.IO.File]::ReadAllText($framePath) }
+Remove-Item $framePath -Force -ErrorAction SilentlyContinue
+
+# The virtual screen in PHYSICAL pixels, the space the guide reports its frame
+# in (a DPI-unaware read is scaled on a >100% desktop).
+Add-Type -Namespace T2667 -Name Vs -MemberDefinition @'
+[DllImport("user32.dll")] public static extern System.IntPtr SetThreadDpiAwarenessContext(System.IntPtr ctx);
+[DllImport("user32.dll")] public static extern int GetSystemMetrics(int nIndex);
+'@
+function Get-VirtualScreenPx {
+    # PER_MONITOR_AWARE_V2 = -4, for this thread only.
+    $old = [T2667.Vs]::SetThreadDpiAwarenessContext([System.IntPtr](-4))
+    try {
+        return [pscustomobject]@{
+            X = [T2667.Vs]::GetSystemMetrics(76); Y = [T2667.Vs]::GetSystemMetrics(77)
+            W = [T2667.Vs]::GetSystemMetrics(78); H = [T2667.Vs]::GetSystemMetrics(79)
+        }
+    } finally { [void][T2667.Vs]::SetThreadDpiAwarenessContext($old) }
+}
 
 $errlog = Join-Path $env:TEMP 'ghoztty-shortcut-guide-stderr.log'
 $script:launched = @()
@@ -328,6 +354,45 @@ try {
     Assert ($null -ne $badCat -and -not $badCat.success) 'I: an unknown category is refused'
     [void](Invoke-Guide @('--op=close'))
 
+    # =====================================================================
+    # J: the guide reopens where you left it (T2667; Mac's frame autosave
+    # name "ShortcutGuideWindow"). `move` ends with WM_EXITSIZEMOVE, the
+    # message a user's drag or resize ends with.
+    # =====================================================================
+    $s = Invoke-Guide @('--op=open')
+    $f0 = $s.data.frame
+    Assert ($null -ne $f0 -and [int]$f0.w -gt 0) "J: the guide reports its frame ($($f0.x),$($f0.y) $($f0.w)x$($f0.h) @$($f0.dpi))"
+    $tx = [int]$f0.x + 37; $ty = [int]$f0.y + 23; $tw = [int]$f0.w + 54; $th = [int]$f0.h + 32
+    $s = Invoke-Guide @('--op=move', "--x=$tx", "--y=$ty", "--w=$tw", "--h=$th")
+    $f1 = $s.data.frame
+    Assert ([int]$f1.x -eq $tx -and [int]$f1.y -eq $ty -and [int]$f1.w -eq $tw -and [int]$f1.h -eq $th) "J1: the move landed ($($f1.x),$($f1.y) $($f1.w)x$($f1.h))"
+    $onDisk = if (Test-Path $framePath) { ([System.IO.File]::ReadAllText($framePath)).Trim() } else { '' }
+    Assert ($onDisk -eq "$tx $ty $tw $th $($f1.dpi)") "J2: the end of the move wrote the frame, before any close ('$onDisk')"
+    [void](Invoke-Guide @('--op=close'))
+    $s = Invoke-Guide @('--op=open')
+    $f2 = $s.data.frame
+    Assert ([int]$f2.x -eq $tx -and [int]$f2.y -eq $ty -and [int]$f2.w -eq $tw -and [int]$f2.h -eq $th) "J3: reopened where it was left ($($f2.x),$($f2.y) $($f2.w)x$($f2.h)), not centred at the default"
+    # A move closed with Esc is remembered too: close() records the frame.
+    $s = Invoke-Guide @('--op=move', "--x=$($tx + 11)")
+    [void](Invoke-Guide @('--op=close'))
+    $s = Invoke-Guide @('--op=open')
+    Assert ([int]$s.data.frame.x -eq ($tx + 11)) "J4: the latest position survives a close ($($s.data.frame.x))"
+    [void](Invoke-Guide @('--op=close'))
+    # A frame whose monitor is gone (far off every screen) opens on one.
+    [System.IO.File]::WriteAllText($framePath, "-90000 -90000 900 700 $($f1.dpi)`n")
+    $s = Invoke-Guide @('--op=open')
+    $f5 = $s.data.frame
+    $vs = Get-VirtualScreenPx
+    $onScreen = ([int]$f5.x -lt ($vs.X + $vs.W)) -and (([int]$f5.x + [int]$f5.w) -gt $vs.X) -and ([int]$f5.y -lt ($vs.Y + $vs.H)) -and (([int]$f5.y + [int]$f5.h) -gt $vs.Y)
+    Assert $onScreen "J5: a frame remembered on a monitor that is gone opens on screen ($($f5.x),$($f5.y) $($f5.w)x$($f5.h) in $($vs.X),$($vs.Y) $($vs.W)x$($vs.H))"
+    Assert ([int]$f5.w -eq 900 -and [int]$f5.h -eq 700) "J5: ...at the size it was left at ($($f5.w)x$($f5.h))"
+    [void](Invoke-Guide @('--op=close'))
+    # A corrupt file is nothing remembered: the default size again.
+    [System.IO.File]::WriteAllText($framePath, "garbage`n")
+    $s = Invoke-Guide @('--op=open')
+    Assert ([int]$s.data.frame.w -eq [int]$f0.w -and [int]$s.data.frame.h -eq [int]$f0.h) "J6: a corrupt frame file opens at the default size ($($s.data.frame.w)x$($s.data.frame.h))"
+    [void](Invoke-Guide @('--op=close'))
+
     Assert (-not ($app.Process -and $app.Process.HasExited)) 'no crash'
     Complete-TestBody
 } catch {
@@ -338,6 +403,8 @@ try {
     try {
         if ($prefExisted) { [System.IO.File]::WriteAllText($prefPath, $prefBackup) }
         else { Remove-Item $prefPath -Force -ErrorAction SilentlyContinue }
+        if ($frameExisted) { [System.IO.File]::WriteAllText($framePath, $frameBackup) }
+        else { Remove-Item $framePath -Force -ErrorAction SilentlyContinue }
     } catch {}
     Remove-TestDesktop
     Kill-RepoInstances

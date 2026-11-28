@@ -1,8 +1,8 @@
 {
     "guard":  "argv-hazard",
     "script":  "test/win32/argv-hazard-audit.ps1",
-    "generated":  "2026-11-28T03:02:20-08:00",
-    "commit":  "aa1ab9d06d",
+    "generated":  "2026-11-28T04:31:35-08:00",
+    "commit":  "b89bc76720",
     "uncommitted":  [
                         "scripts/guard-due.ps1"
                     ],
@@ -54,7 +54,7 @@
                   "scripts/go-loop-lock.ps1":  "eda6fc5f2bc851e11a9718ddbdd529d9fb9a5ce06637703e93800f37ccc0a2bb",
                   "scripts/go-loop-pane-probe.ps1":  "e491be3477c3236c4e10af70db2f40e9d632c45f83bf860f4b09fe6eeda5e2b7",
                   "scripts/go-loop-watchdog.ps1":  "37f19f9ce08a701645b7267fea8411125b9112d83ef5ff0cbddb8e380f058d67",
-                  "scripts/guard-due.ps1":  "21a85633e539341d0ddc013898a1e44f923f3cff17a1adcd36930bb5b008c75f",
+                  "scripts/guard-due.ps1":  "d58bc68c8a8872e32e77e4979c7e567edbb497f447abed84aca40f483c331385",
                   "scripts/harness-floor.ps1":  "cfa23792d110d499fa4086697daa516d218d0d110e594a7452167a81220ee15e",
                   "scripts/hero-glide-onscreen.ps1":  "46d211f7ec7843d13506f4e3bd13933630339adb8aff13b5c97d69ae3fd248a7",
                   "scripts/hidden-windows-cpu.ps1":  "61551ac8760570d16a46ab2ef235c9792a2e29fb9e9d116ebbc23a5ce9051876",
@@ -111,7 +111,7 @@
                   "scripts/parity-decisions.ps1":  "b015b8a70ced5c02206665da242777565107d12832421122bc800ce59d516e70",
                   "scripts/parity-sweep.ps1":  "5a38a6b97bf9b4964a27a73bcc63fa727b151162daad66a67d2ce91aa0c6fb4a",
                   "scripts/parity-tasks.ps1":  "90b54903d5f131cd1fe225c956ec3296eaf940f12f598e45903d6f7740daa3e1",
-                  "scripts/perf-baseline.ps1":  "3a44e39ef4c3f6343b7944888642459f8e51bf5ff6f3a7c8eb2b27bbf2f399e0",
+                  "scripts/perf-baseline.ps1":  "7b2d6b59c7a20654fb4f1a8ea40dae951a2be4c03734bd33768b4d049a88b91f",
                   "scripts/pr-health.ps1":  "a37d7a44dda98ec8650d3c0f65015f255956c3c2e5c1f1535a767aaa7a65184a",
                   "scripts/pr-review.ps1":  "8c817f2422323eb57ba9a7bb52a9fc72fd2a731fa4388f2f3d8116985003078c",
                   "scripts/publish-windows-tag.ps1":  "28b1b5a25a0216a2305278b0bb48d7255813eae8f608b6f333536fee1b0d3b05",

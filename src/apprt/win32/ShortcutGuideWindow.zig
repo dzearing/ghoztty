@@ -44,6 +44,7 @@ const layout = @import("shortcut_guide_layout.zig");
 const wheel_accum = @import("wheel_accum.zig");
 const notes_render = @import("whats_new_notes.zig");
 const panel_theme = @import("panel_theme.zig");
+const panel_frame_memory = @import("panel_frame_memory.zig");
 const system_colors = @import("system_colors.zig");
 const w32 = @import("win32.zig");
 
@@ -135,12 +136,17 @@ pub fn openFor(app: *App, owner: ?w32.HWND, scale: f32) void {
     }
     registerClass(app) orelse return;
     const alloc = app.core_app.alloc;
+    // Where it opens (T2667): the frame the user left it at, else centred on
+    // the owner at the default size. A remembered frame lands on its own
+    // monitor, so it takes that monitor's scale rather than the owner's.
+    const remembered = rememberedFrame(alloc);
+    const open_scale: f32 = if (remembered) |r| @as(f32, @floatFromInt(r.dpi)) / 96.0 else scale;
     const self = alloc.create(ShortcutGuideWindow) catch return;
     self.* = .{
         .app = app,
         .hwnd = undefined,
-        .scale = scale,
-        .text = .init(alloc, scale, .spacious, system_colors.panelFor(app)),
+        .scale = open_scale,
+        .text = .init(alloc, open_scale, .spacious, system_colors.panelFor(app)),
         .catalog_arena = .init(alloc),
         .view_arena = .init(alloc),
         .owner = owner,
@@ -152,11 +158,16 @@ pub fn openFor(app: *App, owner: ?w32.HWND, scale: f32) void {
     const sz = layout.defaultSize(scale);
     var outer: w32.RECT = .{ .left = 0, .top = 0, .right = sz.w, .bottom = sz.h };
     _ = w32.AdjustWindowRectEx(&outer, style, 0, 0);
-    const ow = outer.right - outer.left;
-    const oh = outer.bottom - outer.top;
+    var ow = outer.right - outer.left;
+    var oh = outer.bottom - outer.top;
     var x: i32 = w32.CW_USEDEFAULT;
     var y: i32 = w32.CW_USEDEFAULT;
-    if (owner) |o| {
+    if (remembered) |r| {
+        x = r.rect.x;
+        y = r.rect.y;
+        ow = r.rect.w;
+        oh = r.rect.h;
+    } else if (owner) |o| {
         var r: w32.RECT = undefined;
         if (w32.GetWindowRect(o, &r) != 0) {
             x = r.left + @divTrunc((r.right - r.left) - ow, 2);
@@ -188,6 +199,7 @@ fn destroyState(self: *ShortcutGuideWindow) void {
 }
 
 fn close(self: *ShortcutGuideWindow) void {
+    self.saveFrame();
     active = null;
     _ = w32.SetWindowLongPtrW(self.hwnd, w32.GWLP_USERDATA, 0);
     _ = w32.DestroyWindow(self.hwnd);
@@ -507,6 +519,56 @@ fn saveIncludeUnbound(alloc: Allocator, on: bool) void {
     const f = std.fs.createFileAbsolute(path, .{ .truncate = true }) catch return;
     defer f.close();
     f.writeAll(if (on) "1" else "0") catch {};
+}
+
+// ---------------------------------------------------------------------
+// The window's frame (Mac: frame autosave name "ShortcutGuideWindow", T2667)
+// ---------------------------------------------------------------------
+
+const FRAME_NAME = "shortcut-guide";
+
+/// The remembered frame resolved onto today's monitors: replayed where it
+/// still overlaps one (rescaled if that monitor's scale changed), centred on
+/// the nearest one when its monitor is gone. `dpi` is the scale it opens at.
+fn rememberedFrame(alloc: Allocator) ?panel_frame_memory.Saved {
+    const saved = panel_frame_memory.load(alloc, FRAME_NAME) orelse return null;
+    const rc: w32.RECT = .{
+        .left = saved.rect.x,
+        .top = saved.rect.y,
+        .right = saved.rect.x +| saved.rect.w,
+        .bottom = saved.rect.y +| saved.rect.h,
+    };
+    const visible = w32.MonitorFromRect(&rc, w32.MONITOR_DEFAULTTONULL) != null;
+    const mon = w32.MonitorFromRect(&rc, w32.MONITOR_DEFAULTTONEAREST) orelse return saved;
+    var mi: w32.MONITORINFO = .{ .cbSize = @sizeOf(w32.MONITORINFO), .rcMonitor = undefined, .rcWork = undefined, .dwFlags = 0 };
+    if (w32.GetMonitorInfoW(mon, &mi) == 0) return saved;
+    var dx: u32 = 0;
+    var dy: u32 = 0;
+    if (w32.GetDpiForMonitor(mon, w32.MDT_EFFECTIVE_DPI, &dx, &dy) != 0 or dx == 0) dx = saved.dpi;
+    const work: panel_frame_memory.Rect = .{
+        .x = mi.rcWork.left,
+        .y = mi.rcWork.top,
+        .w = mi.rcWork.right - mi.rcWork.left,
+        .h = mi.rcWork.bottom - mi.rcWork.top,
+    };
+    return .{ .rect = panel_frame_memory.resolve(saved, visible, dx, work), .dpi = dx };
+}
+
+/// Record where the window is now. Called when a move or resize ends and on
+/// close; a minimized or maximized window keeps the last normal frame on file.
+pub fn saveFrame(self: *ShortcutGuideWindow) void {
+    if (w32.IsIconic(self.hwnd) != 0 or w32.IsZoomed(self.hwnd) != 0) return;
+    const r = self.outerFrame() orelse return;
+    const dpi = w32.GetDpiForWindow(self.hwnd);
+    if (dpi == 0) return;
+    panel_frame_memory.save(self.app.core_app.alloc, FRAME_NAME, .{ .rect = r, .dpi = dpi });
+}
+
+/// The outer window rect, virtual-screen pixels.
+pub fn outerFrame(self: *const ShortcutGuideWindow) ?panel_frame_memory.Rect {
+    var r: w32.RECT = undefined;
+    if (w32.GetWindowRect(self.hwnd, &r) == 0) return null;
+    return .{ .x = r.left, .y = r.top, .w = r.right - r.left, .h = r.bottom - r.top };
 }
 
 // ---------------------------------------------------------------------
@@ -1111,6 +1173,11 @@ fn wndProc(hwnd: w32.HWND, msg: u32, wparam: usize, lparam: isize) callconv(.win
         w32.WM_SIZE => {
             self.scroll = layout.clampScroll(self.scroll, self.content_h, self.listRect().h);
             self.invalidate();
+            return 0;
+        },
+        // A drag or a resize ended: remember where the user put it (T2667).
+        w32.WM_EXITSIZEMOVE => {
+            self.saveFrame();
             return 0;
         },
         w32.WM_SETFOCUS, w32.WM_KILLFOCUS => {

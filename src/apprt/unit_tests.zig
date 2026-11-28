@@ -1144,6 +1144,11 @@ test {
     // asks for (T748). Imports only `restore_frame.zig` for its `Rect`.
     _ = @import("win32/window_placement.zig");
 
+    // Pure utility-window frame memory (T2667): the shortcut guide reopens
+    // where the user left it, Mac's frame autosave. Imports restore_frame,
+    // window_placement and window_memory.
+    _ = @import("win32/panel_frame_memory.zig");
+
     // Pure win32 background-window z-order rule (T1797): where a window opened
     // without `--focus` sits - behind Ghoztty's frontmost, never over the
     // user's app. No imports.

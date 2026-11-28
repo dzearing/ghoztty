@@ -19,6 +19,7 @@
 //! {"action":"shortcut-guide","arguments":["--op=run"]}
 //! {"action":"shortcut-guide","arguments":["--op=escape"]}
 //! {"action":"shortcut-guide","arguments":["--op=cheat-sheet"]}   (writes, never opens)
+//! {"action":"shortcut-guide","arguments":["--op=move","--x=40","--y=60","--w=900","--h=700"]}  (T2667)
 //! {"action":"shortcut-guide","arguments":["--op=close"]}
 //!   -> {"success":true,"data":{"open":true,"query":"...","category":null,
 //!        "include_unbound":false,"bound":61,"customized":0,"selected":"...",
@@ -36,12 +37,13 @@ const App = @import("App.zig");
 const ipc_capture = @import("ipc_capture.zig");
 const catalog_mod = @import("shortcut_catalog.zig");
 const ShortcutGuideWindow = @import("ShortcutGuideWindow.zig");
+const w32 = @import("win32.zig");
 
 const errorResponse = ipc_capture.errorResponse;
 
 pub const enabled = build_config.is_debug;
 
-pub const Op = enum { open, close, state, select, run, escape, @"cheat-sheet", shot };
+pub const Op = enum { open, close, state, select, run, escape, @"cheat-sheet", shot, move };
 
 pub const Request = struct {
     op: Op,
@@ -52,6 +54,12 @@ pub const Request = struct {
     down: ?i32 = null,
     /// `shot`: where to write the PNG.
     path: ?[]const u8 = null,
+    /// `move` (T2667): the outer frame to put the window at, virtual-screen
+    /// pixels; it then ends the way a user's drag does (WM_EXITSIZEMOVE).
+    x: ?i32 = null,
+    y: ?i32 = null,
+    w: ?i32 = null,
+    h: ?i32 = null,
 };
 
 pub const ParseError = error{ MissingOp, BadOp, BadCategory, BadNumber };
@@ -73,6 +81,14 @@ pub fn parse(arguments: ?[]const []const u8) ParseError!Request {
             req.unbound = std.mem.eql(u8, arg["--unbound=".len..], "1");
         } else if (std.mem.startsWith(u8, arg, "--path=")) {
             req.path = arg["--path=".len..];
+        } else if (frameArg(arg)) |fa| {
+            const v = std.fmt.parseInt(i32, fa.value, 10) catch return error.BadNumber;
+            switch (fa.field) {
+                'x' => req.x = v,
+                'y' => req.y = v,
+                'w' => req.w = v,
+                else => req.h = v,
+            }
         } else if (std.mem.startsWith(u8, arg, "--down=")) {
             req.down = std.fmt.parseInt(i32, arg["--down=".len..], 10) catch return error.BadNumber;
         }
@@ -81,12 +97,22 @@ pub fn parse(arguments: ?[]const []const u8) ParseError!Request {
     return req;
 }
 
+const FrameArg = struct { field: u8, value: []const u8 };
+
+fn frameArg(arg: []const u8) ?FrameArg {
+    if (arg.len < 5 or !std.mem.startsWith(u8, arg, "--") or arg[3] != '=') return null;
+    return switch (arg[2]) {
+        'x', 'y', 'w', 'h' => .{ .field = arg[2], .value = arg[4..] },
+        else => null,
+    };
+}
+
 pub fn handle(app: *App, alloc: Allocator, arguments: ?[]const []const u8) Allocator.Error![]u8 {
     const req = parse(arguments) catch |err| return switch (err) {
-        error.MissingOp => errorResponse(alloc, "--op=open|close|state|select|run|escape|cheat-sheet|shot is required", .{}),
-        error.BadOp => errorResponse(alloc, "--op must be open, close, state, select, run, escape, cheat-sheet or shot", .{}),
+        error.MissingOp => errorResponse(alloc, "--op=open|close|state|select|run|escape|cheat-sheet|shot|move is required", .{}),
+        error.BadOp => errorResponse(alloc, "--op must be open, close, state, select, run, escape, cheat-sheet, shot or move", .{}),
         error.BadCategory => errorResponse(alloc, "--category must be all or a category name", .{}),
-        error.BadNumber => errorResponse(alloc, "--down must be an integer", .{}),
+        error.BadNumber => errorResponse(alloc, "--down, --x, --y, --w and --h must be integers", .{}),
     };
 
     if (req.op == .open) {
@@ -114,6 +140,11 @@ pub fn handle(app: *App, alloc: Allocator, arguments: ?[]const []const u8) Alloc
         .run => ran = w.runSelection(),
         .escape => w.escape(),
         .@"cheat-sheet" => sheet = w.writeCheatSheet(alloc) catch null,
+        .move => {
+            const cur = w.outerFrame() orelse return errorResponse(alloc, "the guide has no frame", .{});
+            _ = w32.SetWindowPos(w.hwnd, null, req.x orelse cur.x, req.y orelse cur.y, req.w orelse cur.w, req.h orelse cur.h, w32.SWP_NOZORDER | w32.SWP_NOACTIVATE);
+            _ = w32.SendMessageW(w.hwnd, w32.WM_EXITSIZEMOVE, 0, 0);
+        },
         .shot => {
             const path = req.path orelse return errorResponse(alloc, "--path=<file.png> is required for --op=shot", .{});
             w.snapshot(alloc, path) catch |err| return errorResponse(alloc, "shot failed ({s})", .{@errorName(err)});
@@ -163,6 +194,10 @@ fn stateResponse(alloc: Allocator, w_opt: ?*ShortcutGuideWindow, ran: ?bool, she
             jws.write(w.all_count) catch break :write;
             jws.objectField("selected") catch break :write;
             jws.write(if (w.selectedRow()) |r| r.id else null) catch break :write;
+            if (w.outerFrame()) |f| {
+                jws.objectField("frame") catch break :write;
+                jws.write(.{ .x = f.x, .y = f.y, .w = f.w, .h = f.h, .dpi = w32.GetDpiForWindow(w.hwnd) }) catch break :write;
+            }
             jws.objectField("last_run") catch break :write;
             jws.write(w.lastRun()) catch break :write;
             jws.objectField("counts") catch break :write;
@@ -222,4 +257,17 @@ test "parse: ops, filters and refusals" {
     try t.expectEqualStrings("panes", r.category.?);
     try t.expect(r.unbound.?);
     try t.expectEqual(Op.@"cheat-sheet", (try parse(&.{"--op=cheat-sheet"})).op);
+}
+
+test "parse: move takes a frame, negative positions included (T2667)" {
+    const t = std.testing;
+    const r = try parse(&.{ "--op=move", "--x=-1700", "--y=60", "--w=900", "--h=700" });
+    try t.expectEqual(Op.move, r.op);
+    try t.expectEqual(@as(?i32, -1700), r.x);
+    try t.expectEqual(@as(?i32, 60), r.y);
+    try t.expectEqual(@as(?i32, 900), r.w);
+    try t.expectEqual(@as(?i32, 700), r.h);
+    try t.expectError(error.BadNumber, parse(&.{ "--op=move", "--w=wide" }));
+    // A partial move leaves the other fields to the current frame.
+    try t.expectEqual(@as(?i32, null), (try parse(&.{ "--op=move", "--x=5" })).w);
 }

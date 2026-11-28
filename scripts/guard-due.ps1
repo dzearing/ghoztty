@@ -5891,6 +5891,8 @@ $GuardTable = @(
             'src\apprt\win32\ipc_shortcut_guide.zig',
             'src\apprt\win32\shortcut_catalog.zig',
             'src\apprt\win32\shortcut_guide_layout.zig',
+            # The guide's frame memory (T2667), section J.
+            'src\apprt\win32\panel_frame_memory.zig',
             'src\config\keybind_list.zig',
             'test\win32\shortcut-guide.ps1'
         )
