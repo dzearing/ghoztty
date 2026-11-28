@@ -848,6 +848,8 @@ pub extern fn gtk_button_set_label(button: *GtkWidget, label: [*:0]const u8) voi
 pub extern fn adw_expander_row_set_expanded(row: *GtkWidget, expanded: c_int) void;
 pub extern fn adw_expander_row_get_expanded(row: *GtkWidget) c_int;
 pub extern fn adw_preferences_group_remove(group: *GtkWidget, child: *GtkWidget) void;
+// Settings search across the pages (T3760).
+pub extern fn gtk_stack_remove(stack: *GtkWidget, child: *GtkWidget) void;
 /// `ADW_RESPONSE_DESTRUCTIVE`.
 pub const adw_response_destructive: c_int = 2;
 pub extern fn adw_alert_dialog_get_heading(dialog: *GtkWidget) ?[*:0]const u8;

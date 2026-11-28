@@ -1895,7 +1895,11 @@ fn readClipboard(app: Context, request: Request) Allocator.Error![]u8 {
 ///
 ///   --op=action                  perform `open_config` (the app action)
 ///   --op=state [--key=<k>]       open?, file, query, row count, and one key
-///   --op=search --value=<q>      typing in the search field
+///   --op=search --value=<q>      typing in the search field: the results
+///                                page (T3760) - state's `search` lists its
+///                                sections, keys and the drawn headings
+///   --op=search-link --index=<i> click result section i's "<Page> >" link
+///   --op=search-stop             Esc in the search field
 ///   --op=set --key=<k> --value=<v>   typing in the row + Return
 ///   --op=reset --key=<k>         the row's Reset button
 ///   --op=close                   the window's close button
@@ -2165,7 +2169,11 @@ fn settingsSeam(app: Context, request: Request) Allocator.Error![]u8 {
         const w = SettingsWindow.current() orelse
             return server.errorResponse(c_alloc, "the Settings window is not open", .{});
         if (std.mem.eql(u8, op, "search")) {
-            w.setQuery(val orelse "");
+            w.typeQuery(val orelse "");
+        } else if (std.mem.eql(u8, op, "search-stop")) {
+            w.stopSearch();
+        } else if (std.mem.eql(u8, op, "search-link")) {
+            if (!w.clickSearchLink(index_arg)) return server.errorResponse(c_alloc, "search result {d} has no page link", .{index_arg});
         } else if (std.mem.eql(u8, op, "set") or std.mem.eql(u8, op, "reset")) {
             const k = key orelse return server.errorResponse(c_alloc, "--key is required for --op={s}", .{op});
             const result = if (std.mem.eql(u8, op, "set"))
@@ -2550,6 +2558,43 @@ fn writeSettingsState(jws: *std.json.Stringify, arena: Allocator, w_opt: anytype
         try jws.endArray();
         try jws.objectField("curated");
         try jws.write(w.curated.items.len);
+        // The search results (T3760): Mac's `searchResults`, as built.
+        try jws.objectField("searching");
+        try jws.write(w.searching());
+        try jws.objectField("listed");
+        try jws.beginArray();
+        for (w.rows.items) |row| try jws.write(row.key);
+        try jws.endArray();
+        try jws.objectField("search");
+        try jws.beginObject();
+        try jws.objectField("shown");
+        try jws.write(w.search_page != null and std.mem.eql(u8, w.visiblePageName(), "search"));
+        try jws.objectField("sections");
+        try jws.beginArray();
+        var curated_hits: usize = 0;
+        for (w.search_hits.items) |h| {
+            try jws.beginObject();
+            try jws.objectField("page");
+            try jws.write(@tagName(h.page));
+            try jws.objectField("title");
+            try jws.write(h.title);
+            try jws.objectField("drawn");
+            try jws.write(@TypeOf(w.*).firstLabelText(h.group));
+            try jws.objectField("keys");
+            try jws.write(h.keys);
+            try jws.objectField("custom");
+            try jws.write(if (h.custom) |c| @tagName(c) else null);
+            try jws.endObject();
+            curated_hits += h.keys.len;
+        }
+        try jws.endArray();
+        try jws.objectField("curated_hits");
+        try jws.write(curated_hits);
+        try jws.objectField("more");
+        try jws.write(w.searchMoreText());
+        try jws.objectField("empty");
+        try jws.write(w.searchEmptyText());
+        try jws.endObject();
         try writeConfigFileState(jws, arena, w);
         try writeLiveState(jws, w);
         // Appearance's theme picker and preview (T3636).
@@ -2592,6 +2637,11 @@ fn writeSettingsState(jws: *std.json.Stringify, arena: Allocator, w_opt: anytype
                 try jws.beginObject();
                 try jws.objectField("page");
                 try jws.write(if (settings_pages.pageFor(k)) |id| @tagName(id) else null);
+                // The row's widget sits in the search results (T3760).
+                try jws.objectField("in_search");
+                try jws.write(SettingsWindow.inSearch(c));
+                try jws.objectField("in_place");
+                try jws.write(w.rowInPlace(c));
                 try jws.objectField("label");
                 try jws.write(c.def.label);
                 try jws.objectField("kind");

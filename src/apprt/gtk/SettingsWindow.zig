@@ -169,7 +169,28 @@ pub const Curated = struct {
     base: [:0]const u8 = "",
     /// The subtitle as last set (what the row shows).
     subtitle: []const u8 = "",
+    /// The section group on its page that the row (and `other_row`) belong
+    /// to, and the search results group holding them while a search lists
+    /// the row there (T3760) - the same widgets, moved, never a copy.
+    home: ?*wk.GtkWidget = null,
+    away: ?*wk.GtkWidget = null,
 };
+
+/// One section the search results list (Mac `searchResults`, T3760): the
+/// "<Page> > <Section>" heading, and the curated keys under it - or, for a
+/// section with its own UI, which one and the button that shows its page.
+pub const SearchHit = struct {
+    page: PageId,
+    title: [:0]const u8,
+    group: *wk.GtkWidget,
+    keys: []const []const u8 = &.{},
+    custom: ?pages.Custom = null,
+    link: ?*wk.GtkWidget = null,
+};
+
+/// Mac's cap on the keys no page shows that a search lists ("N more -
+/// keep typing to narrow."), win32's `search_cap`.
+pub const search_cap = 40;
 
 gpa: Allocator,
 app: *Application,
@@ -235,6 +256,19 @@ config_file: ConfigFile = .{},
 live: SettingsLive = .{},
 /// Appearance's theme picker and live preview (T3636).
 theme: SettingsTheme = .{},
+/// The search results (T3760): the stack's "search" page while a search
+/// is on, its All Settings list, the sections it lists, the uncurated
+/// matches before the cap, and its strings.
+search_page: ?*wk.GtkWidget = null,
+search_list: ?*wk.GtkWidget = null,
+search_more: ?*wk.GtkWidget = null,
+search_empty: ?*wk.GtkWidget = null,
+search_hits: std.ArrayListUnmanaged(SearchHit) = .empty,
+search_arena: std.heap.ArenaAllocator,
+/// A search section's page link, clicked: shown on idle, outside the
+/// click's own signal (showing it removes the page the button is on).
+link_source: c_uint = 0,
+link_page: PageId = .appearance,
 
 const Group = struct { page: PageId, title: ?[]const u8, widget: *wk.GtkWidget };
 
@@ -304,6 +338,7 @@ fn create(app: *Application) !*SettingsWindow {
         .build_arena = std.heap.ArenaAllocator.init(gpa),
         .font_arena = std.heap.ArenaAllocator.init(gpa),
         .folder_arena = std.heap.ArenaAllocator.init(gpa),
+        .search_arena = std.heap.ArenaAllocator.init(gpa),
     };
     self.model = SettingsModel.init(gpa, &self.store, .{ .ctx = self, .func = reloadHook });
     self.reloadData();
@@ -379,6 +414,8 @@ fn buildChrome(self: *SettingsWindow) !void {
     wk.gtk_widget_set_margin_bottom(side, 10);
     wk.gtk_search_entry_set_placeholder_text(self.search, "Search settings");
     self.connect(self.search, "search-changed", @ptrCast(&onSearchChanged));
+    // Esc in the field clears the search first (Mac's, and win32's).
+    self.connect(self.search, "stop-search", @ptrCast(&onStopSearch));
     wk.gtk_box_append(side, self.search);
     wk.gtk_list_box_set_selection_mode(self.sidebar, 1); // single
     wk.gtk_widget_add_css_class(self.sidebar, "navigation-sidebar");
@@ -760,6 +797,7 @@ fn addCurated(self: *SettingsWindow, group: *wk.GtkWidget, def: *const pages.Row
         wk.adw_action_row_add_suffix(c.row, c.reset);
     }
 
+    c.home = group;
     try self.curated.append(self.gpa, c);
     wk.adw_preferences_group_add(group, c.row);
     if (c.other_row) |o| wk.adw_preferences_group_add(group, o);
@@ -927,11 +965,22 @@ pub fn reader(self: *const SettingsWindow) ?SettingsSources.Reader {
     };
 }
 
-/// The keys All Settings lists for the current search and filter. Caller
-/// frees.
+/// The keys All Settings matches: while a search is on, every key no
+/// curated page shows that matches it (before the cap; Mac's "Advanced >
+/// All settings (N)"), else Advanced's list under its filter. Caller frees.
 pub fn visibleKeys(self: *const SettingsWindow, alloc: Allocator) Allocator.Error![]const []const u8 {
     const r = self.reader() orelse return alloc.alloc([]const u8, 0);
-    return r.allSettings(alloc, self.filter, self.query.items);
+    if (self.searching()) return r.allSettings(alloc, .uncovered, self.trimmedQuery());
+    return r.allSettings(alloc, self.filter, "");
+}
+
+pub fn trimmedQuery(self: *const SettingsWindow) []const u8 {
+    return std.mem.trim(u8, self.query.items, " \t");
+}
+
+/// Whether the window shows search results instead of a page.
+pub fn searching(self: *const SettingsWindow) bool {
+    return self.trimmedQuery().len > 0;
 }
 
 /// The sidebar's count for a page (Mac `changedCount`): the page's keys the
@@ -1349,18 +1398,251 @@ fn refreshCounts(self: *SettingsWindow) void {
     }
 }
 
-/// Rebuild the All Settings rows for the current search and filter.
+/// Rebuild the All Settings rows: Advanced's list, or while a search is on
+/// the results' "Advanced > All settings" list, capped at `search_cap`.
 fn rebuild(self: *SettingsWindow) void {
-    wk.gtk_list_box_remove_all(self.list);
+    const list = self.search_list orelse self.list;
+    wk.gtk_list_box_remove_all(list);
     self.rows.clearRetainingCapacity();
     const keys = self.visibleKeys(self.gpa) catch return;
     defer self.gpa.free(keys);
-    for (keys) |key| self.addRow(key) catch |err| {
+    const shown = if (self.search_list != null) keys[0..@min(keys.len, search_cap)] else keys;
+    for (shown) |key| self.addRow(list, key) catch |err| {
         log.warn("settings: row {s} failed err={}", .{ key, err });
     };
+    if (self.search_more) |more| {
+        var buf: [96]u8 = undefined;
+        const text = if (keys.len > shown.len)
+            std.fmt.bufPrintZ(&buf, "{d} more \u{2014} keep typing to narrow.", .{keys.len - shown.len}) catch ""
+        else
+            "";
+        wk.gtk_label_set_text(more, text.ptr);
+        wk.gtk_widget_set_visible(more, @intFromBool(text.len > 0));
+    }
 }
 
-fn addRow(self: *SettingsWindow, key: []const u8) !void {
+// ---------------------------------------------------------------------
+// Search (Mac `searchResults`, T3760)
+// ---------------------------------------------------------------------
+
+/// Take `w` out of `group`, keeping it alive for the next `attach`.
+fn detach(group: *wk.GtkWidget, w: *wk.GtkWidget) void {
+    _ = wk.g_object_ref(@ptrCast(w));
+    wk.adw_preferences_group_remove(group, w);
+}
+
+/// Put a `detach`ed widget into `group` (appended) and drop the hold.
+fn attach(group: *wk.GtkWidget, w: *wk.GtkWidget) void {
+    wk.adw_preferences_group_add(group, w);
+    wk.g_object_unref(@ptrCast(w));
+}
+
+/// Move every curated row the search took back onto its page, in the
+/// page's order, and drop the results page.
+fn endSearchView(self: *SettingsWindow) void {
+    // Each home group a row left is rebuilt in order: the rows still in it
+    // come out too, then all of them go back in curated (= page) order.
+    for (self.curated.items, 0..) |*c, i| {
+        const home = c.home orelse continue;
+        if (c.away == null) continue;
+        var first = true;
+        for (self.curated.items[0..i]) |*prev| if (prev.home == home and prev.away != null) {
+            first = false;
+        };
+        if (!first) continue;
+        for (self.curated.items) |*m| {
+            if (m.home != home) continue;
+            const from = m.away orelse home;
+            detach(from, m.row);
+            if (m.other_row) |o| detach(from, o);
+        }
+        for (self.curated.items) |*m| {
+            if (m.home != home) continue;
+            attach(home, m.row);
+            if (m.other_row) |o| attach(home, o);
+        }
+    }
+    for (self.curated.items) |*c| c.away = null;
+    if (self.search_page) |p| wk.gtk_stack_remove(self.stack, p);
+    self.search_page = null;
+    self.search_list = null;
+    self.search_more = null;
+    self.search_empty = null;
+    self.search_hits.clearRetainingCapacity();
+    _ = self.search_arena.reset(.retain_capacity);
+}
+
+/// Build the results page for the query: each page's matching curated rows
+/// (the rows themselves, moved) under "<Page> > <Section>", a section with
+/// its own UI that matches its words as a link to its page, then the keys
+/// no page shows.
+fn showSearch(self: *SettingsWindow) !void {
+    const arena = self.search_arena.allocator();
+    const r = self.reader() orelse return;
+    const q = self.trimmedQuery();
+    const page = wk.adw_preferences_page_new();
+    for (pages.all) |p| {
+        if (!pageShown(p)) continue;
+        for (p.sections) |*sec| {
+            // Advanced's keys are the uncurated block below; only its
+            // Config file section is searched here (win32's planSearch).
+            if (p.id == .advanced and sec.custom != .config_file) continue;
+            const heading = if (sec.title) |t|
+                try std.fmt.allocPrintSentinel(arena, "{s} \u{203A} {s}", .{ p.title, t }, 0)
+            else
+                try arena.dupeZ(u8, p.title);
+            if (sec.custom) |c| {
+                // Mac: the preview is never a search result.
+                if (c == .preview or c == .all_settings or !customBuilt(c)) continue;
+                const words = c.searchText();
+                if (!SettingsCatalog.containsIgnoreCase(words, q) and
+                    !(sec.title != null and SettingsCatalog.containsIgnoreCase(sec.title.?, q))) continue;
+                const group = wk.adw_preferences_group_new();
+                wk.adw_preferences_group_set_title(group, (try markup(arena, heading)).ptr);
+                const row = wk.adw_action_row_new();
+                plainTitle(row, try arena.dupeZ(u8, sec.title orelse p.title));
+                const sub = try std.fmt.allocPrintSentinel(arena, "On the {s} page.", .{p.title}, 0);
+                wk.adw_action_row_set_subtitle(row, sub.ptr);
+                const link = wk.gtk_button_new_with_label((try std.fmt.allocPrintSentinel(arena, "{s} \u{203A}", .{p.title}, 0)).ptr);
+                wk.gtk_widget_add_css_class(link, "flat");
+                wk.gtk_widget_set_valign(link, 3);
+                wk.gtk_widget_set_tooltip_text(link, "Show this section on its page");
+                tag(link, "settings-page", @intFromEnum(p.id));
+                self.connect(link, "clicked", @ptrCast(&onSearchLinkClicked));
+                wk.adw_action_row_add_suffix(row, link);
+                wk.adw_preferences_group_add(group, row);
+                wk.adw_preferences_page_add(page, group);
+                try self.search_hits.append(self.gpa, .{ .page = p.id, .title = heading, .group = group, .custom = c, .link = link });
+                continue;
+            }
+            var keys: std.ArrayListUnmanaged([]const u8) = .empty;
+            var group: ?*wk.GtkWidget = null;
+            for (sec.rows) |*row| {
+                const c = self.curatedForDef(row) orelse continue;
+                if (!pages.rowMatchesText(row, q) and !try r.matches(arena, row.key, q)) continue;
+                const g = group orelse blk: {
+                    const g = wk.adw_preferences_group_new();
+                    wk.adw_preferences_group_set_title(g, (try markup(arena, heading)).ptr);
+                    wk.adw_preferences_page_add(page, g);
+                    group = g;
+                    break :blk g;
+                };
+                const home = c.home orelse continue;
+                detach(home, c.row);
+                attach(g, c.row);
+                if (c.other_row) |o| {
+                    detach(home, o);
+                    attach(g, o);
+                }
+                c.away = g;
+                try keys.append(arena, c.key);
+            }
+            if (group) |g| try self.search_hits.append(self.gpa, .{ .page = p.id, .title = heading, .group = g, .keys = keys.items });
+        }
+    }
+
+    const uncurated = try r.allSettings(arena, .uncovered, q);
+    if (uncurated.len > 0) {
+        const group = wk.adw_preferences_group_new();
+        const heading = try std.fmt.allocPrintSentinel(arena, "Advanced \u{203A} All settings ({d})", .{uncurated.len}, 0);
+        wk.adw_preferences_group_set_title(group, (try markup(arena, heading)).ptr);
+        const list = wk.gtk_list_box_new();
+        wk.gtk_list_box_set_selection_mode(list, 0); // none
+        wk.gtk_widget_add_css_class(list, "boxed-list");
+        wk.adw_preferences_group_add(group, list);
+        const more = wk.gtk_label_new("");
+        wk.gtk_widget_add_css_class(more, "dim-label");
+        wk.gtk_widget_add_css_class(more, "caption");
+        wk.gtk_label_set_xalign(more, 0.0);
+        wk.gtk_widget_set_margin_top(more, 6);
+        wk.adw_preferences_group_add(group, more);
+        wk.adw_preferences_page_add(page, group);
+        self.search_list = list;
+        self.search_more = more;
+    }
+    if (self.search_hits.items.len == 0 and uncurated.len == 0) {
+        const group = wk.adw_preferences_group_new();
+        const text = try std.fmt.allocPrintSentinel(arena, "No settings match \u{201C}{s}\u{201D}.", .{q}, 0);
+        const empty = wk.gtk_label_new(text.ptr);
+        wk.gtk_widget_add_css_class(empty, "dim-label");
+        wk.gtk_label_set_xalign(empty, 0.0);
+        wk.gtk_label_set_wrap(empty, 1);
+        wk.adw_preferences_group_add(group, empty);
+        wk.adw_preferences_page_add(page, group);
+        self.search_empty = empty;
+    }
+    _ = wk.gtk_stack_add_named(self.stack, page, "search");
+    self.search_page = page;
+    wk.gtk_stack_set_visible_child_name(self.stack, "search");
+    // Mac's sidebar shows no page selected while it searches.
+    self.syncing = true;
+    defer self.syncing = false;
+    wk.gtk_list_box_unselect_all(self.sidebar);
+}
+
+/// The curated row built for `def`.
+fn curatedForDef(self: *SettingsWindow, def: *const pages.Row) ?*Curated {
+    for (self.curated.items) |*c| if (c.def == def) return c;
+    return null;
+}
+
+/// The "No settings match" line while it shows.
+pub fn searchEmptyText(self: *const SettingsWindow) ?[]const u8 {
+    const e = self.search_empty orelse return null;
+    return std.mem.span(wk.gtk_label_get_text(e));
+}
+
+/// The "N more" caption under the results' All settings, while it shows.
+pub fn searchMoreText(self: *const SettingsWindow) ?[]const u8 {
+    const m = self.search_more orelse return null;
+    if (wk.gtk_widget_get_visible(m) == 0) return null;
+    return std.mem.span(wk.gtk_label_get_text(m));
+}
+
+/// A results section's page link, clicked (the seam's `search-link`).
+pub fn clickSearchLink(self: *SettingsWindow, index: usize) bool {
+    if (index >= self.search_hits.items.len) return false;
+    const link = self.search_hits.items[index].link orelse return false;
+    wk.g_signal_emit_by_name(@ptrCast(link), "clicked");
+    return true;
+}
+
+/// Whether `c`'s row sits in the search results right now.
+pub fn inSearch(c: *const Curated) bool {
+    return c.away != null;
+}
+
+/// Whether `c`'s row is back in its own place on its page: in the same
+/// list as the curated row built before it in its group, and after it
+/// (a search moves rows out and back, T3760).
+pub fn rowInPlace(self: *const SettingsWindow, c: *const Curated) bool {
+    if (c.away != null) return false;
+    const parent = wk.gtk_widget_get_parent(c.row) orelse return false;
+    // A second row (Other..., the Font row's fallbacks) sits right under it.
+    if (c.other_row) |o| if (wk.gtk_widget_get_next_sibling(c.row) != o) return false;
+    var prev: ?*const Curated = null;
+    for (self.curated.items) |*m| {
+        if (m == c) break;
+        if (m.home == c.home) prev = m;
+    }
+    const p = prev orelse return true;
+    if (wk.gtk_widget_get_parent(p.row) != parent) return false;
+    var seen_prev = false;
+    var child = wk.gtk_widget_get_first_child(parent);
+    while (child) |ch| : (child = wk.gtk_widget_get_next_sibling(ch)) {
+        if (ch == p.row) seen_prev = true;
+        if (ch == c.row) return seen_prev;
+    }
+    return false;
+}
+
+/// Esc in the search field (the seam's `search-stop`): the entry's own
+/// `stop-search`.
+pub fn stopSearch(self: *SettingsWindow) void {
+    wk.g_signal_emit_by_name(@ptrCast(self.search), "stop-search");
+}
+
+fn addRow(self: *SettingsWindow, list: *wk.GtkWidget, key: []const u8) !void {
     const r = self.reader() orelse return;
     const entry_def = self.catalog.get(key) orelse return;
     var arena_state = std.heap.ArenaAllocator.init(self.gpa);
@@ -1460,7 +1742,7 @@ fn addRow(self: *SettingsWindow, key: []const u8) !void {
     // The row index rides on the widgets, so a signal finds its key.
     tag(entry, "settings-row", index);
     tag(reset, "settings-row", index);
-    wk.gtk_list_box_append(self.list, outer);
+    wk.gtk_list_box_append(list, outer);
 }
 
 fn rowOf(self: *SettingsWindow, widget: *wk.GtkWidget) ?*Row {
@@ -1550,6 +1832,8 @@ pub fn mainPath(self: *const SettingsWindow) []const u8 {
 /// Show page `id` (a sidebar click). False when this window does not list it.
 pub fn setPage(self: *SettingsWindow, id: PageId) bool {
     const i = std.mem.indexOfScalar(PageId, self.shown_pages.items, id) orelse return false;
+    // Mac: picking a page ends the search (`onChange(of: selection)`).
+    if (self.searching() or self.search_page != null) self.clearSearch();
     self.page = id;
     wk.gtk_stack_set_visible_child_name(self.stack, @tagName(id).ptr);
     // Mac's `.onAppear` / `.task`: the live sections re-read when shown.
@@ -1581,11 +1865,39 @@ pub fn setFilter(self: *SettingsWindow, f: Filter) void {
     self.rebuild();
 }
 
-/// What typing in the search field does: All Settings narrows, and shows.
+/// What typing in the search field does (Mac `searchResults`, T3760): the
+/// window shows every page's matching rows, then the keys no page shows;
+/// an empty query puts the page back.
 pub fn setQuery(self: *SettingsWindow, q: []const u8) void {
     self.query.clearRetainingCapacity();
     self.query.appendSlice(self.gpa, q) catch return;
-    if (std.mem.trim(u8, q, " \t").len > 0) _ = self.setPage(.advanced);
+    self.endSearchView();
+    if (self.searching()) {
+        self.showSearch() catch |err| log.warn("settings: search results failed err={}", .{err});
+        self.rebuild();
+        log.info("settings: search sections={d} uncurated={d}", .{ self.search_hits.items.len, self.rows.items.len });
+        return;
+    }
+    self.rebuild();
+    _ = self.setPage(self.page);
+}
+
+/// Typing `q` into the search field (the seam): the field shows it, and
+/// the search runs now rather than after the entry's own delay.
+pub fn typeQuery(self: *SettingsWindow, q: []const u8) void {
+    self.setQuery(q);
+    const z = self.gpa.dupeZ(u8, q) catch return;
+    defer self.gpa.free(z);
+    if (!std.mem.eql(u8, std.mem.span(wk.gtk_editable_get_text(self.search)), q)) wk.gtk_editable_set_text(self.search, z.ptr);
+}
+
+/// End the search without a page change of its own: the field empties
+/// (its late `search-changed` then matches and is ignored), the rows go
+/// home, All Settings lists Advanced's keys again.
+fn clearSearch(self: *SettingsWindow) void {
+    self.query.clearRetainingCapacity();
+    if (std.mem.span(wk.gtk_editable_get_text(self.search)).len > 0) wk.gtk_editable_set_text(self.search, "");
+    self.endSearchView();
     self.rebuild();
 }
 
@@ -1775,6 +2087,11 @@ pub fn flush(self: *SettingsWindow) void {
         _ = wk.g_source_remove(self.refresh_source);
         self.refresh_source = 0;
         self.redraw();
+    }
+    if (self.link_source != 0) {
+        _ = wk.g_source_remove(self.link_source);
+        self.link_source = 0;
+        _ = self.setPage(self.link_page);
     }
     self.theme.flush();
 }
@@ -2014,6 +2331,9 @@ fn destroy(self: *SettingsWindow) void {
     self.build_arena.deinit();
     self.font_arena.deinit();
     self.folder_arena.deinit();
+    if (self.link_source != 0) _ = wk.g_source_remove(self.link_source);
+    self.search_hits.deinit(gpa);
+    self.search_arena.deinit();
     self.query.deinit(gpa);
     self.draft_key.deinit(gpa);
     self.draft_text.deinit(gpa);
@@ -2048,6 +2368,24 @@ fn onSearchChanged(entry: *wk.GtkWidget, self: *SettingsWindow) callconv(.c) voi
     // GtkSearchEntry reports after the fact, even for text set here (T3570).
     if (std.mem.eql(u8, text, self.query.items)) return;
     self.setQuery(text);
+}
+
+fn onStopSearch(entry: *wk.GtkWidget, _: *SettingsWindow) callconv(.c) void {
+    // Its own `search-changed` then ends the search.
+    wk.gtk_editable_set_text(entry, "");
+}
+
+fn onSearchLinkClicked(button: *wk.GtkWidget, self: *SettingsWindow) callconv(.c) void {
+    const i = tagOf(button, "settings-page") orelse return;
+    self.link_page = @enumFromInt(i);
+    // Showing the page removes the results page this button is on.
+    if (self.link_source == 0) self.link_source = wk.g_idle_add(@ptrCast(&onSearchLinkIdle), self);
+}
+
+fn onSearchLinkIdle(self: *SettingsWindow) callconv(.c) c_int {
+    self.link_source = 0;
+    if (open_window == self) _ = self.setPage(self.link_page);
+    return 0; // G_SOURCE_REMOVE
 }
 
 fn onSidebarSelected(_: *wk.GtkWidget, row: ?*wk.GtkWidget, self: *SettingsWindow) callconv(.c) void {
