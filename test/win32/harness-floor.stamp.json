@@ -1,10 +1,10 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-11-28T04:50:39-08:00",
-    "commit":  "f175ee0708",
+    "generated":  "2026-11-28T05:09:11-08:00",
+    "commit":  "47f03d1379",
     "uncommitted":  [
-                        "test/win32/shortcut-guide.ps1"
+
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "cfa23792d110d499fa4086697daa516d218d0d110e594a7452167a81220ee15e",
@@ -559,7 +559,7 @@
                   "test/win32/share-machine.ps1":  "34e40c8ca85c443766d887410f57d43e8e2085a3a0cd8b71bdfdc2f64df792cc",
                   "test/win32/shell-starting-folder.ps1":  "5b7ff11760cfc8f98304ab88112630eb20e9e5c461528d0761d51cd9ab7914a0",
                   "test/win32/ship-workflow.ps1":  "7bf70cc43ea794bd74bf0805a941d717b21105f67302ea654794cebdd6195ac6",
-                  "test/win32/shortcut-guide.ps1":  "8824c9abdfceb88520ac476acbf4c15d1f7ddfb7bd0c748df4a632d52c377091",
+                  "test/win32/shortcut-guide.ps1":  "7124d8cb6f3e5580121d94a7d3010381856277c2acc01676635dca22a1a116b5",
                   "test/win32/sidebar-comp.ps1":  "8f24185c8d9e69ec538498b639a1ec03846f6b9ad02cf1684030a0e5ef81a20a",
                   "test/win32/sidebar-divider-tuck.ps1":  "7ad507d8bd0a5c5690dd22984c819003693fc9ee04c09ccabce11aab01df3d0a",
                   "test/win32/sidebar-transition-comp.ps1":  "311ee9edc37759c5a238992bd98f2265c5775afe7e9ec9a3465df78e7d873c3e",

@@ -1,18 +1,18 @@
 {
     "guard":  "guard-due",
     "script":  "test/win32/guard-due.ps1",
-    "generated":  "2026-11-28T04:21:16-08:00",
-    "commit":  "b89bc76720",
+    "generated":  "2026-11-28T05:05:08-08:00",
+    "commit":  "47f03d1379",
     "uncommitted":  [
-                        "scripts/guard-due.ps1"
+
                     ],
     "files":  {
-                  "scripts/guard-due.ps1":  "d58bc68c8a8872e32e77e4979c7e567edbb497f447abed84aca40f483c331385",
+                  "scripts/guard-due.ps1":  "c743ba7e3c832faa94510aa3bd288efafaead67979cf3edc4d25d7b7f879dfce",
                   "scripts/lib/InputDesktopExceptions.ps1":  "212affd5e01acbcc2e81fd1b0ea9c3d97e6d8cdb81c0c8d927a0615c7c205a03",
                   "test/win32/guard-due.ps1":  "277db6843d429f54d65f2f8fa1b5774078ab287141af0f8142c43a5a6477d2ef"
               },
     "code":  {
-                 "scripts/guard-due.ps1":  "code1:b1a947e86881f0ee8ad86ee0f280334874860706c14eb33c9fc47f955e207456",
+                 "scripts/guard-due.ps1":  "code1:6473a8b249cc5631aa2ce84dbd6f11716e7c490945018e7548a30ac6406955de",
                  "scripts/lib/InputDesktopExceptions.ps1":  "code1:5ca32e995c6ab9783fa3a1f1ed5906c60942a3dc6d05c971642fb2fb15fe7163",
                  "test/win32/guard-due.ps1":  "code1:c001848eeec5e97b5f3a31477fc432ac93add6f88de43312f1a1d2c84138e896"
              }

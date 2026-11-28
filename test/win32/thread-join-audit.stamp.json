@@ -1,8 +1,8 @@
 {
     "guard":  "thread-join",
     "script":  "test/win32/thread-join-audit.ps1",
-    "generated":  "2026-11-26T14:20:11-08:00",
-    "commit":  "f02b6712b3",
+    "generated":  "2026-11-28T04:58:23-08:00",
+    "commit":  "47f03d1379",
     "uncommitted":  [
 
                     ],
@@ -17,7 +17,7 @@
                   "src/datastruct/main.zig":  "210ee529695b0e5b1e889d09dcfb63b202da1b2d1728622032106f2fd5f9c3e2",
                   "src/datastruct/message_data.zig":  "d28cf26bdaabe6ec2372d80c1e735b3ce20acdf5079daf5c89037b462a1d1588",
                   "src/datastruct/segmented_pool.zig":  "1acefe4cc755f7268e6116b76eb7fb82085a95db9115efca70efbcb14bfdb968",
-                  "src/datastruct/split_tree.zig":  "56259e5796675b7a557d561659b42c3e47e79dc5d56024c15ef0c9ffa5e79cf3",
+                  "src/datastruct/split_tree.zig":  "bbed4dd3ce63b9a6a44be59064691beac8a779697338b95049b4cc8239aded71",
                   "src/remote/agent/adopt.zig":  "0af7bf58df99cd1f6036c58e4fa45797fe9b6df93c255de1e90960703030b5bb",
                   "src/remote/agent/agent_log.zig":  "b6edc2cd75d2e4ab02d09877efdfda4ac8a4595d2800a9a2d64d4dc0f9e84538",
                   "src/remote/agent/atomic_write.zig":  "74bfecbb79a06425c8e32bb7b0381d23605355a90983191cbaf2758f0b002222",
