@@ -145,6 +145,7 @@ for _ in $(seq 1 50); do [ "$(fr "$p2" released)" = True ] && break; sleep 0.2; 
 sleep 1
 busy_t=$(fr "$p1" target_bytes); busy_a=$(fr "$p1" atlas_bytes); busy_rel=$(fr "$p1" released)
 busy_priv=$(priv_kb "$APP"); busy_maps=$(big_maps "$APP")
+cp "/proc/$APP/smaps" /tmp/t3775-busy.smaps # TEMP DIAG T3775
 press "$p1" ctrl+shift+f2
 hid=""
 for _ in $(seq 1 40); do
@@ -163,6 +164,7 @@ hl_check "R4 a busy pane sent to a background tab releases its frames (targets $
 held_kb=$(( (${busy_t:-0} + ${busy_a:-0}) / 1024 ))
 want_kb=$(( held_kb * 6 / 10 ))
 priv_drop=$(( ${busy_priv:-0} - $(priv_kb "$APP") ))
+sleep 1; cp "/proc/$APP/smaps" /tmp/t3775-hid.smaps; echo "DIAG drop-after-1s=$(( ${busy_priv:-0} - $(priv_kb "$APP") ))" # TEMP DIAG T3775
 [ -n "$hid" ] && [ "$want_kb" -gt 500 ] && [ "$priv_drop" -ge "$want_kb" ]
 hl_check "R5 the hidden release gives the memory back: app private memory fell ${priv_drop} KB (frames held ${held_kb} KB; needs >= ${want_kb} KB)" $? "busy_priv=${busy_priv:-?} KB; 1MB+ anon maps busy: ${busy_maps}| hidden: $(big_maps "$APP")"
 

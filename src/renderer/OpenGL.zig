@@ -1710,6 +1710,7 @@ test "idleReleaseKnobOn: only an explicit off turns the idle release off" {
 pub fn dropReleasedFrameRefs(self: *const OpenGL, target: Target, pipeline: Pipeline) void {
     _ = self;
     if (comptime apprt.runtime != apprt.gtk) return;
+    if (std.posix.getenv("GHOZTTY_T3775_NODROP") != null) return; // TEMP DIAG T3775
     const fbobind = target.framebuffer.bind(.framebuffer) catch return;
     defer fbobind.unbind();
     const pbind = pipeline.program.use() catch return;
