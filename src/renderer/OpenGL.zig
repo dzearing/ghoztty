@@ -1716,7 +1716,12 @@ pub fn dropReleasedFrameRefs(self: *const OpenGL, target: Target, pipeline: Pipe
     defer pbind.unbind();
     const vaobind = pipeline.vao.bind() catch return;
     defer vaobind.unbind();
-    gl.glad.context.Viewport.?(0, 0, 1, 1);
+    // The frame draw relies on the viewport it already has, so put it back.
+    const ctx = gl.glad.context;
+    var vp: [4]gl.c.GLint = undefined;
+    ctx.GetIntegerv.?(gl.c.GL_VIEWPORT, &vp);
+    defer ctx.Viewport.?(vp[0], vp[1], vp[2], vp[3]);
+    ctx.Viewport.?(0, 0, 1, 1);
     gl.drawArrays(gl.c.GL_TRIANGLES, 0, 3) catch |err| {
         log.warn("frame release: could not draw to drop the released frames' references err={}", .{err});
     };

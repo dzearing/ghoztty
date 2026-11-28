@@ -80,6 +80,9 @@ press() { hl_ipc press-key "--target=$1" "--key=$2" > /dev/null 2>&1; }
 type_line() { cli +send-keys --target="$1" "$2" Enter > /dev/null 2>&1; }
 # The app's private memory in KB (smaps_rollup Private_*, as pane-close-memory.sh).
 priv_kb() { awk '/^Private_(Clean|Dirty):/ { s += $2 } END { print s + 0 }' "/proc/$1/smaps_rollup" 2>/dev/null || echo 0; }
+# Its anonymous mappings of 1 MB or more, by size in KB (R5's failure detail:
+# a frame-sized one that stays is what a held reference looks like).
+big_maps() { awk '/^[0-9a-f]+-[0-9a-f]+ / { anon = (NF < 6) } /^Size:/ { if (anon && $2 >= 1024) printf "%s ", $2 }' "/proc/$1/smaps" 2>/dev/null; }
 white_of() { hl_png_stats "$1" 255 255 255 2>&1 | sed -n 's/.*match=\([0-9.]*\).*/\1/p'; }
 # A screen of reverse-video blank rows: white on the black background.
 fill_white() { type_line "$1" "clear; i=0; while [ \$i -lt 26 ]; do printf '\\\\033[7m%100s\\\\033[0m\\\\n' ''; i=\$((i+1)); done"; }
@@ -141,7 +144,7 @@ type_line "$p1" "python3 -I $busy_py"
 for _ in $(seq 1 50); do [ "$(fr "$p2" released)" = True ] && break; sleep 0.2; done
 sleep 1
 busy_t=$(fr "$p1" target_bytes); busy_a=$(fr "$p1" atlas_bytes); busy_rel=$(fr "$p1" released)
-busy_priv=$(priv_kb "$APP")
+busy_priv=$(priv_kb "$APP"); busy_maps=$(big_maps "$APP")
 press "$p1" ctrl+shift+f2
 hid=""
 for _ in $(seq 1 40); do
@@ -161,7 +164,7 @@ held_kb=$(( (${busy_t:-0} + ${busy_a:-0}) / 1024 ))
 want_kb=$(( held_kb * 6 / 10 ))
 priv_drop=$(( ${busy_priv:-0} - $(priv_kb "$APP") ))
 [ -n "$hid" ] && [ "$want_kb" -gt 500 ] && [ "$priv_drop" -ge "$want_kb" ]
-hl_check "R5 the hidden release gives the memory back: app private memory fell ${priv_drop} KB (frames held ${held_kb} KB; needs >= ${want_kb} KB)" $? "busy_priv=${busy_priv:-?} KB"
+hl_check "R5 the hidden release gives the memory back: app private memory fell ${priv_drop} KB (frames held ${held_kb} KB; needs >= ${want_kb} KB)" $? "busy_priv=${busy_priv:-?} KB; 1MB+ anon maps busy: ${busy_maps}| hidden: $(big_maps "$APP")"
 
 # ---- 4. shown again, the pane draws what it has now ------------------------
 cli +send-keys --target="$p1" C-c > /dev/null 2>&1
