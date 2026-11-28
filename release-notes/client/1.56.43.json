@@ -1,0 +1,11 @@
+{
+  "version": "1.56.43",
+  "sections": [
+    { "title": "Fixes",
+      "items": [
+        { "text": "A link's side pane no longer takes the keyboard on Windows and Linux." },
+        { "text": "A viewer pane opening out of its strip now slides out as its page already laid out at the new size, like a terminal." },
+        { "text": "A right-edge grow no longer shows a stripe of window background between a viewer's page and its card edge." }
+      ] }
+  ]
+}
