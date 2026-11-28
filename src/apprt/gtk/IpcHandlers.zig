@@ -2639,7 +2639,7 @@ fn writeSettingsState(jws: *std.json.Stringify, arena: Allocator, w_opt: anytype
                 try jws.write(if (settings_pages.pageFor(k)) |id| @tagName(id) else null);
                 // The row's widget sits in the search results (T3760).
                 try jws.objectField("in_search");
-                try jws.write(SettingsWindow.inSearch(c));
+                try jws.write(@TypeOf(w.*).inSearch(c));
                 try jws.objectField("in_place");
                 try jws.write(w.rowInPlace(c));
                 try jws.objectField("label");
