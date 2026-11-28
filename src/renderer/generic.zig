@@ -1586,6 +1586,15 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                 }
             }
             if (comptime redraws) {
+                // GTK (T3775): the context's driver state still names the
+                // old target and atlases until it draws again; see
+                // `OpenGL.dropReleasedFrameRefs`.
+                if (comptime @hasDecl(GraphicsAPI, "dropReleasedFrameRefs")) {
+                    self.api.dropReleasedFrameRefs(
+                        self.swap_chain.frames[0].target,
+                        self.shaders.pipelines.bg_color,
+                    );
+                }
                 self.api.hiddenTargetsReleased();
                 self.redraw_after_release = true;
                 self.release_reason = reason;

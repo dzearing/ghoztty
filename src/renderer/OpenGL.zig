@@ -1690,6 +1690,38 @@ test "idleReleaseKnobOn: only an explicit off turns the idle release off" {
     try testing.expect(!idleReleaseKnobOn("FALSE"));
 }
 
+/// GTK (T3775): after a release, point this context's driver state away from
+/// the storage just freed, so the driver can let it go now rather than at the
+/// pane's next frame. Deleting a GL name does not drop the references the
+/// driver's bound state holds: Mesa updates its framebuffer and fragment
+/// sampler bindings only when a draw validates them. So after the last frame
+/// the context still names the old target (the pipe framebuffer from the cell
+/// draw, and llvmpipe's setup keeps the present blit's source) and the old
+/// atlases (the cell draw's sampler views), and a hidden or idle pane does not
+/// draw again. Measured on llvmpipe 2026-11-25: the target-sized mapping
+/// stayed until the next frame. A `glClear` validates only the framebuffer.
+///
+/// The fix is one draw: the `bg_color` pipeline (no samplers, no vertex
+/// buffers) draws one triangle into the new 1x1 `target`. That rebinds the
+/// framebuffer to the 1x1 and unbinds every fragment sampler view. What it
+/// draws does not matter: the 1x1 target is never shown, and the next frame
+/// rebuilds it and draws in full. `hiddenTargetsReleased`'s `glFinish` then
+/// retires the draw, so the old storage is freed before the release returns.
+pub fn dropReleasedFrameRefs(self: *const OpenGL, target: Target, pipeline: Pipeline) void {
+    _ = self;
+    if (comptime apprt.runtime != apprt.gtk) return;
+    const fbobind = target.framebuffer.bind(.framebuffer) catch return;
+    defer fbobind.unbind();
+    const pbind = pipeline.program.use() catch return;
+    defer pbind.unbind();
+    const vaobind = pipeline.vao.bind() catch return;
+    defer vaobind.unbind();
+    gl.glad.context.Viewport.?(0, 0, 1, 1);
+    gl.drawArrays(gl.c.GL_TRIANGLES, 0, 3) catch |err| {
+        log.warn("frame release: could not draw to drop the released frames' references err={}", .{err});
+    };
+}
+
 /// The renderer freed the targets (`releaseFrameResources`): the one recorded
 /// here is gone, so nothing may present or capture it again. The next frame
 /// draws in full and records a new one.
