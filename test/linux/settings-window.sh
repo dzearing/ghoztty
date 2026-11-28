@@ -594,7 +594,6 @@ hl_wait_for 5 sh -c "[ \"\$(hl_ipc settings --op=state 2>/dev/null | python3 -I 
 o=$(st --op=state)
 [ "$(jget "$o" 'd["searching"]')" = false ] && [ "$(jget "$o" 'd["visible_page"]')" = keyboard ]
 hl_check "S12 Esc in the search field clears the search and the page comes back" $? "searching=$(jget "$o" 'd["searching"]') visible=$(jget "$o" 'd["visible_page"]')"
-grep -E "settings: (search|set|opened|closed|reading)|gtk_settings" "$HL_RUNTIME/APP.log" 2>/dev/null | tail -40 | sed "s/^/APPLOG /"
 
 # ---- close ------------------------------------------------------------------
 st --op=close > /dev/null

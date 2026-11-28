@@ -269,6 +269,9 @@ search_arena: std.heap.ArenaAllocator,
 /// click's own signal (showing it removes the page the button is on).
 link_source: c_uint = 0,
 link_page: PageId = .appearance,
+/// Set while the window writes the search field itself: `gtk_editable_set_text`
+/// empties it first, and GtkSearchEntry reports an empty field at once.
+setting_query: bool = false,
 
 const Group = struct { page: PageId, title: ?[]const u8, widget: *wk.GtkWidget };
 
@@ -1891,16 +1894,24 @@ pub fn typeQuery(self: *SettingsWindow, q: []const u8) void {
     self.setQuery(q);
     const z = self.gpa.dupeZ(u8, q) catch return;
     defer self.gpa.free(z);
-    if (!std.mem.eql(u8, std.mem.span(wk.gtk_editable_get_text(self.search)), q)) wk.gtk_editable_set_text(self.search, z.ptr);
+    if (!std.mem.eql(u8, std.mem.span(wk.gtk_editable_get_text(self.search)), q)) self.setSearchText(z);
 }
 
-/// End the search without a page change of its own: the field empties
-/// (its late `search-changed` then matches and is ignored), the rows go
-/// home, All Settings lists Advanced's keys again.
+/// Write the search field without its signal running a search of its own
+/// (the caller has already run the one it wants): `gtk_editable_set_text`
+/// empties the field first, and GtkSearchEntry reports an empty field at
+/// once, which ended the search it was writing.
+fn setSearchText(self: *SettingsWindow, text: [:0]const u8) void {
+    self.setting_query = true;
+    defer self.setting_query = false;
+    wk.gtk_editable_set_text(self.search, text.ptr);
+}
+
+/// End the search without a page change of its own: the field empties,
+/// the rows go home, All Settings lists Advanced's keys again.
 fn clearSearch(self: *SettingsWindow) void {
-    log.info("settings: search cleared (was {s})", .{self.query.items});
     self.query.clearRetainingCapacity();
-    if (std.mem.span(wk.gtk_editable_get_text(self.search)).len > 0) wk.gtk_editable_set_text(self.search, "");
+    if (std.mem.span(wk.gtk_editable_get_text(self.search)).len > 0) self.setSearchText("");
     self.endSearchView();
     self.rebuild();
 }
@@ -2369,6 +2380,7 @@ fn onShortcutGuideClicked(_: *wk.GtkWidget, self: *SettingsWindow) callconv(.c) 
 
 fn onSearchChanged(entry: *wk.GtkWidget, self: *SettingsWindow) callconv(.c) void {
     const text = std.mem.span(wk.gtk_editable_get_text(entry));
+    if (self.setting_query) return;
     // GtkSearchEntry reports after the fact, even for text set here (T3570).
     if (std.mem.eql(u8, text, self.query.items)) return;
     self.setQuery(text);
