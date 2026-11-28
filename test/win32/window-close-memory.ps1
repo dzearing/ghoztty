@@ -122,6 +122,7 @@ function Assert([bool]$cond, [string]$label) {
 # Get-Sample / Get-Descendants / Get-GpuBytes / Wait-Settled (T2494 moved them
 # to a lib so the pane meter measures exactly what this one does).
 . (Join-Path $PSScriptRoot 'lib\ProcessMemory.ps1')
+. (Join-Path $PSScriptRoot 'lib\MemoryVerdictShape.ps1')  # T2673: which runs may stamp
 
 # Hidden windows count: with `undo-timeout` (5s by default) a closed window is
 # PARKED - hidden, every pane intact - until the undo expires, and only then
@@ -398,12 +399,22 @@ Assert ($leaked.Count -eq 0) "no test-desktop app ever became foreground on the 
 Complete-TestBody  # T1039/T1511: before the stamp, which is a child process reading this run's state
 
 # A green run stamps the covered files (T783). Only the verdict shape stamps:
-# a bisect run (-Shape, -Resize, -CloseSplitFirst, -AppArgs) or a short one
-# answers a narrower question than the guard asks.
-$verdictShape = ($Shape -eq 'full' -and -not $Resize -and -not $CloseSplitFirst -and $AppArgs.Count -eq 0 -and $Cycles -ge 10 -and -not $HeapCensus)
-if ($script:fail -eq 0 -and -not $NegativeControl -and $verdictShape) {
+# a bisect run (-Shape, -Resize, -CloseSplitFirst, -AppArgs), a short one, or
+# a diagnostic one answers a narrower question than the guard asks. T2673: on
+# 2026-11-03 two `-ReleaseSandbox -Report` runs against a ReleaseFast -ExePath
+# stamped this guard green - and cleared its ack - while the default debug
+# verdict at the same code was red (A1 1.53 MB, A8 1.20 MB). So the release
+# sandbox, a foreign exe, a changed warm-up, -Report and every census switch
+# are diagnostic too, and say so instead of stamping silently.
+$diag = @(Get-WindowCloseMemoryDiagnosticReason -Repo $repo -ExePath $ExePath -Shape $Shape -Cycles $Cycles `
+        -Warmup $Warmup -MaxWarmup $MaxWarmup -AppArgs $AppArgs -Resize:$Resize -CloseSplitFirst:$CloseSplitFirst `
+        -Report:$Report -HeapCensus:$HeapCensus -HeapCensusCommands $HeapCensusCommands `
+        -HeapCensusRegions:$HeapCensusRegions -ReleaseSandbox:$ReleaseSandbox -NegativeControl:$NegativeControl)
+if ($script:fail -eq 0 -and $diag.Count -eq 0) {
     & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'scripts\guard-due.ps1') `
         update -Guard window-close-memory -Repo $repo 2>&1 | ForEach-Object { "  $_" }
+} elseif ($diag.Count -gt 0) {
+    Write-Host "  NOT STAMPED (diagnostic run: $($diag -join ', '))"
 }
 
 Write-Host ''

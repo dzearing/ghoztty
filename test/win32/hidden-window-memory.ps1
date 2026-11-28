@@ -77,6 +77,7 @@ $errlog = Join-Path $env:TEMP "ghoztty-hidden-window-memory-$PID.log"
 
 . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
 . (Join-Path $PSScriptRoot 'lib\ProcessMemory.ps1')
+. (Join-Path $PSScriptRoot 'lib\MemoryVerdictShape.ps1')  # T2673: a foreign -ExePath never stamps
 . (Join-Path $PSScriptRoot 'lib\PaneCapture.ps1')
 
 # T1511: arms the run, so an unwound body neither prints a pass nor stamps.
@@ -404,7 +405,11 @@ Complete-TestBody  # T1039/T1511: before the stamp, which is a child process rea
 
 # A green run stamps the covered files (T783); a short run, or one that could
 # not read the GPU counters, answers a narrower question than the guard asks.
-if ($script:fail -eq 0 -and $script:skipped -eq 0 -and $Cycles -ge 4) {
+# T2673: and neither does a run against an exe that is not this checkout's
+# zig-out debug build - it measured somebody else's code.
+$foreignExe = -not (Test-RepoDefaultExe $repo $ExePath)
+if ($foreignExe) { Write-Host "  NOT STAMPED (diagnostic run: -ExePath $ExePath is not this checkout's zig-out)" }
+if ($script:fail -eq 0 -and $script:skipped -eq 0 -and $Cycles -ge 4 -and -not $foreignExe) {
     & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'scripts\guard-due.ps1') `
         update -Guard hidden-window-memory -Repo $repo 2>&1 | ForEach-Object { "  $_" }
 }

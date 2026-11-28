@@ -2690,10 +2690,25 @@ $GuardTable = @(
         Covers = @(
             'test\win32\window-close-memory.ps1',
             'test\win32\lib\ProcessMemory.ps1',
+            'test\win32\lib\MemoryVerdictShape.ps1',
             'src\apprt\win32\Window.zig',
             'src\apprt\win32\PaneDesk.zig',
             'src\apprt\win32\Surface.zig',
             'src\renderer\gl_comp_present.zig'
+        )
+    },
+    # T2673: which memory-harness runs may stamp. A diagnostic run (release
+    # sandbox, foreign exe, census, bisect shape) stamped window-close-memory
+    # green over a red default verdict; this pure harness pins the rule.
+    [pscustomobject]@{
+        Name   = 'memory-verdict-shape'
+        Script = 'test\win32\memory-verdict-shape.ps1'
+        Stamp  = 'test\win32\memory-verdict-shape.stamp.json'
+        Covers = @(
+            'test\win32\memory-verdict-shape.ps1',
+            'test\win32\lib\MemoryVerdictShape.ps1',
+            'test\win32\window-close-memory.ps1',
+            'test\win32\hidden-window-memory.ps1'
         )
     },
     # T3004: clearing a full scrollback gives its pages back to the OS. The
@@ -2753,6 +2768,7 @@ $GuardTable = @(
         Covers = @(
             'test\win32\hidden-window-memory.ps1',
             'test\win32\lib\ProcessMemory.ps1',
+            'test\win32\lib\MemoryVerdictShape.ps1',
             'src\renderer\generic.zig',
             'src\renderer\OpenGL.zig',
             'src\apprt\win32\occlusion.zig'

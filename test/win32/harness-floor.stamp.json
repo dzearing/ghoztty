@@ -1,10 +1,13 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-11-28T06:14:38-08:00",
-    "commit":  "6a7319554e",
+    "generated":  "2026-11-28T06:23:00-08:00",
+    "commit":  "1988a04ab2",
     "uncommitted":  [
-
+                        "test/win32/hidden-window-memory.ps1",
+                        "test/win32/lib/MemoryVerdictShape.ps1",
+                        "test/win32/memory-verdict-shape.ps1",
+                        "test/win32/window-close-memory.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "cfa23792d110d499fa4086697daa516d218d0d110e594a7452167a81220ee15e",
@@ -221,7 +224,7 @@
                   "test/win32/hidden-new-pane.ps1":  "5f12c8912a7fded420286713a1349614717b14fd5a56bd4517f10bafe3294ae1",
                   "test/win32/hidden-title.ps1":  "ba19c0ded6b798a6fe069c2e9ce5ce9845a94f0c994bd29356d56977955cabcb",
                   "test/win32/hidden-viewer.ps1":  "6ac84b06e1632973d41ca813fd54c0d611bcbd6083fb11adcd3eea00fe8113a7",
-                  "test/win32/hidden-window-memory.ps1":  "8a77ffd72887c9976612b4770c477ae99591d0493ba83f32f0fa35d3713274ef",
+                  "test/win32/hidden-window-memory.ps1":  "03bd8cd23d538c22f00944ffc334d289a006f7bfa62c85ecbb6fb5dc493b94bd",
                   "test/win32/history-guard-flavor.ps1":  "0411d42ec5a55b477b15fa43913be4af394a38941e274cff9ecdfe0610ac5dd1",
                   "test/win32/holder-adopt.ps1":  "70acb6fe2b26bcbd6ddc0ddfccd1e6110385fa944827a7f136de91624359cc92",
                   "test/win32/holder-durable.ps1":  "97592f6b6d4919077d068098a1f0a16fa6ce8995628f53d202a62ec61000b3bd",
@@ -329,6 +332,7 @@
                   "test/win32/lib/lab-card.ps1":  "14b5944f80ebcd6e447fe1906c920e861c44c22a1af1c242a3151afeddbb5d1a",
                   "test/win32/lib/ListTree.ps1":  "b34980aaae91d3fb167ada3273c91c4a2d9da5803e526799072e1ea33de1063c",
                   "test/win32/lib/LogSinkAudit.ps1":  "2732920d2dbfd12cc565ae7236854f9aebaab04cb9cd12cded7f1730ac78e2ca",
+                  "test/win32/lib/MemoryVerdictShape.ps1":  "affa0248e0de96e175698ecc3a7b8781b1bf4cb3d4380db1ad2fbbf80cbc9236",
                   "test/win32/lib/ModalSweep.ps1":  "184e9a43cb648802d31d9915603162177988b9a525ce16c2b06166e600e3955b",
                   "test/win32/lib/NativeStderrAudit.ps1":  "20ce857d03cfe9a6c009e9845b54dd139c429fb7f405d72665313f8cbb9cd78f",
                   "test/win32/lib/NativeTolerant.ps1":  "a35b1c90607856a77f255e99ada11b301b281c9cfbd225101071372bf5b0263a",
@@ -392,6 +396,7 @@
                   "test/win32/machine-lock.ps1":  "9602e2bd3bc08b206a5cc8b6eff0c2f872de8f2c7a65b858d7a83d7e7aa2c444",
                   "test/win32/main-intake.ps1":  "1902f11d0ba7222f21da46d202725c544777bbfa0604c8a17bf4d1c5fb49098b",
                   "test/win32/maximize-restore-memory.ps1":  "b1b9968c5225dffc03c465532507ee6e64f65df9bfd5f326de5c29aea14622e2",
+                  "test/win32/memory-verdict-shape.ps1":  "d31774c63af5e4f728245eae62043ea9db40e38cbc478cbb9a0167e972598840",
                   "test/win32/menu-bar.ps1":  "49960cb0e7d84f55d16771f049a424080cd789fc1a93bdaa64934cd8262da77e",
                   "test/win32/menu-f10-binding.ps1":  "2a0f0edd446c99a0ed1ffb5d1b0ce8e3e1a8ae8df140fd70fa5f6b5df37b8e22",
                   "test/win32/merge-terminology.ps1":  "7d155ca2da0de4866e7afab82df19ab046be33aa3c34655481192c1e158b5d25",
@@ -675,7 +680,7 @@
                   "test/win32/wheel-scroll.ps1":  "102b83d67fee16785f293727fae1691eecf661003b52638bbb5afdc796bcafa3",
                   "test/win32/window-active.ps1":  "1e8da7c61ec9ca7ddc6019092ab0187d4c2b069cd3e780e1afbac64edad27f43",
                   "test/win32/window-active-audit.ps1":  "713214a5212d2f50713ae9eaff05d788293b6f8ada9b6daa78d1dcf081406879",
-                  "test/win32/window-close-memory.ps1":  "b0e94dbaf175deb48377a17599a1fd8fe1397cee62f02df71ee6a410f32d48ef",
+                  "test/win32/window-close-memory.ps1":  "d4218327620c8e6ee5fd2f539b49ac84464733eccc21f30c9533d1f5ae4d7205",
                   "test/win32/window-color.ps1":  "a084fa33aa2a295229fa83447b572402bf66a2b4b53ba9208f5caf4a21eee975",
                   "test/win32/window-composite.ps1":  "baabce20f85c453dc926c93f8cf784c12686905152b4ef0dc264b82257b36f8d",
                   "test/win32/window-count-scale.ps1":  "eaaf377dc04d8fb75de69f88c357cc69932c8d85f84f25058260dd0e59f7006f",

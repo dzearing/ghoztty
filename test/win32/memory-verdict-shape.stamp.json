@@ -1,0 +1,24 @@
+{
+    "guard":  "memory-verdict-shape",
+    "script":  "test/win32/memory-verdict-shape.ps1",
+    "generated":  "2026-11-28T06:20:54-08:00",
+    "commit":  "1988a04ab2",
+    "uncommitted":  [
+                        "test/win32/hidden-window-memory.ps1",
+                        "test/win32/lib/MemoryVerdictShape.ps1",
+                        "test/win32/memory-verdict-shape.ps1",
+                        "test/win32/window-close-memory.ps1"
+                    ],
+    "files":  {
+                  "test/win32/hidden-window-memory.ps1":  "03bd8cd23d538c22f00944ffc334d289a006f7bfa62c85ecbb6fb5dc493b94bd",
+                  "test/win32/lib/MemoryVerdictShape.ps1":  "affa0248e0de96e175698ecc3a7b8781b1bf4cb3d4380db1ad2fbbf80cbc9236",
+                  "test/win32/memory-verdict-shape.ps1":  "d31774c63af5e4f728245eae62043ea9db40e38cbc478cbb9a0167e972598840",
+                  "test/win32/window-close-memory.ps1":  "d4218327620c8e6ee5fd2f539b49ac84464733eccc21f30c9533d1f5ae4d7205"
+              },
+    "code":  {
+                 "test/win32/hidden-window-memory.ps1":  "code1:e444f7ec65a9f402d4a3ef176429c3139d83010e8f3355224cdef87b5a278275",
+                 "test/win32/lib/MemoryVerdictShape.ps1":  "code1:a466d84d70e51b0221a84df86d30c2de7ab03e971aefbf01aa1274ee17d604db",
+                 "test/win32/memory-verdict-shape.ps1":  "code1:3334991c75b16292ed0b67bfb68d8ee3b6822f209d452218be846b2352afba05",
+                 "test/win32/window-close-memory.ps1":  "code1:3853da8fb241b6bab1a3d7d10fd8045626d83a12c5b6ce1d122ceab3e710f9c0"
+             }
+}
