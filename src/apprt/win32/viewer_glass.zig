@@ -65,7 +65,51 @@ pub fn classToggleJs(draws_on_glass: bool) []const u8 {
         "document.documentElement.classList.toggle('pane-glass', false)";
 }
 
+/// A rect in host client pixels (left/top inclusive, right/bottom exclusive).
+pub const Strip = struct { left: i32, top: i32, right: i32, bottom: i32 };
+
+/// What a host resize from `old_w` x `old_h` to `new_w` x `new_h` uncovers
+/// (T2654): the strip down the right past the old width, and the strip along
+/// the bottom under the old height. A live layout pass moves panes with
+/// `SWP_NOREDRAW`, so nothing invalidates these and the compositor shows the
+/// grown surface unpainted (black, or the sheet a step behind) until a later
+/// paint - and a web view resizes a frame or two behind its host, so even a
+/// painted strip shows between the page and the card's rim. Null on a side
+/// that did not grow, and both null before the first size (no old picture).
+pub fn grownStrips(old_w: i32, old_h: i32, new_w: i32, new_h: i32) [2]?Strip {
+    if (old_w <= 0 or old_h <= 0) return .{ null, null };
+    const right: ?Strip = if (new_w > old_w and new_h > 0)
+        .{ .left = old_w, .top = 0, .right = new_w, .bottom = new_h }
+    else
+        null;
+    const bottom: ?Strip = if (new_h > old_h and new_w > 0)
+        .{ .left = 0, .top = old_h, .right = @min(old_w, new_w), .bottom = new_h }
+    else
+        null;
+    return .{ right, bottom };
+}
+
 const testing = std.testing;
+
+test "T2654: a grown host's uncovered strips are the right and bottom past the old size" {
+    // A right-edge grow: one strip, full height, past the old width.
+    const g = grownStrips(400, 300, 406, 300);
+    try testing.expectEqual(Strip{ .left = 400, .top = 0, .right = 406, .bottom = 300 }, g[0].?);
+    try testing.expect(g[1] == null);
+    // Both ways at once: the corner belongs to the right strip alone.
+    const b = grownStrips(400, 300, 410, 320);
+    try testing.expectEqual(Strip{ .left = 400, .top = 0, .right = 410, .bottom = 320 }, b[0].?);
+    try testing.expectEqual(Strip{ .left = 0, .top = 300, .right = 400, .bottom = 320 }, b[1].?);
+    // A shrink, a same size, and the first size uncover nothing.
+    for ([_][4]i32{ .{ 400, 300, 390, 290 }, .{ 400, 300, 400, 300 }, .{ 0, 0, 400, 300 } }) |c| {
+        const n = grownStrips(c[0], c[1], c[2], c[3]);
+        try testing.expect(n[0] == null and n[1] == null);
+    }
+    // Narrower but taller: the bottom strip stops at the new width.
+    const t = grownStrips(400, 300, 380, 310);
+    try testing.expect(t[0] == null);
+    try testing.expectEqual(Strip{ .left = 0, .top = 300, .right = 380, .bottom = 310 }, t[1].?);
+}
 
 test "T1885: our own pages go see-through on glass; a website and an html file keep their own" {
     try testing.expect(drawsOnGlass(true, .markdown));

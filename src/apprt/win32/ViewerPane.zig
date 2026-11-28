@@ -777,6 +777,11 @@ glass_buf: []u32 = &.{},
 /// glass paint skips it. Null until the controller has been placed.
 page_rect: ?w32.RECT = null,
 
+/// The host's client size as `syncBounds` last saw it (T2654), so a resize
+/// can paint what it uncovered before the frame is composed.
+synced_w: i32 = 0,
+synced_h: i32 = 0,
+
 /// The next glass paint lays the whole client, whatever was invalidated
 /// (T3041). Set when the sheet itself changes - a new slice of the desk, a
 /// resize, the page turning opaque or see-through - so the part under the
@@ -6004,6 +6009,13 @@ pub fn syncBounds(self: *ViewerPane) void {
         sync_cost.bounds_ns +|= sinceNs(tb);
     }
 
+    // What the resize uncovered is painted now, in this pass (T2654).
+    const old_w = self.synced_w;
+    const old_h = self.synced_h;
+    self.synced_w = width;
+    self.synced_h = height;
+    self.paintGrownStrips(h, old_w, old_h, width, height);
+
     // The find card follows the pane's width live too, and it is placed against
     // the CONTENT's top rather than the pane's — so a nav bar sliding in moves
     // the card down with the text instead of leaving it under the bar. A pane
@@ -7812,6 +7824,58 @@ fn paintUnderPage(self: *ViewerPane, dirty: ?w32.RECT) void {
     self.glass_full_due = false;
     self.glass_skipped_page = opaque_page != null;
     // A drag-hidden nav bar's band (T2767), over the sheet just laid there.
+    if (self.nav) |nav| _ = nav.paintDeferred(dc);
+}
+
+/// Paint what a resize just uncovered, before the pass that made it ends
+/// (T2654). A live layout pass moves the host with `SWP_NOREDRAW`, so no
+/// `WM_PAINT` is coming for the grown strip and the compositor shows it
+/// unpainted; and WebView2 renders the new size a frame or two after its
+/// host, so the strip shows between the page and the card's rim on most
+/// frames of a right-edge drag. Under the page it is laid in the page's own
+/// colour, which is what the card's rim already edges, so the lag reads as
+/// page; elsewhere it is what `WM_PAINT` would lay there - the sheet, or `bg`.
+fn paintGrownStrips(self: *ViewerPane, h: w32.HWND, old_w: i32, old_h: i32, width: i32, height: i32) void {
+    if (self.state == .failed) return; // the error card is laid out whole by WM_PAINT
+    if (w32.IsWindowVisible(h) == 0) return;
+    const strips = viewer_glass.grownStrips(old_w, old_h, width, height);
+    if (strips[0] == null and strips[1] == null) return;
+    const dc = w32.GetDCEx(h, null, w32.DCX_CACHE | w32.DCX_CLIPSIBLINGS) orelse return;
+    defer _ = w32.ReleaseDC(h, dc);
+    var child = w32.GetWindow(h, w32.GW_CHILD);
+    while (child) |c| : (child = w32.GetWindow(c, w32.GW_HWNDNEXT)) {
+        if (w32.IsWindowVisible(c) == 0 or !isOwnChrome(c)) continue;
+        var wr: w32.RECT = undefined;
+        if (w32.GetWindowRect(c, &wr) == 0) continue;
+        var pts = [2]w32.POINT{ .{ .x = wr.left, .y = wr.top }, .{ .x = wr.right, .y = wr.bottom } };
+        _ = w32.ScreenToClient(h, &pts[0]);
+        _ = w32.ScreenToClient(h, &pts[1]);
+        _ = w32.ExcludeClipRect(dc, pts[0].x, pts[0].y, pts[1].x, pts[1].y);
+    }
+    const opaque_page: ?w32.RECT = if (self.state == .ready and !self.drawsOnGlass()) self.page_rect else null;
+    const fill = self.cardColors().fill;
+    const page_brush = if (opaque_page != null) w32.CreateSolidBrush(w32.RGB(fill.r, fill.g, fill.b)) else null;
+    defer if (page_brush) |b| {
+        _ = w32.DeleteObject(b);
+    };
+    for (strips) |maybe| {
+        const s = maybe orelse continue;
+        const r: w32.RECT = .{ .left = s.left, .top = s.top, .right = s.right, .bottom = s.bottom };
+        const saved = w32.SaveDC(dc);
+        defer _ = w32.RestoreDC(dc, saved);
+        _ = w32.IntersectClipRect(dc, r.left, r.top, r.right, r.bottom);
+        self.paintRect(dc, width, height, glassSheetRect(r, opaque_page));
+    }
+    // The whole page, not only the strip: the browser follows its host's
+    // MOVE a frame late as well as its size, so on a step that both moves and
+    // grows the host (a split's right pane on a right-edge drag) the host's
+    // own pixels under the page's old place show too - and the host never
+    // paints there otherwise (T3041 skips under an opaque page). The browser
+    // composes over all of it once it has caught up.
+    if (opaque_page) |p| if (page_brush) |b| {
+        var under = p;
+        _ = w32.FillRect(dc, &under, b);
+    };
     if (self.nav) |nav| _ = nav.paintDeferred(dc);
 }
 

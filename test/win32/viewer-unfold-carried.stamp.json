@@ -1,21 +1,18 @@
 {
     "guard":  "viewer-unfold-carried",
     "script":  "test/win32/viewer-unfold-carried.ps1",
-    "generated":  "2026-11-27T06:38:51-08:00",
-    "commit":  "f500e650bd",
+    "generated":  "2026-11-28T01:29:48-08:00",
+    "commit":  "6d6893c362",
     "uncommitted":  [
-                        "src/apprt/win32/gdiplus_decode.zig",
-                        "src/apprt/win32/PaneView.zig",
-                        "src/apprt/win32/ViewerPane.zig",
-                        "test/win32/viewer-unfold-carried.ps1"
+                        "src/apprt/win32/ViewerPane.zig"
                     ],
     "files":  {
                   "src/apprt/win32/gdiplus_decode.zig":  "fda1cd1c917638a71f1970f6f85c108b7870c90e29834c1e5c066b13dc490614",
                   "src/apprt/win32/PaneView.zig":  "4e92b618145ed8fa4865a391ef8a528aba917dd360abd98fd6eff4711ba58ced",
-                  "src/apprt/win32/ViewerPane.zig":  "4c55a46e2e13ec6bdbd059cc17149e5c9c5e68496a7904851a8ad69c54a2e0d9",
+                  "src/apprt/win32/ViewerPane.zig":  "deaaa8b46bcb82119a1364105206eea1573eb3faa0ca629b96be875a851c385a",
                   "test/win32/viewer-unfold-carried.ps1":  "0883b029a63a8db916e438f9330fb4ad995cdfc1509b50b40d712cf32acd0cca"
               },
     "code":  {
-                 "test/win32/viewer-unfold-carried.ps1":  "code1:91731f7af8b778b3bd6f017b3767e922753dee4000a4a71bc6e53af001338387"
+                 "test/win32/viewer-unfold-carried.ps1":  "code1:3909c142b78ec96c1cd5b8a8729c6d10caa871b715730133e6faf01aa739afe0"
              }
 }
