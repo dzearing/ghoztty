@@ -206,7 +206,7 @@ for kind in $SCENARIOS; do
     # private memory by no more than M1's own budget per cycle, up to
     # MAX_WARMUP. A real leak (>= 1 MB a cycle) never settles, runs to the cap
     # and still fails M1; under NEGATIVE=1 nothing is closed, so it never
-    # settles either and is not tried (the app dies past ~20 open splits, T3779).
+    # settles either and is not tried.
     wn=$WARMUP
     if [ "$NEG" != 1 ]; then
         blk=${SETTLE_BLOCK:-4}
@@ -266,5 +266,7 @@ done
 printf "  measured:%b\n" "$summary"
 
 kill -0 "$APP" 2>/dev/null
-hl_check "P2 the app is still running after every scenario" $?
+# T3779: hl_finish removes the runtime dir and the app log with it, so a dead
+# app's panic is named here as the failure's detail or it is lost.
+hl_check "P2 the app is still running after every scenario" $? "$(grep -m1 -A3 -i 'panic\|reached unreachable\|segmentation' "$APP_LOG" 2>/dev/null | tr '\n' '|')"
 hl_finish "$L"

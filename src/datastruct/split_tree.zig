@@ -1563,6 +1563,18 @@ pub fn SplitTree(comptime V: type) type {
                     if (slot.height > 0) min_h = @min(min_h, slot.height);
                 }
 
+                // T3779: a deep tree makes the smallest slot tiny, and the
+                // scale that brings it up to one cell overflows f16 (2^-16
+                // gives inf) - `@intFromFloat` below then panicked, and the
+                // GTK app logs this diagram on every new split. Past a
+                // readable size there is no useful picture anyway, so give
+                // up on the diagram (`format` keeps the text) instead of
+                // scaling into infinity or a gigabyte grid.
+                const max_cells: f32 = 256;
+                const scaled_w = @as(f32, sp.slots[0].width) / @as(f32, min_w);
+                const scaled_h = @as(f32, sp.slots[0].height) / @as(f32, min_h);
+                if (!(scaled_w <= max_cells and scaled_h <= max_cells)) return error.WriteFailed;
+
                 const ratio_w: f16 = 1 / min_w;
                 const ratio_h: f16 = 1 / min_h;
                 const slots = alloc.dupe(Spatial.Slot, sp.slots) catch return error.WriteFailed;
@@ -1908,6 +1920,64 @@ test "SplitTree: single node" {
         \\+---+
         \\
     );
+}
+
+/// T3779: `depth` nested right-splits, each one halving the newest pane -
+/// the shape a script makes by running `+split` on the same pane again and
+/// again. Returns the formatted tree (`{f}`: diagram, then text).
+fn formatNestedSplits(alloc: Allocator, depth: usize) ![]u8 {
+    const labels = [_][]const u8{
+        "0",  "1",  "2",  "3",  "4",  "5",  "6",  "7",  "8",  "9",  "10",
+        "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21",
+        "22", "23", "24", "25",
+    };
+    std.debug.assert(depth < labels.len);
+    var views: [labels.len]TestView = undefined;
+    for (&views, labels) |*v, l| v.* = .{ .label = l };
+
+    var cur: TestTree = try .init(alloc, &views[0]);
+    defer cur.deinit();
+    for (1..depth + 1) |i| {
+        const at: TestTree.Node.Handle = handle: {
+            for (cur.nodes, 0..) |node, h| switch (node) {
+                .leaf => |v| if (std.mem.eql(u8, v.label, labels[i - 1])) break :handle @enumFromInt(h),
+                .split => {},
+            };
+            return error.TestUnexpectedResult;
+        };
+        var leaf: TestTree = try .init(alloc, &views[i]);
+        defer leaf.deinit();
+        const next = try cur.split(alloc, at, .right, 0.5, &leaf);
+        cur.deinit();
+        cur = next;
+    }
+    return std.fmt.allocPrint(alloc, "{f}", .{cur});
+}
+
+test "SplitTree: format survives a deep split tree (T3779)" {
+    const testing = std.testing;
+    const alloc = testing.allocator;
+
+    // Shallow: the diagram is still drawn ahead of the text.
+    {
+        const str = try formatNestedSplits(alloc, 4);
+        defer alloc.free(str);
+        try testing.expect(std.mem.startsWith(u8, str, "+"));
+        try testing.expect(std.mem.indexOf(u8, str, "leaf: 4") != null);
+    }
+
+    // Deep: the smallest pane is 2^-20 of the window. Scaling it up to one
+    // cell overflowed f16 to infinity and `@intFromFloat` panicked - the
+    // Linux app's debug log of every new split took the whole app down at
+    // the 16th nested split. Now the diagram is skipped and the text stays.
+    {
+        const str = try formatNestedSplits(alloc, 20);
+        defer alloc.free(str);
+        try testing.expect(!std.mem.startsWith(u8, str, "+"));
+        try testing.expect(std.mem.startsWith(u8, str, "split"));
+        try testing.expect(std.mem.indexOf(u8, str, "leaf: 20") != null);
+        try testing.expect(std.mem.indexOf(u8, str, "leaf: 0") != null);
+    }
 }
 
 test "SplitTree: split horizontal" {
