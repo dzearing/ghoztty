@@ -1,8 +1,8 @@
 {
     "guard":  "split-zoom-nav",
     "script":  "test/win32/split-zoom-nav.ps1",
-    "generated":  "2026-11-28T05:11:21-08:00",
-    "commit":  "47f03d1379",
+    "generated":  "2026-11-28T06:38:22-08:00",
+    "commit":  "0f48474fa3",
     "uncommitted":  [
 
                     ],

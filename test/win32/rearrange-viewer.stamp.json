@@ -1,8 +1,8 @@
 {
     "guard":  "rearrange-viewer",
     "script":  "test/win32/rearrange-viewer.ps1",
-    "generated":  "2026-11-28T05:29:43-08:00",
-    "commit":  "f18aae3aac",
+    "generated":  "2026-11-28T06:34:51-08:00",
+    "commit":  "0f48474fa3",
     "uncommitted":  [
 
                     ],
