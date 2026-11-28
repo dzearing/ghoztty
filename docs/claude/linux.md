@@ -2613,9 +2613,15 @@ Descendants are the app's (WebKit web processes) AND the session agent's
 `LIBGL_ALWAYS_SOFTWARE=1`, so its GL textures are its own memory and a
 leaked render target would show (P0d checks no d3d12 driver is mapped).
 Ends `PANE CLOSE MEMORY: ALL PASS` (40 checks), about 6 minutes.
-`NEGATIVE=1` leaves the panes open and must fail every budget check (today
-the app dies after ~20 open splits, so only the split scenario's checks are
-meaningful there - T3779; its M6 reads ~10 KB per kept session).
+`NEGATIVE=1` leaves the panes open and must fail every budget check
+(`SCENARIOS=split`, 2026-11-28: M1-M6 red, P1 and P2 green, ~40 MB, 2
+threads, 9 fds and ~18 KB of agent heap per kept pane). Until T3779 the app
+died at its 16th nested split, so M1-M3 read a dead process: the debug log of
+every new split formats the tree, and `SplitTree.formatDiagram` scaled the
+smallest slot up to one cell in `f16`, which overflowed to infinity and
+panicked in `@intFromFloat`. It now skips a diagram wider or taller than 256
+cells. If P2 ever fails again, its detail line carries the app's panic,
+because `hl_finish` deletes the app log with the runtime dir.
 
 **`WARMUP` is a floor, not the whole warm-up** (T3778). One `CYCLES=50` run
 on 2026-11-25 failed M1 at 1073 KB a cycle; re-run on that same commit and on
