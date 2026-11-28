@@ -19,8 +19,8 @@
 #   powershell -NoProfile -File scripts\linux\wsl-run.ps1 -CommandFile test\linux\frame-release.sh
 #
 # NEGATIVE=1 runs the app with GHOZTTY_IDLE_FRAME_RELEASE=0, which turns the
-# idle release off, and must FAIL R1 and R2 alone (2 failures): the oracle can
-# tell released frames from held ones.
+# idle release off, and must FAIL R1, R2 and R5 alone (3 failures): the oracle
+# can tell released frames from held ones.
 # Output: one PASS/FAIL line per check, then 'FRAME RELEASE: ALL PASS' or
 # 'FRAME RELEASE: <n> FAILURE(S)'. Exit 0 only on ALL PASS.
 set -u
@@ -60,7 +60,6 @@ export LIBGL_ALWAYS_SOFTWARE=1
 # the heap, where giving it back does not show.
 export MALLOC_MMAP_THRESHOLD_=131072
 if [ "${NEGATIVE:-0}" = 1 ]; then export GHOZTTY_IDLE_FRAME_RELEASE=0; fi
-[ -n "${T3775_SHIM:-}" ] && export LD_PRELOAD="$T3775_SHIM" # TEMP DIAG T3775
 hl_launch APP "$app" --gtk-single-instance=false
 hl_wait_for 30 test -S "$(hl_socket)"
 hl_check "R0c the app serves its socket" $?
@@ -81,9 +80,6 @@ press() { hl_ipc press-key "--target=$1" "--key=$2" > /dev/null 2>&1; }
 type_line() { cli +send-keys --target="$1" "$2" Enter > /dev/null 2>&1; }
 # The app's private memory in KB (smaps_rollup Private_*, as pane-close-memory.sh).
 priv_kb() { awk '/^Private_(Clean|Dirty):/ { s += $2 } END { print s + 0 }' "/proc/$1/smaps_rollup" 2>/dev/null || echo 0; }
-# Its anonymous mappings of 1 MB or more, by size in KB (R5's failure detail:
-# a frame-sized one that stays is what a held reference looks like).
-big_maps() { awk '/^[0-9a-f]+-[0-9a-f]+ / { anon = (NF < 6) } /^Size:/ { if (anon && $2 >= 1024) printf "%s ", $2 }' "/proc/$1/smaps" 2>/dev/null; }
 white_of() { hl_png_stats "$1" 255 255 255 2>&1 | sed -n 's/.*match=\([0-9.]*\).*/\1/p'; }
 # A screen of reverse-video blank rows: white on the black background.
 fill_white() { type_line "$1" "clear; i=0; while [ \$i -lt 26 ]; do printf '\\\\033[7m%100s\\\\033[0m\\\\n' ''; i=\$((i+1)); done"; }
@@ -96,11 +92,13 @@ hl_check "R0d the app renders on Mesa's software rasterizer, so GL memory is the
 fill_white "$p1"
 sleep 0.5
 # Drawing now: the frames hold real targets.
-[ -n "${T3775_TRACE:-}" ] && echo "MARK idle0" >> "$T3775_TRACE"; idle0_priv=$(priv_kb "$APP") # TEMP DIAG T3775
 held=$(fr "$p1" target_bytes)
+held_priv=$(priv_kb "$APP")
 rel=""
 for _ in $(seq 1 40); do rel=$(fr "$p1" released); [ "$rel" = True ] && break; sleep 0.2; done
-after=$(fr "$p1" target_bytes); sleep 0.5; [ -n "${T3775_TRACE:-}" ] && echo "MARK idle1" >> "$T3775_TRACE"; echo "DIAG idle drop=$(( idle0_priv - $(priv_kb "$APP") ))" # TEMP DIAG T3775
+after=$(fr "$p1" target_bytes)
+sleep 0.5
+freed_kb=$(( held_priv - $(priv_kb "$APP") ))
 [ "$rel" = True ] && [ "${after:-99}" -le 12 ] && grep -q 'released idle render targets' "$APP_LOG"
 hl_check "R1 a pane that drew nothing for 3s releases its frames (targets ${held:-?} -> ${after:-?} bytes; log: $(grep -m1 -o 'released idle render targets.*' "$APP_LOG"))" $? "$(seen)"
 
@@ -108,6 +106,18 @@ hl_screenshot "$p1" "$shot" > /dev/null
 w=$(white_of "$shot")
 python3 -I -c "import sys; sys.exit(0 if float('${w:-0}') >= 0.3 else 1)" && [ "$rel" = True ]
 hl_check "R2 released while idle, the pane still shows its last picture (white ${w:-?})" $? "released=$rel white=$w"
+
+# R5 (T3775): the release gives the target's memory back, not just its GL
+# name. One pane, nothing else drawing, so the app's private memory is a clean
+# oracle here (a tab switch is not: the tab that comes forward allocates its
+# own frames in the same moment). Before the fix the target's storage stayed
+# allocated until the pane drew again: Mesa's bound state still named it
+# (`OpenGL.dropReleasedFrameRefs`). Measured 2026-11-28, three runs each: the
+# release freed 2832-2928 KB with the fix and 696-744 KB without, for a
+# 1890 KB target.
+want_kb=$(( ${held:-0} * 3 / 4 / 1024 ))
+[ "$rel" = True ] && [ "$want_kb" -gt 500 ] && [ "$freed_kb" -ge "$want_kb" ]
+hl_check "R5 the idle release gives the target's memory back: app private memory fell ${freed_kb} KB (target ${held:-?} bytes; needs >= ${want_kb} KB)" $? "held_priv=${held_priv:-?} KB released=$rel"
 
 # ---- 2. the first frame back draws in full -----------------------------------
 type_line "$p1" "clear"
@@ -146,8 +156,6 @@ type_line "$p1" "python3 -I $busy_py"
 for _ in $(seq 1 50); do [ "$(fr "$p2" released)" = True ] && break; sleep 0.2; done
 sleep 1
 busy_t=$(fr "$p1" target_bytes); busy_a=$(fr "$p1" atlas_bytes); busy_rel=$(fr "$p1" released)
-busy_priv=$(priv_kb "$APP"); busy_maps=$(big_maps "$APP")
-cp "/proc/$APP/smaps" /tmp/t3775-busy.smaps; [ -n "${T3775_TRACE:-}" ] && echo "MARK busy" >> "$T3775_TRACE" # TEMP DIAG T3775
 press "$p1" ctrl+shift+f2
 hid=""
 for _ in $(seq 1 40); do
@@ -158,18 +166,6 @@ done
 hid_t=$(fr "$p1" target_bytes)
 [ -n "$hid" ] && [ "$busy_rel" = False ] && [ "${busy_t:-0}" -gt 100000 ] && [ "${hid_t:-99}" -le 12 ] && grep -q 'released hidden render targets' "$APP_LOG"
 hl_check "R4 a busy pane sent to a background tab releases its frames (targets $busy_t -> ${hid_t:-?} bytes, atlases ${busy_a:-?} bytes; log: $(grep -m1 -o 'released hidden render targets.*' "$APP_LOG"))" $? "busy_rel=$busy_rel $(seen)"
-
-# R5 (T3775): the release gives the memory back, not just the GL names. The
-# app's private memory drops by about what the frames held. Before the fix it
-# did not move: Mesa's bound state still named the old target and atlases
-# until the pane drew again (`OpenGL.dropReleasedFrameRefs`).
-held_kb=$(( (${busy_t:-0} + ${busy_a:-0}) / 1024 ))
-want_kb=$(( held_kb * 6 / 10 ))
-[ -n "${T3775_TRACE:-}" ] && echo "MARK hid" >> "$T3775_TRACE" # TEMP DIAG T3775
-priv_drop=$(( ${busy_priv:-0} - $(priv_kb "$APP") ))
-sleep 1; cp "/proc/$APP/smaps" /tmp/t3775-hid.smaps; echo "DIAG drop-after-1s=$(( ${busy_priv:-0} - $(priv_kb "$APP") ))" # TEMP DIAG T3775
-[ -n "$hid" ] && [ "$want_kb" -gt 500 ] && [ "$priv_drop" -ge "$want_kb" ]
-hl_check "R5 the hidden release gives the memory back: app private memory fell ${priv_drop} KB (frames held ${held_kb} KB; needs >= ${want_kb} KB)" $? "busy_priv=${busy_priv:-?} KB; 1MB+ anon maps busy: ${busy_maps}| hidden: $(big_maps "$APP")"
 
 # ---- 4. shown again, the pane draws what it has now ------------------------
 cli +send-keys --target="$p1" C-c > /dev/null 2>&1

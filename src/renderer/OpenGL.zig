@@ -1694,12 +1694,14 @@ test "idleReleaseKnobOn: only an explicit off turns the idle release off" {
 /// the storage just freed, so the driver can let it go now rather than at the
 /// pane's next frame. Deleting a GL name does not drop the references the
 /// driver's bound state holds: Mesa updates its framebuffer and fragment
-/// sampler bindings only when a draw validates them. So after the last frame
-/// the context still names the old target (the pipe framebuffer from the cell
-/// draw, and llvmpipe's setup keeps the present blit's source) and the old
-/// atlases (the cell draw's sampler views), and a hidden or idle pane does not
-/// draw again. Measured on llvmpipe 2026-11-25: the target-sized mapping
-/// stayed until the next frame. A `glClear` validates only the framebuffer.
+/// sampler bindings only when a draw validates them, so after the last frame
+/// the context can still name the old target (the pipe framebuffer from the
+/// cell draw; llvmpipe's setup keeps the present blit's source), and a pane
+/// that has gone idle does not draw again. Measured on Mesa 25.2.8 llvmpipe
+/// 2026-11-28 with an allocation trace: without this draw an idle release
+/// left the target's storage allocated until the pane's next frame, and with
+/// it the storage is freed inside the release (test/linux/frame-release.sh
+/// R5). A `glClear` validates only the framebuffer and was not enough.
 ///
 /// The fix is one draw: the `bg_color` pipeline (no samplers, no vertex
 /// buffers) draws one triangle into the new 1x1 `target`. That rebinds the
@@ -1710,7 +1712,6 @@ test "idleReleaseKnobOn: only an explicit off turns the idle release off" {
 pub fn dropReleasedFrameRefs(self: *const OpenGL, target: Target, pipeline: Pipeline) void {
     _ = self;
     if (comptime apprt.runtime != apprt.gtk) return;
-    if (std.posix.getenv("GHOZTTY_T3775_NODROP") != null) return; // TEMP DIAG T3775
     const fbobind = target.framebuffer.bind(.framebuffer) catch return;
     defer fbobind.unbind();
     const pbind = pipeline.program.use() catch return;
