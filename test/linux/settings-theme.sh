@@ -197,8 +197,22 @@ hl_check "V2 the terminal is the theme's background at the configured opacity, a
 hl_check "V3 the lines are in the configured family at Mac's 0.9 x size (15pt -> 13.5pt)" $? "line2=$(pv "$o" '["drawn"]["lines"][2]')"
 # ---- the pixels (T3769): --op=shot, sampled at the rects the state names --
 # shot: the window's own render to a fresh PNG, its path printed.
+# The tiles are laid out on the next frame after a grid change, so shot first
+# waits (3 s at most) for the first tile to have a real size, and the rects
+# used are the ones the shot's OWN reply reports (saved beside it as .json).
 shots=0
-shot() { shots=$((shots + 1)); local f="$HL_RUNTIME/settings-theme-$shots.png"; rm -f "$f"; st --op=shot --path="$f" > /dev/null; [ -s "$f" ] && echo "$f"; }
+shot() {
+    shots=$((shots + 1))
+    local f="$HL_RUNTIME/settings-theme-$shots.png" i r
+    rm -f "$f"
+    for i in $(seq 30); do
+        r=$(st --op=state)
+        [ "$(rq "$r" 'len(T) == 0 or T[0]["rect"][2] > 20')" = True ] && break
+        sleep 0.1
+    done
+    st --op=shot --path="$f" > "$f.json"
+    [ -s "$f" ] && echo "$f"
+}
 # rq <reply> <python expr>: T the drawn tiles, C the preview's drawn card,
 # k the scale, and pt(x, y) a logical point as 'x y' shot pixels.
 rq() {
@@ -228,8 +242,8 @@ accent() { [ -n "$1" ] && [ "$1" != off ] && near "$1" '#3584e4' 45; }
 st --op=theme-tab --value=dark > /dev/null
 st --op=theme-filter --value=catppuccin > /dev/null
 st --op=set --key=macos-pane-style --value=elevated > /dev/null
-o=$(st --op=set --key=background-opacity --value=1)
-f=$(shot)
+st --op=set --key=background-opacity --value=1 > /dev/null
+f=$(shot); o=$(cat "$f.json" 2>/dev/null)
 t0=$(rq "$o" 'T[0]["name"]'); t1=$(rq "$o" 'T[1]["name"]'); t1bg=$(rq "$o" 'T[1]["background"]')
 want_mocha='#101820'; [ "${NEGATIVE:-}" = 2 ] && want_mocha='#1e1e2e'   # the BUNDLED Mocha: S1 must FAIL
 px0=$(hl_png_pixel "$f" $(rq "$o" 'tile_bg(0)')); px1=$(hl_png_pixel "$f" $(rq "$o" 'tile_bg(1)'))
@@ -241,8 +255,8 @@ hl_check "S2 the picked tile's ring is drawn in the accent color; the unpicked o
 tp=$(hl_png_pixel "$f" $(rq "$o" 'term_px()'))
 [ "$(pv "$o" '["opacity"] == 1')" = true ] && near "$tp" "$want_mocha" 4
 hl_check "S3 fully opaque, the preview terminal is drawn in the theme's background ($want_mocha)" $? "term=$tp rect=$(rq "$o" 'C["term_rect"]')"
-o=$(st --op=set --key=background-opacity --value=0.8)
-f=$(shot)
+st --op=set --key=background-opacity --value=0.8 > /dev/null
+f=$(shot); o=$(cat "$f.json" 2>/dev/null)
 tp=$(hl_png_pixel "$f" $(rq "$o" 'term_px()')); dp=$(hl_png_pixel "$f" $(rq "$o" 'desk_px()'))
 want=$(blend '#101820' 0.8 "$dp")
 near "$tp" "$want" 6 && ! near "$tp" '#101820' 4
