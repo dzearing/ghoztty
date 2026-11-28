@@ -37,7 +37,7 @@
 # NEGATIVE=1 makes M1 expect the switch to seed "Catppuccin Frappe" (a DARK
 # theme) for the light slot: M1 must FAIL. NEGATIVE=2 makes S1 expect the
 # BUNDLED Catppuccin Mocha's #1e1e2e where the user's #101820 is drawn: S1
-# must FAIL (the pixel check tells two dark backgrounds apart).
+# and S3 must FAIL (the pixel check tells two dark backgrounds apart).
 #
 # Output: one PASS/FAIL line per check, then 'SETTINGS THEME: ALL PASS' or
 # 'SETTINGS THEME: <n> FAILURE(S)'. Exit 0 only on ALL PASS.
