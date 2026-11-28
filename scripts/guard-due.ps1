@@ -7070,9 +7070,12 @@ $GuardTable = @(
     },
     # The T2373 frame lab's live driver (T2392): the two live probes every lab
     # verdict rests on - the pointer lands where the path says, and a capture
-    # that misses frames says so. Pure section anywhere; live sections only on
-    # an idle box (SKIP ALL while the user is present, so it stamps only from
-    # a real live run).
+    # that misses frames says so. Two rows (T2657, divider-flicker's shape):
+    # `frame-lab` is the pure section A, which a sweep's plain run stamps over
+    # the by-design "-Live not passed" skip; `frame-lab-live` is B/C/D, which
+    # move the real pointer, need -Live and nobody at the box, and so stamp
+    # only from a person's live run - ADVISORY, and refused to the loop by the
+    # `-Live only` input-desktop declaration in lib\TestDesktop.ps1.
     [pscustomobject]@{
         Name   = 'frame-lab'
         Script = 'test\win32\frame-lab.ps1'
@@ -7082,6 +7085,19 @@ $GuardTable = @(
             'test\win32\lib\FrameCapture.ps1',
             'test\win32\lib\FrameLabInput.ps1',
             # T2395: the matrix driver its section D runs live (A9-A17 pure).
+            'test\win32\lib\FrameLabDriver.ps1'
+        )
+    },
+    [pscustomobject]@{
+        Name     = 'frame-lab-live'
+        Script   = 'test\win32\frame-lab.ps1'
+        RunArgs  = '-Live'
+        Stamp    = 'test\win32\frame-lab-live.stamp.json'
+        Advisory = $true
+        Covers   = @(
+            'test\win32\frame-lab.ps1',
+            'test\win32\lib\FrameCapture.ps1',
+            'test\win32\lib\FrameLabInput.ps1',
             'test\win32\lib\FrameLabDriver.ps1'
         )
     },

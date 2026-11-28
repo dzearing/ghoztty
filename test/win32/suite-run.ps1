@@ -1015,21 +1015,21 @@ exit 0
     try {
         Set-Content -LiteralPath $RunLog -Value '' -Encoding ASCII
         Set-FixtureScript 'translucent-window.ps1' $passBody
-        Set-FixtureScript 'frame-lab.ps1' $passBody
+        Set-FixtureScript 'background-blur.ps1' $passBody
         # Flag-gated entry ('-Live only'): its DEFAULT run is synthetic, and the
         # runner passes no arguments, so it must still run.
         Set-FixtureScript 'divider-flicker.ps1' $passBody
-        $xSet = @('-Include', 'translucent-window.ps1,frame-lab.ps1,divider-flicker.ps1,b-pass.ps1', '-TimeoutSec', '60')
+        $xSet = @('-Include', 'translucent-window.ps1,background-blur.ps1,divider-flicker.ps1,b-pass.ps1', '-TimeoutSec', '60')
 
         $dirX1 = Join-Path $Fixture 'runX1'
         $rX1 = Invoke-Runner ($xSet + @('-OutDir', $dirX1))
         $sX1 = Get-Summary $dirX1
         Check 'X1 serial: a listed script is never started' `
-            (((Get-InvocationCount 'translucent-window.ps1') -eq 0) -and ((Get-InvocationCount 'frame-lab.ps1') -eq 0)) `
-            "invocations tw=$(Get-InvocationCount 'translucent-window.ps1') fl=$(Get-InvocationCount 'frame-lab.ps1')"
+            (((Get-InvocationCount 'translucent-window.ps1') -eq 0) -and ((Get-InvocationCount 'background-blur.ps1') -eq 0)) `
+            "invocations tw=$(Get-InvocationCount 'translucent-window.ps1') bb=$(Get-InvocationCount 'background-blur.ps1')"
         Check 'X2 serial: it is scored skip, never red' `
-            (((Get-Verdict $sX1 'translucent-window.ps1') -eq 'skip') -and ((Get-Verdict $sX1 'frame-lab.ps1') -eq 'skip')) `
-            "$(Get-Verdict $sX1 'translucent-window.ps1') / $(Get-Verdict $sX1 'frame-lab.ps1')"
+            (((Get-Verdict $sX1 'translucent-window.ps1') -eq 'skip') -and ((Get-Verdict $sX1 'background-blur.ps1') -eq 'skip')) `
+            "$(Get-Verdict $sX1 'translucent-window.ps1') / $(Get-Verdict $sX1 'background-blur.ps1')"
         $twRow = @(@($sX1.results) | Where-Object { $_.Name -eq 'translucent-window.ps1' })
         Check 'X3 serial: the row says NOT RUN (input-desktop-exception) with the declared reason' `
             (($twRow.Count -eq 1) -and ($twRow[0].Line -match 'NOT RUN \(input-desktop-exception\)') -and ($twRow[0].Line -match 'T1787')) `
@@ -1047,8 +1047,8 @@ exit 0
         $rX2 = Invoke-Runner ($xSet + @('-Jobs', '2', '-OutDir', $dirX2))
         $sX2 = Get-Summary $dirX2
         Check 'X7 -Jobs: a listed script is never handed to a worker' `
-            (((Get-InvocationCount 'translucent-window.ps1') -eq 0) -and ((Get-InvocationCount 'frame-lab.ps1') -eq 0)) `
-            "invocations tw=$(Get-InvocationCount 'translucent-window.ps1') fl=$(Get-InvocationCount 'frame-lab.ps1')"
+            (((Get-InvocationCount 'translucent-window.ps1') -eq 0) -and ((Get-InvocationCount 'background-blur.ps1') -eq 0)) `
+            "invocations tw=$(Get-InvocationCount 'translucent-window.ps1') bb=$(Get-InvocationCount 'background-blur.ps1')"
         Check 'X8 -Jobs: scored skip, the others still run, the run stays green' `
             (((Get-Verdict $sX2 'translucent-window.ps1') -eq 'skip') -and ((Get-Verdict $sX2 'b-pass.ps1') -eq 'pass') -and
                 ((Get-InvocationCount 'divider-flicker.ps1') -eq 1) -and ($rX2.Exit -eq 0)) `
@@ -1082,7 +1082,7 @@ exit 0
     }
     finally {
         Remove-Item -LiteralPath $fixLib -Force -ErrorAction SilentlyContinue
-        foreach ($n in @('translucent-window.ps1', 'frame-lab.ps1', 'divider-flicker.ps1')) {
+        foreach ($n in @('translucent-window.ps1', 'background-blur.ps1', 'divider-flicker.ps1')) {
             Remove-Item -LiteralPath (Join-Path $FixTests $n) -Force -ErrorAction SilentlyContinue
         }
     }

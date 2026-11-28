@@ -75,6 +75,8 @@ $ErrorActionPreference = 'Stop'
 $script:passes = 0
 $script:failures = 0
 $script:skipped = 0
+# T2657: the share of $skipped that is the by-design "-Live not passed" skip.
+$script:liveOptOut = 0
 function Assert($name, $cond, $detail = '') {
     if ($cond) {
         "  PASS $name"
@@ -460,6 +462,9 @@ try {
         ''
         "  SKIP B/C/D (live) - $(if ($PureOnly) { 'by -PureOnly' } else { 'pass -Live to run them; a sweep never does' })"
         $script:skipped += 2
+        # T2657: this skip is the design, not a gap - the pure guard stamps
+        # over it, and only the live guard needs B/C/D to have run.
+        $script:liveOptOut = 2
     } else {
         # Everything below moves the user's pointer or reads their screen.
         Assert-UserAbsent
@@ -573,10 +578,20 @@ finally {
 }
 
 # A green run stamps the covered files (T783); red or skipped stays due.
-if ($script:failures -eq 0 -and $script:skipped -eq 0) {
+# T2657: two guards. `frame-lab` is section A and stamps from a sweep's plain
+# run, whose only skip is the by-design live opt-out; any OTHER skip (a real
+# gap in A) still blocks it. `frame-lab-live` (advisory) stamps only from a
+# full green -Live run - B, C and the default D, nothing skipped.
+if ($script:failures -eq 0) {
     $repo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
-    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'scripts\guard-due.ps1') `
-        update -Guard frame-lab -Repo $repo 2>&1 | ForEach-Object { "  $_" }
+    if (($script:skipped - $script:liveOptOut) -eq 0) {
+        & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'scripts\guard-due.ps1') `
+            update -Guard frame-lab -Repo $repo 2>&1 | ForEach-Object { "  $_" }
+    }
+    if ($Live -and -not $PureOnly -and -not $NoMatrix -and $script:skipped -eq 0) {
+        & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'scripts\guard-due.ps1') `
+            update -Guard frame-lab-live -Repo $repo 2>&1 | ForEach-Object { "  $_" }
+    }
 }
 
 ''

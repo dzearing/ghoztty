@@ -1,17 +1,17 @@
 {
     "guard":  "probe-topmost-restore",
     "script":  "test/win32/probe-topmost-restore.ps1",
-    "generated":  "2026-11-24T23:59:30-08:00",
-    "commit":  "ac1593e8f",
+    "generated":  "2026-11-28T02:53:50-08:00",
+    "commit":  "aa1ab9d06d",
     "uncommitted":  [
                         "test/win32/lib/TestDesktop.ps1"
                     ],
     "files":  {
-                  "test/win32/lib/TestDesktop.ps1":  "fe2b0064351e2d105716bec2c66c5624d8be3b861f7476eab5c6ef7e7ad09d78",
+                  "test/win32/lib/TestDesktop.ps1":  "aaf0de06f81814acd5cd4e90a8c66ec05c6ac9c0e32d544980fab14696894293",
                   "test/win32/probe-topmost-restore.ps1":  "0def592e8312af57add7e40935b2be576d2cfc1ff7b2b7070f8a236af7432c5a"
               },
     "code":  {
-                 "test/win32/lib/TestDesktop.ps1":  "code1:d65eeadd6ed614a44b83552589e61a51bc77ab780a1768c67fed0e14cf35d207",
+                 "test/win32/lib/TestDesktop.ps1":  "code1:b457bb20866257a0cdac6a73b3c571f3ac3598b82b05a5f206b2c52ddeefbe79",
                  "test/win32/probe-topmost-restore.ps1":  "code1:c3bdb916408df420ecae27e96329e9069e38509a94c38c9de350934384d21cc8"
              }
 }

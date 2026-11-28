@@ -1,8 +1,8 @@
 {
     "guard":  "stack-caret-on-show",
     "script":  "test/win32/stack-caret-on-show.ps1",
-    "generated":  "2026-11-28T01:52:01-08:00",
-    "commit":  "b843981921",
+    "generated":  "2026-11-28T03:00:51-08:00",
+    "commit":  "aa1ab9d06d",
     "uncommitted":  [
 
                     ],

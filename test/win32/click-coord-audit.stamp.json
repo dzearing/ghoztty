@@ -1,21 +1,21 @@
 {
     "guard":  "click-coord",
     "script":  "test/win32/click-coord-audit.ps1",
-    "generated":  "2026-11-25T20:38:09-08:00",
-    "commit":  "169fd8fa7c",
+    "generated":  "2026-11-28T03:03:24-08:00",
+    "commit":  "aa1ab9d06d",
     "uncommitted":  [
-                        "test/win32/lib/ChromeGeometry.ps1"
+                        "test/win32/lib/TestDesktop.ps1"
                     ],
     "files":  {
                   "test/win32/click-coord-audit.ps1":  "cd83fc5d9f26712fd0c66245cb9fc86a2879206235fc7ffc9a47f5b43534d7c0",
                   "test/win32/lib/ChromeGeometry.ps1":  "9c51a3a8301d6b007036e816ce7700a457a405262671ce523afc25f11ef1cf6d",
                   "test/win32/lib/ClickCoordAudit.ps1":  "3f404a1cd9e3ff05c0daec8735a9d5c163d02b3a1beae8161ee2885d5026e36f",
-                  "test/win32/lib/TestDesktop.ps1":  "fe2b0064351e2d105716bec2c66c5624d8be3b861f7476eab5c6ef7e7ad09d78"
+                  "test/win32/lib/TestDesktop.ps1":  "aaf0de06f81814acd5cd4e90a8c66ec05c6ac9c0e32d544980fab14696894293"
               },
     "code":  {
                  "test/win32/click-coord-audit.ps1":  "code1:55355c64b5b3f0f61410ffec68e400076d37e119c86ccfed7c35e07b32d9dfbc",
                  "test/win32/lib/ChromeGeometry.ps1":  "code1:059ad10f5e3076b5bf99ea4cc9a9edecf5433a5c756d7b02983a72f2634e3649",
                  "test/win32/lib/ClickCoordAudit.ps1":  "code1:15cc7622a715419521d342e94c16797e62c7691c38406bd37fe1da61b0663551",
-                 "test/win32/lib/TestDesktop.ps1":  "code1:d65eeadd6ed614a44b83552589e61a51bc77ab780a1768c67fed0e14cf35d207"
+                 "test/win32/lib/TestDesktop.ps1":  "code1:b457bb20866257a0cdac6a73b3c571f3ac3598b82b05a5f206b2c52ddeefbe79"
              }
 }

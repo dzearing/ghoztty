@@ -1,18 +1,18 @@
 {
     "guard":  "mouse-nc-routing",
     "script":  "test/win32/mouse-nc-routing.ps1",
-    "generated":  "2026-11-25T00:00:28-08:00",
-    "commit":  "ac1593e8f",
+    "generated":  "2026-11-28T02:58:48-08:00",
+    "commit":  "aa1ab9d06d",
     "uncommitted":  [
                         "test/win32/lib/TestDesktop.ps1"
                     ],
     "files":  {
                   "src/apprt/win32/caption_layout.zig":  "39e4484c2478bd4b72a4053f80aaf39c50510637ab9b63f70a5b21ff67744603",
-                  "test/win32/lib/TestDesktop.ps1":  "fe2b0064351e2d105716bec2c66c5624d8be3b861f7476eab5c6ef7e7ad09d78",
+                  "test/win32/lib/TestDesktop.ps1":  "aaf0de06f81814acd5cd4e90a8c66ec05c6ac9c0e32d544980fab14696894293",
                   "test/win32/mouse-nc-routing.ps1":  "3db56b4cbf515ec3000fc54f8bc6b3536f7ec26b6146528a112b9567890319eb"
               },
     "code":  {
-                 "test/win32/lib/TestDesktop.ps1":  "code1:d65eeadd6ed614a44b83552589e61a51bc77ab780a1768c67fed0e14cf35d207",
+                 "test/win32/lib/TestDesktop.ps1":  "code1:b457bb20866257a0cdac6a73b3c571f3ac3598b82b05a5f206b2c52ddeefbe79",
                  "test/win32/mouse-nc-routing.ps1":  "code1:8c6017a9e1bc4ebd199dfe5f96d89b49af3db259e89c04f46d89acb24c8b4cc3"
              }
 }
