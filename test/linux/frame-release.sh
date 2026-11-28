@@ -60,6 +60,7 @@ export LIBGL_ALWAYS_SOFTWARE=1
 # the heap, where giving it back does not show.
 export MALLOC_MMAP_THRESHOLD_=131072
 if [ "${NEGATIVE:-0}" = 1 ]; then export GHOZTTY_IDLE_FRAME_RELEASE=0; fi
+[ -n "${T3775_SHIM:-}" ] && export LD_PRELOAD="$T3775_SHIM" # TEMP DIAG T3775
 hl_launch APP "$app" --gtk-single-instance=false
 hl_wait_for 30 test -S "$(hl_socket)"
 hl_check "R0c the app serves its socket" $?
@@ -145,7 +146,7 @@ for _ in $(seq 1 50); do [ "$(fr "$p2" released)" = True ] && break; sleep 0.2; 
 sleep 1
 busy_t=$(fr "$p1" target_bytes); busy_a=$(fr "$p1" atlas_bytes); busy_rel=$(fr "$p1" released)
 busy_priv=$(priv_kb "$APP"); busy_maps=$(big_maps "$APP")
-cp "/proc/$APP/smaps" /tmp/t3775-busy.smaps # TEMP DIAG T3775
+cp "/proc/$APP/smaps" /tmp/t3775-busy.smaps; [ -n "${T3775_TRACE:-}" ] && echo "MARK busy" >> "$T3775_TRACE" # TEMP DIAG T3775
 press "$p1" ctrl+shift+f2
 hid=""
 for _ in $(seq 1 40); do
@@ -163,6 +164,7 @@ hl_check "R4 a busy pane sent to a background tab releases its frames (targets $
 # until the pane drew again (`OpenGL.dropReleasedFrameRefs`).
 held_kb=$(( (${busy_t:-0} + ${busy_a:-0}) / 1024 ))
 want_kb=$(( held_kb * 6 / 10 ))
+[ -n "${T3775_TRACE:-}" ] && echo "MARK hid" >> "$T3775_TRACE" # TEMP DIAG T3775
 priv_drop=$(( ${busy_priv:-0} - $(priv_kb "$APP") ))
 sleep 1; cp "/proc/$APP/smaps" /tmp/t3775-hid.smaps; echo "DIAG drop-after-1s=$(( ${busy_priv:-0} - $(priv_kb "$APP") ))" # TEMP DIAG T3775
 [ -n "$hid" ] && [ "$want_kb" -gt 500 ] && [ "$priv_drop" -ge "$want_kb" ]
