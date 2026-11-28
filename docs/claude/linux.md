@@ -2820,8 +2820,15 @@ unset makes no workspaces.
   `gotoWindow` over `PaneSidebar.listOrder`, which is `all.railOrder` over the
   same gather the sidebar draws): previous/next wrap, last is the last, N is
   the Nth (clamped), through win32's pure `pane_sidebar_window_order.gotoTab`
-  and `stepped`. Nowhere to go returns false (the key goes on). Separate mode
-  is unchanged (tabs within the window; goto_window over GTK's toplevels).
+  and `stepped`. Nowhere to go returns false (the key goes on). In separate
+  mode goto_tab stays within the window, and goto_window walks the same list
+  with every tab of every visible window one stop (T3784,
+  `Workspaces.gotoWindowSeparate`; Mac 997b26535, win32 T3132), from the
+  window the chord came from - never GTK's toplevel order or its active
+  window, which Weston headless never reports. Landing selects the tab,
+  `bringForward`s its window and focuses its pane. Logged `goto_window
+  <dir>: <from> -> <to> of <n> window=<name>`; the `workspaces` seam's
+  `stops` lists the stops. Acceptance: `test/linux/window-goto-separate.sh`.
 - **A new tab is a new workspace** (`Workspaces.newTabIsWindow`, from both the
   core action and the viewer-pane path): opened as Ctrl+Shift+N opens one from
   that pane, on show. So every workspace has one tab.

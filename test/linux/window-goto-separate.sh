@@ -17,7 +17,7 @@
 #
 # NEGATIVE=1 runs the same steps in `single` mode, where goto_window walks
 # workspaces instead (window-workspace-switch.sh's job): the separate walk
-# never runs, so it must FAIL from G2 on.
+# never runs, so it must FAIL from G1 on. Measured: 8 failures.
 #
 # Oracles: the debug-only `workspaces` seam's `stops` (the list's stops in
 # order: window, tab position, whether it is the window's selected tab), the
