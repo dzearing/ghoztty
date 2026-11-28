@@ -2307,14 +2307,25 @@ State adds `theme` (model, the catalog's names/kinds/backgrounds, and `drawn`)
 and `preview` (inputs, caption, and `drawn`: caption, the terminal rule, the
 lines' markup, elevated, mapped, blinking).
 
+**Pixels (T3769):** `settings --op=shot --path=<file.png>` renders the Settings
+window from its own render (win32's op; `pane_snapshot.png`, flushed first),
+and the state says where things were drawn, in window logical px `[x,y,w,h]`:
+each drawn tile's `rect` and `name_rect`, the tiles' `scale`, and the
+preview's `term_rect` / `desk_rect`. Two traps: a grid change (tab, filter,
+pick) lays the tiles out a FRAME later - read straight after, every tile is
+4x4 - so wait for a real size and take the rects from the shot's own reply;
+and the picked ring is libadwaita's dark-scheme accent `#78aeed` here, not
+`#3584e4`, since the headless Weston reads dark.
+
 ```powershell
 powershell -NoProfile -File scripts\linux\wsl-run.ps1 -CommandFile test\linux\settings-theme.sh
 ```
 
-Ends `SETTINGS THEME: ALL PASS` (32 checks: K catalog, G grid, P one theme,
-M light & dark, X mismatch, V preview, O a later file owns `theme`, R
-reopen). `NEGATIVE=1` expects the light slot seeded with a dark theme and
-must fail M1. The headless Weston reports the system as dark (adwaita's
+Ends `SETTINGS THEME: ALL PASS` (36 checks: K catalog, G grid, P one theme,
+M light & dark, X mismatch, V preview, S pixels, O a later file owns `theme`,
+R reopen). `NEGATIVE=1` expects the light slot seeded with a dark theme and
+must fail M1; `NEGATIVE=2` expects the bundled Mocha's `#1e1e2e` where the
+user's `#101820` is drawn and must fail S1 and S3. The headless Weston reports the system as dark (adwaita's
 default there), so K3 and M5 read `system_dark` rather than assume it.
 
 ### List keys (T3632)
