@@ -236,8 +236,9 @@ blend() { python3 -I -c '
 import sys
 h = sys.argv[1].lstrip("#"); a = float(sys.argv[2]); u = [int(v) for v in sys.argv[3].split()]
 print("#" + "".join("%02x" % round(a * int(h[i:i + 2], 16) + (1 - a) * b) for i, b in zip((0, 2, 4), u)))' "$1" "$2" "$3"; }
-# accent <r g b>: libadwaita's default accent (#3584e4) within 45 a channel.
-accent() { [ -n "$1" ] && [ "$1" != off ] && near "$1" '#3584e4' 45; }
+# accent <r g b>: libadwaita's default @accent_color - #3584e4 in a light
+# scheme, #78aeed in a dark one - within 30 a channel.
+accent() { [ -n "$1" ] && [ "$1" != off ] && { near "$1" '#3584e4' 30 || near "$1" '#78aeed' 30; }; }
 
 st --op=theme-tab --value=dark > /dev/null
 st --op=theme-filter --value=catppuccin > /dev/null
