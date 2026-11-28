@@ -288,6 +288,33 @@ pub extern fn gtk_file_launcher_open_containing_folder(
 ) void;
 pub extern fn gtk_file_launcher_launch_finish(launcher: *GtkFileLauncher, result: *GAsyncResult, err: *?*GError) c_int;
 pub extern fn gtk_file_launcher_open_containing_folder_finish(launcher: *GtkFileLauncher, result: *GAsyncResult, err: *?*GError) c_int;
+
+// Settings' color wells and Choose Folder... (T3759): GTK 4.10's async
+// dialogs. A `GtkColorDialogButton` takes ownership of its dialog.
+pub const GtkColorDialog = opaque {};
+pub extern fn gtk_color_dialog_new() *GtkColorDialog;
+pub extern fn gtk_color_dialog_set_with_alpha(dialog: *GtkColorDialog, with_alpha: c_int) void;
+pub extern fn gtk_color_dialog_set_title(dialog: *GtkColorDialog, title: [*:0]const u8) void;
+pub extern fn gtk_color_dialog_button_new(dialog: ?*GtkColorDialog) *GtkWidget;
+pub extern fn gtk_color_dialog_button_set_rgba(button: *GtkWidget, color: *const GdkRGBA) void;
+pub extern fn gtk_color_dialog_button_get_rgba(button: *GtkWidget) *const GdkRGBA;
+pub const GtkFileDialog = opaque {};
+pub extern fn gtk_file_dialog_new() *GtkFileDialog;
+pub extern fn gtk_file_dialog_set_title(dialog: *GtkFileDialog, title: [*:0]const u8) void;
+pub extern fn gtk_file_dialog_set_accept_label(dialog: *GtkFileDialog, label: ?[*:0]const u8) void;
+pub extern fn gtk_file_dialog_set_initial_folder(dialog: *GtkFileDialog, folder: ?*GFile) void;
+pub extern fn gtk_file_dialog_select_folder(
+    dialog: *GtkFileDialog,
+    parent: ?*GtkWidget,
+    cancellable: ?*anyopaque,
+    callback: ?GAsyncReadyCallback,
+    user_data: ?*anyopaque,
+) void;
+pub extern fn gtk_file_dialog_select_folder_finish(dialog: *GtkFileDialog, result: *GAsyncResult, err: *?*GError) ?*GFile;
+/// Caller frees with `g_free`.
+pub extern fn g_file_get_path(file: *GFile) ?[*:0]u8;
+pub extern fn g_cancellable_new() *anyopaque;
+pub extern fn g_cancellable_cancel(cancellable: *anyopaque) void;
 pub extern fn g_signal_emit_by_name(instance: *anyopaque, signal: [*:0]const u8, ...) void;
 pub extern fn g_idle_add(function: *const fn (?*anyopaque) callconv(.c) c_int, data: ?*anyopaque) c_uint;
 pub extern fn g_timeout_add(interval_ms: c_uint, function: *const fn (?*anyopaque) callconv(.c) c_int, data: ?*anyopaque) c_uint;

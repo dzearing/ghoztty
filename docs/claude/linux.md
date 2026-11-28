@@ -2202,15 +2202,45 @@ Traps found here:
 powershell -NoProfile -File scripts\linux\wsl-run.ps1 -CommandFile test\linux\settings-window.sh
 ```
 
-Ends `SETTINGS WINDOW: ALL PASS` (76 checks: W1-W20 for the window and
-All Settings, P1-P23 for the pages, L1-L10 less L5 for list keys, F1-F8 for
-the Font picker, C1-C14 with C4b and C11b for Config file and the toast).
-Left off the pages for their own cards: color wells and the
-folder picker T3759, search across the pages T3760 (the preview and themes
-are T3636's, below). Also
+Ends `SETTINGS WINDOW: ALL PASS` (88 checks: W1-W20 for the window and
+All Settings, P1-P23 for the pages, K1-K12 for the color wells and the
+folder picker, L1-L10 less L5 for list keys, F1-F8 for the Font picker,
+C1-C14 with C4b and C11b for Config file and the toast).
+Left off the pages for its own card: search across the pages T3760 (the
+preview and themes are T3636's, below). Also
 still to port: the file-mode and local-time fix T3634 (until it lands, a
 backup's date in Restore... reads in UTC: `ConfigFileStore.localNow` is
 Windows-only).
+
+### Color wells and the folder picker (T3759)
+
+Mac's `ColorControl` and `FolderControl`, on win32's shared
+`settings_controls` (`parseHex`/`formatHex`, `folderLabel` and the three
+folder labels).
+
+- **A color row** (Cursor color, Dimming color, Divider color): the
+  default's name (`none_label`: Theme / Background / Automatic) while the
+  key has no hex color - or the value as written, `cell-foreground`, as
+  win32 shows it - then "Use <default>" while the file sets a hex color, then
+  a `GtkColorDialogButton` (opacity off, grey when unset). The dialog reports
+  once, on Select, so the write is immediate (Mac's 0.35 s debounce is for a
+  picker that streams a drag). "Use <default>" removes the key.
+- **The folder row** (Start new windows in) is an `AdwComboRow`: Home folder
+  (unset; `home` in the file reads the same), Where Ghoztty was launched
+  (`inherit`), the file's folder with `~` once it names one, then Choose
+  Folder... - a `GtkFileDialog` (`select_folder`, accept label "Choose",
+  starting in that folder, else home). Only the FILE's value counts, as on
+  Mac. A cancel writes nothing and the popup goes back to what the file says.
+- **The dialog's late reply** carries a generation: one the seam answered,
+  or the window closed under, is dropped (the window cancels it on close).
+
+Seam: `--op=color --key=<k> --value=#rrggbb` (sets the well's color, whose
+`notify::rgba` writes), `--op=color-use --key=<k>`, `--op=folder-choose
+--key=working-directory` (picks Choose Folder...: the dialog opens) and
+`--op=folder-answer --key=working-directory --value=<path>|cancel` (handled
+exactly as the dialog's own reply; refused with no dialog up). The key's
+`curated` state adds `well`, `none_text` and `use` on a color row, and
+`folder_dialog` and `selected` on the folder row.
 
 ### The theme picker and the live preview (T3636)
 

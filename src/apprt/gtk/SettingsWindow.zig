@@ -46,6 +46,12 @@
 //! says Ghoztty uses the next font. The rules are `settings_controls.zig`'s,
 //! shared with win32.
 //!
+//! **Color and folder rows (T3759)** are Mac's `ColorControl` and
+//! `FolderControl`: a `GtkColorDialogButton` well that writes `#rrggbb`, the
+//! default's name while the key has no hex color and "Use <default>" while
+//! the file sets one; and a popup of Home folder / Where Ghoztty was launched
+//! / the chosen folder with `~` / Choose Folder... (a `GtkFileDialog`).
+//!
 //! **A repeatable key (T3632)** - Font features on its page, and every list
 //! key under All Settings - is Mac's
 //! `ListControl`: the user's file's values as removable chips, then an "add a
@@ -117,7 +123,7 @@ const Row = struct {
 };
 
 /// How a curated row is drawn.
-pub const Kind = enum { toggle, choice, shell, spin, slider, flags, text, list, font };
+pub const Kind = enum { toggle, choice, shell, spin, slider, flags, text, list, font, color, folder };
 
 /// One curated row as built. Widgets live as long as the window; strings and
 /// slices are in `build_arena`.
@@ -143,6 +149,15 @@ pub const Curated = struct {
     /// (in `font_arena`); the items are rebuilt when this changes.
     font_extra: ?[]const u8 = null,
     scale: ?*wk.GtkWidget = null,
+    /// A color row (Mac `ColorControl`, T3759): the `GtkColorDialogButton`
+    /// well, the default's name shown while the key has no hex color, and
+    /// "Use <default>" while the file sets one.
+    well: ?*wk.GtkWidget = null,
+    none_text: ?*wk.GtkWidget = null,
+    use_button: ?*wk.GtkWidget = null,
+    /// The folder row's chosen-folder item while its popup lists one (in
+    /// `folder_arena`); the items are rebuilt when this changes.
+    folder_item: ?[]const u8 = null,
     /// A choice or shell row's items, in the popup's order (a shell row's
     /// list ends with Other..., which is not in here).
     choices: []const pages.Option = &.{},
@@ -205,6 +220,15 @@ draft_text: std.ArrayListUnmanaged(u8) = .empty,
 /// `build_arena`; and the Font row's current items, in `font_arena`.
 fonts: font_families.Families = .{ .mono = &.{}, .all = &.{} },
 font_arena: std.heap.ArenaAllocator,
+/// The folder row's items (T3759), rebuilt when its chosen folder changes.
+folder_arena: std.heap.ArenaAllocator,
+/// Choose Folder...'s dialog while it is up: which row asked, its cancel
+/// handle, and the generation its reply must carry (a reply for a dialog the
+/// seam answered, or the window closed under, is dropped).
+folder_pending: bool = false,
+folder_index: usize = 0,
+folder_cancel: ?*anyopaque = null,
+folder_gen: usize = 0,
 /// Advanced > Config file and the change toast (T3633).
 config_file: ConfigFile = .{},
 /// Sessions & Agent's agent status and Remote Machines (T3635).
@@ -279,6 +303,7 @@ fn create(app: *Application) !*SettingsWindow {
         .file = file,
         .build_arena = std.heap.ArenaAllocator.init(gpa),
         .font_arena = std.heap.ArenaAllocator.init(gpa),
+        .folder_arena = std.heap.ArenaAllocator.init(gpa),
     };
     self.model = SettingsModel.init(gpa, &self.store, .{ .ctx = self, .func = reloadHook });
     self.reloadData();
@@ -554,13 +579,13 @@ fn addCurated(self: *SettingsWindow, group: *wk.GtkWidget, def: *const pages.Row
             c.kind = .choice;
             c.row = wk.adw_combo_row_new();
             c.choices = try pages.choices(arena, def, entry_def.options);
-            try setComboItems(arena, c.row, c.choices, false);
+            try setComboItems(arena, c.row, c.choices, null);
         },
         .shell => |sh| {
             c.kind = .shell;
             c.row = wk.adw_combo_row_new();
             c.choices = try self.shellChoices(arena, sh.scripted);
-            try setComboItems(arena, c.row, c.choices, true);
+            try setComboItems(arena, c.row, c.choices, controls.other_shell_label);
             // Other...: a typed command, checked before it is written.
             const other = wk.adw_action_row_new();
             plainTitle(other, try std.fmt.allocPrintSentinel(arena, "{s}: other command", .{def.label}, 0));
@@ -665,26 +690,58 @@ fn addCurated(self: *SettingsWindow, group: *wk.GtkWidget, def: *const pages.Row
             wk.adw_action_row_add_suffix(c.row, field);
             c.entry = field;
         },
-        // A color, folder or free text: edited as its value text, the All
-        // Settings way.
-        .text, .color, .folder => {
+        // Mac's `ColorControl` (T3759): the default's name while the key
+        // has no hex color, "Use <default>" while the file sets one, and a
+        // color well (GTK's color dialog, no opacity) that writes #rrggbb.
+        .color => |col| {
+            c.kind = .color;
+            c.row = wk.adw_action_row_new();
+            const none = wk.gtk_label_new((try arena.dupeZ(u8, col.none_label)).ptr);
+            wk.gtk_widget_add_css_class(none, "dim-label");
+            wk.gtk_widget_set_valign(none, 3);
+            wk.adw_action_row_add_suffix(c.row, none);
+            const use = wk.gtk_button_new_with_label((try std.fmt.allocPrintSentinel(arena, "Use {s}", .{col.none_label}, 0)).ptr);
+            wk.gtk_widget_add_css_class(use, "flat");
+            wk.gtk_widget_set_valign(use, 3);
+            tag(use, "settings-curated", index);
+            self.connect(use, "clicked", @ptrCast(&onColorUse));
+            wk.adw_action_row_add_suffix(c.row, use);
+            const dialog = wk.gtk_color_dialog_new();
+            wk.gtk_color_dialog_set_with_alpha(dialog, 0);
+            wk.gtk_color_dialog_set_title(dialog, label.ptr);
+            const well = wk.gtk_color_dialog_button_new(dialog);
+            wk.gtk_widget_set_valign(well, 3);
+            wk.gtk_widget_set_tooltip_text(well, label.ptr);
+            tag(well, "settings-curated", index);
+            self.connect(well, "notify::rgba", @ptrCast(&onColorRgba));
+            wk.adw_action_row_add_suffix(c.row, well);
+            c.none_text = none;
+            c.use_button = use;
+            c.well = well;
+        },
+        // Mac's `FolderControl` (T3759): Home folder (unset), Where Ghoztty
+        // was launched (`inherit`), the chosen folder with `~` once there is
+        // one, and Choose Folder... (GTK's folder dialog). The items are set
+        // by `refreshFolder`.
+        .folder => {
+            c.kind = .folder;
+            c.row = wk.adw_combo_row_new();
+        },
+        // Free text: edited as its value text, the All Settings way.
+        .text => |t| {
             c.kind = .text;
             c.row = wk.adw_action_row_new();
             const field = wk.gtk_entry_new();
             wk.gtk_editable_set_width_chars(field, 22);
             wk.gtk_widget_set_valign(field, 3);
-            switch (def.control) {
-                .text => |t| wk.gtk_entry_set_placeholder_text(field, (try arena.dupeZ(u8, t.placeholder)).ptr),
-                .color => |col| wk.gtk_entry_set_placeholder_text(field, (try arena.dupeZ(u8, col.none_label)).ptr),
-                else => {},
-            }
+            wk.gtk_entry_set_placeholder_text(field, (try arena.dupeZ(u8, t.placeholder)).ptr);
             tag(field, "settings-curated", index);
             self.connect(field, "activate", @ptrCast(&onCuratedEntryActivate));
             wk.adw_action_row_add_suffix(c.row, field);
             c.entry = field;
         },
     }
-    if (c.kind == .choice or c.kind == .shell or c.kind == .font) self.connect(c.row, "notify::selected", @ptrCast(&onComboSelected));
+    if (c.kind == .choice or c.kind == .shell or c.kind == .font or c.kind == .folder) self.connect(c.row, "notify::selected", @ptrCast(&onComboSelected));
     plainTitle(c.row, label);
     tag(c.row, "settings-curated", index);
 
@@ -708,10 +765,12 @@ fn addCurated(self: *SettingsWindow, group: *wk.GtkWidget, def: *const pages.Row
     if (c.other_row) |o| wk.adw_preferences_group_add(group, o);
 }
 
-fn setComboItems(arena: Allocator, row: *wk.GtkWidget, choices: []const pages.Option, other: bool) !void {
-    const strs = try arena.alloc(?[*:0]const u8, choices.len + @intFromBool(other) + 1);
+/// The popup's items: `choices`' labels, then `last` (a shell row's
+/// Other..., the folder row's Choose Folder...) when there is one.
+fn setComboItems(arena: Allocator, row: *wk.GtkWidget, choices: []const pages.Option, last: ?[]const u8) !void {
+    const strs = try arena.alloc(?[*:0]const u8, choices.len + @intFromBool(last != null) + 1);
     for (choices, 0..) |o, i| strs[i] = (try arena.dupeZ(u8, o.label)).ptr;
-    if (other) strs[choices.len] = controls.other_shell_label;
+    if (last) |l| strs[choices.len] = (try arena.dupeZ(u8, l)).ptr;
     strs[strs.len - 1] = null;
     const model = wk.gtk_string_list_new(strs.ptr);
     wk.adw_combo_row_set_model(row, model);
@@ -940,9 +999,20 @@ pub fn expectedDisplay(self: *const SettingsWindow, buf: []u8, c: *const Curated
             if (controls.hasFamily(self.fonts.all, primary)) break :blk std.fmt.bufPrint(buf, "{s}", .{primary}) catch "";
             break :blk std.fmt.bufPrint(buf, "{s} (not installed)", .{primary}) catch "";
         },
-        .text, .color, .folder, .list => if (c.kind == .list) self.fileListShown(buf, c.key) else self.textShown(buf, c),
+        // win32's `controlDisplay`: the hex the well paints, any other value
+        // as written, else the default's name.
+        .color => |col| if (controls.parseHex(cur)) |rgb|
+            controls.formatHex(buf[0..7], rgb)
+        else if (cur.len > 0) cur else col.none_label,
+        .folder => controls.folderLabel(buf, if (r.isSetInFile(c.key)) cur else "", homeDir()),
+        .text, .list => if (c.kind == .list) self.fileListShown(buf, c.key) else self.textShown(buf, c),
         else => c.def.labelFor(cur),
     };
+}
+
+/// The home folder the folder row shows as `~`.
+fn homeDir() []const u8 {
+    return std.posix.getenv("HOME") orelse "";
 }
 
 /// A text row's value text: a list joined by ", ".
@@ -1006,7 +1076,35 @@ pub fn widgetDisplay(self: *const SettingsWindow, buf: []u8, c: *const Curated) 
             return buf[0..n];
         },
         .text => return std.mem.span(wk.gtk_editable_get_text(c.entry.?)),
+        .color => {
+            if (wk.gtk_widget_get_visible(c.none_text.?) != 0) return std.mem.span(wk.gtk_label_get_text(c.none_text.?));
+            return controls.formatHex(buf[0..7], rgbaHex(wk.gtk_color_dialog_button_get_rgba(c.well.?).*));
+        },
+        .folder => {
+            const sel = wk.adw_combo_row_get_selected(c.row);
+            if (sel < c.choices.len) return c.choices[sel].label;
+            return if (sel == c.choices.len) controls.folder_choose_label else "";
+        },
     }
+}
+
+/// A well's color as 0xRRGGBB (opacity is not offered, as Mac's).
+fn rgbaHex(rgba: wk.GdkRGBA) u32 {
+    const ch = struct {
+        fn f(v: f32) u32 {
+            return @intFromFloat(@round(std.math.clamp(v, 0, 1) * 255));
+        }
+    }.f;
+    return (ch(rgba.red) << 16) | (ch(rgba.green) << 8) | ch(rgba.blue);
+}
+
+fn hexRgba(rgb: u32) wk.GdkRGBA {
+    return .{
+        .red = @as(f32, @floatFromInt((rgb >> 16) & 0xFF)) / 255,
+        .green = @as(f32, @floatFromInt((rgb >> 8) & 0xFF)) / 255,
+        .blue = @as(f32, @floatFromInt(rgb & 0xFF)) / 255,
+        .alpha = 1,
+    };
 }
 
 /// Whether the row's widget can be used (not dimmed).
@@ -1111,6 +1209,26 @@ fn refreshOne(self: *SettingsWindow, r: SettingsSources.Reader, arena: Allocator
             // The field is left alone: the add empties it when it writes,
             // and a refused value stays there to be fixed.
         },
+        .color => {
+            // Mac: no hex color reads as the default's name (or the value
+            // as written - `cell-foreground` - as win32 shows it); a hex one
+            // the file sets offers "Use <default>". The well starts on the
+            // color, else grey.
+            const rgb = controls.parseHex(cur);
+            const none = c.none_text.?;
+            if (rgb == null) {
+                const shown = if (cur.len > 0) cur else c.def.control.color.none_label;
+                wk.gtk_label_set_text(none, (try arena.dupeZ(u8, shown)).ptr);
+            }
+            wk.gtk_widget_set_visible(none, @intFromBool(rgb == null));
+            wk.gtk_widget_set_visible(c.use_button.?, @intFromBool(rgb != null and r.isSetInFile(c.key)));
+            const want = rgb orelse 0x808080;
+            if (rgbaHex(wk.gtk_color_dialog_button_get_rgba(c.well.?).*) != want) {
+                const rgba = hexRgba(want);
+                wk.gtk_color_dialog_button_set_rgba(c.well.?, &rgba);
+            }
+        },
+        .folder => try self.refreshFolder(r, c),
     }
 
     const entry_def = self.catalog.get(c.key);
@@ -1159,7 +1277,7 @@ fn refreshFont(self: *SettingsWindow, r: SettingsSources.Reader, arena: Allocato
         for (fc, opts) |f, *o| o.* = .{ .value = f.value, .label = f.label };
         c.choices = opts;
         c.font_extra = if (extra != null) fc[fc.len - 1].value else null;
-        try setComboItems(arena, c.row, c.choices, false);
+        try setComboItems(arena, c.row, c.choices, null);
     }
     const sel = controls.fontChoiceIndex(c.choices, primary) orelse 0;
     wk.adw_combo_row_set_selected(c.row, @intCast(sel));
@@ -1185,6 +1303,41 @@ fn refreshFont(self: *SettingsWindow, r: SettingsSources.Reader, arena: Allocato
     if (primary.len == 0 or controls.hasFamily(self.fonts.all, primary)) return null;
     var wbuf: [512]u8 = undefined;
     return try arena.dupe(u8, controls.fontNotInstalledText(&wbuf, primary));
+}
+
+/// The folder row (Mac `FolderControl`): Home folder, Where Ghoztty was
+/// launched, the file's folder with `~` when it names one, then Choose
+/// Folder.... Only the file's value counts (Mac reads `isSetInFile`), and
+/// `home` reads as Home folder. The items are rebuilt only when that folder
+/// changes.
+fn refreshFolder(self: *SettingsWindow, r: SettingsSources.Reader, c: *Curated) !void {
+    const now = std.mem.trim(u8, if (r.isSetInFile(c.key)) r.value(c.key) else "", " \t");
+    const named = now.len > 0 and !std.mem.eql(u8, now, "home") and !std.mem.eql(u8, now, "inherit");
+    const custom: ?[]const u8 = if (named) now else null;
+    const same = if (c.folder_item) |old| (custom != null and std.mem.eql(u8, old, custom.?)) else custom == null;
+    if (!same or c.choices.len == 0) {
+        _ = self.folder_arena.reset(.retain_capacity);
+        const fa = self.folder_arena.allocator();
+        var opts: std.ArrayListUnmanaged(pages.Option) = .empty;
+        try opts.append(fa, .{ .value = "", .label = controls.folder_home_label });
+        try opts.append(fa, .{ .value = "inherit", .label = controls.folder_inherit_label });
+        c.folder_item = null;
+        if (custom) |v| {
+            var buf: [std.fs.max_path_bytes + 2]u8 = undefined;
+            const item = try fa.dupe(u8, v);
+            try opts.append(fa, .{ .value = item, .label = try fa.dupe(u8, controls.folderLabel(&buf, v, homeDir())) });
+            c.folder_item = item;
+        }
+        c.choices = opts.items;
+        try setComboItems(fa, c.row, c.choices, controls.folder_choose_label);
+    }
+    // A Choose Folder... still up keeps its item selected.
+    if (self.folder_pending and self.folder_index == self.curatedIndex(c)) {
+        wk.adw_combo_row_set_selected(c.row, @intCast(c.choices.len));
+        return;
+    }
+    const sel: c_uint = if (custom != null) 2 else if (std.mem.eql(u8, now, "inherit")) 1 else 0;
+    wk.adw_combo_row_set_selected(c.row, sel);
 }
 
 fn refreshCounts(self: *SettingsWindow) void {
@@ -1679,7 +1832,39 @@ fn reloadHook(ctx: ?*anyopaque) void {
 // never reached the `activate` handler (measured in T3631's first run).
 // ---------------------------------------------------------------------
 
-pub const GestureError = error{ NotCurated, WrongControl, BadValue, NotListed };
+pub const GestureError = error{ NotCurated, WrongControl, BadValue, NotListed, NotOpen };
+
+/// The well's color dialog answering `rgb` (what its Select does: the
+/// button's color moves, and its signal writes).
+pub fn gestureColor(self: *SettingsWindow, key: []const u8, rgb: u32) GestureError!void {
+    const c = self.curatedFor(key) orelse return error.NotCurated;
+    if (c.kind != .color) return error.WrongControl;
+    if (wk.gtk_widget_get_sensitive(c.row) == 0) return;
+    const rgba = hexRgba(rgb);
+    wk.gtk_color_dialog_button_set_rgba(c.well.?, &rgba);
+}
+
+/// Click "Use <default>" (refused while it is not drawn).
+pub fn gestureColorUse(self: *SettingsWindow, key: []const u8) GestureError!void {
+    const c = self.curatedFor(key) orelse return error.NotCurated;
+    if (c.kind != .color) return error.WrongControl;
+    if (wk.gtk_widget_get_visible(c.use_button.?) == 0) return error.BadValue;
+    wk.g_signal_emit_by_name(c.use_button.?, "clicked");
+}
+
+/// Pick Choose Folder... in the folder popup: the dialog opens.
+pub fn gestureFolderChoose(self: *SettingsWindow, key: []const u8) GestureError!void {
+    const c = self.curatedFor(key) orelse return error.NotCurated;
+    if (c.kind != .folder) return error.WrongControl;
+    wk.adw_combo_row_set_selected(c.row, @intCast(c.choices.len));
+}
+
+/// Answer the open folder dialog with `path` (null = Cancel): the dialog is
+/// closed and its answer handled exactly as the dialog's own reply is.
+pub fn gestureFolderAnswer(self: *SettingsWindow, path: ?[]const u8) GestureError!void {
+    if (!self.folder_pending) return error.NotOpen;
+    self.folderAnswered(path);
+}
 
 /// Type into a curated list row's "add a value" field and press Return.
 pub fn gestureListAdd(self: *SettingsWindow, key: []const u8, text: []const u8) GestureError!void {
@@ -1744,7 +1929,7 @@ pub fn gestureToggle(self: *SettingsWindow, key: []const u8) GestureError!void {
 /// shell row anything not listed goes through Other...).
 pub fn gestureChoose(self: *SettingsWindow, key: []const u8, val: []const u8) GestureError!void {
     const c = self.curatedFor(key) orelse return error.NotCurated;
-    if (c.kind != .choice and c.kind != .shell and c.kind != .font) return error.WrongControl;
+    if (c.kind != .choice and c.kind != .shell and c.kind != .font and c.kind != .folder) return error.WrongControl;
     for (c.choices, 0..) |o, i| if (std.mem.eql(u8, o.value, val)) {
         wk.adw_combo_row_set_selected(c.row, @intCast(i));
         return;
@@ -1814,6 +1999,9 @@ fn destroy(self: *SettingsWindow) void {
     open_window = null;
     if (self.refresh_source != 0) _ = wk.g_source_remove(self.refresh_source);
     if (self.slide_source != 0) _ = wk.g_source_remove(self.slide_source);
+    // A Choose Folder... dialog still up closes with the window; its late
+    // reply finds no window and is dropped.
+    self.dropFolderDialog();
     const gpa = self.gpa;
     self.config_file.deinit(gpa);
     self.live.deinit(gpa);
@@ -1825,6 +2013,7 @@ fn destroy(self: *SettingsWindow) void {
     self.counts.deinit(gpa);
     self.build_arena.deinit();
     self.font_arena.deinit();
+    self.folder_arena.deinit();
     self.query.deinit(gpa);
     self.draft_key.deinit(gpa);
     self.draft_text.deinit(gpa);
@@ -1914,6 +2103,11 @@ fn onComboSelected(row: *wk.GtkWidget, _: ?*anyopaque, self: *SettingsWindow) ca
     const sel = wk.adw_combo_row_get_selected(row);
     if (c.kind == .font) {
         if (sel < c.choices.len) _ = self.pickFont(c.key, c.choices[sel].value);
+        return;
+    }
+    if (c.kind == .folder) {
+        // Choose Folder...: GTK's folder dialog; its answer writes.
+        if (sel == c.choices.len) self.openFolderDialog(c) else if (sel < c.choices.len) _ = self.chooseValue(c.key, c.choices[sel].value);
         return;
     }
     if (c.kind == .shell) {
@@ -2010,6 +2204,91 @@ fn onRowChipRemove(button: *wk.GtkWidget, self: *SettingsWindow) callconv(.c) vo
     const row = self.rowOf(button) orelse return;
     const i = tagOf(button, "settings-chip") orelse return;
     _ = self.removeListValue(row.key, i);
+}
+
+/// The well's color dialog answered: write it as `#rrggbb` (the dialog
+/// reports once, on its Select - Mac's 0.35 s debounce is for a picker that
+/// streams every drag).
+fn onColorRgba(well: *wk.GtkWidget, _: ?*anyopaque, self: *SettingsWindow) callconv(.c) void {
+    if (self.syncing) return;
+    const c = self.curatedOf(well) orelse return;
+    var buf: [7]u8 = undefined;
+    _ = self.chooseValue(c.key, controls.formatHex(&buf, rgbaHex(wk.gtk_color_dialog_button_get_rgba(well).*)));
+}
+
+/// "Use <default>": the key leaves the file (Mac `model.reset`).
+fn onColorUse(button: *wk.GtkWidget, self: *SettingsWindow) callconv(.c) void {
+    const c = self.curatedOf(button) orelse return;
+    _ = self.resetKey(c.key) catch |err| log.warn("settings: reset {s} err={}", .{ c.key, err });
+}
+
+/// Choose Folder...: GTK's folder dialog over the window, starting in the
+/// folder the row names (else home), with Mac's "Choose" button.
+fn openFolderDialog(self: *SettingsWindow, c: *Curated) void {
+    if (self.folder_pending) return;
+    const dialog = wk.gtk_file_dialog_new();
+    wk.gtk_file_dialog_set_title(dialog, "Choose Folder");
+    wk.gtk_file_dialog_set_accept_label(dialog, "Choose");
+    const start = c.folder_item orelse homeDir();
+    if (start.len > 0) {
+        if (self.gpa.dupeZ(u8, start)) |z| {
+            defer self.gpa.free(z);
+            const file = wk.g_file_new_for_path(z.ptr);
+            wk.gtk_file_dialog_set_initial_folder(dialog, file);
+            wk.g_object_unref(file);
+        } else |_| {}
+    }
+    self.folder_gen +%= 1;
+    if (self.folder_gen == 0) self.folder_gen = 1;
+    self.folder_pending = true;
+    self.folder_index = self.curatedIndex(c);
+    self.folder_cancel = wk.g_cancellable_new();
+    wk.gtk_file_dialog_select_folder(dialog, self.window, self.folder_cancel, &onFolderDone, @ptrFromInt(self.folder_gen));
+    log.info("settings: choose folder for {s}", .{c.key});
+}
+
+fn onFolderDone(source: ?*wk.GObject, result: *wk.GAsyncResult, data: ?*anyopaque) callconv(.c) void {
+    const dialog: *wk.GtkFileDialog = @ptrCast(source orelse return);
+    defer wk.g_object_unref(dialog);
+    var err: ?*wk.GError = null;
+    const file = wk.gtk_file_dialog_select_folder_finish(dialog, result, &err);
+    defer if (file) |f| wk.g_object_unref(f);
+    defer if (err) |e| wk.g_error_free(e);
+    // A dialog the seam answered, or one the window closed under, is over.
+    const self = open_window orelse return;
+    if (!self.folder_pending or self.folder_gen != @intFromPtr(data)) return;
+    const path = if (file) |f| wk.g_file_get_path(f) else null;
+    defer if (path) |p| wk.g_free(p);
+    self.folderAnswered(if (path) |p| std.mem.span(p) else null);
+}
+
+/// The folder dialog's answer: a folder is written; a cancel writes nothing.
+/// Either way the popup goes back to what the file says.
+fn folderAnswered(self: *SettingsWindow, path: ?[]const u8) void {
+    const index = self.folder_index;
+    self.dropFolderDialog();
+    if (index >= self.curated.items.len) return;
+    const key = self.curated.items[index].key;
+    if (path) |p| _ = self.chooseValue(key, p);
+    log.info("settings: chose folder for {s}: {s}", .{ key, path orelse "(cancelled)" });
+    self.afterChange();
+}
+
+/// Forget the dialog: its late reply carries a generation nobody waits for.
+fn dropFolderDialog(self: *SettingsWindow) void {
+    if (!self.folder_pending) return;
+    self.folder_pending = false;
+    self.folder_gen +%= 1;
+    if (self.folder_cancel) |cn| {
+        wk.g_cancellable_cancel(cn);
+        wk.g_object_unref(cn);
+    }
+    self.folder_cancel = null;
+}
+
+/// Whether Choose Folder...'s dialog is up (the seam's `folder_dialog`).
+pub fn folderDialogOpen(self: *const SettingsWindow) bool {
+    return self.folder_pending;
 }
 
 fn onCuratedReset(button: *wk.GtkWidget, self: *SettingsWindow) callconv(.c) void {

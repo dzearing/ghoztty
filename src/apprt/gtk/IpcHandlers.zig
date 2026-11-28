@@ -56,6 +56,7 @@ const capture_seam = @import("capture_seam.zig");
 const pane_snapshot = @import("pane_snapshot.zig");
 const wk = @import("webkit.zig");
 const settings_pages = @import("../win32/settings_pages.zig");
+const settings_controls = @import("../win32/settings_controls.zig");
 const PaneDrag = @import("PaneDrag.zig");
 const url_scheme = @import("../ipc/url_scheme.zig");
 const url_activation = @import("url_activation.zig");
@@ -2017,7 +2018,7 @@ fn settingsSeam(app: Context, request: Request) Allocator.Error![]u8 {
         if (filter_arg) |f| w.setFilter(std.meta.stringToEnum(SettingsWindow.Filter, f) orelse
             return server.errorResponse(c_alloc, "--filter must be all, changed or uncovered", .{}));
     }
-    const gestures = [_][]const u8{ "toggle", "choose", "step", "slide", "flag", "text", "curated-reset", "reveal", "add", "remove", "list-add", "list-remove" };
+    const gestures = [_][]const u8{ "toggle", "choose", "step", "slide", "flag", "text", "curated-reset", "reveal", "add", "remove", "list-add", "list-remove", "color", "color-use", "folder-choose", "folder-answer" };
     var is_gesture = false;
     for (gestures) |g| is_gesture = is_gesture or std.mem.eql(u8, op, g);
     if (std.mem.eql(u8, op, "action")) {
@@ -2053,12 +2054,22 @@ fn settingsSeam(app: Context, request: Request) Allocator.Error![]u8 {
             w.gestureListAdd(k, v)
         else if (std.mem.eql(u8, op, "list-remove"))
             w.gestureListRemove(k, index_arg)
+        else if (std.mem.eql(u8, op, "color"))
+            w.gestureColor(k, settings_controls.parseHex(v) orelse
+                return server.errorResponse(c_alloc, "--value=#rrggbb is required for --op=color", .{}))
+        else if (std.mem.eql(u8, op, "color-use"))
+            w.gestureColorUse(k)
+        else if (std.mem.eql(u8, op, "folder-choose"))
+            w.gestureFolderChoose(k)
+        else if (std.mem.eql(u8, op, "folder-answer"))
+            w.gestureFolderAnswer(if (std.mem.eql(u8, v, "cancel")) null else v)
         else if (w.reveal(k)) {} else error.NotCurated;
         result catch |err| return server.errorResponse(c_alloc, "--op={s} on '{s}': {s}", .{ op, k, switch (err) {
             error.NotCurated => "no curated row has that key on a page this window shows",
             error.WrongControl => "that row is not drawn with this control",
             error.BadValue => "that row has no such value",
             error.NotListed => "All Settings does not list that key as a list row (search for it first)",
+            error.NotOpen => "no Choose Folder dialog is open (--op=folder-choose first)",
         } });
         // The write (and its redraw) run now, so the reply reads the result.
         w.flush();
@@ -2616,6 +2627,31 @@ fn writeSettingsState(jws: *std.json.Stringify, arena: Allocator, w_opt: anytype
                 try jws.write(W.listField(c));
                 try jws.objectField("other_visible");
                 try jws.write(if (c.other_row) |o| wk.gtk_widget_get_visible(o) != 0 else null);
+                // A color row (T3759): the well's color, the default's name
+                // and "Use <default>" as drawn (null when hidden).
+                if (c.well) |well| {
+                    var hb: [7]u8 = undefined;
+                    const rgba = wk.gtk_color_dialog_button_get_rgba(well).*;
+                    const ch = struct {
+                        fn f(x: f32) u32 {
+                            return @intFromFloat(@round(std.math.clamp(x, 0, 1) * 255));
+                        }
+                    }.f;
+                    try jws.objectField("well");
+                    try jws.write(settings_controls.formatHex(&hb, (ch(rgba.red) << 16) | (ch(rgba.green) << 8) | ch(rgba.blue)));
+                    try jws.objectField("none_text");
+                    try jws.write(if (wk.gtk_widget_get_visible(c.none_text.?) != 0) std.mem.span(wk.gtk_label_get_text(c.none_text.?)) else null);
+                    try jws.objectField("use");
+                    try jws.write(if (wk.gtk_widget_get_visible(c.use_button.?) != 0) if (wk.gtk_button_get_label(c.use_button.?)) |l| std.mem.span(l) else "" else null);
+                }
+                // The folder row (T3759): whether Choose Folder...'s dialog
+                // is up, and which item the popup selects.
+                if (c.kind == .folder) {
+                    try jws.objectField("folder_dialog");
+                    try jws.write(w.folderDialogOpen());
+                    try jws.objectField("selected");
+                    try jws.write(wk.adw_combo_row_get_selected(c.row));
+                }
                 // The Font row (T3765): "+N fallback" as drawn (null when
                 // hidden), its tooltip, and the fallback chips.
                 if (c.fallback_label) |fb| {

@@ -12,6 +12,8 @@
 # C1-C13 (T3633) cover Advanced > Config file and the change toast: the
 # file row, the other files, Restore... and its confirmation, the current
 # file, a link, and the toast's Show Change / Undo / x / timed exit.
+# K1-K12 (T3759) cover the color wells (Mac's ColorControl) and the
+# starting-folder picker (Mac's FolderControl, Choose Folder... included).
 #
 # Run it ONLY through the wrapper, from this box:
 #
@@ -259,6 +261,75 @@ hl_check "P22 All Settings' page link opens the key's page" $? "visible=$(jget "
 o=$(st --op=state --key=auto-update)
 [ "$(jget "$o" 'd["key"]["curated"]')" = null ] && [ "$(jget "$(st --op=state --page=keyboard)" 'd["visible_page"]')" = keyboard ]
 hl_check "P23 Updates offers no auto-update on Linux; the Keyboard page is there" $? "auto-update curated=$(jget "$o" 'd["key"]["curated"]')"
+
+# ---- color wells and the folder picker (T3759) ------------------------------
+# Mac's ColorControl: the default's name while the key has no hex color, a
+# well (GtkColorDialogButton) that writes #rrggbb, and "Use <default>" while
+# the file sets one. Mac's FolderControl: Home folder / Where Ghoztty was
+# launched / the chosen folder with ~ / Choose Folder... (GtkFileDialog; the
+# seam answers the dialog the way its own reply is handled).
+both() { [ "$(cur "$1" display)" = "$2" ] && [ "$(cur "$1" expected)" = "$2" ]; }
+o=$(st --op=state --key=cursor-color)
+[ "$(cur cursor-color kind)" = color ] && both cursor-color Theme && [ "$(cur cursor-color none_text)" = Theme ] && [ "$(cur cursor-color use)" = null ] && [ "$(cur cursor-color well)" = "#808080" ]
+hl_check "K1 an unset color row reads its default's name beside a grey well, no Use link" $? "kind=$(cur cursor-color kind) display=$(cur cursor-color display) none=$(cur cursor-color none_text) use=$(cur cursor-color use) well=$(cur cursor-color well)"
+o=$(st --op=color --key=cursor-color --value=#FF8800)
+[ "$(jget "$o" 'd["ok"]')" = true ] && [ "$(line_of cursor-color)" = "#ff8800" ] && both cursor-color "#ff8800" && [ "$(cur cursor-color well)" = "#ff8800" ] && [ "$(cur cursor-color use)" = "Use Theme" ] && [ "$(cur cursor-color none_text)" = null ] && [ "$(cur cursor-color dot)" = true ]
+hl_check "K2 the well's pick writes #ff8800; the well, Use Theme and the dot follow" $? "line=$(line_of cursor-color) display=$(cur cursor-color display) well=$(cur cursor-color well) use=$(cur cursor-color use)"
+st --op=color-use --key=cursor-color > /dev/null
+! grep -q '^cursor-color' "$dev" && both cursor-color Theme && [ "$(cur cursor-color use)" = null ] && [ "$(cur cursor-color well)" = "#808080" ]
+hl_check "K3 Use Theme takes cursor-color out of the file and the row reads Theme again" $? "file=$(grep -c '^cursor-color' "$dev") display=$(cur cursor-color display) use=$(cur cursor-color use)"
+st --op=set --key=cursor-color --value=cell-foreground > /dev/null
+[ "$(line_of cursor-color)" = cell-foreground ] && both cursor-color cell-foreground && [ "$(cur cursor-color use)" = null ]
+r=$?
+d4="display=$(cur cursor-color display) use=$(cur cursor-color use)"
+st --op=reset --key=cursor-color > /dev/null
+hl_check "K4 a color that is not hex (cell-foreground) is shown as written, with no Use link" $r "$d4"
+st --op=choose --key=macos-pane-style --value=elevated > /dev/null
+st --op=color --key=split-divider-color --value=#112233 > /dev/null
+a1=$(grep -c '^split-divider-color' "$dev")
+s1=$(cur split-divider-color sensitive); sub=$(cur split-divider-color subtitle)
+st --op=choose --key=macos-pane-style --value=flat > /dev/null
+st --op=color --key=split-divider-color --value=#112233 > /dev/null
+l2=$(line_of split-divider-color)
+st --op=curated-reset --key=split-divider-color > /dev/null
+st --op=curated-reset --key=macos-pane-style > /dev/null
+[ "$s1" = false ] && [ "$sub" = "Flat style only" ] && [ "$a1" = 0 ] && [ "$l2" = "#112233" ]
+hl_check "K5 Divider color's well is dimmed off the Flat style, and writes once it is Flat" $? "elevated: sensitive=$s1 '$sub' lines=$a1; flat: line=$l2"
+
+o=$(st --op=state --page=terminal --key=working-directory)
+ch=$(jget "$o" '"|".join(c["label"] for c in d["key"]["curated"]["choices"])')
+[ "$(cur working-directory kind)" = folder ] && both working-directory "Home folder" && [ "$ch" = "Home folder|Where Ghoztty was launched" ] && [ "$(cur working-directory selected)" = 0 ]
+hl_check "K6 Start new windows in is a popup: Home folder (unset), Where Ghoztty was launched" $? "kind=$(cur working-directory kind) display=$(cur working-directory display) items=$ch"
+st --op=choose --key=working-directory --value=inherit > /dev/null
+[ "$(line_of working-directory)" = inherit ] && both working-directory "Where Ghoztty was launched" && [ "$(cur working-directory selected)" = 1 ]
+hl_check "K7 Where Ghoztty was launched writes inherit" $? "line=$(line_of working-directory) display=$(cur working-directory display)"
+proj="$HOME/.cache/gz-t3759-proj"
+mkdir -p "$proj"
+st --op=folder-choose --key=working-directory > /dev/null
+[ "$(cur working-directory folder_dialog)" = true ] && [ "$(line_of working-directory)" = inherit ] && [ "$(cur working-directory display)" = "Choose Folder…" ]
+hl_check "K8 Choose Folder... opens the folder dialog and writes nothing yet" $? "dialog=$(cur working-directory folder_dialog) line=$(line_of working-directory) display=$(cur working-directory display)"
+o=$(st --op=folder-answer --key=working-directory --value="$proj")
+ch=$(jget "$(st --op=state --key=working-directory)" '"|".join(c["label"] for c in d["key"]["curated"]["choices"])')
+[ "$(line_of working-directory)" = "$proj" ] && both working-directory "~/.cache/gz-t3759-proj" && [ "$(cur working-directory folder_dialog)" = false ] && [ "$(cur working-directory selected)" = 2 ] && [ "$ch" = "Home folder|Where Ghoztty was launched|~/.cache/gz-t3759-proj" ]
+hl_check "K9 the chosen folder is written, listed with ~ and selected" $? "line=$(line_of working-directory) display=$(cur working-directory display) items=$ch"
+before=$(cat "$dev")
+st --op=folder-choose --key=working-directory > /dev/null
+st --op=folder-answer --key=working-directory --value=cancel > /dev/null
+[ "$(cat "$dev")" = "$before" ] && [ "$(cur working-directory folder_dialog)" = false ] && both working-directory "~/.cache/gz-t3759-proj" && [ "$(cur working-directory selected)" = 2 ]
+hl_check "K10 a cancelled dialog writes nothing and the popup goes back to the folder" $? "display=$(cur working-directory display) selected=$(cur working-directory selected)"
+o=$(st --op=folder-answer --key=working-directory --value=/tmp)
+[ "$(jget "$o" 'd.get("error","")' | grep -c 'no Choose Folder dialog')" = 1 ] && [ "$(cat "$dev")" = "$before" ]
+r=$?
+st --op=choose --key=working-directory --value= > /dev/null
+ch=$(jget "$(st --op=state --key=working-directory)" 'len(d["key"]["curated"]["choices"])')
+! grep -q '^working-directory' "$dev" && [ $r = 0 ] && both working-directory "Home folder" && [ "$ch" = 2 ]
+hl_check "K11 Home folder takes the key out (the folder item goes); an answer with no dialog is refused" $? "refused=$r file=$(grep -c '^working-directory' "$dev") items=$ch"
+st --op=set --key=working-directory --value=home > /dev/null
+[ "$(line_of working-directory)" = home ] && both working-directory "Home folder" && [ "$(cur working-directory selected)" = 0 ]
+r=$?
+st --op=reset --key=working-directory > /dev/null
+rmdir "$proj" 2>/dev/null
+hl_check "K12 working-directory = home in the file reads as Home folder" $r "display=$(cur working-directory display) selected=$(cur working-directory selected)"
 
 # ---- list keys (T3632): chips and an "add a value" field --------------------
 # Mac's ListControl, on a curated row (Font features, the Font row's family
