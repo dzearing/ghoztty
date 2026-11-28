@@ -96,10 +96,11 @@ hl_check "R0d the app renders on Mesa's software rasterizer, so GL memory is the
 fill_white "$p1"
 sleep 0.5
 # Drawing now: the frames hold real targets.
+[ -n "${T3775_TRACE:-}" ] && echo "MARK idle0" >> "$T3775_TRACE"; idle0_priv=$(priv_kb "$APP") # TEMP DIAG T3775
 held=$(fr "$p1" target_bytes)
 rel=""
 for _ in $(seq 1 40); do rel=$(fr "$p1" released); [ "$rel" = True ] && break; sleep 0.2; done
-after=$(fr "$p1" target_bytes)
+after=$(fr "$p1" target_bytes); sleep 0.5; [ -n "${T3775_TRACE:-}" ] && echo "MARK idle1" >> "$T3775_TRACE"; echo "DIAG idle drop=$(( idle0_priv - $(priv_kb "$APP") ))" # TEMP DIAG T3775
 [ "$rel" = True ] && [ "${after:-99}" -le 12 ] && grep -q 'released idle render targets' "$APP_LOG"
 hl_check "R1 a pane that drew nothing for 3s releases its frames (targets ${held:-?} -> ${after:-?} bytes; log: $(grep -m1 -o 'released idle render targets.*' "$APP_LOG"))" $? "$(seen)"
 
