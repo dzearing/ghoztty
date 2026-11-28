@@ -346,6 +346,45 @@ pub fn sampleColors(pixels: []const u32, w: i32, h: i32) u32 {
     return n;
 }
 
+/// The commonest colour (alpha ignored) of a 32 x 32 grid over `f`, and the
+/// share of the grid it covers in permille - the pixels a popup face hands
+/// UpdateLayeredWindow, as the `strip face pixels` oracle (T2646). It is what
+/// stack-fold-slide F13 scores when the system answers PrintWindow for the
+/// layered popup with an untouched black bitmap: the photo is a copy of these
+/// pixels, so a face that draws nothing still reads black here. A cut pixel
+/// (premultiplied 0) counts as 000000, as it does in the photo.
+pub const TopColor = struct { rgb: u32, permille: u16 };
+
+pub fn topColor(f: Frame) TopColor {
+    if (f.w == 0 or f.h == 0 or f.pixels.len < (f.h - 1) * f.stride + f.w) return .{ .rgb = 0, .permille = 0 };
+    const grid_n = 32;
+    var colors: [32]u32 = undefined;
+    var counts: [32]u16 = undefined;
+    var n: usize = 0;
+    var total: u16 = 0;
+    for (0..grid_n) |gy| {
+        const y = (gy * 2 + 1) * f.h / (grid_n * 2);
+        for (0..grid_n) |gx| {
+            const x = (gx * 2 + 1) * f.w / (grid_n * 2);
+            const c = f.pixels[y * f.stride + x] & 0xFF_FFFF;
+            total += 1;
+            if (std.mem.indexOfScalar(u32, colors[0..n], c)) |i| {
+                counts[i] += 1;
+            } else if (n < colors.len) {
+                colors[n] = c;
+                counts[n] = 1;
+                n += 1;
+            }
+        }
+    }
+    if (n == 0) return .{ .rgb = 0, .permille = 0 };
+    var best: usize = 0;
+    for (1..n) |i| {
+        if (counts[i] > counts[best]) best = i;
+    }
+    return .{ .rgb = colors[best], .permille = @intCast(@as(u32, counts[best]) * 1000 / total) };
+}
+
 /// The face's constant alpha for `collapse` (0..1).
 pub fn alphaOf(collapse: f64) u8 {
     return @intFromFloat(@round(std.math.clamp(collapse, 0, 1) * 255));
@@ -647,6 +686,30 @@ test "sampleColors: a black frame holds one colour, a page holds more, alpha ign
     // Nothing to read: no frame, or a slice short of its size.
     try testing.expectEqual(@as(u32, 0), sampleColors(&page, 0, 32));
     try testing.expectEqual(@as(u32, 0), sampleColors(page[0..10], 32, 32));
+}
+
+test "topColor: the band of a banded face, black for a face that drew nothing, inside the stride (T2646)" {
+    // A 40 x 20 face in a 48-wide DIB: a band, a name across a fifth of it,
+    // and a stride margin full of a colour that must never be counted.
+    var px: [48 * 20]u32 = undefined;
+    @memset(&px, 0xFF_00FF00);
+    for (0..20) |y| {
+        for (0..40) |x| px[y * 48 + x] = if (y >= 8 and y < 12) 0xFF_FFFFFF else 0xFF_1A1D22;
+    }
+    const f: Frame = .{ .pixels = &px, .stride = 48, .w = 40, .h = 20 };
+    const top = topColor(f);
+    try testing.expectEqual(@as(u32, 0x1A1D22), top.rgb);
+    try testing.expectEqual(@as(u16, 812), top.permille);
+
+    // Nothing drawn (or all cut: premultiplied 0) reads black, whole.
+    @memset(&px, 0);
+    const none = topColor(f);
+    try testing.expectEqual(@as(u32, 0), none.rgb);
+    try testing.expectEqual(@as(u16, 1000), none.permille);
+
+    // A frame too small for its pixels answers nothing rather than reading past.
+    try testing.expectEqual(@as(u16, 0), topColor(.{ .pixels = px[0..10], .stride = 48, .w = 40, .h = 20 }).permille);
+    try testing.expectEqual(@as(u16, 0), topColor(.{ .pixels = &px, .stride = 48, .w = 0, .h = 20 }).permille);
 }
 
 test "finish: a frame wider than the window it stands in for still covers it, clipped (T2485)" {

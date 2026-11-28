@@ -66,7 +66,13 @@
 #       A pure-black photo is retaken (up to 5 times, then scored): the system
 #       answers PrintWindow for the layered popup from its own surface, never
 #       the app's WM_PRINT, and under load hands back an untouched bitmap -
-#       this row's intermittent red (T2752/T2836)
+#       this row's intermittent red (T2752/T2836). A photo still blind after
+#       the retakes (or none landed) is no evidence either way, so F13 then
+#       scores the pixels the app handed UpdateLayeredWindow mid-fold - the
+#       debug build's `strip face pixels top=RRGGBB permille=N` line, the
+#       bytes the photo copies (T2646). -BlindFacePhoto forces that path, to
+#       exercise it; that a face drawing nothing reads 000000 there is the
+#       `topColor` unit test in strip_face.zig.
 #   F14) folding re-cuts s2 to its narrowing card on 2+ frames and redraws it
 #       on at most one, its first (T2415): a cut that only shrinks shows no
 #       pixel of the pane that was not on show already, and a redraw per frame
@@ -142,6 +148,7 @@ param(
     [switch]$NegativeControl,
     [switch]$SlowFrames,
     [switch]$Tree,
+    [switch]$BlindFacePhoto,
     [ValidateSet('flat', 'elevated')][string]$PaneStyle = 'flat',
     [switch]$Interactive
 )
@@ -360,6 +367,19 @@ function Get-FaceAlphas([int]$from, [int]$to) {
     for ($i = $from; $i -lt [math]::Min($to, $lines.Count); $i++) {
         if ($lines[$i] -match 'strip face alpha=(\d+) band=([0-9a-f]{6})') {
             $out += [pscustomobject]@{ Alpha = [int]$Matches[1]; Band = $Matches[2] }
+        }
+    }
+    return $out
+}
+# The `strip face pixels top=RRGGBB permille=N` oracle lines (T2646) from
+# line $from to line $to: what each popup commit handed UpdateLayeredWindow,
+# as its commonest colour and that colour's share (0..1).
+function Get-FacePixels([int]$from, [int]$to) {
+    $lines = @(Get-Content -Path $script:errlog -ErrorAction SilentlyContinue)
+    $out = @()
+    for ($i = $from; $i -lt [math]::Min($to, $lines.Count); $i++) {
+        if ($lines[$i] -match 'strip face pixels top=([0-9a-f]{6}) permille=(\d+)') {
+            $out += [pscustomobject]@{ Color = $Matches[1]; Share = [int]$Matches[2] / 1000.0 }
         }
     }
     return $out
@@ -915,8 +935,28 @@ try {
             Assert ($fvAll.Failed -eq 0 -and $popupShown -eq 0 -and $null -eq $script:faceShot) "F13: every face frame was a picture in the window's tree ($($fvAll.Failed) fell back, the popup shown $popupShown times)"
         } elseif ($PaneStyle -eq 'flat' -and -not $NegativeControl) {
             $bands = @(@($fadeIn) + @($fadeOut) | ForEach-Object Band | Sort-Object -Unique)
-            if ($null -eq $script:faceShot) {
-                Assert $false "F13: the face was photographed mid-glide (no capture landed; $($script:faceShotsEmpty) untouched black photo(s) retaken)"
+            # A photo is blind when no capture landed, or every retake came back
+            # the system's untouched black bitmap (T2646: 5 of 5 under a busy
+            # four-wide sweep, and once alone). It is then no evidence either
+            # way, so F13 scores the pixels the app handed UpdateLayeredWindow
+            # mid-fold instead - the bytes the photo would have copied. A face
+            # that draws nothing still reads 000000 there and fails.
+            $blind = $BlindFacePhoto -or $null -eq $script:faceShot
+            if (-not $blind -and $script:faceShotsEmpty -ge $faceRetakes) {
+                $tcB = Get-TopColor $script:faceShot
+                $blind = ($tcB.Color -eq '000000' -and $tcB.Share -ge 0.99)
+            }
+            if ($blind) {
+                if ($null -ne $script:faceShot) { Close-TestWindowPixels -Shot $script:faceShot }
+                $px = @(Get-FacePixels $logFold $logBack)
+                if ($px.Count -eq 0) {
+                    Assert $false "F13: the face was seen mid-glide (the photo was blind after $($script:faceShotsEmpty) retake(s), and no 'strip face pixels' line was logged)"
+                } else {
+                    $mid = $px[[int][math]::Floor($px.Count / 2)]
+                    Say ("      face photo blind ({0} untouched black photo(s) retaken): scoring the committed pixels, mid-fold commit {1} of {2}: top colour {3} ({4:p0}); logged bands {5}" -f $script:faceShotsEmpty, ([int][math]::Floor($px.Count / 2) + 1), $px.Count, $mid.Color, $mid.Share, ($bands -join ', '))
+                    Assert ($bands -contains $mid.Color) "F13: the face's commonest committed pixel $($mid.Color) is the strip band the face logged ($($bands -join ', '))"
+                    Assert ($mid.Share -ge 0.6) "F13: the band covers most of the committed face ($([math]::Round($mid.Share * 100))%)"
+                }
             } else {
                 $tc = Get-TopColor $script:faceShot
                 Say ("      face photo {0}x{1}: top colour {2} ({3:p0}); {4} untouched black photo(s) retaken; logged bands {5}" -f $script:faceShot.Width, $script:faceShot.Height, $tc.Color, $tc.Share, $script:faceShotsEmpty, ($bands -join ', '))

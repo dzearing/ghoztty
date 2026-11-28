@@ -11172,7 +11172,16 @@ fn paintStripFace(self: *Window, view: *PaneView) bool {
         f.commitVisual(&self.chrome_host, vis.left, vis.top, alpha, faceClip(view, region, w, ht));
     if (on_tree) {
         if (region) |r| _ = w32.DeleteObject(r);
-    } else f.commit(pt.x, pt.y, alpha, region);
+    } else {
+        f.commit(pt.x, pt.y, alpha, region);
+        // The acceptance oracle (stack-fold-slide.ps1 F13, T2646): the
+        // pixels the popup was just handed, card cut included - what a
+        // PrintWindow photo of it is a copy of, when the system answers one.
+        if (comptime std.log.logEnabled(.debug, .win32)) {
+            const top = strip_face.topColor(frame);
+            log.debug("strip face pixels top={x:0>6} permille={d}", .{ top.rgb, top.permille });
+        }
+    }
     if (stackTraceOn()) _ = w32.QueryPerformanceCounter(&tq[1]);
     if (perf_t0) |t0| if (std.time.Instant.now()) |t1| {
         const us = t1.since(t0) / std.time.ns_per_us;
