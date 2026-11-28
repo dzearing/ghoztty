@@ -2660,11 +2660,34 @@ The `pane-seen` seam reports each terminal pane's `frames`: `target_bytes`,
 powershell -NoProfile -File scripts\linux\wsl-run.ps1 -CommandFile test\linux\frame-release.sh
 ```
 
-Ends `FRAME RELEASE: ALL PASS` (10 checks, about a minute). `NEGATIVE=1`
-turns the idle release off and must fail R1 and R2 alone. **Open (T3775):** on
-Mesa llvmpipe the app's private memory does not drop after a release (the
-target-sized mappings stay, with `MALLOC_MMAP_THRESHOLD_` pinned too), while a
-closed pane's do go; something in Mesa's context state still references them.
+Ends `FRAME RELEASE: ALL PASS` (11 checks, about a minute). `NEGATIVE=1`
+turns the idle release off and must fail R1, R2 and R5 alone.
+
+**Freeing the GL name is not freeing the memory (T3775).** Mesa updates a
+context's framebuffer and sampler bindings only when a draw validates them,
+so after an idle pane's last frame the context still named the old target and
+llvmpipe kept its storage until the pane drew again. `glClear` validates only
+the framebuffer and was not enough. The release now ends with one sampler-free
+draw into the new 1x1 target (`OpenGL.dropReleasedFrameRefs`, the `bg_color`
+pipeline), with the viewport saved and restored around it: the first try left
+the viewport at 1x1 and the next frame drew one pixel (R3/R6 went red). R5
+measures it: the app's private memory falls by at least 3/4 of the target
+across an idle release with nothing else drawing (2492-2928 KB measured for a
+1890 KB target; 696-744 KB without the draw, 628 KB with no release at all).
+The test pins `MALLOC_MMAP_THRESHOLD_=131072` so glibc unmaps each freed
+frame-sized block, instead of the dynamic threshold keeping later ones in the
+heap. Do not measure a release across a tab switch: the tab that comes forward
+allocates its own frames in the same window, and that net is noise.
+
+How it was found: an `LD_PRELOAD` shim built in the distro with `zig cc`
+(no gcc or gdb needed) that logs each heap block of 256 KB or more, with its
+caller, as it is allocated and freed. The test appends `MARK` lines to the
+same file, and the log of blocks between two marks names what a release
+freed. Every llvmpipe resource comes from one `libgallium` site, so the block
+size is what tells a target from an atlas. The shim must interpose `malloc`,
+`calloc`, `realloc`, `free`, `memalign`, `aligned_alloc` and `posix_memalign`
+over glibc's `__libc_*` (no `dlsym`), and must switch itself off in every
+process whose `program_invocation_short_name` is not `ghoz*`.
 
 ## Window modes: the launch latch (T3573)
 
