@@ -13,9 +13,13 @@
 # window paints. The WINDOW is structural: one top-level GhozttyShortcutGuide
 # titled "Keyboard Shortcuts", however many times it is asked for.
 #
-# THE CONFIG IS DRIVEN, NOT OBSERVED: --config-default-files=false plus two
-# --keybind flags make "added a binding" and "unbound a default" reachable
-# states rather than whatever this box's config happens to say.
+# THE CONFIG IS DRIVEN, NOT OBSERVED: --config-default-files=false plus a
+# temp --config-file carrying two keybinds make "added a binding" and "unbound
+# a default" reachable states rather than whatever this box's config happens
+# to say. It is a FILE rather than --keybind flags (T2668) so section J can
+# rewrite it and `+reload --config`: the open guide must rebuild its rows from
+# the new bindings (ShortcutGuideWindow.configChanged, from App config_change)
+# without being reopened.
 #
 # Runs on the BACKGROUND test desktop (lib\TestDesktop.ps1), so it never
 # steals the user's foreground. The cheat sheet op WRITES the file and never
@@ -118,6 +122,49 @@ function Get-VirtualScreenPx {
 }
 
 $errlog = Join-Path $env:TEMP 'ghoztty-shortcut-guide-stderr.log'
+$confRoot = Join-Path $env:TEMP "ghoztty-shortcut-guide-$PID"
+New-Item -ItemType Directory -Force $confRoot | Out-Null
+$conf = Join-Path $confRoot 'shortcuts.conf'
+
+# The starting bindings: an ADDED chord (new_tab keeps its defaults too) and
+# a default UNBOUND outright (Ctrl+Shift+S is the only default for the pane
+# sidebar toggle on Windows).
+$confStart = "keybind = ctrl+alt+z=new_tab`r`nkeybind = ctrl+shift+s=unbind`r`n"
+# What section J reloads to: both of those undone, and a different chord
+# added to a different action.
+$confReloaded = "keybind = ctrl+alt+y=toggle_fullscreen`r`n"
+function Write-Conf([string]$text) { [IO.File]::WriteAllText($conf, $text) }
+
+$script:reloadN = 0
+function Invoke-ConfigReload {
+    # persistence: n/a - a CLI invocation, which opens no window.
+    $script:reloadN++
+    $out = Join-Path $confRoot "reload-$($script:reloadN).txt"
+    $p = Start-Process -FilePath $exe -WindowStyle Hidden -PassThru `
+        -ArgumentList @('+reload', '--config') -RedirectStandardOutput $out -RedirectStandardError "$out.err"
+    $null = $p.Handle
+    if (-not $p.WaitForExit(20000)) {
+        Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+        return [pscustomobject]@{ Rc = $null; Err = 'timed out' }
+    }
+    $p.WaitForExit()
+    $err = ''
+    if (Test-Path "$out.err") { $err = "$(Get-Content "$out.err" -Raw)".Trim() }
+    return [pscustomobject]@{ Rc = $p.ExitCode; Err = $err }
+}
+
+# Poll the open guide until $pred holds for its state, or time out. Returns
+# the last state read either way.
+function Wait-GuideState([scriptblock]$pred, [int]$timeoutMs = 6000) {
+    $deadline = (Get-Date).AddMilliseconds($timeoutMs)
+    $st = $null
+    while ($true) {
+        $st = Invoke-Guide @('--op=state')
+        if ($null -ne $st -and $st.success -and (& $pred $st)) { return $st }
+        if ((Get-Date) -ge $deadline) { return $st }
+        Start-Sleep -Milliseconds 250
+    }
+}
 $script:launched = @()
 $app = $null
 
@@ -130,15 +177,12 @@ try {
         Write-Host "NEGATIVE CONTROL: section B asserts the user's added binding is NOT customized - this run MUST fail"
     }
     Remove-Item $errlog -ErrorAction SilentlyContinue
+    Write-Conf $confStart
     $sp = @{
         Exe       = $exe
         Arguments = @(
             '--config-default-files=false', '--session-persistence=false', '--background=#101014',
-            # An ADDED binding (new_tab keeps its defaults too) ...
-            '--keybind=ctrl+alt+z=new_tab',
-            # ... and a default UNBOUND outright (Ctrl+Shift+S is the only
-            # default for the pane sidebar toggle on Windows).
-            '--keybind=ctrl+shift+s=unbind'
+            "--config-file=$conf"
         )
     }
     if (-not $ExePath) { $sp.StdErr = $errlog }
@@ -230,6 +274,62 @@ try {
         $prev = $i
     }
     Assert $ordered 'B: rows are grouped by category in Mac order'
+
+    # =====================================================================
+    # J: a config reload rebuilds the OPEN guide (T2668). The file is
+    # rewritten first and read BEFORE the reload - the guide must still show
+    # the old bindings then (the control: nothing but the reload may change
+    # the rows) - then `+reload --config` must change them in place, in the
+    # same window, without a reopen.
+    # =====================================================================
+    $hwndBefore = @(Get-TestWindows -ProcessId $app.Pid -Class 'GhozttyShortcutGuide' | ForEach-Object { [int64]$_.Hwnd })
+    Write-Conf $confReloaded
+    # settle: the subject is that NOTHING reacts to the write alone - give any file watcher time to, so the unchanged row below means something
+    Start-Sleep -Milliseconds 800
+    $s = Invoke-Guide @('--op=state')
+    $tab = Find-Row $s 'new_tab'
+    Assert ($null -ne $tab -and (@($tab.keys) -contains 'Ctrl+Alt+Z')) 'J: rewriting the file alone does not change the open guide (control)'
+
+    $r = Invoke-ConfigReload
+    Assert ($r.Rc -eq 0) "J: +reload --config exits 0 (rc=$($r.Rc) $($r.Err))"
+    $s = Wait-GuideState {
+        param($st)
+        $t = Find-Row $st 'new_tab'
+        $null -ne $t -and -not (@($t.keys) -contains 'Ctrl+Alt+Z')
+    }
+    Assert ([bool]$s.data.open) 'J: the guide is still open after the reload'
+    $tab = Find-Row $s 'new_tab'
+    if ($tab) {
+        $keys = @($tab.keys)
+        Assert (-not ($keys -contains 'Ctrl+Alt+Z')) "J: the removed chord leaves the New Tab row (keys: $($keys -join ', '))"
+        Assert ($keys -contains 'Ctrl+T') "J: ...which keeps its defaults (keys: $($keys -join ', '))"
+        Assert (-not [bool]$tab.customized) "J: ...and is no longer CUSTOM (customized=$($tab.customized))"
+    } else { Assert $false 'J: new_tab is still listed after the reload' }
+    $side = Find-Row $s 'toggle_pane_sidebar'
+    if ($side) {
+        Assert (-not [bool]$side.unbound_by_user) 'J: the sidebar toggle is no longer unbound in your config'
+        Assert (@($side.keys) -contains 'Ctrl+Shift+S') "J: ...and has its default chord back (keys: $(@($side.keys) -join ', '))"
+        Assert (-not [bool]$side.customized) 'J: ...and is no longer CUSTOM'
+    } else { Assert $false 'J: toggle_pane_sidebar is listed after the reload' }
+    $fs = Find-Row $s 'toggle_fullscreen'
+    if ($fs) {
+        Assert (@($fs.keys) -contains 'Ctrl+Alt+Y') "J: the newly added chord is on Toggle Full Screen (keys: $(@($fs.keys) -join ', '))"
+        Assert ([bool]$fs.customized) 'J: ...and marks that row CUSTOM'
+    } else { Assert $false 'J: toggle_fullscreen is listed after the reload' }
+    $hwndAfter = @(Get-TestWindows -ProcessId $app.Pid -Class 'GhozttyShortcutGuide' | ForEach-Object { [int64]$_.Hwnd })
+    Assert ($hwndAfter.Count -eq 1 -and $hwndBefore.Count -eq 1 -and $hwndAfter[0] -eq $hwndBefore[0]) "J: the same window was rebuilt, not reopened ($($hwndBefore -join ',') -> $($hwndAfter -join ','))"
+
+    # Back to the starting bindings, so the sections below see what B saw.
+    Write-Conf $confStart
+    $r = Invoke-ConfigReload
+    Assert ($r.Rc -eq 0) "J: reloading the starting file exits 0 (rc=$($r.Rc) $($r.Err))"
+    $s = Wait-GuideState {
+        param($st)
+        $t = Find-Row $st 'new_tab'
+        $null -ne $t -and (@($t.keys) -contains 'Ctrl+Alt+Z')
+    }
+    $tab = Find-Row $s 'new_tab'
+    Assert ($null -ne $tab -and (@($tab.keys) -contains 'Ctrl+Alt+Z') -and [bool]$tab.customized) 'J: reloading back restores the added chord, CUSTOM again'
 
     # =====================================================================
     # C: search - words, key combos in any modifier order, bare keys.
@@ -408,6 +508,7 @@ try {
     } catch {}
     Remove-TestDesktop
     Kill-RepoInstances
+    Remove-Item $confRoot -Recurse -Force -ErrorAction SilentlyContinue
 }
 
 $fgSeen = @(Stop-TestForegroundWatch)

@@ -1,24 +1,20 @@
 {
     "guard":  "shortcut-guide",
     "script":  "test/win32/shortcut-guide.ps1",
-    "generated":  "2026-11-28T04:22:14-08:00",
-    "commit":  "b89bc76720",
+    "generated":  "2026-11-28T04:50:51-08:00",
+    "commit":  "f175ee0708",
     "uncommitted":  [
-                        "src/apprt/win32/ipc_shortcut_guide.zig",
-                        "src/apprt/win32/panel_frame_memory.zig",
-                        "src/apprt/win32/ShortcutGuideWindow.zig",
                         "test/win32/shortcut-guide.ps1"
                     ],
     "files":  {
-                  "src/apprt/win32/ipc_shortcut_guide.zig":  "82a11ae4fa9ea1831349487a5a25cdc7bf8541442e912b8113737b029a6d7fea",
-                  "src/apprt/win32/panel_frame_memory.zig":  "9e4993359858af2614d7f3ab0d618ca15caf28b32f29dd8fb48579950148d1ea",
+                  "src/apprt/win32/ipc_shortcut_guide.zig":  "ffbe20a34b9868b26615353dfab84d2b65d011faf27094c957711cdd4d756705",
                   "src/apprt/win32/shortcut_catalog.zig":  "0683bb8e4e8ae5a182875a017a635b88fa53eba4020baa1e8e48841a45edac11",
                   "src/apprt/win32/shortcut_guide_layout.zig":  "d9356d3a6621e692e33289a3f9ada33dd70126f61567bf2d29414c5c3cd41bcb",
-                  "src/apprt/win32/ShortcutGuideWindow.zig":  "460034c2540cca59790ad51a60d108b4b512145ce02a8cda977e5c4ac8843a67",
+                  "src/apprt/win32/ShortcutGuideWindow.zig":  "71afd30af0c11feb3b8cfccb6dc57e160fbd0758ee3af44c5f16702f6fba84ad",
                   "src/config/keybind_list.zig":  "1cdf8ee5129fa0242d84f16ad10773f152076a7591f30767cd80620e5a515977",
-                  "test/win32/shortcut-guide.ps1":  "bac9f4874a37aaf72c52f12c2bc86a47d9866eb2495bdf429596413c233aa0d4"
+                  "test/win32/shortcut-guide.ps1":  "8824c9abdfceb88520ac476acbf4c15d1f7ddfb7bd0c748df4a632d52c377091"
               },
     "code":  {
-                 "test/win32/shortcut-guide.ps1":  "code1:1e956192f71787fe20828483dcf120850134037390aff83be40e90988f100d6f"
+                 "test/win32/shortcut-guide.ps1":  "code1:894101cb31bad8c5525d809b0af018546ac67266a7a2cc055ede05126b6bd9fc"
              }
 }
