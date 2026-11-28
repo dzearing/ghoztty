@@ -123,10 +123,15 @@ param(
     [string[]]$Compare,
     # T3111: measure this ghoztty.exe instead of the build's zig-out folder -
     # an A/B against an older commit built into its own prefix. Only with
-    # -Build Debug or -Build Release, and it must be a zig-out* build tree.
+    # -Build Debug or -Build Release, and it must be a zig-out* build tree
+    # INSIDE this repo (copy a worktree's prefix to zig-out-<name>\): the
+    # test-desktop cleanup refuses to stop any exe outside it (T3880).
     [string]$Exe,
     # T3111: check the CPU-time reader against Get-Process and exit.
-    [switch]$SelfTest
+    [switch]$SelfTest,
+    # T3880: print the ghoztty.exe this run would measure and exit, launching
+    # nothing - how test\win32\perf-baseline-reader.ps1 proves -Exe is honoured.
+    [switch]$PrintExe
 )
 
 $ErrorActionPreference = 'Stop'
@@ -454,7 +459,10 @@ if ($SelfTest) {
     Write-Host 'SELFTEST FAIL'; exit 1
 }
 
-$exe = Join-Path $repo $(if ($isRelease) { 'zig-out-release\bin\ghoztty.exe' } else { 'zig-out\bin\ghoztty.exe' })
+# T3880: PowerShell variable names are case-insensitive, so `$exe` IS the
+# -Exe parameter. Assigning the default first overwrote it, and every -Exe
+# run since T3111 silently measured this repo's own zig-out build. Resolve
+# the override before the default, never after.
 if ($Exe) {
     $exe = [IO.Path]::GetFullPath($Exe)
     # Never the user's install (CLAUDE.md non-negotiable): only a build tree.
@@ -462,7 +470,10 @@ if ($Exe) {
         Write-Host "PERF BASELINE: -Exe must be a zig-out*\bin\ghoztty.exe build tree, not $exe"
         exit 2
     }
+} else {
+    $exe = Join-Path $repo $(if ($isRelease) { 'zig-out-release\bin\ghoztty.exe' } else { 'zig-out\bin\ghoztty.exe' })
 }
+if ($PrintExe) { Write-Host "PERF BASELINE EXE: $exe"; exit 0 }
 if (-not (Test-Path $exe)) {
     Write-Host "PERF BASELINE: $exe is missing. Build it with:"
     if ($isRelease) { Write-Host '  zig build -Dapp-runtime=win32 -Doptimize=ReleaseFast -Dtarget=x86_64-windows-gnu -Dstrip=false --prefix zig-out-release' }

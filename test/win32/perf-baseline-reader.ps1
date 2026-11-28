@@ -157,6 +157,20 @@ public static class T3111Spi {
     $none = Select-Descendants $rows 999
     Assert 'D3 a pid with no children has none' ($none.Count -eq 0) "got $($none.Count)"
 
+    # E (T3880): -Exe is honoured. `$exe` and `$Exe` are one variable in
+    # PowerShell, and the script assigned the default build path before it
+    # read the parameter, so every -Exe A/B measured zig-out-release twice.
+    # -PrintExe resolves and exits before anything launches.
+    $pb = Join-Path $repo 'scripts\perf-baseline.ps1'
+    $want = Join-Path $work 'zig-out-t3880\bin\ghoztty.exe'
+    $o1 = (& powershell -NoProfile -ExecutionPolicy Bypass -File $pb -Build Release -Exe $want -PrintExe 2>&1 | ForEach-Object { "$_" } | Out-String)
+    Assert 'E1 -Exe names the exe the run measures' ($o1 -match [regex]::Escape("PERF BASELINE EXE: $want")) $o1.Trim()
+    $o2 = (& powershell -NoProfile -ExecutionPolicy Bypass -File $pb -Build Release -PrintExe 2>&1 | ForEach-Object { "$_" } | Out-String)
+    $def = Join-Path $repo 'zig-out-release\bin\ghoztty.exe'
+    Assert 'E2 no -Exe keeps the build tree default' ($o2 -match [regex]::Escape("PERF BASELINE EXE: $def")) $o2.Trim()
+    $o3 = (& powershell -NoProfile -ExecutionPolicy Bypass -File $pb -Build Debug -Exe 'C:\Users\x\ghoztty.exe' -PrintExe 2>&1 | ForEach-Object { "$_" } | Out-String)
+    Assert 'E3 an -Exe outside a zig-out tree is still refused' ($o3 -match 'must be a zig-out') $o3.Trim()
+
     Complete-TestBody
 }
 finally {

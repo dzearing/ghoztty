@@ -1,8 +1,8 @@
 {
     "guard":  "side-pane-featured",
     "script":  "test/win32/side-pane-featured.ps1",
-    "generated":  "2026-11-28T01:28:44-08:00",
-    "commit":  "6d6893c362",
+    "generated":  "2026-11-28T01:31:21-08:00",
+    "commit":  "d2d80dc1e7",
     "uncommitted":  [
 
                     ],

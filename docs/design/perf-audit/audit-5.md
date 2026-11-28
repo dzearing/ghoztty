@@ -130,6 +130,15 @@ perf fix.
 
 ## Umbrella close condition
 
+> **Update 2026-11-28 (T3880):** the busy-CPU regression did not reproduce.
+> Three same-day interleaved runs of each build gave base 424c9e5ab 10.8 s
+> mean (8.9-13.4) and head 5eaac0760a 11.7 s mean: the gap is inside one
+> build's own spread, so baseline-4's 7.50 s was a low draw. Busy cpu_s from
+> a single run cannot carry a +-30% tolerance (T3886). The same task found
+> that `perf-baseline.ps1 -Exe` had been ignored since T3111, so every earlier
+> `-Exe` A/B measured one binary twice (T3885). Evidence: `t3880/ab.md`.
+> T3881 remains the one confirmed baseline regression.
+
 **Not met.** The two confirmed baseline regressions (T3880, T3881) are open
 at P1, and T2984 (the Mac half of audit-1's renderer fixes, `seat: mac`)
 is still open at P1. No area auditor found an open P0 or P1 PA item on the
