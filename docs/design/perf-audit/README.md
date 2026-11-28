@@ -144,7 +144,12 @@ That is T3236.
   8x (T3060/T3061) and cycle memory fell 60-100 MB. Idle app cycles (T3234)
   and the agent's idle CPU and release memory (T3235) are worse. See
   `audit-4.md`.
-- `audit-1.md`, `audit-2.md` and `audit-3.md` are the audit write-ups; `audit-N/` holds each
+- `baseline-5.json` is the audit-5 baseline (T3316, commit 5eaac0760a, both
+  builds). Against baseline-4, 42 of 536 metrics are out of tolerance. Idle
+  and agent idle CPU are better (the agent's fell about 5x, T3235). Busy CPU
+  (T3880) and the memory a viewer opening adds (T3881) are worse, and a
+  same-day repeat confirmed both. See `audit-5.md`.
+- `audit-1.md` to `audit-5.md` are the audit write-ups; `audit-N/` holds each
   area's detail.
 
 What baseline-1 already shows. These numbers are measured, not explained;

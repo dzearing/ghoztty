@@ -1,8 +1,8 @@
 {
     "guard":  "unwired-hook",
     "script":  "test/win32/unwired-hook-audit.ps1",
-    "generated":  "2026-11-28T00:52:14-08:00",
-    "commit":  "0d9d74940f",
+    "generated":  "2026-11-28T00:55:49-08:00",
+    "commit":  "5eaac0760a",
     "uncommitted":  [
 
                     ],
@@ -72,7 +72,7 @@
                   "src/apprt/gtk/ipc_remote_pill.zig":  "78c47e5db9b88530fbe616cf460c1b58c0d077f736a08c1808957ee06c611cd5",
                   "src/apprt/gtk/ipc_remote_window.zig":  "cb5a0b05fa831909ca27a64ccde82a49dd65e94efc85d792e9117053a05b3f8c",
                   "src/apprt/gtk/ipc_stash.zig":  "3bf54e95b5035712dcf2a23ef51a7c848a655e3d1c6a7988025f526c51aa5bff",
-                  "src/apprt/gtk/IpcHandlers.zig":  "a06ee5f129fa8a5dd67551c86720142f482cd509fa5e76c3f50a2943e689d9d6",
+                  "src/apprt/gtk/IpcHandlers.zig":  "f0af0cef0262065627246786f269ba8b8a05dcdc1f6576903843c2e8d9b2860f",
                   "src/apprt/gtk/IpcServer.zig":  "ad1bb0f13aaea00f82f5086300343bb75789c64137d8ed4b0c9d0df128a678fb",
                   "src/apprt/gtk/key.zig":  "26190d1c1be8ddfc9874f035ffe218881ca6a24a91d27966555d3663c83a0cf4",
                   "src/apprt/gtk/launch_handoff.zig":  "52e116534e9c5e902b64e2261911370eda25773afb68b645149cf935949c83d6",
@@ -109,7 +109,7 @@
                   "src/apprt/gtk/SettingsConfigFile.zig":  "1aef5918eb0b55b33b5ecb86430233f59062358dabca0a0a9cf75544feee3668",
                   "src/apprt/gtk/SettingsLive.zig":  "3c412738dec254ee111fd121f897b86febfcd4a7480d14a536308095f6041577",
                   "src/apprt/gtk/SettingsTheme.zig":  "a2f1db48c3ab299007fcd033a944ff197a42d8fd1a14ac5341b27dee8f13b9ed",
-                  "src/apprt/gtk/SettingsWindow.zig":  "0b348ba3b483d96a03529dac185bf5c95cf626215dcd1a9eb6067777912a26cc",
+                  "src/apprt/gtk/SettingsWindow.zig":  "e8e8d31329560f877b549cc7c88e5687dd4d8a03bd9921d6cf5d08a7bbfe10c7",
                   "src/apprt/gtk/shell_pick.zig":  "d118a547617af25c1fc94538c82e8b65700017325242b8aac96fd45482578aa9",
                   "src/apprt/gtk/ShortcutGuideWindow.zig":  "e7d5856c052b8adf851783503e5e05afe4ffadc04fba142a6cd0dfea9734a53b",
                   "src/apprt/gtk/Surface.zig":  "8eac8dd1563d21d5c3e44e43fb0499045b068843a2fde81f9aa369addc47ee6b",
@@ -135,7 +135,7 @@
                   "src/apprt/gtk/ViewerImage.zig":  "a59719c203986e0e21f2fcabda7926b2f1fbabb8241c3458e63dde8d26f007f8",
                   "src/apprt/gtk/ViewerTOC.zig":  "f267de0b8df5cd8e4b993ea51616e6a9fb82b809d9e39ed999ace9e4c4907a9a",
                   "src/apprt/gtk/weak_ref.zig":  "6d8c8990e92f12cc4405bce631ec02580d1fdcda5c4c9443fed988d41544956a",
-                  "src/apprt/gtk/webkit.zig":  "f2f8a13e7d84dbe1d48a5858063175f5b5447f7db3add820391c60151165f370",
+                  "src/apprt/gtk/webkit.zig":  "33ec75e09ceb428995c06f22302095ff017df7ab1f59e3c18697f7b74bd867eb",
                   "src/apprt/gtk/window_activity.zig":  "dafc3bb90d49666bd48505b3c3798391ab68f9f5e514d123dd3c983b79c6abd2",
                   "src/apprt/gtk/window_seen.zig":  "ae7b2be0c01fc9a56ec247f4a804e265da196e1d843ef014cd10572ec6a8b46b",
                   "src/apprt/gtk/winproto.zig":  "e969c146d18c84c58a7b1f415cca5271ab54db8b3f30fc5165419e7e7c566c17",

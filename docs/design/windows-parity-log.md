@@ -41222,3 +41222,8 @@ WebKitGTK's script message carries no frame, and a page-world handler is visible
 ## 2026-11-28 00:40 lane a - T2654: re-measured, not fixed; back to todo
 - What: re-filmed right-grow (ReleaseSafe): the column past the viewer page is on 28-47/55 frames with the chrome knob on and 17-22 off (it was 3-6, knob on only). It is window background between the page and the card's already-moved rim, not the viewer's own paint: two host-fill fixes (page colour off glass, and under the opaque page on glass) made no difference across two runs per arm, so both were reverted. The task's Summary now says what is left and names the next diagnostic.
 - Filed: T3878 (ReleaseSafe msvc build: ghoztty-setup fails to link).
+
+## 2026-11-28 01:00 lane b - T3316: perf audit-5 (baseline-5 + Fable 5.2 area re-audit) at 5eaac0760a
+- What: baseline-5 (both builds) vs baseline-4: 42/536 out. Better: idle CPU (release 1.28 -> 0.60), agent idle cycles ~5x down (T3235 confirmed). Worse and repeat-confirmed: busy CPU ~2.2x (T3880, P1) and viewer-open growth 6 -> 50 MB (T3881, P1); Debug stack 17 -> 45 MB (T3882, P3). Six Fable 5.2 auditors gave every PA id a verdict; only R17 fixed this week (by T3739, so T2983 closed vs d6732bc4da). New cites read at HEAD and filed: T3862-T3875; agent freeUnlinked race T3876 (P2 fix); -Compare count defect T3883. 17 notes on existing tasks. Audit-6 = T3877, parked to 2026-12-05.
+- Evidence: docs/design/perf-audit/audit-5.md, baseline-5.json, audit-5/<A>-findings.md; repeat run temp\t3316-repeat.json; self-spawn-audit + unwired-hook-audit re-run green (due from lane l's GTK edits).
+- Filed: T3862-T3877, T3880-T3883.
