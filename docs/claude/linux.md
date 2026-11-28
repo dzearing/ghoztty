@@ -2615,8 +2615,19 @@ leaked render target would show (P0d checks no d3d12 driver is mapped).
 Ends `PANE CLOSE MEMORY: ALL PASS` (40 checks), about 6 minutes.
 `NEGATIVE=1` leaves the panes open and must fail every budget check (today
 the app dies after ~20 open splits, so only the split scenario's checks are
-meaningful there - T3779; its M6 reads ~10 KB per kept session). At
-`CYCLES=50` the app's own M1 goes red, ~1 MB a cycle (T3778).
+meaningful there - T3779; its M6 reads ~10 KB per kept session).
+
+**`WARMUP` is a floor, not the whole warm-up** (T3778). One `CYCLES=50` run
+on 2026-11-25 failed M1 at 1073 KB a cycle; re-run on that same commit and on
+two later ones it passes at 112-260 KB, flat from cycle 10 to 50. The
+failing run's baseline was 297 MB where every other run sits at ~335 MB, and
+it ended on the same ~345-350 MB plateau: caches still filling, not a leak.
+So after `WARMUP` cycles the script keeps warming up in `SETTLE_BLOCK` (4)
+cycle blocks until a block grows the app by <= 1 MB a cycle, up to
+`MAX_WARMUP` (32); P1 and the summary say how many it took. A real leak never
+settles, runs to the cap and still fails M1. Glibc's malloc tunables do not
+move it: `MALLOC_ARENA_MAX=2` and `MALLOC_MMAP_THRESHOLD_=131072` measured
+255 and 260 KB a cycle against the default's 129 KB.
 The wrapper does not pass environment variables into WSL: for `SCENARIOS`,
 `CYCLES`, `WARMUP`, `REPORT=1` (every sample) or `NEGATIVE=1`, write a
 scratch command file that exports them and then holds the script's text.

@@ -43,7 +43,9 @@
 # NEGATIVE=1 leaves every measured pane OPEN instead of closing it: the
 # budget checks MUST go red, the proof that this meter can see a retained
 # pane at all. SCENARIOS="split window" runs a subset; CYCLES / WARMUP
-# override the counts; REPORT=1 prints every sample.
+# override the counts; REPORT=1 prints every sample. WARMUP is a floor:
+# warm-up goes on in SETTLE_BLOCK (4) cycle blocks until one grows the app's
+# memory by <= 1 MB a cycle, up to MAX_WARMUP (32) cycles (T3778).
 # Output: one PASS/FAIL line per check, then 'PANE CLOSE MEMORY: ALL PASS'
 # or 'PANE CLOSE MEMORY: <n> FAILURE(S)'. Exit 0 only on ALL PASS.
 set -u
@@ -195,6 +197,27 @@ summary=""
 for kind in $SCENARIOS; do
     ok=1
     for i in $(seq 1 "$WARMUP"); do cycle "$kind" "w$i" || ok=0; done
+    # T3778: WARMUP is a floor, not a guarantee. On 2026-11-25 one run's
+    # baseline came out at 297 MB where every other run of the same commit
+    # sits at ~335 MB after 8 warm-ups, and the measured cycles then "climbed"
+    # 1073 KB a cycle up to the same ~345-350 MB plateau every run reaches: the
+    # caches were still filling, and M1 read the tail of warm-up as a per-pane
+    # leak. So keep warming up in blocks of SETTLE_BLOCK until a block grows
+    # private memory by no more than M1's own budget per cycle, up to
+    # MAX_WARMUP. A real leak (>= 1 MB a cycle) never settles, runs to the cap
+    # and still fails M1; under NEGATIVE=1 nothing is closed, so it never
+    # settles either and is not tried (the app dies past ~20 open splits, T3779).
+    wn=$WARMUP
+    if [ "$NEG" != 1 ]; then
+        blk=${SETTLE_BLOCK:-4}
+        while [ "$wn" -lt "${MAX_WARMUP:-32}" ]; do
+            set -- $(settled 1.5); w0=$1
+            for _ in $(seq 1 "$blk"); do wn=$((wn + 1)); cycle "$kind" "w$wn" || ok=0; done
+            set -- $(settled 1.5); w1=$1
+            [ "${REPORT:-0}" = 1 ] && echo "    $kind warm-up to $wn: $(per "$w0" "$w1" "$blk") KB a cycle over the last $blk"
+            python3 -I -c "import sys; sys.exit(0 if $(per "$w0" "$w1" "$blk") <= 1024 else 1)" && break
+        done
+    fi
     BASE=$(settled 2.5); show "$kind base" "$BASE"
     for i in $(seq 1 "$CYCLES"); do
         # the first measured cycle also samples PEAK, with its pane open
@@ -203,7 +226,7 @@ for kind in $SCENARIOS; do
         [ "${REPORT:-0}" = 1 ] && show "$kind $i" "$(sample)"
     done
     END=$(settled 2.5); show "$kind end" "$END"
-    hl_check "P1 $kind: every one of the $((CYCLES + WARMUP)) opens succeeded" $((1 - ok))
+    hl_check "P1 $kind: every one of the $((CYCLES + wn)) opens succeeded ($wn of them warm-up)" $((1 - ok))
     set -- $BASE; b_priv=$1 b_thr=$2 b_fd=$3 b_procs=$4 b_pkb=$5 b_heap=$6
     set -- $END; e_priv=$1 e_thr=$2 e_fd=$3 e_procs=$4 e_pkb=$5 e_heap=$6
     set -- $PEAK; k_priv=$1 k_thr=$2 k_fd=$3 k_procs=$4 k_heap=$6
@@ -213,7 +236,7 @@ for kind in $SCENARIOS; do
     f=$(per "$b_fd" "$e_fd" "$CYCLES")
     pr=$(per "$b_procs" "$e_procs" "$CYCLES")
     pm=$(per "$b_pkb" "$e_pkb" "$CYCLES")
-    summary="$summary\n    $kind: one open pane ~${pane_kb}KB/$((k_thr - b_thr)) threads/$((k_fd - b_fd)) fds/$((k_procs - b_procs)) procs; per closed: ${m}KB ${t} threads ${f} fds ${pr} procs ${pm}KB in them, $(per "$b_heap" "$e_heap" "$CYCLES")B agent live heap"
+    summary="$summary\n    $kind: warm-up $wn cycles; one open pane ~${pane_kb}KB/$((k_thr - b_thr)) threads/$((k_fd - b_fd)) fds/$((k_procs - b_procs)) procs; per closed: ${m}KB ${t} threads ${f} fds ${pr} procs ${pm}KB in them, $(per "$b_heap" "$e_heap" "$CYCLES")B agent live heap"
     python3 -I -c "import sys; sys.exit(0 if $m <= 1024 else 1)"
     hl_check "M1 $kind: private memory per closed pane <= 1 MB (left ${m} KB; one open pane cost ~${pane_kb} KB)" $? "base=$BASE end=$END peak=$PEAK"
     python3 -I -c "import sys; sys.exit(0 if $t <= 0.5 else 1)"
