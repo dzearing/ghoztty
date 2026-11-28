@@ -1,8 +1,8 @@
 {
     "guard":  "test-reach",
     "script":  "test/win32/test-reach-audit.ps1",
-    "generated":  "2026-11-28T02:07:40-08:00",
-    "commit":  "d2d80dc1e7",
+    "generated":  "2026-11-28T02:35:47-08:00",
+    "commit":  "b843981921",
     "uncommitted":  [
 
                     ],
@@ -434,7 +434,7 @@
                   "src/apprt/win32/viewer_feedback_report.zig":  "74fd27fb98919ed12aca9e5d481d61743c0f9310c833726169d4b00e40b30c75",
                   "src/apprt/win32/viewer_file_tree.zig":  "cc5e6dcb205c91453a37f851b34030466b3b219baa5118c85a02be01f45d329a",
                   "src/apprt/win32/viewer_find.zig":  "2d1018fde968a349c12070c0c51b34590cd495f70b7000cc639e2627a118efc0",
-                  "src/apprt/win32/viewer_glass.zig":  "853ab45b9ccf20457e0d86fd58f6d7a23352cb2ffcea19bb9d6e5dab2a70057b",
+                  "src/apprt/win32/viewer_glass.zig":  "c6eb6ba88dbdeed64eac0fec1381a51def8104d7f7b3036a6437e207ebb87fad",
                   "src/apprt/win32/viewer_image.zig":  "87a18ab432898de2acdc82d78e79e24dcb92c104e7c3ce440a7cf8dcff73e6ec",
                   "src/apprt/win32/viewer_nav.zig":  "f4216a1059fc8c84706e2dcc569bae77f9ffa67f5141b255006ae63a73a86bb5",
                   "src/apprt/win32/viewer_nav_field.zig":  "dc1ae36c5851503078899d814191709c3609238d5e71971559a2a8cffb0295fd",
@@ -461,7 +461,7 @@
                   "src/apprt/win32/ViewerFindBar.zig":  "6ee907004fb2b44c09adbb581f154b4066299fd389391a8379fab8758387760b",
                   "src/apprt/win32/ViewerImageDecode.zig":  "11d9a32e27289f795d9a6d4779c7dc18db054eff55a147d84f029f0f958db7b2",
                   "src/apprt/win32/ViewerNavBar.zig":  "a407509dd2226edbff97599f5bc8583e5c01a83d74d4126125c4ea0027a5f306",
-                  "src/apprt/win32/ViewerPane.zig":  "4c55a46e2e13ec6bdbd059cc17149e5c9c5e68496a7904851a8ad69c54a2e0d9",
+                  "src/apprt/win32/ViewerPane.zig":  "deaaa8b46bcb82119a1364105206eea1573eb3faa0ca629b96be875a851c385a",
                   "src/apprt/win32/ViewerResourceServe.zig":  "bd121e0ff837e006c5be318b0908551de2987af86c7312da37e0143a0fbcb2f8",
                   "src/apprt/win32/ViewerTOCPanel.zig":  "078f58e513a7cc782fb29c1fa91081b355a07118894eef39bb641552410a5700",
                   "src/apprt/win32/ViewerWorktreeProbe.zig":  "5d03178b045024eb4a7adc140aa6cf83f4d75784c313f07d55ffa815e3c86435",

@@ -218,19 +218,41 @@ if ($Compare) {
     Get-Leaves $a.builds '' $la
     Get-Leaves $b.builds '' $lb
     $bad = 0; $rows = 0
+    # T3881: T3169 put a terminal CONTROL tab (open, close) between the viewer
+    # phase's base and its three viewers, and viewer.open.growth stayed
+    # "open minus base" - so from T3169 on it carries that tab's GL driver
+    # arena (~40 MB, ~53 handles, ~11 USER, ~6 threads). A document from
+    # before T3169 has no viewer.control; its growth is what the later
+    # document calls growth_vs_warm (open minus warm_base). Scored straight,
+    # baseline-4 -> baseline-5 read as a 6 -> 50 MB regression that was the
+    # definition moving. Score like against like and say so.
+    $remapped = @{}
+    foreach ($bld in @($la.Keys | ForEach-Object { ($_ -split '\.')[0] } | Sort-Object -Unique)) {
+        $aHasControl = @($la.Keys | Where-Object { $_.StartsWith("$bld.viewer.control.") }).Count -gt 0
+        $bHasWarm = @($lb.Keys | Where-Object { $_.StartsWith("$bld.viewer.open.growth_vs_warm.") }).Count -gt 0
+        if (-not $aHasControl -and $bHasWarm) { $remapped[$bld] = $true }
+    }
     foreach ($k in ($la.Keys | Sort-Object)) {
         $fam = Get-MetricFamily $k
         if (-not $fam) { continue }
-        if (-not $lb.ContainsKey($k)) { Write-Host ("MISSING  {0}" -f $k); $bad++; continue }
+        $kb = $k; $tag = ''
+        if ($k -match '^([^.]+)\.viewer\.open\.growth\.(.+)$' -and $remapped.ContainsKey($Matches[1])) {
+            $kb = "$($Matches[1]).viewer.open.growth_vs_warm.$($Matches[2])"
+            $tag = ' vs b.growth_vs_warm'
+        }
+        if (-not $lb.ContainsKey($kb)) { Write-Host ("MISSING  {0}" -f $kb); $bad++; continue }
         $t = $script:Tolerance[$fam]
-        $va = $la[$k]; $vb = $lb[$k]
+        $va = $la[$k]; $vb = $lb[$kb]
         $lim = [math]::Max($t.abs, $t.rel * [math]::Abs($va))
         $ok = [math]::Abs($vb - $va) -le $lim
         $rows++
         if (-not $ok) { $bad++ }
-        Write-Host ("{0,-6} {1,-58} {2,12:N2} {3,12:N2}  (+-{4:N2} {5})" -f $(if ($ok) { 'ok' } else { 'OUT' }), $k, $va, $vb, $lim, $fam)
+        Write-Host ("{0,-6} {1,-58} {2,12:N2} {3,12:N2}  (+-{4:N2} {5}{6})" -f $(if ($ok) { 'ok' } else { 'OUT' }), $k, $va, $vb, $lim, $fam, $tag)
     }
     Write-Host ''
+    foreach ($bld in ($remapped.Keys | Sort-Object)) {
+        Write-Host ("DEFINITION CHANGED {0}.viewer.open.growth: a predates the T3169 control tab, so it is scored against b's growth_vs_warm (open minus warm_base); b's own growth includes that tab's driver arena (T3881)" -f $bld)
+    }
     if ($bad -eq 0) { Write-Host "COMPARE WITHIN TOLERANCE ($rows metrics)"; exit 0 }
     Write-Host "COMPARE OUT OF TOLERANCE: $bad of $rows metrics"
     exit 1

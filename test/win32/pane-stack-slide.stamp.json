@@ -1,8 +1,8 @@
 {
     "guard":  "pane-stack-slide",
     "script":  "test/win32/pane-stack-slide.ps1",
-    "generated":  "2026-11-28T01:31:33-08:00",
-    "commit":  "d2d80dc1e7",
+    "generated":  "2026-11-28T01:48:53-08:00",
+    "commit":  "b843981921",
     "uncommitted":  [
 
                     ],

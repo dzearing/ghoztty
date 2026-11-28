@@ -1,8 +1,8 @@
 {
     "guard":  "rearrange-noop-drop",
     "script":  "test/win32/rearrange-noop-drop.ps1",
-    "generated":  "2026-11-28T01:35:13-08:00",
-    "commit":  "d2d80dc1e7",
+    "generated":  "2026-11-28T01:52:28-08:00",
+    "commit":  "b843981921",
     "uncommitted":  [
 
                     ],

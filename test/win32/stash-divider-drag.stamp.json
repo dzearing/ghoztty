@@ -1,8 +1,8 @@
 {
     "guard":  "stash-divider-drag",
     "script":  "test/win32/stash-divider-drag.ps1",
-    "generated":  "2026-11-28T01:30:57-08:00",
-    "commit":  "d2d80dc1e7",
+    "generated":  "2026-11-28T01:48:28-08:00",
+    "commit":  "b843981921",
     "uncommitted":  [
 
                     ],

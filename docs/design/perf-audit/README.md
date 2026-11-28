@@ -147,8 +147,12 @@ That is T3236.
 - `baseline-5.json` is the audit-5 baseline (T3316, commit 5eaac0760a, both
   builds). Against baseline-4, 42 of 536 metrics are out of tolerance. Idle
   and agent idle CPU are better (the agent's fell about 5x, T3235). Busy CPU
-  (T3880) and the memory a viewer opening adds (T3881) are worse, and a
-  same-day repeat confirmed both. See `audit-5.md`.
+  read worse but did not reproduce in interleaved same-day runs (T3880:
+  baseline-4's number was a low draw). The viewer-open growth that also read
+  worse (T3881) was T3169's control tab inside the
+  number: since T3169, compare viewer growth across documents with
+  `growth_vs_warm`, which `-Compare` does on its own for a pre-T3169 `a`.
+  See `audit-5.md`.
 - `audit-1.md` to `audit-5.md` are the audit write-ups; `audit-N/` holds each
   area's detail.
 

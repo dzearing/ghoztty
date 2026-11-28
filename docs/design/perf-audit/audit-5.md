@@ -55,8 +55,8 @@ confirmed by a second run of those phases alone on the same day
 | **busy: app CPU s for 64 MB** | 7.50 | **17.47** (repeat 15.77) | **worse, about 2.1-2.3x: T3880** |
 | busy: wall s | 26.0 | 32.6 (repeat 38.6) | worse; folded into T3880 |
 | busy: app counters (reads, batches, renders, wakeups, fps, attributed Mcycles/s) | | | all within tolerance |
-| **viewer open: app growth MB** | 6.0 | **50.4** (repeat 49.2) | **worse: T3881**; debug 8.2 -> 47.7 |
-| viewer open: growth handles / USER / threads | 132 / 45 / 10 | 187 / 58 / 15 | worse; folded into T3881 |
+| viewer open: app growth MB | 6.0 | 50.4 raw; **10.4 like-for-like** | **not a regression** (T3881): the raw number includes T3169's control tab; debug 8.2 -> 6.3 like-for-like |
+| viewer open: growth handles / USER / threads | 132 / 45 / 10 | 134 / 47 / 9 like-for-like (187 / 58 / 15 raw) | within tolerance (T3881) |
 | cycle settled private MB | -5.6 | +10.1 | worse, small; noted |
 | cycle stack MB, **debug only** | 17.4 | 44.6 | worse, Debug only (release in tolerance): T3882 |
 
@@ -72,6 +72,17 @@ outside the attributed threads. It is not a hotter loop.
 A tool defect surfaced along the way: `-Compare` against a run with only
 some phases counts the missing metrics as out of tolerance ("472 of 74").
 That is T3883.
+
+**Correction (T3881, 2026-11-28): the viewer "regression" was the measure
+moving.** T3169 (7c44aa9eca, after baseline-4) opens and closes a terminal
+control tab between the viewer phase's base and its three viewers, and
+`viewer.open.growth` stayed "open minus base". So in baseline-5 it carries
+that tab's GL driver arena: `viewer.control.leak` is 40.0 MB, 53 handles, 11
+USER and 6 threads, which is the whole gap. Against `growth_vs_warm` (open
+minus warm_base, the shape baseline-4 measured) release is 10.4 MB and debug
+6.3 MB, and every count is within tolerance. `-Compare` now scores a
+pre-T3169 document against the later one's `growth_vs_warm` and prints
+`DEFINITION CHANGED` (section F of `test\win32\perf-baseline-reader.ps1`).
 
 ## What changed in the tracker
 
@@ -96,7 +107,7 @@ That is T3883.
 | V37 | T3874 | P3 | `ViewerPane.zig:5840-5859` | an opening viewer decodes each capture before checking it is wanted, up to 8 times (from T2635) |
 | C25 | T3875 | P3 | `src/Surface.zig:1247-1268`; `os/agent_exec_argv.zig:51-109` | `-e` quoting walks PATH x PATHEXT on the GUI thread (from T3402) |
 | baseline | T3880 | P1 | busy phase | busy CPU about 2.1-2.3x baseline-4 |
-| baseline | T3881 | P1 | viewer phase | three viewers grow the app by about 50 MB instead of 6 MB |
+| baseline | T3881 | P1 | viewer phase | three viewers grow the app by about 50 MB instead of 6 MB - closed: a measurement change, not a regression (see the correction above) |
 | baseline | T3882 | P3 | cycle phase, Debug | Debug committed stack 17 -> 45 MB |
 
 **Outside the PA list:**
@@ -137,11 +148,15 @@ perf fix.
 > a single run cannot carry a +-30% tolerance (T3886). The same task found
 > that `perf-baseline.ps1 -Exe` had been ignored since T3111, so every earlier
 > `-Exe` A/B measured one binary twice (T3885). Evidence: `t3880/ab.md`.
-> T3881 remains the one confirmed baseline regression.
+>
+> **Update 2026-11-28 (T3881):** the viewer-open growth regression is not
+> real either: it was T3169's control tab counted inside the number (see the
+> correction under the baseline table). With both closed, audit-5 confirmed
+> no baseline regression.
 
-**Not met.** The two confirmed baseline regressions (T3880, T3881) are open
-at P1, and T2984 (the Mac half of audit-1's renderer fixes, `seat: mac`)
-is still open at P1. No area auditor found an open P0 or P1 PA item on the
+**Not met.** No baseline regression is open (T3880 and T3881 were both
+closed as measurement artefacts on 2026-11-28), but T2984 (the Mac half of
+audit-1's renderer fixes, `seat: mac`) is still open at P1. No area auditor found an open P0 or P1 PA item on the
 Windows side. Every open area item is P2 or P3.
 
 ## Open PA tasks (the audit-6 count starts here)

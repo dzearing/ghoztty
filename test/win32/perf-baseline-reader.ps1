@@ -171,6 +171,38 @@ public static class T3111Spi {
     $o3 = (& powershell -NoProfile -ExecutionPolicy Bypass -File $pb -Build Debug -Exe 'C:\Users\x\ghoztty.exe' -PrintExe 2>&1 | ForEach-Object { "$_" } | Out-String)
     Assert 'E3 an -Exe outside a zig-out tree is still refused' ($o3 -match 'must be a zig-out') $o3.Trim()
 
+    # --- F. viewer growth across the T3169 control-tab change (T3881) -----
+    # baseline-5's viewer.open.growth carries the control tab's driver arena
+    # (~40 MB) that baseline-4's never had; scored straight it read as a
+    # 6 -> 50 MB regression. A pre-control document is scored against the
+    # later one's growth_vs_warm, and only then.
+    ''
+    '-- F. viewer open growth vs the T3169 control tab'
+    $b45 = Invoke-Pb @('-Compare', "$audit\baseline-4.json,$audit\baseline-5.json")
+    $row = Get-Row $b45.Lines 'release.viewer.open.growth.private_mb'
+    Assert 'F1 baseline-4 vs baseline-5: release viewer growth 6.0 vs growth_vs_warm 10.4 is ok' ($row -match '^ok\s.*\s10\.40\s.*vs b\.growth_vs_warm\)$') "row: $row"
+    Assert 'F2 and the compare says the definition changed' (@($b45.Lines | Where-Object { $_ -like 'DEFINITION CHANGED release.viewer.open.growth*' }).Count -eq 1) ''
+    $mkv = {
+        param([bool]$control, $growth, $warm)
+        $v = [ordered]@{ open = [ordered]@{ growth = [ordered]@{ private_mb = $growth } } }
+        if ($null -ne $warm) { $v.open.growth_vs_warm = [ordered]@{ private_mb = $warm } }
+        if ($control) { $v.control = [ordered]@{ leak = [ordered]@{ private_mb = 40.0 } } }
+        [ordered]@{ schema = 'ghoztty-perf-baseline/1'; builds = [ordered]@{ release = [ordered]@{ viewer = $v } } } | ConvertTo-Json -Depth 8
+    }
+    $va = Join-Path $work 'va.json'; $vb = Join-Path $work 'vb.json'
+    # Negative control: a real regression past the control tab still goes OUT.
+    (& $mkv $false 6.0 $null) | Set-Content -Path $va -Encoding ascii
+    (& $mkv $true 70.0 30.0) | Set-Content -Path $vb -Encoding ascii
+    $neg = Invoke-Pb @('-Compare', "$va,$vb")
+    Assert 'F3 negative control: growth_vs_warm 6 -> 30 MB is OUT' ((Get-Row $neg.Lines 'release.viewer.open.growth.private_mb') -match '^OUT\s.*vs b\.growth_vs_warm\)$') ''
+    # Both documents carry the control tab: growth is scored against growth.
+    (& $mkv $true 50.0 10.0) | Set-Content -Path $va -Encoding ascii
+    (& $mkv $true 52.0 11.0) | Set-Content -Path $vb -Encoding ascii
+    $same = Invoke-Pb @('-Compare', "$va,$vb")
+    $row = Get-Row $same.Lines 'release.viewer.open.growth.private_mb'
+    Assert 'F4 both post-T3169: growth is scored against growth, untagged' ($row -match '^ok\s.*\s52\.00\s.*mb\)$') "row: $row"
+    Assert 'F5 and no definition note' (@($same.Lines | Where-Object { $_ -like 'DEFINITION CHANGED*' }).Count -eq 0) ''
+
     Complete-TestBody
 }
 finally {
