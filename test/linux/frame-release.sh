@@ -12,7 +12,7 @@
 # the pane's picture from its own render (capture-pane). The app runs on
 # Mesa's software rasterizer (LIBGL_ALWAYS_SOFTWARE=1), as pane-close-memory.sh
 # does, so the frames' storage is the app's own memory and R5 can see it go
-(T3775).
+# (T3775).
 #
 # Run it ONLY through the wrapper, from this box:
 #
