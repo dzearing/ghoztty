@@ -1247,7 +1247,20 @@ fn workspacesSeam(app: Context, request: Request) Allocator.Error![]u8 {
         break :focus windowName(app, owner);
     };
     var list_names: std.ArrayListUnmanaged(?[]const u8) = .empty;
-    for (try @import("PaneSidebar.zig").listOrder(arena)) |f| try list_names.append(arena, windowName(app, f.win));
+    // T3784: each list stop's tab too - its position in its window's strip
+    // and whether it is that window's selected tab (separate-mode
+    // goto_window stops on every tab).
+    const Stop = struct { window: ?[]const u8, tab: c_int, selected: bool };
+    var stops: std.ArrayListUnmanaged(Stop) = .empty;
+    for (try @import("PaneSidebar.zig").listOrder(arena)) |f| {
+        try list_names.append(arena, windowName(app, f.win));
+        const tv = f.win.getTabView();
+        try stops.append(arena, .{
+            .window = windowName(app, f.win),
+            .tab = tv.getPagePosition(tv.getPage(f.tab.as(gtk.Widget))),
+            .selected = f.win.getSelectedTab() == f.tab,
+        });
+    }
     const counts: struct { all: usize, mapped: usize } = counts: {
         var all: usize = 0;
         var mapped: usize = 0;
@@ -1286,6 +1299,7 @@ fn workspacesSeam(app: Context, request: Request) Allocator.Error![]u8 {
             .shown = shown,
             .focus_window = focus_window,
             .list = list_names.items,
+            .stops = stops.items,
             .order = rows.items,
             // T3651: the toplevel's desk - the seed it last drew (the
             // workspace on show's) and its shade crossfade.

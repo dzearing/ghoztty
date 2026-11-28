@@ -415,6 +415,44 @@ pub fn gotoWindow(next: bool) bool {
     return true;
 }
 
+/// `goto_window` in separate mode (T3784; Mac 997b26535
+/// `BaseTerminalController.gotoWindow`, win32 T3132 `App.gotoWindow`): one
+/// along the pane sidebar's all-windows list, wrapping, from `from`'s
+/// selected tab. A GTK tab is the Mac window's counterpart (as a win32 tab
+/// is), so every tab of every visible window is one stop, and going to one is
+/// the sidebar's own row click: select its tab, raise its window, focus its
+/// pane. `from` is the window the chord came from - not GTK's active
+/// toplevel, which a compositor may never report (Weston headless has no
+/// seat). Null `from` starts at the list's edge the step enters by. False
+/// when there is nowhere else to go.
+pub fn gotoWindowSeparate(from: ?*Window, next: bool) bool {
+    var arena_state = std.heap.ArenaAllocator.init(Application.default().allocator());
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const all_tabs = PaneSidebar.listOrder(arena) catch return false;
+    // Mac walks the visible windows only (`window.isVisible`).
+    const list = arena.alloc(PaneSidebar.FoundTab, all_tabs.len) catch return false;
+    var n: usize = 0;
+    for (all_tabs) |f| {
+        if (f.win.as(gtk.Widget).isVisible() == 0) continue;
+        list[n] = f;
+        n += 1;
+    }
+    const at = if (from) |w| indexOf(list[0..n], w) else null;
+    const dir = if (next) "next" else "previous";
+    const to = window_order.stepped(n, at, if (next) .next else .previous) orelse {
+        log.info("goto_window {s}: nowhere else to go ({d} listed)", .{ dir, n });
+        return false;
+    };
+    const f = list[to];
+    log.info("goto_window {s}: {d} -> {d} of {d} window={s}", .{ dir, at orelse n, to, n, name(f.win) });
+    const tv = f.win.getTabView();
+    tv.setSelectedPage(tv.getPage(f.tab.as(gtk.Widget)));
+    f.win.bringForward();
+    if (f.tab.getActiveSurface()) |s| s.grabFocus();
+    return true;
+}
+
 /// The list entry of the workspace on show's selected tab, else its first.
 fn indexOf(list: []const PaneSidebar.FoundTab, win: *Window) ?usize {
     const sel = win.getSelectedTab();

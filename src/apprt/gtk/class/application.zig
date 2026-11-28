@@ -993,7 +993,7 @@ pub const Application = extern struct {
 
             .swap_split => return Action.swapSplit(target, value),
 
-            .goto_window => return Action.gotoWindow(value),
+            .goto_window => return Action.gotoWindow(target, value),
 
             .goto_tab => return Action.gotoTab(target, value),
 
@@ -2813,72 +2813,33 @@ const Action = struct {
         }
     }
 
-    pub fn gotoWindow(direction: apprt.action.GotoWindow) bool {
+    pub fn gotoWindow(target: apprt.Target, direction: apprt.action.GotoWindow) bool {
         // Single-window mode: one along the pane sidebar's all-windows list,
-        // its workspace put on show (T3649). Only one toplevel is mapped,
-        // so the walk below would find nowhere to go.
-        if (Workspaces.gotoWindow(direction == .next)) return true;
+        // its workspace put on show (T3649). Only one toplevel is mapped.
+        if (window_mode.current() == .single) return Workspaces.gotoWindow(direction == .next);
 
-        const glist = gtk.Window.listToplevels();
-        defer glist.free();
-
-        // The window we're starting from is typically our active window.
-        const starting: *glib.List = @as(?*glib.List, glist.findCustom(
-            null,
-            findActiveWindow,
-        )) orelse glist;
-
-        // Go forward or backwards in the list until we find a valid
-        // window that is visible.
-        var current_: ?*glib.List = starting;
-        while (current_) |node| : (current_ = switch (direction) {
-            .next => node.f_next,
-            .previous => node.f_prev,
-        }) {
-            const data = node.f_data orelse continue;
-            const gtk_window: *gtk.Window = @ptrCast(@alignCast(data));
-            if (gotoWindowMaybe(gtk_window)) return true;
-        }
-
-        // If we reached here, we didn't find a valid window to focus.
-        // Wrap around.
-        current_ = switch (direction) {
-            .next => glist,
-            .previous => last: {
-                var end: *glib.List = glist;
-                while (end.f_next) |next| end = next;
-                break :last end;
-            },
+        // Separate mode: one along the same list, every tab of every
+        // window a stop, from the window the chord came from (T3784; Mac
+        // 997b26535, win32 T3132) - not GTK's toplevel list, whose order is
+        // the order the windows opened in, nor its active window, which a
+        // compositor may never report.
+        const from: ?*Window = switch (target) {
+            .surface => |core| ext.getAncestor(Window, core.rt_surface.surface.as(gtk.Widget)),
+            .app => activeWindow(),
         };
-        while (current_) |node| : (current_ = switch (direction) {
-            .next => node.f_next,
-            .previous => node.f_prev,
-        }) {
-            if (current_ == starting) break;
-            const data = node.f_data orelse continue;
-            const gtk_window: *gtk.Window = @ptrCast(@alignCast(data));
-            if (gotoWindowMaybe(gtk_window)) return true;
-        }
-
-        return false;
+        return Workspaces.gotoWindowSeparate(from, direction == .next);
     }
 
-    fn gotoWindowMaybe(gtk_window: *gtk.Window) bool {
-        // If it is already active skip it.
-        if (gtk_window.isActive() != 0) return false;
-        // If it is hidden, skip it.
-        if (gtk_window.as(gtk.Widget).isVisible() == 0) return false;
-        // If it isn't a Ghostty window, skip it.
-        const window = gobject.ext.cast(
-            Window,
-            gtk_window,
-        ) orelse return false;
-
-        // Focus our active surface
-        const surface = window.getActiveSurface() orelse return false;
-        gtk.Window.present(gtk_window);
-        surface.grabFocus();
-        return true;
+    /// The GTK toplevel the compositor reports active, when it is ours.
+    fn activeWindow() ?*Window {
+        const glist = gtk.Window.listToplevels();
+        defer glist.free();
+        const node: *glib.List = @as(?*glib.List, glist.findCustom(
+            null,
+            findActiveWindow,
+        )) orelse return null;
+        const data = node.f_data orelse return null;
+        return gobject.ext.cast(Window, @as(*gtk.Window, @ptrCast(@alignCast(data))));
     }
 
     pub fn initialSize(
