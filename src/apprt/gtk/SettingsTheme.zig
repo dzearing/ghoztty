@@ -848,7 +848,19 @@ fn hex(buf: *[7]u8, c: Rgb) []const u8 {
 }
 
 /// "theme" and "preview": the model beside what the widgets draw.
+/// `widget`'s bounds in the Settings window's coordinates as `[x,y,w,h]`
+/// (logical px, rounded), or null while it is not laid out - where the
+/// seam's `--op=shot` PNG drew it, scaled by the reply's `scale` (T3769).
+fn writeRect(jws: *std.json.Stringify, widget: *wk.GtkWidget, space: *wk.GtkWidget) !void {
+    var r: wk.GrapheneRect = .{};
+    if (wk.gtk_widget_compute_bounds(widget, space, &r) == 0 or r.w <= 0 or r.h <= 0) return jws.write(null);
+    try jws.beginArray();
+    for ([_]f32{ r.x, r.y, r.w, r.h }) |v| try jws.write(@as(i64, @intFromFloat(@round(v))));
+    try jws.endArray();
+}
+
 pub fn writeState(self: *SettingsTheme, jws: *std.json.Stringify, alloc: Allocator) !void {
+    const space = self.window().window;
     const cat = self.catalog();
     const sel = self.selection();
     const tab = self.currentTab();
@@ -951,9 +963,15 @@ pub fn writeState(self: *SettingsTheme, jws: *std.json.Stringify, alloc: Allocat
             try jws.write(wk.gtk_widget_get_sensitive(t.button) != 0);
             try jws.objectField("background");
             try jws.write(hex(&hb, th.background));
+            try jws.objectField("rect");
+            try writeRect(jws, t.button, space);
+            try jws.objectField("name_rect");
+            try writeRect(jws, t.name, space);
             try jws.endObject();
         }
         try jws.endArray();
+        try jws.objectField("scale");
+        try jws.write(wk.gtk_widget_get_scale_factor(space));
         try jws.objectField("all");
         try jws.write(if (self.all_button) |b| std.mem.span(wk.gtk_button_get_label(b) orelse "") else null);
         try jws.objectField("empty");
@@ -1019,6 +1037,10 @@ pub fn writeState(self: *SettingsTheme, jws: *std.json.Stringify, alloc: Allocat
         try jws.write(wk.gtk_widget_get_mapped(card.overlay) != 0);
         try jws.objectField("blinking");
         try jws.write(self.blink_source != 0);
+        try jws.objectField("term_rect");
+        try writeRect(jws, card.term, space);
+        try jws.objectField("desk_rect");
+        try writeRect(jws, card.desk, space);
         try jws.endObject();
     } else try jws.write(null);
     try jws.endObject();

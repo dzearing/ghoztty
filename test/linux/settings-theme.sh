@@ -19,6 +19,10 @@
 #   V1-V7   the preview: theme colors, the terminal's rgba, the caption, font
 #           family and size, the cursor style, the blink only while shown,
 #           the elevated backdrop.
+#   S1-S4   the pixels (T3769): --op=shot renders the window, and the tiles'
+#           backgrounds, the picked ring and the preview terminal (opaque,
+#           then blended at 80% over the backdrop) are sampled from it at the
+#           rects the state reports.
 #   O1-O2   a later file that sets theme makes the whole section read-only.
 #   R1      the section survives a close and reopen.
 #
@@ -31,7 +35,9 @@
 # XDG_CONFIG_HOME holds every config and theme file written here.
 #
 # NEGATIVE=1 makes M1 expect the switch to seed "Catppuccin Frappe" (a DARK
-# theme) for the light slot: M1 must FAIL.
+# theme) for the light slot: M1 must FAIL. NEGATIVE=2 makes S1 expect the
+# BUNDLED Catppuccin Mocha's #1e1e2e where the user's #101820 is drawn: S1
+# must FAIL (the pixel check tells two dark backgrounds apart).
 #
 # Output: one PASS/FAIL line per check, then 'SETTINGS THEME: ALL PASS' or
 # 'SETTINGS THEME: <n> FAILURE(S)'. Exit 0 only on ALL PASS.
@@ -189,6 +195,59 @@ cap="DejaVu Sans Mono 15pt · Catppuccin Mocha · 80% opaque"
 hl_check "V2 the terminal is the theme's background at the configured opacity, and the corner caption says so" $? "rule=$(pv "$o" '["drawn"]["term_rule"]') caption=$(pv "$o" '["drawn"]["caption"]')"
 [ "$fam" = "DejaVu Sans Mono" ] && printf '%s' "$(pv "$o" '["drawn"]["lines"][2]')" | grep -q 'font_family="DejaVu Sans Mono" size="13824"'
 hl_check "V3 the lines are in the configured family at Mac's 0.9 x size (15pt -> 13.5pt)" $? "line2=$(pv "$o" '["drawn"]["lines"][2]')"
+# ---- the pixels (T3769): --op=shot, sampled at the rects the state names --
+# shot: the window's own render to a fresh PNG, its path printed.
+shots=0
+shot() { shots=$((shots + 1)); local f="$HL_RUNTIME/settings-theme-$shots.png"; rm -f "$f"; st --op=shot --path="$f" > /dev/null; [ -s "$f" ] && echo "$f"; }
+# rq <reply> <python expr>: T the drawn tiles, C the preview's drawn card,
+# k the scale, and pt(x, y) a logical point as 'x y' shot pixels.
+rq() {
+    printf '%s' "$1" | python3 -I -c '
+import json, sys
+d = json.load(sys.stdin); t = d["theme"]["drawn"]; T = t["tiles"]; C = d["preview"]["drawn"]; k = t["scale"] or 1
+def pt(x, y): return "%d %d" % (round(x * k), round(y * k))
+def tile_bg(i): r, n = T[i]["rect"], T[i]["name_rect"]; return pt(r[0] + 4, (r[1] + n[1]) / 2)
+def tile_ring(i): r, n = T[i]["rect"], T[i]["name_rect"]; return pt(r[0] + 1, (r[1] + n[1]) / 2)
+def term_px(): r = C["term_rect"]; return pt(r[0] + 3, r[1] + r[3] / 2)
+def desk_px(): r = C["term_rect"]; return pt(r[0] - 3, r[1] + r[3] / 2)
+print(eval(sys.argv[1]))' "$2" 2>/dev/null
+}
+# near <"r g b"> <#rrggbb> <tol>: every channel within tol.
+near() { [ -n "$1" ] && [ "$1" != off ] && python3 -I -c '
+import sys
+p = [int(v) for v in sys.argv[1].split()]; h = sys.argv[2].lstrip("#"); t = int(sys.argv[3])
+sys.exit(0 if all(abs(a - int(h[i:i + 2], 16)) <= t for a, i in zip(p, (0, 2, 4))) else 1)' "$1" "$2" "$3"; }
+# blend <#fg> <alpha> <"r g b" under>: the #rrggbb the compositor should show.
+blend() { python3 -I -c '
+import sys
+h = sys.argv[1].lstrip("#"); a = float(sys.argv[2]); u = [int(v) for v in sys.argv[3].split()]
+print("#" + "".join("%02x" % round(a * int(h[i:i + 2], 16) + (1 - a) * b) for i, b in zip((0, 2, 4), u)))' "$1" "$2" "$3"; }
+# accent <r g b>: libadwaita's default accent (#3584e4) within 45 a channel.
+accent() { [ -n "$1" ] && [ "$1" != off ] && near "$1" '#3584e4' 45; }
+
+st --op=theme-tab --value=dark > /dev/null
+st --op=theme-filter --value=catppuccin > /dev/null
+st --op=set --key=macos-pane-style --value=elevated > /dev/null
+o=$(st --op=set --key=background-opacity --value=1)
+f=$(shot)
+t0=$(rq "$o" 'T[0]["name"]'); t1=$(rq "$o" 'T[1]["name"]'); t1bg=$(rq "$o" 'T[1]["background"]')
+want_mocha='#101820'; [ "${NEGATIVE:-}" = 2 ] && want_mocha='#1e1e2e'   # the BUNDLED Mocha: S1 must FAIL
+px0=$(hl_png_pixel "$f" $(rq "$o" 'tile_bg(0)')); px1=$(hl_png_pixel "$f" $(rq "$o" 'tile_bg(1)'))
+[ -n "$f" ] && [ "$t0" = "Catppuccin Mocha" ] && near "$px0" "$want_mocha" 4 && near "$px1" "$t1bg" 4
+hl_check "S1 --op=shot draws each tile in its own theme's background: Catppuccin Mocha is the user's $want_mocha, $t1 its $t1bg" $? "shot=$f px0=$px0 px1=$px1 rect0=$(rq "$o" 'T[0]["rect"]') stats=$([ -n "$f" ] && hl_png_stats "$f")"
+ring0=$(hl_png_pixel "$f" $(rq "$o" 'tile_ring(0)')); ring1=$(hl_png_pixel "$f" $(rq "$o" 'tile_ring(1)'))
+[ "$(rq "$o" 'T[0]["picked"]')" = True ] && accent "$ring0" && ! accent "$ring1"
+hl_check "S2 the picked tile's ring is drawn in the accent color; the unpicked one beside it has none" $? "ring0=$ring0 ring1=$ring1"
+tp=$(hl_png_pixel "$f" $(rq "$o" 'term_px()'))
+[ "$(pv "$o" '["opacity"] == 1')" = true ] && near "$tp" "$want_mocha" 4
+hl_check "S3 fully opaque, the preview terminal is drawn in the theme's background ($want_mocha)" $? "term=$tp rect=$(rq "$o" 'C["term_rect"]')"
+o=$(st --op=set --key=background-opacity --value=0.8)
+f=$(shot)
+tp=$(hl_png_pixel "$f" $(rq "$o" 'term_px()')); dp=$(hl_png_pixel "$f" $(rq "$o" 'desk_px()'))
+want=$(blend '#101820' 0.8 "$dp")
+near "$tp" "$want" 6 && ! near "$tp" '#101820' 4
+hl_check "S4 at 80% the terminal is the theme's background blended over the backdrop beside it ($want), not the opaque color" $? "term=$tp desk=$dp want=$want"
+
 st --op=set --key=cursor-style-blink --value=false > /dev/null
 o=$(st --op=set --key=cursor-style --value=bar)
 [ "$(pv "$o" '["cursor_style"]')" = bar ] && printf '%s' "$(pv "$o" '["drawn"]["lines"][3]')" | grep -q 'foreground="#ff8800" alpha="100%">▏</span>' \

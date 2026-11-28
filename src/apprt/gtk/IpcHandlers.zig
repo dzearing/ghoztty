@@ -1985,10 +1985,15 @@ fn readClipboard(app: Context, request: Request) Allocator.Error![]u8 {
 ///   matched,more,tiles[],catalog:[{name,light,user,background}],drawn:{
 ///   follow_active,one_active,mode_sensitive,use_caption,tab_labels[],
 ///   tab_active,tab_caption,filter,notices[],tiles:[{name,light,picked,
-///   sensitive,background}],all,empty}} and "preview":{theme,from_catalog,
+///   sensitive,background,rect,name_rect}],scale,all,empty}} and "preview":{theme,from_catalog,
 ///   background,foreground,cursor_color,family,size,opacity,pad_x,pad_y,
 ///   elevated,ligatures,cursor_style,blink,cursor_opacity,caption,drawn:{
-///   caption,term_rule,elevated,lines[],text_margin,mapped,blinking}}
+///   caption,term_rule,elevated,lines[],text_margin,mapped,blinking,
+///   term_rect,desk_rect}} - each rect [x,y,w,h] in the window's logical px,
+///   where --op=shot drew it (T3769)
+///
+///   --op=shot --path=<file.png>   the window from its own render (T3769,
+///                                win32's shot); the reply is the state
 ///
 ///   state adds "page", "visible_page", "filter", "pages":[{id,title,count}],
 ///   "groups":[{page,title,drawn}] and, with --key, "key.curated":
@@ -2002,7 +2007,9 @@ fn settingsSeam(app: Context, request: Request) Allocator.Error![]u8 {
     var page_arg: ?[]const u8 = null;
     var filter_arg: ?[]const u8 = null;
     var index_arg: usize = 0;
+    var shot_path: ?[]const u8 = null;
     for (request.arguments orelse &.{}) |arg| {
+        if (std.mem.startsWith(u8, arg, "--path=")) shot_path = arg["--path=".len..];
         if (std.mem.startsWith(u8, arg, "--index=")) index_arg = std.fmt.parseInt(usize, arg["--index=".len..], 10) catch
             return server.errorResponse(c_alloc, "--index must be a non-negative integer", .{});
         if (std.mem.startsWith(u8, arg, "--op=")) op = arg["--op=".len..];
@@ -2168,7 +2175,21 @@ fn settingsSeam(app: Context, request: Request) Allocator.Error![]u8 {
     } else if (!std.mem.eql(u8, op, "state")) {
         const w = SettingsWindow.current() orelse
             return server.errorResponse(c_alloc, "the Settings window is not open", .{});
-        if (std.mem.eql(u8, op, "search")) {
+        if (std.mem.eql(u8, op, "shot")) {
+            // The window from its own render (`pane_snapshot`), as win32's
+            // `--op=shot` (T3769): flush first so the PNG is the state the
+            // reply reports, not the frame before the last gesture.
+            const path = shot_path orelse return server.errorResponse(c_alloc, "--path=<file.png> is required for --op=shot", .{});
+            w.flush();
+            const bytes = pane_snapshot.png(w.window) orelse
+                return server.errorResponse(c_alloc, "the Settings window produced no frame to capture", .{});
+            defer wk.g_bytes_unref(bytes);
+            var len: usize = 0;
+            const data = wk.g_bytes_get_data(bytes, &len) orelse
+                return server.errorResponse(c_alloc, "the Settings window produced no frame to capture", .{});
+            writeCapture(path, data[0..len]) catch |err|
+                return server.errorResponse(c_alloc, "could not write '{s}' ({s})", .{ path, @errorName(err) });
+        } else if (std.mem.eql(u8, op, "search")) {
             w.typeQuery(val orelse "");
         } else if (std.mem.eql(u8, op, "search-stop")) {
             w.stopSearch();
