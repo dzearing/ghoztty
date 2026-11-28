@@ -1,8 +1,8 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-11-27T07:26:23-08:00",
-    "commit":  "1b199e694f",
+    "generated":  "2026-11-27T08:27:41-08:00",
+    "commit":  "62490f5132",
     "uncommitted":  [
 
                     ],
@@ -663,6 +663,7 @@
                   "test/win32/viewer-slow-path.ps1":  "4a5a0ac38b934693518a0b2d023cbf6b4440442c2e2d7fadfea66ea48d1aa552",
                   "test/win32/viewer-toc-emphasis.ps1":  "474a094cf2f125c992a2c90553f30740e4ce5ee3faf72409b7b7b0926ceaa3f0",
                   "test/win32/viewer-toc-handle.ps1":  "c03d9bea47d45df56e8df941ddc0e2156e4af4b5474a2ecf2ec4e1672b97ab9d",
+                  "test/win32/viewer-unfold-carried.ps1":  "0883b029a63a8db916e438f9330fb4ad995cdfc1509b50b40d712cf32acd0cca",
                   "test/win32/viewer-window-chords.ps1":  "05c069b7eaa44b646ed720b157ea9a5c5d0e4368ff34c80112ff51020343b0ab",
                   "test/win32/viewer-worktree.ps1":  "ff312a507bf64b11b5bca28f265698b222a944b1685f5ddb94322bcc01c5880a",
                   "test/win32/viewer-worktree-port.ps1":  "b991f340cf0f1f4a34fa3edab4305aad56e131ad7115a9e01417343306fe31e2",

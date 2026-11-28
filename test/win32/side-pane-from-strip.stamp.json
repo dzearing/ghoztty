@@ -1,14 +1,14 @@
 {
     "guard":  "side-pane-from-strip",
     "script":  "test/win32/side-pane-from-strip.ps1",
-    "generated":  "2026-11-27T05:15:30-08:00",
-    "commit":  "522f69d13d",
+    "generated":  "2026-11-27T07:20:14-08:00",
+    "commit":  "62490f5132",
     "uncommitted":  [
 
                     ],
     "files":  {
                   "src/apprt/win32/pane_stack_state.zig":  "e3087d45b99e3a09eb31c6022d285f91114895b601b0d60ab24b48a9a3bcff51",
-                  "src/apprt/win32/Window.zig":  "fee72e4c37a9c83138a994604dee41fd9a2267aa6bf9a19543e1dcaba2c4aacb",
+                  "src/apprt/win32/Window.zig":  "58cc49c995169127450eb1268c9d7c42a3fdc8a9425d0fc94d4da5c69ffb7878",
                   "test/win32/side-pane-from-strip.ps1":  "905582220dc8d3f0acce9496331db4c4cf5dcaf3f12c74be698987538b3957b3"
               },
     "code":  {

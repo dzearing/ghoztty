@@ -1,8 +1,8 @@
 {
     "guard":  "rearrange-noop-drop",
     "script":  "test/win32/rearrange-noop-drop.ps1",
-    "generated":  "2026-11-27T05:53:48-08:00",
-    "commit":  "f57ca82e80",
+    "generated":  "2026-11-27T07:25:15-08:00",
+    "commit":  "62490f5132",
     "uncommitted":  [
 
                     ],
@@ -11,7 +11,7 @@
                   "src/apprt/win32/DropHighlight.zig":  "b8fc223144b4c3aae404684db9f27d12839ff11451dcca6a19aaf8b88687f9d8",
                   "src/apprt/win32/pane_drop.zig":  "39d64882481a626ec63fe66146687be97ef6071de608ee669eb3551e4228e53a",
                   "src/apprt/win32/pane_layout.zig":  "26c669b1304588a43beb02c5eeff7bec66092c41f8e569e733fcc50551ff222d",
-                  "src/apprt/win32/Window.zig":  "fee72e4c37a9c83138a994604dee41fd9a2267aa6bf9a19543e1dcaba2c4aacb",
+                  "src/apprt/win32/Window.zig":  "58cc49c995169127450eb1268c9d7c42a3fdc8a9425d0fc94d4da5c69ffb7878",
                   "test/win32/rearrange-noop-drop.ps1":  "4b5de62e0e8318f64db14bdaf85bdf25024714bcbd33deb55678934cd06d800d"
               },
     "code":  {
