@@ -607,10 +607,32 @@ private runtime dir, so a test app can never meet the user's.
   within the stash, the last pane on screen is refused), in the list a
   stashed pane is restored, focused, then placed. Stashed rows drag.
   A real pointer drag is NOT RUN (no pointer, even on the seat compositor:
-  T3847). Not yet: a pane drag (a header
-  or a strip, so another window's pane) dropped on the sidebar (T3756), the
+  T3847). Not yet: the
   order across a restore (T3700), the rows sliding to make room (parity is
   behavior here, not the glide).
+  **Pane drags land on the sidebar too (T3756)**: the list carries a second
+  drop target, for the pane drag's own type (`PaneDrag.mime`: a rearrange
+  header, the grab handle or a strip, so any window's pane), and the row
+  target never sees one. `PaneSidebar.dropPaneAt` plans with
+  `rows.paneDrop`: a pane drawn in this list does exactly what its row does
+  (`dropRowAt`: a place in its list, its tray, another window's rows to
+  join); a pane from another window, or another tab of this one, ARRIVES -
+  onto this grid's right edge at the top level, out of its old stash
+  (`joinWindow`, the T3699 join), then in the same turn takes the place it
+  was let go at: in the list there (`moveRow`), in the tray stashed at that
+  gap (`stashRowAt`), so a stashed arrival is never drawn on screen (Mac
+  `.sidebarOrder` cross-window and `stashInOtherWindow`, win32
+  `commitListDrop` / `commitStashDrop`). Over a third window's rows in the
+  outline it joins that one. Held over the list the tray lights when a
+  release would stash (`hoverPaneAt`; the seam reports a tray head's
+  `lit`). Logged `pane sidebar pane drop pane= y= plan=` and `pane sidebar
+  pane arrived pane= into= index= placed=`. Seam: `pane-sidebar
+  --pane-hover=<pane>:<y>`, `--pane-leave`, `--pane-drop=<pane>:<y>`
+  (reply `drop`: `target` sidebar_order|stash|join_window, `outcome`,
+  `index`). Acceptance: `wsl-run.ps1 -CommandFile
+  test\linux\cli-sidebar-pane-drop.sh`, ends `CLI SIDEBAR PANE DROP: ALL
+  PASS` (27 checks); `NEGATIVE=1` must fail P2, P2b, P6b, P6c, P6e, P7c. A
+  real pointer drag onto the sidebar is NOT RUN (no pointer: T3847).
   **Windows and groups drag too (T3697)**, in the expanded all-windows list
   only: a project header among the top level (never above the lone
   windows), a window row anywhere - into a group (retitled `<group>:

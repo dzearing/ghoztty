@@ -26,8 +26,10 @@
 # (`--pane-drop=<pane>:<y>`) a pane drag at a y of the list through the list's
 # pane drop target's own calls (PaneSidebar.hoverPaneAt / dropPaneAt).
 #
-# NEGATIVE=1 lets the first pane go over its own place, which must FAIL P2 and
-# P2b and nothing else: the harness can tell a drop that moved nothing.
+# NEGATIVE=1 lets the first pane go over its own place, which must FAIL P2,
+# P2b and the places read off that order later - P6b, P6c, P6e, P7c - and
+# nothing else (6 failures, measured 2026-11-27): the harness can tell a drop
+# that moved nothing.
 #
 # Output: one PASS/FAIL line per check, then 'CLI SIDEBAR PANE DROP: ALL PASS'
 # or 'CLI SIDEBAR PANE DROP: <n> FAILURE(S)'. Exit 0 only on ALL PASS.
