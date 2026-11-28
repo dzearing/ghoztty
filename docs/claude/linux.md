@@ -2202,15 +2202,46 @@ Traps found here:
 powershell -NoProfile -File scripts\linux\wsl-run.ps1 -CommandFile test\linux\settings-window.sh
 ```
 
-Ends `SETTINGS WINDOW: ALL PASS` (88 checks: W1-W20 for the window and
+Ends `SETTINGS WINDOW: ALL PASS` (101 checks: W1-W20 for the window and
 All Settings, P1-P23 for the pages, K1-K12 for the color wells and the
 folder picker, L1-L10 less L5 for list keys, F1-F8 for the Font picker,
-C1-C14 with C4b and C11b for Config file and the toast).
-Left off the pages for its own card: search across the pages T3760 (the
-preview and themes are T3636's, below). Also
-still to port: the file-mode and local-time fix T3634 (until it lands, a
+C1-C14 with C4b and C11b for Config file and the toast, S1-S12 for search).
+Still to port: the file-mode and local-time fix T3634 (until it lands, a
 backup's date in Restore... reads in UTC: `ConfigFileStore.localNow` is
 Windows-only).
+
+### Search across the pages (T3760)
+
+Mac's `searchResults`, on win32's `planSearch` rules: typing in the sidebar's
+field swaps the stack to a `search` page (an `AdwPreferencesPage`, rebuilt per
+query) listing, in page order, each section's matching curated rows under
+"<Page> › <Section>" (`settings_pages.rowMatchesText` or `Reader.matches`:
+label, key, hint, options, doc, the file's value), then "Advanced › All
+settings (N)" - the keys no page shows, the first 40, then "N more — keep
+typing to narrow." - or "No settings match “q”.". The sidebar shows no page
+selected; picking one, a result's page link, or Esc ends the search.
+
+- **The rows are MOVED, not copied.** A curated row's widget (and its second
+  row: a shell's Other..., the Font row's fallbacks) is detached from its
+  page's group with a ref held and attached to the results group, then put
+  back - each touched group re-filled in curated order - when the query
+  changes or ends (`Curated.home`/`away`). One widget per key keeps
+  `curatedFor`, the seam's gestures and `refreshCurated` exactly as they are;
+  a copy would have shared the Font and folder rows' per-row arenas.
+- **A section with its own UI** (Theme, Agent, Config file, ...) that matches
+  its words is listed as a row with a "<Page> ›" link, not drawn inline: those
+  sections are single-instance widgets. Mac draws them in place (T3888).
+- **Trap: `gtk_editable_set_text` on a `GtkSearchEntry` empties the field
+  first, and an empty field reports `search-changed` AT ONCE** (non-empty text
+  waits out the entry's delay). The window writing its own field therefore
+  ended the search it was writing. `setSearchText` guards it.
+
+Seam: `--op=search --value=` (runs the search now, then writes the field),
+`--op=search-link --index=<i>` (result section i's page link, shown on idle),
+`--op=search-stop` (Esc). State adds `searching`, `listed` (All Settings'
+keys as built), `search` (`shown`, `sections`: page, title, `drawn` heading,
+keys, custom; `curated_hits`, `more`, `empty`) and, per curated key,
+`in_search` and `in_place` (back in its own place on its page).
 
 ### Color wells and the folder picker (T3759)
 

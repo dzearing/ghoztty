@@ -14,6 +14,9 @@
 # file, a link, and the toast's Show Change / Undo / x / timed exit.
 # K1-K12 (T3759) cover the color wells (Mac's ColorControl) and the
 # starting-folder picker (Mac's FolderControl, Choose Folder... included).
+# S1-S12 (T3760) cover search: Mac's searchResults, the curated rows moved
+# into a results page under "<Page> > <Section>" and back, then the keys no
+# page shows capped at 40.
 #
 # Run it ONLY through the wrapper, from this box:
 #

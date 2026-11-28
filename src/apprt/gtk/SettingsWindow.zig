@@ -78,6 +78,12 @@
 //! padding, pane style and cursor - on win32's shared `theme_catalog`,
 //! `settings_theme_grid` and `settings_preview`.
 //!
+//! **Search (T3760)** is Mac's `searchResults` on win32's `planSearch`
+//! rules: a results page listing each page's matching curated rows under
+//! "<Page> > <Section>" - the rows' own widgets, moved there and back, so
+//! there is still one control per key - a matching custom section as a link
+//! to its page, then the keys no page shows, capped at `search_cap`.
+//!
 //! Rows are built once and refreshed in place after every write (a rebuild
 //! would lose the page's scroll), from the same reader the seam reports.
 const SettingsWindow = @This();
