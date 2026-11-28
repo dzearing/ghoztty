@@ -1,8 +1,8 @@
 {
     "guard":  "seam-audit",
     "script":  "test/win32/seam-audit.ps1",
-    "generated":  "2026-11-28T01:54:30-08:00",
-    "commit":  "b843981921",
+    "generated":  "2026-11-28T02:53:30-08:00",
+    "commit":  "6ee54f3636",
     "uncommitted":  [
 
                     ],
@@ -662,7 +662,7 @@
                   "src/renderer/comp_overlay.zig":  "464d66818660b8b75c691438fc34b340fadbaffc8cacd0b37595060c7d9967da",
                   "src/renderer/comp_tree.zig":  "796b0cb57c6c43a027e070605dcd3c2d1ca2bfa37be914b5fbbceda43dc02876",
                   "src/renderer/cursor.zig":  "1cec4ef3e7be9cdd649c7e121052ee3e77e645c4f8093b73c97e3d8fe5ed1c3f",
-                  "src/renderer/generic.zig":  "eb9a343b976acb8d37d0d999cb2de3d23826c28b443d926f90a1c1db01d5af62",
+                  "src/renderer/generic.zig":  "f322c21cd9ebccd47a26c5d8cd79a7a247a3d2074c88085559ce38ef3e607a27",
                   "src/renderer/gl_comp_present.zig":  "2682728e659969af8e077c7c938152d93f340d5d814bb3bfba127dabee56126b",
                   "src/renderer/gl_loader.zig":  "9a92b476463d9e027dc3b104a7309fc97386c6a555482f494714a67f507fa89a",
                   "src/renderer/gl_report.zig":  "cab949c5e9d9586daef1261de0090f4cd58a53dee78ef01022aa478d1ce3f51e",
@@ -673,7 +673,7 @@
                   "src/renderer/low_power.zig":  "561c61649c3385011078e4c7646604e1f28b70e3cd6889967b8d997e8788e8cb",
                   "src/renderer/message.zig":  "d48c9c6252695951f0c7808643a0eabe6b0a90a9886d7aa2ad9a9f4f5c340373",
                   "src/renderer/Metal.zig":  "281fbaffd863a3ee8f36f0654796757459620fadde62965f6c896f2151366937",
-                  "src/renderer/OpenGL.zig":  "aec1bed38dc7956ef0614b3314ddffd0534363cbed390488fcb08cc42aee89d2",
+                  "src/renderer/OpenGL.zig":  "a4ec27197e65720be0b08bd641e516273d28797314489c623302a4709f3e27ed",
                   "src/renderer/Options.zig":  "884d0510167fbc720bde36b502c75ff9ed4b5fcce47a07c8c3b74cbc490ed6fd",
                   "src/renderer/Overlay.zig":  "7cbdcee4452a18989936b19ad73484a64182d9660bd25dc95997ec18edec109e",
                   "src/renderer/pace.zig":  "7d85fe15556797de7937e9bb264650d74fff9e592d61e8cf0c62ce3ae11618b3",
