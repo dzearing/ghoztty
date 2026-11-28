@@ -129,7 +129,7 @@ hl_check "W15 a key later.ghostty overrides is refused and the row names that fi
 # under "<Page> > <Section>", then the keys no page shows (S1-S12 below).
 o=$(st --op=search --value=font-size)
 sec=$(jget "$o" '[s["title"] for s in d["search"]["sections"] if "font-size" in s["keys"]]')
-[ "$(jget "$o" 'd["searching"]')" = true ] && [ "$(jget "$o" 'd["search"]["shown"]')" = true ] && [ "$sec" = '["Appearance › Font"]' ]
+[ "$(jget "$o" 'd["searching"]')" = true ] && [ "$(jget "$o" 'd["search"]["shown"]')" = true ] && [ "$(jget "$o" '[s["title"] for s in d["search"]["sections"] if "font-size" in s["keys"]] == ["Appearance › Font"]')" = true ]
 hl_check "W16 searching shows the results, font-size's row under Appearance > Font" $? "sections=$(jget "$o" '[(s["title"],s["keys"]) for s in d["search"]["sections"]]')"
 m=$(jget "$o" 'd["matched"]')
 [ "$(jget "$o" 'd["rows"]')" = "$(( m < 40 ? m : 40 ))" ] && [ "$(jget "$o" '"font-size" in d["listed"]')" = false ]
@@ -557,8 +557,8 @@ o=$(st --op=state --key=font-size)
 [ "$(line_of font-size)" = 18.5 ] && [ "$(jget "$o" 'd["key"]["curated"]["display"]')" = "$(jget "$o" 'd["key"]["curated"]["expected"]')" ] && [ "$(jget "$o" 'd["key"]["curated"]["in_search"]')" = true ] && [ "$(jget "$o" 'd["searching"]')" = true ]
 hl_check "S3 a row in the results is the live control: its arrow writes, and it stays listed" $? "line=$(line_of font-size) display=$(jget "$o" 'd["key"]["curated"]["display"]')"
 o=$(st --op=search --value=18.5)
-[ "$(jget "$o" '[s["title"] for s in d["search"]["sections"] if "font-size" in s["keys"]]')" = '["Appearance › Font"]' ]
-hl_check "S4 a search matches a row by the value the file gives it" $? "sections=$(jget "$o" '[(s["title"],s["keys"]) for s in d["search"]["sections"]]')"
+[ "$(jget "$o" '[s["title"] for s in d["search"]["sections"] if "font-size" in s["keys"]] == ["Appearance › Font"]')" = true ]
+hl_check "S4 a search matches a row by the value the file gives it" $? "sections=$(jget "$o" '[(s["title"],s["keys"]) for s in d["search"]["sections"]]') searching=$(jget "$o" 'd["searching"]') query=$(jget "$o" 'd["query"]') shown=$(jget "$o" 'd["search"]["shown"]') visible=$(jget "$o" 'd["visible_page"]')"
 o=$(st --op=search --value=)
 c1=$(jget "$(st --op=state --key=font-size)" 'd["key"]["curated"]')
 c2=$(jget "$(st --op=state --key=scrollbar)" 'd["key"]["curated"]')
@@ -573,7 +573,7 @@ m=$(jget "$o" 'd["matched"]')
 hl_check "S7 a broad search lists 40 keys no page shows, then 'N more - keep typing to narrow.'" $? "matched=$m rows=$(jget "$o" 'd["rows"]') more=$(jget "$o" 'd["search"]["more"]')"
 o=$(st --op=search --value=zzqqxxnothing)
 [ "$(jget "$o" 'd["search"]["empty"]')" = 'No settings match “zzqqxxnothing”.' ] && [ "$(jget "$o" 'len(d["search"]["sections"])')" = 0 ] && [ "$(jget "$o" 'd["rows"]')" = 0 ]
-hl_check "S8 a search that matches nothing says so" $? "empty=$(jget "$o" 'd["search"]["empty"]')"
+hl_check "S8 a search that matches nothing says so" $? "empty=$(jget "$o" 'd["search"]["empty"]') searching=$(jget "$o" 'd["searching"]') query=$(jget "$o" 'd["query"]') shown=$(jget "$o" 'd["search"]["shown"]') visible=$(jget "$o" 'd["visible_page"]')"
 o=$(st --op=search --value=backup)
 i=$(jget "$o" '[i for i,s in enumerate(d["search"]["sections"]) if s["custom"]=="config_file"][0]')
 [ -n "$i" ] && [ "$i" != null ] && [ "$(jget "$o" 'd["search"]["sections"]['"$i"']["title"]')" = 'Advanced › Config file' ]
@@ -594,6 +594,7 @@ hl_wait_for 5 sh -c "[ \"\$(hl_ipc settings --op=state 2>/dev/null | python3 -I 
 o=$(st --op=state)
 [ "$(jget "$o" 'd["searching"]')" = false ] && [ "$(jget "$o" 'd["visible_page"]')" = keyboard ]
 hl_check "S12 Esc in the search field clears the search and the page comes back" $? "searching=$(jget "$o" 'd["searching"]') visible=$(jget "$o" 'd["visible_page"]')"
+grep -E "settings: (search|set|opened|closed|reading)|gtk_settings" "$HL_RUNTIME/APP.log" 2>/dev/null | tail -40 | sed "s/^/APPLOG /"
 
 # ---- close ------------------------------------------------------------------
 st --op=close > /dev/null

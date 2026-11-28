@@ -1478,7 +1478,10 @@ fn endSearchView(self: *SettingsWindow) void {
 /// no page shows.
 fn showSearch(self: *SettingsWindow) !void {
     const arena = self.search_arena.allocator();
-    const r = self.reader() orelse return;
+    const r = self.reader() orelse {
+        log.warn("settings: search has no reader (sources unread)", .{});
+        return;
+    };
     const q = self.trimmedQuery();
     const page = wk.adw_preferences_page_new();
     for (pages.all) |p| {
@@ -1895,6 +1898,7 @@ pub fn typeQuery(self: *SettingsWindow, q: []const u8) void {
 /// (its late `search-changed` then matches and is ignored), the rows go
 /// home, All Settings lists Advanced's keys again.
 fn clearSearch(self: *SettingsWindow) void {
+    log.info("settings: search cleared (was {s})", .{self.query.items});
     self.query.clearRetainingCapacity();
     if (std.mem.span(wk.gtk_editable_get_text(self.search)).len > 0) wk.gtk_editable_set_text(self.search, "");
     self.endSearchView();
